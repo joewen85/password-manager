@@ -7,18 +7,20 @@ import 'package:cryptography/cryptography.dart';
 import 'models.dart';
 
 class KeyDerivationService {
-  KeyDerivationService({Pbkdf2? pbkdf2})
-      : _pbkdf2 = pbkdf2 ?? Pbkdf2(
-          macAlgorithm: Hmac.sha256(),
-          iterations: 120000,
-          bits: 256,
-        );
+  KeyDerivationService({int iterations = 120000})
+      : _defaultIterations = iterations;
 
-  final Pbkdf2 _pbkdf2;
+  final int _defaultIterations;
 
-  Future<DerivedKey> deriveKey(String password, {Uint8List? salt}) async {
+  Future<DerivedKey> deriveKey(
+    String password, {
+    Uint8List? salt,
+    int? iterations,
+  }) async {
     final saltBytes = salt ?? _randomSalt();
-    final secretKey = await _pbkdf2.deriveKey(
+    final kdfIterations = iterations ?? _defaultIterations;
+    final pbkdf2 = _pbkdf2For(kdfIterations);
+    final secretKey = await pbkdf2.deriveKey(
       secretKey: SecretKey(Uint8List.fromList(utf8.encode(password))),
       nonce: saltBytes,
     );
@@ -26,7 +28,15 @@ class KeyDerivationService {
     return DerivedKey(
       bytes: Uint8List.fromList(keyBytes),
       salt: saltBytes,
-      iterations: _pbkdf2.iterations,
+      iterations: kdfIterations,
+    );
+  }
+
+  Pbkdf2 _pbkdf2For(int iterations) {
+    return Pbkdf2(
+      macAlgorithm: Hmac.sha256(),
+      iterations: iterations,
+      bits: 256,
     );
   }
 

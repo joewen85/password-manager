@@ -47,6 +47,8 @@ class VaultService {
       id: _uuid.v4(),
       label: label,
       encryptedPayload: encrypted,
+      kdfSalt: derivedKey.salt,
+      kdfIterations: derivedKey.iterations,
       createdAt: now,
       updatedAt: now,
     );
@@ -58,7 +60,11 @@ class VaultService {
     VaultItem item, {
     required String masterPassword,
   }) async {
-    final derivedKey = await _keyDerivationService.deriveKey(masterPassword);
+    final derivedKey = await _keyDerivationService.deriveKey(
+      masterPassword,
+      salt: Uint8List.fromList(item.kdfSalt),
+      iterations: item.kdfIterations,
+    );
     final decryptedBytes = await _cryptoService.decrypt(
       item.encryptedPayload,
       derivedKey.bytes,
@@ -69,4 +75,8 @@ class VaultService {
     }
     return CredentialPayload.fromJson(Map<String, Object?>.from(decoded));
   }
+
+  Future<List<VaultItem>> listAll() => _repository.listAll();
+
+  Future<void> delete(String id) => _repository.delete(id);
 }
