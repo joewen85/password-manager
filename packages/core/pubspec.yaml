@@ -1,0 +1,17 @@
+name: password_manager_core
+description: Domain models and orchestration for the password manager.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  meta: ^1.11.0
+  password_manager_crypto:
+    path: ../crypto
+  uuid: ^4.4.0
+
+dev_dependencies:
+  lints: ^3.0.0
+  test: ^1.25.0
