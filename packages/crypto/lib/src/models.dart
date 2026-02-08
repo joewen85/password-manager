@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 class EncryptedPayload {
@@ -14,11 +15,20 @@ class EncryptedPayload {
   final int version;
 
   Map<String, Object> toJson() => {
-        'ciphertext': ciphertext,
-        'nonce': nonce,
-        'mac': mac,
+        'ciphertext': base64Encode(ciphertext),
+        'nonce': base64Encode(nonce),
+        'mac': base64Encode(mac),
         'version': version,
       };
+
+  static EncryptedPayload fromJson(Map<String, Object?> json) {
+    return EncryptedPayload(
+      ciphertext: base64Decode(json['ciphertext'] as String? ?? ''),
+      nonce: base64Decode(json['nonce'] as String? ?? ''),
+      mac: base64Decode(json['mac'] as String? ?? ''),
+      version: (json['version'] as int?) ?? 1,
+    );
+  }
 }
 
 class DerivedKey {

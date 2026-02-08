@@ -64,9 +64,9 @@ class VaultService {
       derivedKey.bytes,
     );
     final decoded = jsonDecode(utf8.decode(decryptedBytes));
-    if (decoded is! Map<String, Object?>) {
+    if (decoded is! Map) {
       return null;
     }
-    return CredentialPayload.fromJson(decoded);
+    return CredentialPayload.fromJson(Map<String, Object?>.from(decoded));
   }
 }

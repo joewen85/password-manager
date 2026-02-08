@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -18,7 +19,7 @@ class KeyDerivationService {
   Future<DerivedKey> deriveKey(String password, {Uint8List? salt}) async {
     final saltBytes = salt ?? _randomSalt();
     final secretKey = await _pbkdf2.deriveKey(
-      secretKey: SecretKey(utf8Encode(password)),
+      secretKey: SecretKey(Uint8List.fromList(utf8.encode(password))),
       nonce: saltBytes,
     );
     final keyBytes = await secretKey.extractBytes();
@@ -35,5 +36,4 @@ class KeyDerivationService {
     return Uint8List.fromList(bytes);
   }
 
-  Uint8List utf8Encode(String value) => Uint8List.fromList(value.codeUnits);
 }
