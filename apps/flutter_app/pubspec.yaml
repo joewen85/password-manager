@@ -1,0 +1,31 @@
+name: password_manager_app
+description: Cross-platform password manager app.
+version: 0.1.0+1
+publish_to: none
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  password_manager_core:
+    path: ../../packages/core
+  password_manager_crypto:
+    path: ../../packages/crypto
+  password_manager_auth:
+    path: ../../packages/auth
+  password_manager_storage:
+    path: ../../packages/storage
+  password_manager_sync:
+    path: ../../packages/sync
+  password_manager_backup:
+    path: ../../packages/backup
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
