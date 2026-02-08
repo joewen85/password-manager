@@ -47,6 +47,12 @@ VaultController buildController({required bool requireTotp}) {
 }
 
 void main() {
+  Finder _fieldWithLabel(String label) {
+    return find.byWidgetPredicate((widget) {
+      return widget is TextFormField && widget.decoration?.labelText == label;
+    });
+  }
+
   testWidgets('Unlock screen shows master password field', (tester) async {
     final controller = buildController(requireTotp: false);
     await tester.pumpWidget(
@@ -76,5 +82,59 @@ void main() {
     );
 
     expect(find.textContaining('No entries yet'), findsOneWidget);
+  });
+
+  testWidgets('Add entry flow adds item to list', (tester) async {
+    final controller = buildController(requireTotp: false);
+    await controller.unlock('master');
+
+    await tester.pumpWidget(
+      MaterialApp(home: HomeScreen(controller: controller)),
+    );
+
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(_fieldWithLabel('Label'), 'AWS Console');
+    await tester.enterText(_fieldWithLabel('Username'), 'user@example.com');
+    await tester.enterText(_fieldWithLabel('Password'), 'secret-pass');
+    await tester.enterText(_fieldWithLabel('Token'), 'token-123');
+    await tester.enterText(_fieldWithLabel('App ID'), 'app-xyz');
+    await tester.enterText(_fieldWithLabel('Access Token'), 'access-456');
+    await tester.enterText(_fieldWithLabel('Secret Key'), 'sk-789');
+
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('AWS Console'), findsOneWidget);
+  });
+
+  testWidgets('Entry details dialog shows decrypted payload', (tester) async {
+    final controller = buildController(requireTotp: false);
+    await controller.unlock('master');
+
+    await controller.addEntry(
+      label: 'GitHub',
+      payload: const CredentialPayload(
+        username: 'octo',
+        password: 'pass123',
+        token: 'token',
+        appId: 'appid',
+        accessToken: 'access',
+        secretKey: 'secret',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: HomeScreen(controller: controller)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.visibility_outlined).first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('GitHub'), findsOneWidget);
+    expect(find.text('octo'), findsOneWidget);
+    expect(find.text('pass123'), findsOneWidget);
   });
 }
