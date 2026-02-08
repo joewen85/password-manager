@@ -44,6 +44,10 @@
 - macOS/Linux：`./scripts/test_all.sh`
 - Windows：`powershell -ExecutionPolicy Bypass -File .\\scripts\\test_all.ps1`
 
+### 6. 仅 Dart 包测试（无 Flutter）
+- macOS/Linux：`./scripts/test_dart_only.sh`
+- Windows：`powershell -ExecutionPolicy Bypass -File .\\scripts\\test_dart_only.ps1`
+
 ## 分步开发计划（里程碑）
 ### 阶段 1：MVP（本地离线 + 基础加密）
 **迭代 1.1：数据模型与加密管线**
