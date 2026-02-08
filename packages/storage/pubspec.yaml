@@ -8,6 +8,10 @@ environment:
 
 dependencies:
   meta: ^1.11.0
+  password_manager_core:
+    path: ../core
+  password_manager_crypto:
+    path: ../crypto
 
 
 dev_dependencies:
