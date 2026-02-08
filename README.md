@@ -40,6 +40,10 @@
 - `cd apps/flutter_app`
 - `flutter test`
 
+### 5. 全量测试（推荐）
+- macOS/Linux：`./scripts/test_all.sh`
+- Windows：`powershell -ExecutionPolicy Bypass -File .\\scripts\\test_all.ps1`
+
 ## 分步开发计划（里程碑）
 ### 阶段 1：MVP（本地离线 + 基础加密）
 **迭代 1.1：数据模型与加密管线**
