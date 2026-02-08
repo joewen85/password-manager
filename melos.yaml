@@ -1,0 +1,4 @@
+name: password_manager
+packages:
+  - apps/*
+  - packages/*
