@@ -20,7 +20,8 @@
 
 ## 开发步骤
 ### 1. 环境准备
-- 安装 Flutter SDK（内含 Dart）
+- macOS 推荐安装方式：安装 Flutter SDK（内含 Dart），确保 `flutter` 与 `dart` 均可在终端直接使用
+- 仅运行 Dart 包测试时：可只安装 Dart SDK（不含 Flutter）
 - 可选：安装 `melos` 以管理多包仓库
   - `dart pub global activate melos`
 
@@ -39,6 +40,11 @@
 ### 4. 测试
 - `cd apps/flutter_app`
 - `flutter test`
+
+### 4.1 测试可行性说明（macOS）
+- **全量测试** 需要同时具备 `dart` 与 `flutter` 命令（Flutter SDK 已包含 Dart）
+- **仅 Dart 包测试** 只需要 `dart` 命令（不依赖 Flutter）
+- 如果提示 `dart: command not found`，说明尚未安装 Dart/Flutter 或未正确配置 PATH
 
 ### 5. 全量测试（推荐）
 - macOS/Linux：`./scripts/test_all.sh`
