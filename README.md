@@ -25,6 +25,27 @@
 - 可选：安装 `melos` 以管理多包仓库
   - `dart pub global activate melos`
 
+### 1.1 跨平台安装步骤（开发环境）
+下面以 **Flutter SDK（包含 Dart）** 为主；若只需要 Dart 测试，请替换为 Dart SDK 安装即可。
+
+**macOS**
+1) 通过官方渠道获取 Flutter SDK 压缩包并解压到本地目录（例如 `~/dev/flutter`）  
+2) 将 `flutter/bin` 加入 PATH（如 `echo 'export PATH=\"$PATH:$HOME/dev/flutter/bin\"' >> ~/.zshrc`）  
+3) 重新打开终端，执行 `flutter doctor` 校验环境  
+4) 需要 iOS 调试时，安装 Xcode 并按 `flutter doctor` 提示完成配置  
+
+**Windows**
+1) 通过官方渠道下载 Flutter SDK（zip），解压到本地目录（例如 `C:\\dev\\flutter`）  
+2) 将 `C:\\dev\\flutter\\bin` 加入系统 PATH  
+3) 打开新终端，执行 `flutter doctor` 校验环境  
+4) 需要 Android 调试时，安装 Android Studio 并按 `flutter doctor` 提示配置 SDK  
+
+**Linux**
+1) 通过官方渠道下载 Flutter SDK（tar.xz），解压到本地目录（例如 `~/dev/flutter`）  
+2) 将 `flutter/bin` 加入 PATH（如 `echo 'export PATH=\"$PATH:$HOME/dev/flutter/bin\"' >> ~/.bashrc`）  
+3) 重新打开终端，执行 `flutter doctor` 校验环境  
+4) 需要 Android 调试时，安装 Android Studio 并按 `flutter doctor` 提示配置 SDK  
+
 ### 2. 安装依赖
 如果使用 melos：
 - `melos bootstrap`
