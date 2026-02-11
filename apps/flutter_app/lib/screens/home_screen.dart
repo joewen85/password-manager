@@ -24,8 +24,22 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _searchController = TextEditingController();
+  final _fabKey = GlobalKey();
   _VaultListMode _mode = _VaultListMode.credentials;
   String? _selectedTag;
+  double _fabHeight = 0;
+
+  void _syncFabHeight() {
+    final context = _fabKey.currentContext;
+    if (context == null) {
+      return;
+    }
+    final renderBox = context.findRenderObject() as RenderBox?;
+    final height = renderBox?.size.height ?? 0;
+    if (height > 0 && (height - _fabHeight).abs() > 0.5) {
+      setState(() => _fabHeight = height);
+    }
+  }
 
   @override
   void dispose() {
@@ -168,6 +182,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncFabHeight());
     return Scaffold(
       appBar: AppBar(
         title: const Text('密码库'),
@@ -303,6 +318,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
+        key: _fabKey,
         onPressed: () async {
           if (_mode == _VaultListMode.credentials) {
             final data = await showModalBottomSheet<NewEntryData>(
@@ -448,8 +464,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         );
                       }
+                      final fabHeight = _fabHeight > 0 ? _fabHeight : 56.0;
                       final bottomPadding =
-                          MediaQuery.of(context).padding.bottom + 96;
+                          MediaQuery.of(context).padding.bottom +
+                              fabHeight +
+                              kFloatingActionButtonMargin +
+                              8;
                       return ListView.separated(
                         padding: EdgeInsets.only(bottom: bottomPadding),
                         itemCount: sorted.length,
