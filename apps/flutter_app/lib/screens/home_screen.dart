@@ -448,7 +448,10 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         );
                       }
+                      final bottomPadding =
+                          MediaQuery.of(context).padding.bottom + 96;
                       return ListView.separated(
+                        padding: EdgeInsets.only(bottom: bottomPadding),
                         itemCount: sorted.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 12),
                         itemBuilder: (context, index) {
