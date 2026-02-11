@@ -96,7 +96,7 @@ class PasswordManagerApp extends StatelessWidget {
       outline: const Color(0xFFC6D1D5),
       outlineVariant: const Color(0xFFE1E6E8),
     );
-    final textTheme = GoogleFonts.notoSansSCTextTheme().apply(
+    final textTheme = GoogleFonts.notoSansScTextTheme().apply(
       bodyColor: colorScheme.onSurface,
       displayColor: colorScheme.onSurface,
     );
@@ -127,7 +127,7 @@ class PasswordManagerApp extends StatelessWidget {
           ),
           iconTheme: IconThemeData(color: colorScheme.onSurface),
         ),
-        cardTheme: CardTheme(
+        cardTheme: CardThemeData(
           color: Colors.white,
           elevation: 0,
           margin: EdgeInsets.zero,
