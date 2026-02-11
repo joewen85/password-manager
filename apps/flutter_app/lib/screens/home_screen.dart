@@ -7,7 +7,9 @@ import '../models/new_entry_data.dart';
 import '../state/vault_metadata.dart';
 import '../state/vault_controller.dart';
 import '../utils/export_file.dart';
+import '../widgets/app_background.dart';
 import '../widgets/entry_details_dialog.dart';
+import '../widgets/fade_slide.dart';
 import 'new_entry_sheet.dart';
 import 'sync_settings_screen.dart';
 import 'tag_management_screen.dart';
@@ -169,6 +171,96 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _infoPill(IconData icon, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.16),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white.withOpacity(0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: Colors.white),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(color: Colors.white, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionCard({required Widget child}) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.92),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withOpacity(0.5)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+
+  Widget _heroCard(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF0F4C5C), Color(0xFF1B7F6E)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.12),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '安全地保存账号信息',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  color: Colors.white,
+                ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'AES-256 加密，支持 2FA 与同步模块。',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Colors.white.withOpacity(0.8),
+                ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _infoPill(Icons.shield_outlined, 'AES-256'),
+              _infoPill(Icons.phonelink_lock_outlined, '多端同步'),
+              _infoPill(Icons.verified_user_outlined, '2FA 保护'),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -354,163 +446,171 @@ class _HomeScreenState extends State<HomeScreen> {
         icon: const Icon(Icons.add),
         label: Text(_mode == _VaultListMode.credentials ? '新建账号' : '新建服务器'),
       ),
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFFF6F6F2), Color(0xFFE8F1F2)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
+      body: AppBackground(
         child: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  '安全地保存账号信息',
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'AES-256 加密，支持 2FA 与同步模块。',
-                  style: Theme.of(context).textTheme.titleMedium,
+                FadeSlide(
+                  delay: const Duration(milliseconds: 60),
+                  child: _heroCard(context),
                 ),
                 const SizedBox(height: 16),
-                Row(
-                  children: [
-                    SegmentedButton<_VaultListMode>(
-                      segments: const [
-                        ButtonSegment(
-                          value: _VaultListMode.credentials,
-                          label: Text('账号'),
+                FadeSlide(
+                  delay: const Duration(milliseconds: 140),
+                  child: _sectionCard(
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            SegmentedButton<_VaultListMode>(
+                              segments: const [
+                                ButtonSegment(
+                                  value: _VaultListMode.credentials,
+                                  label: Text('账号'),
+                                ),
+                                ButtonSegment(
+                                  value: _VaultListMode.servers,
+                                  label: Text('服务器'),
+                                ),
+                              ],
+                              selected: {_mode},
+                              onSelectionChanged: (value) {
+                                setState(() => _mode = value.first);
+                              },
+                            ),
+                            const Spacer(),
+                            DropdownButtonHideUnderline(
+                              child: DropdownButton<VaultSortOrder>(
+                                value: widget.controller.metadata.sortOrder,
+                                borderRadius: BorderRadius.circular(12),
+                                onChanged: (value) async {
+                                  if (value == null) {
+                                    return;
+                                  }
+                                  await widget.controller.updateSortOrder(
+                                    value,
+                                  );
+                                },
+                                items: const [
+                                  DropdownMenuItem(
+                                    value: VaultSortOrder.updatedDesc,
+                                    child: Text('按更新时间'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: VaultSortOrder.labelAsc,
+                                    child: Text('按名称'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
-                        ButtonSegment(
-                          value: _VaultListMode.servers,
-                          label: Text('服务器'),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _searchController,
+                          onChanged: (_) => setState(() {}),
+                          decoration: const InputDecoration(
+                            prefixIcon: Icon(Icons.search),
+                            hintText: '按名称或标签搜索',
+                          ),
                         ),
+                        const SizedBox(height: 12),
+                        _tagFilterRow(),
                       ],
-                      selected: {_mode},
-                      onSelectionChanged: (value) {
-                        setState(() => _mode = value.first);
-                      },
-                    ),
-                    const Spacer(),
-                    DropdownButton<VaultSortOrder>(
-                      value: widget.controller.metadata.sortOrder,
-                      onChanged: (value) async {
-                        if (value == null) {
-                          return;
-                        }
-                        await widget.controller.updateSortOrder(value);
-                      },
-                      items: const [
-                        DropdownMenuItem(
-                          value: VaultSortOrder.updatedDesc,
-                          child: Text('按更新时间'),
-                        ),
-                        DropdownMenuItem(
-                          value: VaultSortOrder.labelAsc,
-                          child: Text('按名称'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _searchController,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    prefixIcon: const Icon(Icons.search),
-                    hintText: '按条目名称搜索',
-                    filled: true,
-                    fillColor: Colors.white,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                 ),
-                const SizedBox(height: 12),
-                _tagFilterRow(),
                 const SizedBox(height: 16),
                 Expanded(
-                  child: AnimatedBuilder(
-                    animation: widget.controller,
-                    builder: (context, _) {
-                      final views = widget.controller.entryViews;
-                      final query = _searchController.text.trim().toLowerCase();
-                      final filtered = views.where((view) {
-                        final matchesType = _mode == _VaultListMode.credentials
-                            ? view.item.type == VaultEntryType.credential
-                            : view.item.type == VaultEntryType.server;
-                        if (!matchesType) {
-                          return false;
-                        }
-                        final matchesQuery = query.isEmpty
-                            ? true
-                            : view.item.label.toLowerCase().contains(query) ||
-                                view.tags
-                                    .any((tag) => tag.toLowerCase().contains(query));
-                        if (!matchesQuery) {
-                          return false;
-                        }
-                        if (_selectedTag == null || _selectedTag!.isEmpty) {
-                          return true;
-                        }
-                        return view.tags.contains(_selectedTag);
-                      }).toList();
-                      final sorted = _sortViews(filtered);
-                      if (sorted.isEmpty) {
-                        return Center(
-                          child: Text(
-                            query.isEmpty
-                                ? '暂无条目，点击“新建”添加。'
-                                : '未找到匹配条目',
-                          ),
-                        );
-                      }
-                      final mediaPadding = MediaQuery.of(context).padding;
-                      final fabHeight =
-                          _fabSize.height > 0 ? _fabSize.height : 56.0;
-                      final fabWidth =
-                          _fabSize.width > 0 ? _fabSize.width : 120.0;
-                      final bottomPadding = mediaPadding.bottom +
-                          fabHeight +
-                          kFloatingActionButtonMargin +
-                          8;
-                      final rightPadding = mediaPadding.right +
-                          fabWidth +
-                          kFloatingActionButtonMargin +
-                          8;
-                      return ListView.separated(
-                        padding: EdgeInsets.only(
-                          bottom: bottomPadding,
-                          right: rightPadding,
-                        ),
-                        itemCount: sorted.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 12),
-                        itemBuilder: (context, index) {
-                          final view = sorted[index];
-                          final item = view.item;
-                          return EntryCard(
-                            item: item,
-                            onView: () {
-                              showDialog<void>(
-                                context: context,
-                                builder: (context) => EntryDetailsDialog(
-                                  controller: widget.controller,
-                                  item: item,
-                                ),
-                              );
-                            },
-                            onEdit: () => _editEntry(item),
-                            onDelete: () => _deleteEntry(item),
+                  child: FadeSlide(
+                    delay: const Duration(milliseconds: 220),
+                    child: AnimatedBuilder(
+                      animation: widget.controller,
+                      builder: (context, _) {
+                        final views = widget.controller.entryViews;
+                        final query = _searchController.text.trim().toLowerCase();
+                        final filtered = views.where((view) {
+                          final matchesType =
+                              _mode == _VaultListMode.credentials
+                                  ? view.item.type ==
+                                      VaultEntryType.credential
+                                  : view.item.type == VaultEntryType.server;
+                          if (!matchesType) {
+                            return false;
+                          }
+                          final matchesQuery = query.isEmpty
+                              ? true
+                              : view.item.label
+                                      .toLowerCase()
+                                      .contains(query) ||
+                                  view.tags.any(
+                                    (tag) =>
+                                        tag.toLowerCase().contains(query),
+                                  );
+                          if (!matchesQuery) {
+                            return false;
+                          }
+                          if (_selectedTag == null || _selectedTag!.isEmpty) {
+                            return true;
+                          }
+                          return view.tags.contains(_selectedTag);
+                        }).toList();
+                        final sorted = _sortViews(filtered);
+                        if (sorted.isEmpty) {
+                          return Center(
+                            child: Text(
+                              query.isEmpty
+                                  ? '暂无条目，点击“新建”添加。'
+                                  : '未找到匹配条目',
+                            ),
                           );
-                        },
-                      );
-                    },
+                        }
+                        final mediaPadding = MediaQuery.of(context).padding;
+                        final fabHeight =
+                            _fabSize.height > 0 ? _fabSize.height : 56.0;
+                        final fabWidth =
+                            _fabSize.width > 0 ? _fabSize.width : 120.0;
+                        final bottomPadding = mediaPadding.bottom +
+                            fabHeight +
+                            kFloatingActionButtonMargin +
+                            8;
+                        final rightPadding = mediaPadding.right +
+                            fabWidth +
+                            kFloatingActionButtonMargin +
+                            8;
+                        return ListView.separated(
+                          padding: EdgeInsets.only(
+                            bottom: bottomPadding,
+                            right: rightPadding,
+                          ),
+                          itemCount: sorted.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 12),
+                          itemBuilder: (context, index) {
+                            final view = sorted[index];
+                            final item = view.item;
+                            return EntryCard(
+                              item: item,
+                              tags: view.tags,
+                              onView: () {
+                                showDialog<void>(
+                                  context: context,
+                                  builder: (context) => EntryDetailsDialog(
+                                    controller: widget.controller,
+                                    item: item,
+                                  ),
+                                );
+                              },
+                              onEdit: () => _editEntry(item),
+                              onDelete: () => _deleteEntry(item),
+                            );
+                          },
+                        );
+                      },
+                    ),
                   ),
                 ),
               ],
@@ -528,40 +628,149 @@ class EntryCard extends StatelessWidget {
   const EntryCard({
     super.key,
     required this.item,
+    required this.tags,
     required this.onView,
     required this.onEdit,
     required this.onDelete,
   });
 
   final VaultItem item;
+  final List<String> tags;
   final VoidCallback onView;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      elevation: 0,
+    final colorScheme = Theme.of(context).colorScheme;
+    final icon = item.type == VaultEntryType.server
+        ? Icons.dns_rounded
+        : Icons.key_rounded;
+    final accent = item.type == VaultEntryType.server
+        ? colorScheme.tertiary
+        : colorScheme.secondary;
+    final visibleTags = tags.take(3).toList();
+    final remaining = tags.length - visibleTags.length;
+    return Material(
       color: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: ListTile(
-        title: Text(item.label),
-        subtitle: Text('更新于 ${item.updatedAt.toLocal()}'),
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
         onTap: onView,
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.edit_outlined),
-              tooltip: '编辑',
-              onPressed: onEdit,
-            ),
-            IconButton(
-              icon: const Icon(Icons.delete_outline),
-              tooltip: '删除',
-              onPressed: onDelete,
-            ),
-          ],
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: colorScheme.outlineVariant),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.04),
+                blurRadius: 12,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: accent.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, color: accent),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.label,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '更新于 ${item.updatedAt.toLocal()}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                    ),
+                    if (tags.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          ...visibleTags.map(
+                            (tag) => Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: colorScheme.primaryContainer
+                                    .withOpacity(0.55),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                tag,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelSmall
+                                    ?.copyWith(
+                                      color: colorScheme.onPrimaryContainer,
+                                    ),
+                              ),
+                            ),
+                          ),
+                          if (remaining > 0)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: colorScheme.surfaceVariant,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                '+$remaining',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelSmall
+                                    ?.copyWith(
+                                      color: colorScheme.onSurfaceVariant,
+                                    ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.edit_outlined),
+                    tooltip: '编辑',
+                    onPressed: onEdit,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline),
+                    tooltip: '删除',
+                    onPressed: onDelete,
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

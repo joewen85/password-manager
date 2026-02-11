@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../state/vault_controller.dart';
+import '../widgets/app_background.dart';
+import '../widgets/fade_slide.dart';
 
 class UnlockScreen extends StatefulWidget {
   const UnlockScreen({super.key, required this.controller});
@@ -29,51 +31,81 @@ class _UnlockScreenState extends State<UnlockScreen> {
   Widget build(BuildContext context) {
     final isInitialized = widget.controller.hasMasterKey;
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFFF6F6F2), Color(0xFFE8F1F2)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
+      body: AppBackground(
         child: SafeArea(
           child: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 420),
-              child: Card(
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Padding(
+              child: FadeSlide(
+                delay: const Duration(milliseconds: 80),
+                offset: const Offset(0, 24),
+                child: Container(
                   padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.96),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: Colors.white.withOpacity(0.6)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.08),
+                        blurRadius: 24,
+                        offset: const Offset(0, 12),
+                      ),
+                    ],
+                  ),
                   child: Form(
                     key: _formKey,
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          isInitialized ? '解锁密码库' : '初始化密码库',
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w700,
-                          ),
+                        Row(
+                          children: [
+                            Container(
+                              width: 44,
+                              height: 44,
+                              decoration: BoxDecoration(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .primaryContainer,
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Icon(
+                                Icons.lock_outline,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                isInitialized ? '解锁密码库' : '初始化密码库',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .headlineSmall,
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 12),
                         Text(
                           isInitialized
                               ? '所有数据均使用 AES-256 加密。请输入主密码继续。'
                               : '首次使用，请设置主密码。',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                              ),
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 20),
                         TextFormField(
                           controller: _passwordController,
                           obscureText: true,
                           decoration: const InputDecoration(
                             labelText: '主密码',
-                            border: OutlineInputBorder(),
                           ),
                           validator: (value) =>
                               (value == null || value.isEmpty)
@@ -87,7 +119,6 @@ class _UnlockScreenState extends State<UnlockScreen> {
                             obscureText: true,
                             decoration: const InputDecoration(
                               labelText: '确认主密码',
-                              border: OutlineInputBorder(),
                             ),
                             validator: (value) {
                               if (value == null || value.isEmpty) {
@@ -107,7 +138,6 @@ class _UnlockScreenState extends State<UnlockScreen> {
                             keyboardType: TextInputType.number,
                             decoration: const InputDecoration(
                               labelText: '2FA 验证码',
-                              border: OutlineInputBorder(),
                             ),
                             validator: (value) =>
                                 (value == null || value.isEmpty)
@@ -115,7 +145,7 @@ class _UnlockScreenState extends State<UnlockScreen> {
                                     : null,
                           ),
                         ],
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 20),
                         SizedBox(
                           width: double.infinity,
                           child: FilledButton(
