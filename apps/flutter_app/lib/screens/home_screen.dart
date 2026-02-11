@@ -1,8 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:password_manager_core/password_manager_core.dart';
 
 import '../models/new_entry_data.dart';
 import '../state/vault_controller.dart';
+import '../utils/export_file.dart';
 import '../widgets/entry_details_dialog.dart';
 import 'new_entry_sheet.dart';
 
@@ -26,6 +29,93 @@ class HomeScreen extends StatelessWidget {
             onPressed: controller.runBackup,
             icon: const Icon(Icons.backup_outlined),
             tooltip: '备份',
+          ),
+          PopupMenuButton<_VaultMenuAction>(
+            tooltip: '更多',
+            onSelected: (action) async {
+              switch (action) {
+                case _VaultMenuAction.export:
+                  final data = await controller.exportEncryptedData();
+                  final filename =
+                      'vault-export-${DateTime.now().toIso8601String()}.json';
+                  if (kIsWeb) {
+                    await downloadTextFile(
+                      filename: filename,
+                      contents: data,
+                    );
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('导出完成')),
+                    );
+                  } else {
+                    await showDialog<void>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: const Text('导出数据'),
+                        content: SizedBox(
+                          width: 480,
+                          child: SingleChildScrollView(
+                            child: SelectableText(data),
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () async {
+                              await Clipboard.setData(
+                                ClipboardData(text: data),
+                              );
+                              Navigator.of(context).pop();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('已复制')),
+                              );
+                            },
+                            child: const Text('复制'),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            child: const Text('关闭'),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+                  break;
+                case _VaultMenuAction.clear:
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('清空数据'),
+                      content: const Text('此操作会删除所有条目，是否继续？'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(false),
+                          child: const Text('取消'),
+                        ),
+                        FilledButton(
+                          onPressed: () => Navigator.of(context).pop(true),
+                          child: const Text('确认清空'),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirmed == true) {
+                    await controller.clearAllEntries();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('已清空')),
+                    );
+                  }
+                  break;
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: _VaultMenuAction.export,
+                child: Text('导出数据'),
+              ),
+              PopupMenuItem(
+                value: _VaultMenuAction.clear,
+                child: Text('清空数据'),
+              ),
+            ],
           ),
           IconButton(
             onPressed: controller.lock,
@@ -115,6 +205,8 @@ class HomeScreen extends StatelessWidget {
     );
   }
 }
+
+enum _VaultMenuAction { export, clear }
 
 class EntryCard extends StatelessWidget {
   const EntryCard({super.key, required this.item, required this.onOpen});

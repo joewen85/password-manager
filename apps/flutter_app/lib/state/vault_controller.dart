@@ -155,6 +155,28 @@ class VaultController extends ChangeNotifier {
 
   Future<SyncStatus> syncStatus() => _syncProvider.status();
 
+  Future<String> exportEncryptedData() async {
+    _ensureUnlocked();
+    final items = await _vaultService.listAll();
+    final record = await _masterKeyStore.read();
+    final payload = {
+      'version': 1,
+      'exportedAt': DateTime.now().toUtc().toIso8601String(),
+      'masterKey': record?.toJson(),
+      'items': items.map(vaultItemToJson).toList(),
+    };
+    return jsonEncode(payload);
+  }
+
+  Future<void> clearAllEntries() async {
+    _ensureUnlocked();
+    final items = await _vaultService.listAll();
+    for (final item in items) {
+      await _vaultService.delete(item.id);
+    }
+    await reload();
+  }
+
   void _ensureUnlocked() {
     if (!_isUnlocked || _masterPassword == null) {
       throw StateError('Vault is locked');
