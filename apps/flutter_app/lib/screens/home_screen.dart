@@ -246,14 +246,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   color: Colors.white,
                   fontWeight: FontWeight.w700,
                 ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'AES-256 加密，支持 2FA 与同步模块。',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Colors.white.withOpacity(0.8),
-                  fontSize: 12,
-                ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 12),
           Wrap(
