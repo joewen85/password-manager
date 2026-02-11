@@ -14,17 +14,20 @@ class UnlockScreen extends StatefulWidget {
 class _UnlockScreenState extends State<UnlockScreen> {
   final _passwordController = TextEditingController();
   final _totpController = TextEditingController();
+  final _confirmController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
 
   @override
   void dispose() {
     _passwordController.dispose();
     _totpController.dispose();
+    _confirmController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final isInitialized = widget.controller.hasMasterKey;
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(
@@ -51,16 +54,18 @@ class _UnlockScreenState extends State<UnlockScreen> {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          '解锁密码库',
+                        Text(
+                          isInitialized ? '解锁密码库' : '初始化密码库',
                           style: TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
                         const SizedBox(height: 8),
-                        const Text(
-                          '所有数据均使用 AES-256 加密。请输入主密码继续。',
+                        Text(
+                          isInitialized
+                              ? '所有数据均使用 AES-256 加密。请输入主密码继续。'
+                              : '首次使用，请设置主密码。',
                         ),
                         const SizedBox(height: 16),
                         TextFormField(
@@ -72,10 +77,30 @@ class _UnlockScreenState extends State<UnlockScreen> {
                           ),
                           validator: (value) =>
                               (value == null || value.isEmpty)
-                                  ? 'Required'
+                                  ? '必填'
                                   : null,
                         ),
-                        if (widget.controller.requireTotp) ...[
+                        if (!isInitialized) ...[
+                          const SizedBox(height: 12),
+                          TextFormField(
+                            controller: _confirmController,
+                            obscureText: true,
+                            decoration: const InputDecoration(
+                              labelText: '确认主密码',
+                              border: OutlineInputBorder(),
+                            ),
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return '必填';
+                              }
+                              if (value != _passwordController.text) {
+                                return '两次输入不一致';
+                              }
+                              return null;
+                            },
+                          ),
+                        ],
+                        if (widget.controller.requireTotp && isInitialized) ...[
                           const SizedBox(height: 12),
                           TextFormField(
                             controller: _totpController,
@@ -86,7 +111,7 @@ class _UnlockScreenState extends State<UnlockScreen> {
                             ),
                             validator: (value) =>
                                 (value == null || value.isEmpty)
-                                    ? 'Required'
+                                    ? '必填'
                                     : null,
                           ),
                         ],
@@ -98,19 +123,25 @@ class _UnlockScreenState extends State<UnlockScreen> {
                               if (!_formKey.currentState!.validate()) {
                                 return;
                               }
-                              final success = await widget.controller.unlock(
-                                _passwordController.text.trim(),
-                                totpCode: _totpController.text.trim(),
-                              );
+                              final password = _passwordController.text.trim();
+                              final success = isInitialized
+                                  ? await widget.controller.unlock(
+                                      password,
+                                      totpCode: _totpController.text.trim(),
+                                    )
+                                  : await widget.controller.setupMasterPassword(
+                                      password,
+                                      _confirmController.text.trim(),
+                                    );
                               if (!success && mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(
-                                    content: Text('解锁失败'),
+                                    content: Text('操作失败'),
                                   ),
                                 );
                               }
                             },
-                            child: const Text('解锁'),
+                            child: Text(isInitialized ? '解锁' : '初始化'),
                           ),
                         ),
                       ],

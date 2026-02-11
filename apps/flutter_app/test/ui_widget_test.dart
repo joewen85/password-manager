@@ -4,6 +4,7 @@ import 'package:password_manager_auth/password_manager_auth.dart';
 import 'package:password_manager_backup/password_manager_backup.dart';
 import 'package:password_manager_core/password_manager_core.dart';
 import 'package:password_manager_crypto/password_manager_crypto.dart';
+import 'package:password_manager_storage/password_manager_storage.dart';
 import 'package:password_manager_sync/password_manager_sync.dart';
 
 import 'package:password_manager_app/screens/home_screen.dart';
@@ -31,9 +32,11 @@ class InMemoryVaultRepository implements VaultRepository {
 }
 
 VaultController buildController({required bool requireTotp}) {
+  final keyDerivationService = KeyDerivationService(iterations: 1000);
+  final masterKeyStore = InMemoryMasterKeyStore();
   final vaultService = VaultService(
     cryptoService: AesGcmCryptoService(),
-    keyDerivationService: KeyDerivationService(iterations: 1000),
+    keyDerivationService: keyDerivationService,
     repository: InMemoryVaultRepository(),
   );
   return VaultController(
@@ -41,6 +44,8 @@ VaultController buildController({required bool requireTotp}) {
     syncProvider: NoopSyncProvider(),
     backupService: NoopBackupService(),
     totpService: const TotpService(),
+    keyDerivationService: keyDerivationService,
+    masterKeyStore: masterKeyStore,
     requireTotp: requireTotp,
     totpSecret: requireTotp ? 'JBSWY3DPEHPK3PXP' : null,
   );
@@ -55,13 +60,16 @@ void main() {
       MaterialApp(home: UnlockScreen(controller: controller)),
     );
 
-    expect(find.text('解锁密码库'), findsOneWidget);
+    expect(find.text('初始化密码库'), findsOneWidget);
     expect(find.text('主密码'), findsOneWidget);
-    expect(find.text('解锁'), findsOneWidget);
+    expect(find.text('初始化'), findsOneWidget);
+    expect(find.text('确认主密码'), findsOneWidget);
   });
 
   testWidgets('Unlock screen shows 2FA field when required', (tester) async {
     final controller = buildController(requireTotp: true);
+    await controller.setupMasterPassword('master', 'master');
+    await controller.lock();
     await tester.pumpWidget(
       MaterialApp(home: UnlockScreen(controller: controller)),
     );
@@ -71,7 +79,7 @@ void main() {
 
   testWidgets('Home screen shows empty state', (tester) async {
     final controller = buildController(requireTotp: false);
-    await controller.unlock('master');
+    await controller.setupMasterPassword('master', 'master');
 
     await tester.pumpWidget(
       MaterialApp(home: HomeScreen(controller: controller)),
@@ -82,7 +90,7 @@ void main() {
 
   testWidgets('Add entry flow adds item to list', (tester) async {
     final controller = buildController(requireTotp: false);
-    await controller.unlock('master');
+    await controller.setupMasterPassword('master', 'master');
 
     await tester.pumpWidget(
       MaterialApp(home: HomeScreen(controller: controller)),
@@ -107,7 +115,7 @@ void main() {
 
   testWidgets('Entry details dialog shows decrypted payload', (tester) async {
     final controller = buildController(requireTotp: false);
-    await controller.unlock('master');
+    await controller.setupMasterPassword('master', 'master');
 
     await controller.addEntry(
       label: 'GitHub',

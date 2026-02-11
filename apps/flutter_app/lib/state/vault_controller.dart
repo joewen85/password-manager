@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -5,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:password_manager_auth/password_manager_auth.dart';
 import 'package:password_manager_backup/password_manager_backup.dart';
 import 'package:password_manager_core/password_manager_core.dart';
+import 'package:password_manager_crypto/password_manager_crypto.dart';
+import 'package:password_manager_storage/password_manager_storage.dart';
 import 'package:password_manager_sync/password_manager_sync.dart';
 
 class VaultController extends ChangeNotifier {
@@ -13,12 +16,16 @@ class VaultController extends ChangeNotifier {
     required SyncProvider syncProvider,
     required BackupService backupService,
     required TotpService totpService,
+    required KeyDerivationService keyDerivationService,
+    required MasterKeyStore masterKeyStore,
     required bool requireTotp,
     required String? totpSecret,
   })  : _vaultService = vaultService,
         _syncProvider = syncProvider,
         _backupService = backupService,
         _totpService = totpService,
+        _keyDerivationService = keyDerivationService,
+        _masterKeyStore = masterKeyStore,
         _requireTotp = requireTotp,
         _totpSecret = totpSecret;
 
@@ -26,18 +33,49 @@ class VaultController extends ChangeNotifier {
   final SyncProvider _syncProvider;
   final BackupService _backupService;
   final TotpService _totpService;
+  final KeyDerivationService _keyDerivationService;
+  final MasterKeyStore _masterKeyStore;
   final bool _requireTotp;
   final String? _totpSecret;
 
   bool _isUnlocked = false;
   String? _masterPassword;
+  MasterKeyRecord? _masterKeyRecord;
   List<VaultItem> _items = [];
 
   bool get isUnlocked => _isUnlocked;
   bool get requireTotp => _requireTotp;
+  bool get hasMasterKey => _masterKeyRecord != null;
   List<VaultItem> get items => List.unmodifiable(_items);
 
+  Future<void> initialize() async {
+    _masterKeyRecord = await _masterKeyStore.read();
+    notifyListeners();
+  }
+
+  Future<bool> setupMasterPassword(String password, String confirm) async {
+    if (password.trim().isEmpty || password != confirm) {
+      return false;
+    }
+    final derived = await _keyDerivationService.deriveKey(password);
+    final record = MasterKeyRecord(
+      salt: derived.salt,
+      iterations: derived.iterations,
+      verifier: base64Encode(derived.bytes),
+    );
+    await _masterKeyStore.save(record);
+    _masterKeyRecord = record;
+    _masterPassword = password;
+    _isUnlocked = true;
+    await reload();
+    notifyListeners();
+    return true;
+  }
+
   Future<bool> unlock(String masterPassword, {String? totpCode}) async {
+    if (_masterKeyRecord == null) {
+      return false;
+    }
     if (_requireTotp) {
       if (_totpSecret == null || totpCode == null) {
         return false;
@@ -45,6 +83,15 @@ class VaultController extends ChangeNotifier {
       if (!_totpService.verifyCode(_totpSecret!, totpCode)) {
         return false;
       }
+    }
+    final derived = await _keyDerivationService.deriveKey(
+      masterPassword,
+      salt: Uint8List.fromList(_masterKeyRecord!.salt),
+      iterations: _masterKeyRecord!.iterations,
+    );
+    final storedVerifier = base64Decode(_masterKeyRecord!.verifier);
+    if (!_bytesEqual(Uint8List.fromList(derived.bytes), storedVerifier)) {
+      return false;
     }
     _masterPassword = masterPassword;
     _isUnlocked = true;
@@ -118,5 +165,16 @@ class VaultController extends ChangeNotifier {
     final random = Random.secure();
     final bytes = List<int>.generate(12, (_) => random.nextInt(256));
     return Uint8List.fromList(bytes);
+  }
+
+  bool _bytesEqual(Uint8List a, Uint8List b) {
+    if (a.length != b.length) {
+      return false;
+    }
+    var diff = 0;
+    for (var i = 0; i < a.length; i++) {
+      diff |= a[i] ^ b[i];
+    }
+    return diff == 0;
   }
 }

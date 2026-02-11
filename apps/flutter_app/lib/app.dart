@@ -20,21 +20,27 @@ class PasswordManagerApp extends StatelessWidget {
 
   static Future<PasswordManagerApp> bootstrap() async {
     VaultRepository repository;
+    MasterKeyStore masterKeyStore;
     if (kIsWeb) {
       repository = InMemoryVaultRepository();
+      masterKeyStore = InMemoryMasterKeyStore();
     } else {
       try {
         final directory = await getApplicationSupportDirectory();
         final vaultPath = path.join(directory.path, 'vault.json');
+        final masterKeyPath = path.join(directory.path, 'master_key.json');
         repository = LocalFileVaultRepository(filePath: vaultPath);
+        masterKeyStore = LocalFileMasterKeyStore(filePath: masterKeyPath);
       } catch (error) {
         debugPrint('Vault storage fallback to memory: $error');
         repository = InMemoryVaultRepository();
+        masterKeyStore = InMemoryMasterKeyStore();
       }
     }
+    final keyDerivationService = KeyDerivationService();
     final vaultService = VaultService(
       cryptoService: AesGcmCryptoService(),
-      keyDerivationService: KeyDerivationService(),
+      keyDerivationService: keyDerivationService,
       repository: repository,
     );
     final controller = VaultController(
@@ -42,9 +48,12 @@ class PasswordManagerApp extends StatelessWidget {
       syncProvider: NoopSyncProvider(),
       backupService: NoopBackupService(),
       totpService: const TotpService(),
+      keyDerivationService: keyDerivationService,
+      masterKeyStore: masterKeyStore,
       requireTotp: false,
       totpSecret: null,
     );
+    await controller.initialize();
     return PasswordManagerApp(controller: controller);
   }
 
