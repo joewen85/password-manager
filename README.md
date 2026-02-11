@@ -33,6 +33,10 @@
 2) 将 `flutter/bin` 加入 PATH（如 `echo 'export PATH=\"$PATH:$HOME/dev/flutter/bin\"' >> ~/.zshrc`）  
 3) 重新打开终端，执行 `flutter doctor` 校验环境  
 4) 需要 iOS 调试时，安装 Xcode 并按 `flutter doctor` 提示完成配置  
+5) **运行 macOS App 时提示 CocoaPods 错误**：  
+   - 推荐：`brew install cocoapods`  
+   - 备选：`sudo gem install cocoapods`  
+   - 然后执行：`cd apps/flutter_app/macos && pod install`  
 
 **Windows**
 1) 通过官方渠道下载 Flutter SDK（zip），解压到本地目录（例如 `C:\\dev\\flutter`）  
