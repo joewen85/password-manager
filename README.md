@@ -84,6 +84,24 @@
    - 需 Apple 开发者账号、证书与 notarization  
    - 若需要分发给他人，建议签名与公证  
 
+#### 4.2.1 签名与公证命令模板（示例）
+> 以下示例仅作模板，请替换 `TEAM_ID`、`BUNDLE_ID`、`APPLE_ID`、`APP_SPECIFIC_PASSWORD`、证书名称等参数。
+
+**准备：导出压缩包**
+- `cd apps/flutter_app/build/macos/Build/Products/Release`
+- `ditto -c -k --sequesterRsrc --keepParent password_manager_app.app password_manager_app.zip`
+
+**签名（Developer ID Application）**
+- `codesign --force --deep --options runtime --sign "Developer ID Application: YOUR_NAME (TEAM_ID)" password_manager_app.app`
+- `codesign --verify --deep --strict --verbose=2 password_manager_app.app`
+
+**公证（notarytool）**
+- `xcrun notarytool submit password_manager_app.zip --apple-id "APPLE_ID" --team-id "TEAM_ID" --password "APP_SPECIFIC_PASSWORD" --wait`
+
+**装订（staple）**
+- `xcrun stapler staple password_manager_app.app`
+- `spctl --assess --type execute --verbose=2 password_manager_app.app`
+
 ### 5. 全量测试（推荐）
 - macOS/Linux：`./scripts/test_all.sh`
 - Windows：`powershell -ExecutionPolicy Bypass -File .\\scripts\\test_all.ps1`
