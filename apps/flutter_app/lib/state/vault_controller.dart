@@ -128,6 +128,23 @@ class VaultController extends ChangeNotifier {
     return item;
   }
 
+  Future<VaultItem> updateEntry({
+    required VaultItem item,
+    required String label,
+    required CredentialPayload payload,
+  }) async {
+    _ensureUnlocked();
+    final updated = await _vaultService.updateCredential(
+      item,
+      payload,
+      label: label,
+      masterPassword: _masterPassword!,
+      nonce: _generateNonce(),
+    );
+    await reload();
+    return updated;
+  }
+
   Future<CredentialPayload?> readEntry(VaultItem item) async {
     _ensureUnlocked();
     return _vaultService.readCredential(

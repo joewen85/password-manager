@@ -134,7 +134,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.visibility_outlined).first);
+    await tester.tap(find.widgetWithText(ListTile, 'GitHub'));
     await tester.pumpAndSettle();
 
     expect(find.text('GitHub'), findsWidgets);

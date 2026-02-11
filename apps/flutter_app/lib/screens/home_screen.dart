@@ -9,10 +9,83 @@ import '../utils/export_file.dart';
 import '../widgets/entry_details_dialog.dart';
 import 'new_entry_sheet.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.controller});
 
   final VaultController controller;
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _editEntry(VaultItem item) async {
+    final payload = await widget.controller.readEntry(item);
+    if (payload == null) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('无法解密条目')),
+      );
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    final data = await showModalBottomSheet<NewEntryData>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => NewEntrySheet(
+        initialData: NewEntryData(label: item.label, payload: payload),
+        title: '编辑条目',
+        submitLabel: '保存修改',
+      ),
+    );
+    if (data != null) {
+      await widget.controller.updateEntry(
+        item: item,
+        label: data.label,
+        payload: data.payload,
+      );
+    }
+  }
+
+  Future<void> _deleteEntry(VaultItem item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除条目'),
+        content: Text('确定删除“${item.label}”吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await widget.controller.deleteEntry(item.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('已删除')),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -21,12 +94,12 @@ class HomeScreen extends StatelessWidget {
         title: const Text('密码库'),
         actions: [
           IconButton(
-            onPressed: controller.syncNow,
+            onPressed: widget.controller.syncNow,
             icon: const Icon(Icons.sync),
             tooltip: '同步',
           ),
           IconButton(
-            onPressed: controller.runBackup,
+            onPressed: widget.controller.runBackup,
             icon: const Icon(Icons.backup_outlined),
             tooltip: '备份',
           ),
@@ -35,7 +108,7 @@ class HomeScreen extends StatelessWidget {
             onSelected: (action) async {
               switch (action) {
                 case _VaultMenuAction.export:
-                  final data = await controller.exportEncryptedData();
+                  final data = await widget.controller.exportEncryptedData();
                   final filename =
                       'vault-export-${DateTime.now().toIso8601String()}.json';
                   if (kIsWeb) {
@@ -98,7 +171,7 @@ class HomeScreen extends StatelessWidget {
                     ),
                   );
                   if (confirmed == true) {
-                    await controller.clearAllEntries();
+                    await widget.controller.clearAllEntries();
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('已清空')),
                     );
@@ -118,7 +191,7 @@ class HomeScreen extends StatelessWidget {
             ],
           ),
           IconButton(
-            onPressed: controller.lock,
+            onPressed: widget.controller.lock,
             icon: const Icon(Icons.lock_outline),
             tooltip: '锁定',
           ),
@@ -132,7 +205,7 @@ class HomeScreen extends StatelessWidget {
             builder: (context) => const NewEntrySheet(),
           );
           if (data != null) {
-            await controller.addEntry(
+            await widget.controller.addEntry(
               label: data.label,
               payload: data.payload,
             );
@@ -165,32 +238,61 @@ class HomeScreen extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 16),
+                TextField(
+                  controller: _searchController,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.search),
+                    hintText: '按条目名称搜索',
+                    filled: true,
+                    fillColor: Colors.white,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
                 Expanded(
                   child: AnimatedBuilder(
-                    animation: controller,
+                    animation: widget.controller,
                     builder: (context, _) {
-                      final items = controller.items;
-                      if (items.isEmpty) {
-                        return const Center(
-                          child: Text('暂无条目，点击“新建条目”添加。'),
+                      final items = widget.controller.items;
+                      final query = _searchController.text.trim().toLowerCase();
+                      final filtered = query.isEmpty
+                          ? items
+                          : items
+                              .where(
+                                (item) =>
+                                    item.label.toLowerCase().contains(query),
+                              )
+                              .toList();
+                      if (filtered.isEmpty) {
+                        return Center(
+                          child: Text(
+                            query.isEmpty
+                                ? '暂无条目，点击“新建条目”添加。'
+                                : '未找到匹配条目',
+                          ),
                         );
                       }
                       return ListView.separated(
-                        itemCount: items.length,
+                        itemCount: filtered.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 12),
                         itemBuilder: (context, index) {
-                          final item = items[index];
+                          final item = filtered[index];
                           return EntryCard(
                             item: item,
-                            onOpen: () {
+                            onView: () {
                               showDialog<void>(
                                 context: context,
                                 builder: (context) => EntryDetailsDialog(
-                                  controller: controller,
+                                  controller: widget.controller,
                                   item: item,
                                 ),
                               );
                             },
+                            onEdit: () => _editEntry(item),
+                            onDelete: () => _deleteEntry(item),
                           );
                         },
                       );
@@ -209,10 +311,18 @@ class HomeScreen extends StatelessWidget {
 enum _VaultMenuAction { export, clear }
 
 class EntryCard extends StatelessWidget {
-  const EntryCard({super.key, required this.item, required this.onOpen});
+  const EntryCard({
+    super.key,
+    required this.item,
+    required this.onView,
+    required this.onEdit,
+    required this.onDelete,
+  });
 
   final VaultItem item;
-  final VoidCallback onOpen;
+  final VoidCallback onView;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -223,9 +333,21 @@ class EntryCard extends StatelessWidget {
       child: ListTile(
         title: Text(item.label),
         subtitle: Text('更新于 ${item.updatedAt.toLocal()}'),
-        trailing: IconButton(
-          icon: const Icon(Icons.visibility_outlined),
-          onPressed: onOpen,
+        onTap: onView,
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.edit_outlined),
+              tooltip: '编辑',
+              onPressed: onEdit,
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: '删除',
+              onPressed: onDelete,
+            ),
+          ],
         ),
       ),
     );

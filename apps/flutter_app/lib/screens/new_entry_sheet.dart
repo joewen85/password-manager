@@ -4,7 +4,16 @@ import 'package:password_manager_core/password_manager_core.dart';
 import '../models/new_entry_data.dart';
 
 class NewEntrySheet extends StatefulWidget {
-  const NewEntrySheet({super.key});
+  const NewEntrySheet({
+    super.key,
+    this.initialData,
+    this.title = '新建条目',
+    this.submitLabel = '保存',
+  });
+
+  final NewEntryData? initialData;
+  final String title;
+  final String submitLabel;
 
   @override
   State<NewEntrySheet> createState() => _NewEntrySheetState();
@@ -19,6 +28,21 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
   final _appIdController = TextEditingController();
   final _accessTokenController = TextEditingController();
   final _secretKeyController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    final data = widget.initialData;
+    if (data != null) {
+      _labelController.text = data.label;
+      _usernameController.text = data.payload.username;
+      _passwordController.text = data.payload.password;
+      _tokenController.text = data.payload.token;
+      _appIdController.text = data.payload.appId;
+      _accessTokenController.text = data.payload.accessToken;
+      _secretKeyController.text = data.payload.secretKey;
+    }
+  }
 
   @override
   void dispose() {
@@ -48,9 +72,9 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                '新建条目',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+              Text(
+                widget.title,
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 12),
               _buildField(
@@ -93,11 +117,11 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
               Row(
                 children: [
                   Expanded(
-                    child: FilledButton(
-                      onPressed: () {
-                        if (!_formKey.currentState!.validate()) {
-                          return;
-                        }
+                      child: FilledButton(
+                        onPressed: () {
+                          if (!_formKey.currentState!.validate()) {
+                            return;
+                          }
                         final payload = CredentialPayload(
                           username: _usernameController.text.trim(),
                           password: _passwordController.text.trim(),
@@ -113,7 +137,7 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
                           ),
                         );
                       },
-                      child: const Text('保存'),
+                      child: Text(widget.submitLabel),
                     ),
                   ),
                 ],

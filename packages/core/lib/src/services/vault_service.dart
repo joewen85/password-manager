@@ -79,4 +79,32 @@ class VaultService {
   Future<List<VaultItem>> listAll() => _repository.listAll();
 
   Future<void> delete(String id) => _repository.delete(id);
+
+  Future<VaultItem> updateCredential(
+    VaultItem item,
+    CredentialPayload payload, {
+    required String label,
+    required String masterPassword,
+    required Uint8List nonce,
+  }) async {
+    final derivedKey = await _keyDerivationService.deriveKey(masterPassword);
+    final jsonPayload = jsonEncode(payload.toJson());
+    final encrypted = await _cryptoService.encrypt(
+      Uint8List.fromList(utf8.encode(jsonPayload)),
+      derivedKey.bytes,
+      nonce: nonce,
+    );
+    final now = DateTime.now().toUtc();
+    final updated = VaultItem(
+      id: item.id,
+      label: label,
+      encryptedPayload: encrypted,
+      kdfSalt: derivedKey.salt,
+      kdfIterations: derivedKey.iterations,
+      createdAt: item.createdAt,
+      updatedAt: now,
+    );
+    await _repository.save(updated);
+    return updated;
+  }
 }
