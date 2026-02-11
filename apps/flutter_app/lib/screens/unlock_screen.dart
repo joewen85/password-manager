@@ -52,7 +52,7 @@ class _UnlockScreenState extends State<UnlockScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'Unlock Vault',
+                          '解锁密码库',
                           style: TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.w700,
@@ -60,14 +60,14 @@ class _UnlockScreenState extends State<UnlockScreen> {
                         ),
                         const SizedBox(height: 8),
                         const Text(
-                          'All data is AES-256 encrypted. Enter your master password to continue.',
+                          '所有数据均使用 AES-256 加密。请输入主密码继续。',
                         ),
                         const SizedBox(height: 16),
                         TextFormField(
                           controller: _passwordController,
                           obscureText: true,
                           decoration: const InputDecoration(
-                            labelText: 'Master Password',
+                            labelText: '主密码',
                             border: OutlineInputBorder(),
                           ),
                           validator: (value) =>
@@ -81,7 +81,7 @@ class _UnlockScreenState extends State<UnlockScreen> {
                             controller: _totpController,
                             keyboardType: TextInputType.number,
                             decoration: const InputDecoration(
-                              labelText: '2FA Code',
+                              labelText: '2FA 验证码',
                               border: OutlineInputBorder(),
                             ),
                             validator: (value) =>
@@ -105,12 +105,12 @@ class _UnlockScreenState extends State<UnlockScreen> {
                               if (!success && mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(
-                                    content: Text('Unlock failed'),
+                                    content: Text('解锁失败'),
                                   ),
                                 );
                               }
                             },
-                            child: const Text('Unlock'),
+                            child: const Text('解锁'),
                           ),
                         ),
                       ],

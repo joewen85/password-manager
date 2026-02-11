@@ -49,44 +49,44 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'New Vault Item',
+                '新建条目',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 12),
               _buildField(
                 controller: _labelController,
-                label: 'Label',
-                hint: 'e.g. AWS Console',
+                label: '标题',
+                hint: '例如 AWS 控制台',
                 requiredField: true,
               ),
               _buildField(
                 controller: _usernameController,
-                label: 'Username',
+                label: '用户名',
                 hint: 'name@example.com',
                 requiredField: true,
               ),
               _buildField(
                 controller: _passwordController,
-                label: 'Password',
+                label: '密码',
                 obscure: true,
               ),
               _buildField(
                 controller: _tokenController,
-                label: 'Token',
+                label: '令牌',
                 obscure: true,
               ),
               _buildField(
                 controller: _appIdController,
-                label: 'App ID',
+                label: '应用ID',
               ),
               _buildField(
                 controller: _accessTokenController,
-                label: 'Access Token',
+                label: '访问令牌',
                 obscure: true,
               ),
               _buildField(
                 controller: _secretKeyController,
-                label: 'Secret Key',
+                label: '密钥',
                 obscure: true,
               ),
               const SizedBox(height: 16),
@@ -113,7 +113,7 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
                           ),
                         );
                       },
-                      child: const Text('Save'),
+                      child: const Text('保存'),
                     ),
                   ),
                 ],
@@ -148,7 +148,7 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
         ),
         validator: requiredField
             ? (value) => (value == null || value.trim().isEmpty)
-                ? 'Required'
+                ? '必填'
                 : null
             : null,
       ),

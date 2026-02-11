@@ -15,22 +15,22 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Vault'),
+        title: const Text('密码库'),
         actions: [
           IconButton(
             onPressed: controller.syncNow,
             icon: const Icon(Icons.sync),
-            tooltip: 'Sync',
+            tooltip: '同步',
           ),
           IconButton(
             onPressed: controller.runBackup,
             icon: const Icon(Icons.backup_outlined),
-            tooltip: 'Backup',
+            tooltip: '备份',
           ),
           IconButton(
             onPressed: controller.lock,
             icon: const Icon(Icons.lock_outline),
-            tooltip: 'Lock',
+            tooltip: '锁定',
           ),
         ],
       ),
@@ -49,7 +49,7 @@ class HomeScreen extends StatelessWidget {
           }
         },
         icon: const Icon(Icons.add),
-        label: const Text('New Item'),
+        label: const Text('新建条目'),
       ),
       body: Container(
         decoration: const BoxDecoration(
@@ -66,12 +66,12 @@ class HomeScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Securely store credentials',
+                  '安全地保存账号信息',
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'AES-256 encrypted vault with 2FA and sync-ready modules.',
+                  'AES-256 加密，支持 2FA 与同步模块。',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 16),
@@ -82,7 +82,7 @@ class HomeScreen extends StatelessWidget {
                       final items = controller.items;
                       if (items.isEmpty) {
                         return const Center(
-                          child: Text('No entries yet. Tap “New Item” to add.'),
+                          child: Text('暂无条目，点击“新建条目”添加。'),
                         );
                       }
                       return ListView.separated(
@@ -130,7 +130,7 @@ class EntryCard extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: ListTile(
         title: Text(item.label),
-        subtitle: Text('Updated ${item.updatedAt.toLocal()}'),
+        subtitle: Text('更新于 ${item.updatedAt.toLocal()}'),
         trailing: IconButton(
           icon: const Icon(Icons.visibility_outlined),
           onPressed: onOpen,

@@ -28,18 +28,18 @@ class EntryDetailsDialog extends StatelessWidget {
           }
           final payload = snapshot.data;
           if (payload == null) {
-            return const Text('Unable to decrypt entry.');
+            return const Text('无法解密条目。');
           }
           return SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _detailRow('Username', payload.username),
-                _detailRow('Password', payload.password),
-                _detailRow('Token', payload.token),
-                _detailRow('App ID', payload.appId),
-                _detailRow('Access Token', payload.accessToken),
-                _detailRow('Secret Key', payload.secretKey),
+                _detailRow('用户名', payload.username),
+                _detailRow('密码', payload.password),
+                _detailRow('令牌', payload.token),
+                _detailRow('应用ID', payload.appId),
+                _detailRow('访问令牌', payload.accessToken),
+                _detailRow('密钥', payload.secretKey),
               ],
             ),
           );
@@ -48,7 +48,7 @@ class EntryDetailsDialog extends StatelessWidget {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Close'),
+          child: const Text('关闭'),
         ),
       ],
     );

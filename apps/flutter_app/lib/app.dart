@@ -55,7 +55,7 @@ class PasswordManagerApp extends StatelessWidget {
       brightness: Brightness.light,
     );
     return MaterialApp(
-      title: 'Password Manager',
+      title: '密码管理器',
       theme: ThemeData(
         colorScheme: colorScheme,
         useMaterial3: true,

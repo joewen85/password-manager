@@ -55,9 +55,9 @@ void main() {
       MaterialApp(home: UnlockScreen(controller: controller)),
     );
 
-    expect(find.text('Unlock Vault'), findsOneWidget);
-    expect(find.text('Master Password'), findsOneWidget);
-    expect(find.text('Unlock'), findsOneWidget);
+    expect(find.text('解锁密码库'), findsOneWidget);
+    expect(find.text('主密码'), findsOneWidget);
+    expect(find.text('解锁'), findsOneWidget);
   });
 
   testWidgets('Unlock screen shows 2FA field when required', (tester) async {
@@ -66,7 +66,7 @@ void main() {
       MaterialApp(home: UnlockScreen(controller: controller)),
     );
 
-    expect(find.text('2FA Code'), findsOneWidget);
+    expect(find.text('2FA 验证码'), findsOneWidget);
   });
 
   testWidgets('Home screen shows empty state', (tester) async {
@@ -77,7 +77,7 @@ void main() {
       MaterialApp(home: HomeScreen(controller: controller)),
     );
 
-    expect(find.textContaining('No entries yet'), findsOneWidget);
+    expect(find.textContaining('暂无条目'), findsOneWidget);
   });
 
   testWidgets('Add entry flow adds item to list', (tester) async {
