@@ -102,6 +102,24 @@
 - `xcrun stapler staple password_manager_app.app`
 - `spctl --assess --type execute --verbose=2 password_manager_app.app`
 
+#### 4.2.2 使用 notarytool store-credentials（安全存储）
+1) 保存凭据（只需一次）  
+   - `xcrun notarytool store-credentials "AC_PROFILE" --apple-id "APPLE_ID" --team-id "TEAM_ID" --password "APP_SPECIFIC_PASSWORD"`
+2) 提交公证（使用 profile）  
+   - `xcrun notarytool submit password_manager_app.zip --keychain-profile "AC_PROFILE" --wait`
+
+#### 4.2.3 通用 DMG 打包流程
+1) 准备目录  
+   - `mkdir -p dist/dmg`  
+   - `cp -R password_manager_app.app dist/dmg/`  
+2) 生成 DMG（基础版）  
+   - `hdiutil create -volname "Password Manager" -srcfolder dist/dmg -ov -format UDZO dist/password_manager_app.dmg`
+3)（可选）对 DMG 签名  
+   - `codesign --force --sign "Developer ID Application: YOUR_NAME (TEAM_ID)" dist/password_manager_app.dmg`
+4) 公证并装订 DMG（推荐）  
+   - `xcrun notarytool submit dist/password_manager_app.dmg --keychain-profile "AC_PROFILE" --wait`  
+   - `xcrun stapler staple dist/password_manager_app.dmg`
+
 ### 5. 全量测试（推荐）
 - macOS/Linux：`./scripts/test_all.sh`
 - Windows：`powershell -ExecutionPolicy Bypass -File .\\scripts\\test_all.ps1`
