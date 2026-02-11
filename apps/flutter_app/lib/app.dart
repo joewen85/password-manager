@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
@@ -18,9 +19,19 @@ class PasswordManagerApp extends StatelessWidget {
   final VaultController controller;
 
   static Future<PasswordManagerApp> bootstrap() async {
-    final directory = await getApplicationSupportDirectory();
-    final vaultPath = path.join(directory.path, 'vault.json');
-    final repository = LocalFileVaultRepository(filePath: vaultPath);
+    VaultRepository repository;
+    if (kIsWeb) {
+      repository = InMemoryVaultRepository();
+    } else {
+      try {
+        final directory = await getApplicationSupportDirectory();
+        final vaultPath = path.join(directory.path, 'vault.json');
+        repository = LocalFileVaultRepository(filePath: vaultPath);
+      } catch (error) {
+        debugPrint('Vault storage fallback to memory: $error');
+        repository = InMemoryVaultRepository();
+      }
+    }
     final vaultService = VaultService(
       cryptoService: AesGcmCryptoService(),
       keyDerivationService: KeyDerivationService(),
