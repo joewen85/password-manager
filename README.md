@@ -71,6 +71,19 @@
 - **仅 Dart 包测试** 只需要 `dart` 命令（不依赖 Flutter）
 - 如果提示 `dart: command not found`，说明尚未安装 Dart/Flutter 或未正确配置 PATH
 
+### 4.2 macOS 打包发布（App）
+1) 安装并验证依赖  
+   - `flutter doctor`  
+   - 确保 CocoaPods 可用（见上方 macOS 步骤）  
+2) 构建 Release 版本  
+   - `cd apps/flutter_app`  
+   - `flutter build macos --release`  
+3) 产物位置  
+   - `apps/flutter_app/build/macos/Build/Products/Release/password_manager_app.app`  
+4)（可选）签名与公证  
+   - 需 Apple 开发者账号、证书与 notarization  
+   - 若需要分发给他人，建议签名与公证  
+
 ### 5. 全量测试（推荐）
 - macOS/Linux：`./scripts/test_all.sh`
 - Windows：`powershell -ExecutionPolicy Bypass -File .\\scripts\\test_all.ps1`
