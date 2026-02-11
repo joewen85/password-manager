@@ -649,6 +649,7 @@ class VaultController extends ChangeNotifier {
       'version': 1,
       'exportedAt': DateTime.now().toUtc().toIso8601String(),
       'masterKey': _syncSettings.syncMasterKey ? record?.toJson() : null,
+      'metadata': {'tags': _metadata.tags},
       'items': items.map(vaultItemToJson).toList(),
     };
     return jsonEncode(payload);
@@ -668,12 +669,14 @@ class VaultController extends ChangeNotifier {
       remoteItems: remote.items,
       strategy: _syncSettings.conflictStrategy,
     );
+    final mergedTags = {...local.tags, ...remote.tags}.toList()..sort();
     final mergedPayload = {
       'version': 1,
       'exportedAt': DateTime.now().toUtc().toIso8601String(),
       'masterKey': _syncSettings.syncMasterKey
           ? (remote.masterKey ?? local.masterKey)
           : null,
+      'metadata': {'tags': mergedTags},
       'items': mergedItems.map(vaultItemToJson).toList(),
     };
     return jsonEncode(mergedPayload);
@@ -692,6 +695,7 @@ class VaultController extends ChangeNotifier {
     for (final item in merged) {
       await _vaultService.saveItem(item);
     }
+    await _refreshMetadataTags(items: merged, extraTags: decoded.tags);
     await reload();
   }
 
@@ -718,9 +722,12 @@ class VaultController extends ChangeNotifier {
   _DecodedPayload _decodePayload(String payload) {
     final decoded = jsonDecode(payload);
     if (decoded is! Map) {
-      return const _DecodedPayload(items: [], masterKey: null);
+      return const _DecodedPayload(items: [], masterKey: null, tags: []);
     }
     final masterKey = decoded['masterKey'] as Map?;
+    final metadata = decoded['metadata'] as Map?;
+    final tags =
+        (metadata?['tags'] as List?)?.whereType<String>().toList() ?? [];
     final items = (decoded['items'] as List? ?? [])
         .whereType<Map>()
         .map((entry) => vaultItemFromJson(Map<String, Object?>.from(entry)))
@@ -730,7 +737,39 @@ class VaultController extends ChangeNotifier {
       masterKey: masterKey != null
           ? Map<String, Object?>.from(masterKey)
           : null,
+      tags: tags,
     );
+  }
+
+  Future<void> _refreshMetadataTags({
+    required List<VaultItem> items,
+    required List<String> extraTags,
+  }) async {
+    final tagSet = <String>{..._metadata.tags, ...extraTags};
+    for (final item in items) {
+      if (item.type == VaultEntryType.server) {
+        final payload = await readServerAsset(item);
+        if (payload != null) {
+          tagSet.addAll(payload.tags);
+        }
+      } else {
+        final payload = await readEntry(item);
+        if (payload != null) {
+          tagSet.addAll(payload.tags);
+        }
+      }
+    }
+    final updated = tagSet
+        .map((tag) => tag.trim())
+        .where((tag) => tag.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    if (listEquals(updated, _metadata.tags)) {
+      return;
+    }
+    _metadata = _metadata.copyWith(tags: updated);
+    await _saveMetadata();
   }
 
   List<VaultItem> _mergeItems({
@@ -815,8 +854,13 @@ class VaultEntryView {
 }
 
 class _DecodedPayload {
-  const _DecodedPayload({required this.items, required this.masterKey});
+  const _DecodedPayload({
+    required this.items,
+    required this.masterKey,
+    required this.tags,
+  });
 
   final List<VaultItem> items;
   final Map<String, Object?>? masterKey;
+  final List<String> tags;
 }
