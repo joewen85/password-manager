@@ -21,11 +21,7 @@ Future<WebStorageBundle> openWebStorage() async {
 }
 
 Future<Database> _openDatabase() async {
-  final factory = idbFactory;
-  if (factory == null) {
-    throw UnsupportedError('IndexedDB is not supported');
-  }
-  return factory.open(
+  return idbFactoryBrowser.open(
     'password_manager',
     version: 1,
     onUpgradeNeeded: (event) {
