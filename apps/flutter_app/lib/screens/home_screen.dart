@@ -27,17 +27,22 @@ class _HomeScreenState extends State<HomeScreen> {
   final _fabKey = GlobalKey();
   _VaultListMode _mode = _VaultListMode.credentials;
   String? _selectedTag;
-  double _fabHeight = 0;
+  Size _fabSize = Size.zero;
 
-  void _syncFabHeight() {
+  void _syncFabSize() {
     final context = _fabKey.currentContext;
     if (context == null) {
       return;
     }
     final renderBox = context.findRenderObject() as RenderBox?;
-    final height = renderBox?.size.height ?? 0;
-    if (height > 0 && (height - _fabHeight).abs() > 0.5) {
-      setState(() => _fabHeight = height);
+    final size = renderBox?.size ?? Size.zero;
+    if (!mounted) {
+      return;
+    }
+    if (size.height > 0 &&
+        ((size.height - _fabSize.height).abs() > 0.5 ||
+            (size.width - _fabSize.width).abs() > 0.5)) {
+      setState(() => _fabSize = size);
     }
   }
 
@@ -182,7 +187,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    WidgetsBinding.instance.addPostFrameCallback((_) => _syncFabHeight());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncFabSize());
     return Scaffold(
       appBar: AppBar(
         title: const Text('密码库'),
@@ -464,14 +469,24 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         );
                       }
-                      final fabHeight = _fabHeight > 0 ? _fabHeight : 56.0;
-                      final bottomPadding =
-                          MediaQuery.of(context).padding.bottom +
-                              fabHeight +
-                              kFloatingActionButtonMargin +
-                              8;
+                      final mediaPadding = MediaQuery.of(context).padding;
+                      final fabHeight =
+                          _fabSize.height > 0 ? _fabSize.height : 56.0;
+                      final fabWidth =
+                          _fabSize.width > 0 ? _fabSize.width : 120.0;
+                      final bottomPadding = mediaPadding.bottom +
+                          fabHeight +
+                          kFloatingActionButtonMargin +
+                          8;
+                      final rightPadding = mediaPadding.right +
+                          fabWidth +
+                          kFloatingActionButtonMargin +
+                          8;
                       return ListView.separated(
-                        padding: EdgeInsets.only(bottom: bottomPadding),
+                        padding: EdgeInsets.only(
+                          bottom: bottomPadding,
+                          right: rightPadding,
+                        ),
                         itemCount: sorted.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 12),
                         itemBuilder: (context, index) {
