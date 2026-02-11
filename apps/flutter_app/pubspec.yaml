@@ -12,6 +12,7 @@ dependencies:
   path: ^1.9.0
   path_provider: ^2.1.2
   idb_shim: ^2.3.1
+  http: ^1.2.2
   password_manager_core:
     path: ../../packages/core
   password_manager_crypto:
@@ -20,8 +21,6 @@ dependencies:
     path: ../../packages/auth
   password_manager_storage:
     path: ../../packages/storage
-  password_manager_sync:
-    path: ../../packages/sync
   password_manager_backup:
     path: ../../packages/backup
 

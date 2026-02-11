@@ -5,11 +5,12 @@ import 'package:password_manager_backup/password_manager_backup.dart';
 import 'package:password_manager_core/password_manager_core.dart';
 import 'package:password_manager_crypto/password_manager_crypto.dart';
 import 'package:password_manager_storage/password_manager_storage.dart';
-import 'package:password_manager_sync/password_manager_sync.dart';
 
 import 'package:password_manager_app/screens/home_screen.dart';
 import 'package:password_manager_app/screens/unlock_screen.dart';
+import 'package:password_manager_app/state/sync_settings.dart';
 import 'package:password_manager_app/state/vault_controller.dart';
+import 'package:password_manager_app/storage/sync_settings_store.dart';
 
 class InMemoryVaultRepository implements VaultRepository {
   final Map<String, VaultItem> _store = {};
@@ -31,21 +32,37 @@ class InMemoryVaultRepository implements VaultRepository {
   }
 }
 
+class InMemorySyncSettingsStore implements SyncSettingsStore {
+  SyncSettingsRecord? _record;
+
+  @override
+  Future<SyncSettingsRecord?> read() async => _record;
+
+  @override
+  Future<void> save(SyncSettingsRecord record) async {
+    _record = record;
+  }
+}
+
 VaultController buildController({required bool requireTotp}) {
   final keyDerivationService = KeyDerivationService(iterations: 1000);
+  final cryptoService = AesGcmCryptoService();
   final masterKeyStore = InMemoryMasterKeyStore();
+  final syncSettingsStore = InMemorySyncSettingsStore();
   final vaultService = VaultService(
-    cryptoService: AesGcmCryptoService(),
+    cryptoService: cryptoService,
     keyDerivationService: keyDerivationService,
     repository: InMemoryVaultRepository(),
   );
   return VaultController(
     vaultService: vaultService,
-    syncProvider: NoopSyncProvider(),
     backupService: NoopBackupService(),
+    cryptoService: cryptoService,
     totpService: const TotpService(),
     keyDerivationService: keyDerivationService,
     masterKeyStore: masterKeyStore,
+    syncSettingsStore: syncSettingsStore,
+    initialSyncSettings: SyncSettings.defaults(),
     requireTotp: requireTotp,
     totpSecret: requireTotp ? 'JBSWY3DPEHPK3PXP' : null,
   );

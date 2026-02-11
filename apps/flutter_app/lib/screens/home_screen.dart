@@ -8,6 +8,7 @@ import '../state/vault_controller.dart';
 import '../utils/export_file.dart';
 import '../widgets/entry_details_dialog.dart';
 import 'new_entry_sheet.dart';
+import 'sync_settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.controller});
@@ -107,6 +108,15 @@ class _HomeScreenState extends State<HomeScreen> {
             tooltip: '更多',
             onSelected: (action) async {
               switch (action) {
+                case _VaultMenuAction.syncSettings:
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => SyncSettingsScreen(
+                        controller: widget.controller,
+                      ),
+                    ),
+                  );
+                  break;
                 case _VaultMenuAction.export:
                   final data = await widget.controller.exportEncryptedData();
                   final filename =
@@ -180,6 +190,10 @@ class _HomeScreenState extends State<HomeScreen> {
               }
             },
             itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: _VaultMenuAction.syncSettings,
+                child: Text('同步设置'),
+              ),
               PopupMenuItem(
                 value: _VaultMenuAction.export,
                 child: Text('导出数据'),
@@ -308,7 +322,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-enum _VaultMenuAction { export, clear }
+enum _VaultMenuAction { syncSettings, export, clear }
 
 class EntryCard extends StatelessWidget {
   const EntryCard({

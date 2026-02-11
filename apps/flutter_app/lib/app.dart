@@ -7,11 +7,12 @@ import 'package:password_manager_backup/password_manager_backup.dart';
 import 'package:password_manager_core/password_manager_core.dart';
 import 'package:password_manager_crypto/password_manager_crypto.dart';
 import 'package:password_manager_storage/password_manager_storage.dart';
-import 'package:password_manager_sync/password_manager_sync.dart';
 
 import 'screens/home_screen.dart';
 import 'screens/unlock_screen.dart';
+import 'storage/sync_settings_store_selector.dart';
 import 'storage/web_storage.dart';
+import 'state/sync_settings.dart';
 import 'state/vault_controller.dart';
 
 class PasswordManagerApp extends StatelessWidget {
@@ -40,18 +41,29 @@ class PasswordManagerApp extends StatelessWidget {
       }
     }
     final keyDerivationService = KeyDerivationService();
+    final cryptoService = AesGcmCryptoService();
     final vaultService = VaultService(
-      cryptoService: AesGcmCryptoService(),
+      cryptoService: cryptoService,
       keyDerivationService: keyDerivationService,
       repository: repository,
     );
+    SyncSettingsStore settingsStore;
+    if (kIsWeb) {
+      settingsStore = WebSyncSettingsStore();
+    } else {
+      final directory = await getApplicationSupportDirectory();
+      final settingsPath = path.join(directory.path, 'sync_settings.json');
+      settingsStore = FileSyncSettingsStore(filePath: settingsPath);
+    }
     final controller = VaultController(
       vaultService: vaultService,
-      syncProvider: NoopSyncProvider(),
       backupService: NoopBackupService(),
+      cryptoService: cryptoService,
       totpService: const TotpService(),
       keyDerivationService: keyDerivationService,
       masterKeyStore: masterKeyStore,
+      syncSettingsStore: settingsStore,
+      initialSyncSettings: SyncSettings.defaults(),
       requireTotp: false,
       totpSecret: null,
     );

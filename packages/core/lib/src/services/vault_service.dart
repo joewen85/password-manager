@@ -80,6 +80,8 @@ class VaultService {
 
   Future<void> delete(String id) => _repository.delete(id);
 
+  Future<void> saveItem(VaultItem item) => _repository.save(item);
+
   Future<VaultItem> updateCredential(
     VaultItem item,
     CredentialPayload payload, {
