@@ -11,8 +11,10 @@ import 'package:password_manager_crypto/password_manager_crypto.dart';
 import 'package:password_manager_storage/password_manager_storage.dart';
 
 import '../storage/sync_settings_store.dart';
+import '../storage/vault_metadata_store.dart';
 import '../sync/remote_sync_client.dart';
 import 'sync_settings.dart';
+import 'vault_metadata.dart';
 
 class VaultController extends ChangeNotifier {
   VaultController({
@@ -24,6 +26,8 @@ class VaultController extends ChangeNotifier {
     required MasterKeyStore masterKeyStore,
     required SyncSettingsStore syncSettingsStore,
     required SyncSettings initialSyncSettings,
+    required VaultMetadataStore vaultMetadataStore,
+    required VaultMetadata initialMetadata,
     required bool requireTotp,
     required String? totpSecret,
   })  : _vaultService = vaultService,
@@ -34,6 +38,8 @@ class VaultController extends ChangeNotifier {
         _masterKeyStore = masterKeyStore,
         _syncSettingsStore = syncSettingsStore,
         _syncSettings = initialSyncSettings,
+        _vaultMetadataStore = vaultMetadataStore,
+        _metadata = initialMetadata,
         _requireTotp = requireTotp,
         _totpSecret = totpSecret;
 
@@ -44,14 +50,17 @@ class VaultController extends ChangeNotifier {
   final KeyDerivationService _keyDerivationService;
   final MasterKeyStore _masterKeyStore;
   final SyncSettingsStore _syncSettingsStore;
+  final VaultMetadataStore _vaultMetadataStore;
   final bool _requireTotp;
   final String? _totpSecret;
   SyncSettings _syncSettings;
+  VaultMetadata _metadata;
 
   bool _isUnlocked = false;
   String? _masterPassword;
   MasterKeyRecord? _masterKeyRecord;
   List<VaultItem> _items = [];
+  List<VaultEntryView> _entryViews = [];
   bool _syncInProgress = false;
   Timer? _syncTimer;
 
@@ -61,6 +70,8 @@ class VaultController extends ChangeNotifier {
   List<VaultItem> get items => List.unmodifiable(_items);
   SyncSettings get syncSettings => _syncSettings;
   bool get isSyncing => _syncInProgress;
+  VaultMetadata get metadata => _metadata;
+  List<VaultEntryView> get entryViews => List.unmodifiable(_entryViews);
 
   Future<void> initialize() async {
     _masterKeyRecord = await _masterKeyStore.read();
@@ -81,6 +92,8 @@ class VaultController extends ChangeNotifier {
     _masterKeyRecord = record;
     _masterPassword = password;
     _isUnlocked = true;
+    _metadata = VaultMetadata.defaults();
+    await _saveMetadata();
     await reload();
     notifyListeners();
     return true;
@@ -110,6 +123,7 @@ class VaultController extends ChangeNotifier {
     _masterPassword = masterPassword;
     _isUnlocked = true;
     await _loadSyncSettings();
+    await _loadMetadata();
     await reload();
     if (_syncSettings.autoSyncOnUnlock) {
       await syncNow();
@@ -130,6 +144,7 @@ class VaultController extends ChangeNotifier {
   Future<void> reload() async {
     _ensureUnlocked();
     _items = await _vaultService.listAll();
+    _entryViews = await _buildEntryViews(_items);
     notifyListeners();
   }
 
@@ -138,6 +153,7 @@ class VaultController extends ChangeNotifier {
     required CredentialPayload payload,
   }) async {
     _ensureUnlocked();
+    await _ensureTags(payload.tags);
     final item = await _vaultService.addCredential(
       payload,
       label: label,
@@ -154,6 +170,7 @@ class VaultController extends ChangeNotifier {
     required CredentialPayload payload,
   }) async {
     _ensureUnlocked();
+    await _ensureTags(payload.tags);
     final updated = await _vaultService.updateCredential(
       item,
       payload,
@@ -168,6 +185,48 @@ class VaultController extends ChangeNotifier {
   Future<CredentialPayload?> readEntry(VaultItem item) async {
     _ensureUnlocked();
     return _vaultService.readCredential(
+      item,
+      masterPassword: _masterPassword!,
+    );
+  }
+
+  Future<VaultItem> addServerAsset({
+    required String label,
+    required ServerAssetPayload payload,
+  }) async {
+    _ensureUnlocked();
+    await _ensureTags(payload.tags);
+    final item = await _vaultService.addServerAsset(
+      payload,
+      label: label,
+      masterPassword: _masterPassword!,
+      nonce: _generateNonce(),
+    );
+    await reload();
+    return item;
+  }
+
+  Future<VaultItem> updateServerAsset({
+    required VaultItem item,
+    required String label,
+    required ServerAssetPayload payload,
+  }) async {
+    _ensureUnlocked();
+    await _ensureTags(payload.tags);
+    final updated = await _vaultService.updateServerAsset(
+      item,
+      payload,
+      label: label,
+      masterPassword: _masterPassword!,
+      nonce: _generateNonce(),
+    );
+    await reload();
+    return updated;
+  }
+
+  Future<ServerAssetPayload?> readServerAsset(VaultItem item) async {
+    _ensureUnlocked();
+    return _vaultService.readServerAsset(
       item,
       masterPassword: _masterPassword!,
     );
@@ -250,11 +309,202 @@ class VaultController extends ChangeNotifier {
     await reload();
   }
 
+  Future<List<VaultEntryView>> _buildEntryViews(
+    List<VaultItem> items,
+  ) async {
+    final views = <VaultEntryView>[];
+    for (final item in items) {
+      if (item.type == VaultEntryType.server) {
+        final payload = await readServerAsset(item);
+        views.add(VaultEntryView(
+          item: item,
+          credential: null,
+          server: payload,
+          tags: payload?.tags ?? const [],
+        ));
+      } else {
+        final payload = await readEntry(item);
+        views.add(VaultEntryView(
+          item: item,
+          credential: payload,
+          server: null,
+          tags: payload?.tags ?? const [],
+        ));
+      }
+    }
+    return views;
+  }
+
+  Future<void> _ensureTags(List<String> tags) async {
+    final additions = tags.where((tag) => tag.trim().isNotEmpty).toList();
+    if (additions.isEmpty) {
+      return;
+    }
+    final newTags = {..._metadata.tags, ...additions}.toList()..sort();
+    _metadata = _metadata.copyWith(tags: newTags);
+    await _saveMetadata();
+  }
+
+  Future<void> _removeTagFromEntries(String tag) async {
+    final items = await _vaultService.listAll();
+    for (final item in items) {
+      if (item.type == VaultEntryType.server) {
+        final payload = await readServerAsset(item);
+        if (payload == null || !payload.tags.contains(tag)) {
+          continue;
+        }
+        final updatedTags =
+            payload.tags.where((entry) => entry != tag).toList();
+        final updatedPayload = ServerAssetPayload(
+          name: payload.name,
+          ipAddress: payload.ipAddress,
+          port: payload.port,
+          username: payload.username,
+          password: payload.password,
+          basicConfig: payload.basicConfig,
+          operatingSystem: payload.operatingSystem,
+          location: payload.location,
+          notes: payload.notes,
+          tags: updatedTags,
+        );
+        await updateServerAsset(
+          item: item,
+          label: item.label,
+          payload: updatedPayload,
+        );
+      } else {
+        final payload = await readEntry(item);
+        if (payload == null || !payload.tags.contains(tag)) {
+          continue;
+        }
+        final updatedTags =
+            payload.tags.where((entry) => entry != tag).toList();
+        final updatedPayload = CredentialPayload(
+          username: payload.username,
+          password: payload.password,
+          token: payload.token,
+          appId: payload.appId,
+          accessToken: payload.accessToken,
+          secretKey: payload.secretKey,
+          tags: updatedTags,
+        );
+        await updateEntry(
+          item: item,
+          label: item.label,
+          payload: updatedPayload,
+        );
+      }
+    }
+  }
+
+  Future<void> _replaceTagInEntries(String oldTag, String newTag) async {
+    final items = await _vaultService.listAll();
+    for (final item in items) {
+      if (item.type == VaultEntryType.server) {
+        final payload = await readServerAsset(item);
+        if (payload == null || !payload.tags.contains(oldTag)) {
+          continue;
+        }
+        final updatedTags = payload.tags
+            .map((entry) => entry == oldTag ? newTag : entry)
+            .toList();
+        final updatedPayload = ServerAssetPayload(
+          name: payload.name,
+          ipAddress: payload.ipAddress,
+          port: payload.port,
+          username: payload.username,
+          password: payload.password,
+          basicConfig: payload.basicConfig,
+          operatingSystem: payload.operatingSystem,
+          location: payload.location,
+          notes: payload.notes,
+          tags: updatedTags,
+        );
+        await updateServerAsset(
+          item: item,
+          label: item.label,
+          payload: updatedPayload,
+        );
+      } else {
+        final payload = await readEntry(item);
+        if (payload == null || !payload.tags.contains(oldTag)) {
+          continue;
+        }
+        final updatedTags = payload.tags
+            .map((entry) => entry == oldTag ? newTag : entry)
+            .toList();
+        final updatedPayload = CredentialPayload(
+          username: payload.username,
+          password: payload.password,
+          token: payload.token,
+          appId: payload.appId,
+          accessToken: payload.accessToken,
+          secretKey: payload.secretKey,
+          tags: updatedTags,
+        );
+        await updateEntry(
+          item: item,
+          label: item.label,
+          payload: updatedPayload,
+        );
+      }
+    }
+  }
+
   Future<void> updateSyncSettings(SyncSettings settings) async {
     _ensureUnlocked();
     _syncSettings = settings;
     await _saveSyncSettings();
     _configureAutoSync();
+    notifyListeners();
+  }
+
+  Future<void> addTag(String tag) async {
+    _ensureUnlocked();
+    final trimmed = tag.trim();
+    if (trimmed.isEmpty) {
+      return;
+    }
+    if (_metadata.tags.contains(trimmed)) {
+      return;
+    }
+    final updated = [..._metadata.tags, trimmed]..sort();
+    _metadata = _metadata.copyWith(tags: updated);
+    await _saveMetadata();
+    notifyListeners();
+  }
+
+  Future<void> renameTag(String oldTag, String newTag) async {
+    _ensureUnlocked();
+    final trimmed = newTag.trim();
+    if (trimmed.isEmpty) {
+      return;
+    }
+    final updatedTags = _metadata.tags
+        .map((entry) => entry == oldTag ? trimmed : entry)
+        .toSet()
+        .toList()
+      ..sort();
+    _metadata = _metadata.copyWith(tags: updatedTags);
+    await _saveMetadata();
+    await _replaceTagInEntries(oldTag, trimmed);
+    await reload();
+  }
+
+  Future<void> deleteTag(String tag) async {
+    _ensureUnlocked();
+    final updatedTags = _metadata.tags.where((entry) => entry != tag).toList()
+      ..sort();
+    _metadata = _metadata.copyWith(tags: updatedTags);
+    await _saveMetadata();
+    await _removeTagFromEntries(tag);
+    await reload();
+  }
+
+  Future<void> updateSortOrder(VaultSortOrder order) async {
+    _ensureUnlocked();
+    _metadata = _metadata.copyWith(sortOrder: order);
+    await _saveMetadata();
     notifyListeners();
   }
 
@@ -294,6 +544,46 @@ class VaultController extends ChangeNotifier {
       }
     } catch (_) {}
     _configureAutoSync();
+  }
+
+  Future<void> _loadMetadata() async {
+    final record = await _vaultMetadataStore.read();
+    if (record == null) {
+      return;
+    }
+    try {
+      final derived = await _keyDerivationService.deriveKey(
+        _masterPassword!,
+        salt: Uint8List.fromList(record.kdfSalt),
+        iterations: record.kdfIterations,
+      );
+      final decrypted = await _cryptoService.decrypt(
+        record.encryptedPayload,
+        derived.bytes,
+      );
+      final decoded = jsonDecode(utf8.decode(decrypted));
+      if (decoded is Map) {
+        _metadata = VaultMetadata.fromJson(
+          Map<String, Object?>.from(decoded),
+        );
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveMetadata() async {
+    final jsonPayload = jsonEncode(_metadata.toJson());
+    final derived = await _keyDerivationService.deriveKey(_masterPassword!);
+    final encrypted = await _cryptoService.encrypt(
+      Uint8List.fromList(utf8.encode(jsonPayload)),
+      derived.bytes,
+      nonce: _generateNonce(),
+    );
+    final record = VaultMetadataRecord(
+      encryptedPayload: encrypted,
+      kdfSalt: derived.salt,
+      kdfIterations: derived.iterations,
+    );
+    await _vaultMetadataStore.save(record);
   }
 
   Future<void> _saveSyncSettings() async {
@@ -479,6 +769,7 @@ class VaultController extends ChangeNotifier {
           final cloned = VaultItem(
             id: _generateId(),
             label: '${remote.label} (冲突-远端)',
+            type: remote.type,
             encryptedPayload: remote.encryptedPayload,
             kdfSalt: remote.kdfSalt,
             kdfIterations: remote.kdfIterations,
@@ -507,6 +798,20 @@ class VaultController extends ChangeNotifier {
     }
     return diff == 0;
   }
+}
+
+class VaultEntryView {
+  const VaultEntryView({
+    required this.item,
+    required this.credential,
+    required this.server,
+    required this.tags,
+  });
+
+  final VaultItem item;
+  final CredentialPayload? credential;
+  final ServerAssetPayload? server;
+  final List<String> tags;
 }
 
 class _DecodedPayload {

@@ -4,11 +4,14 @@ import 'package:flutter/services.dart';
 import 'package:password_manager_core/password_manager_core.dart';
 
 import '../models/new_entry_data.dart';
+import '../state/vault_metadata.dart';
 import '../state/vault_controller.dart';
 import '../utils/export_file.dart';
 import '../widgets/entry_details_dialog.dart';
 import 'new_entry_sheet.dart';
 import 'sync_settings_screen.dart';
+import 'tag_management_screen.dart';
+import 'new_server_sheet.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.controller});
@@ -21,6 +24,8 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _searchController = TextEditingController();
+  _VaultListMode _mode = _VaultListMode.credentials;
+  String? _selectedTag;
 
   @override
   void dispose() {
@@ -29,6 +34,41 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _editEntry(VaultItem item) async {
+    if (item.type == VaultEntryType.server) {
+      final payload = await widget.controller.readServerAsset(item);
+      if (payload == null) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('无法解密条目')),
+        );
+        return;
+      }
+      if (!mounted) {
+        return;
+      }
+      final data = await showModalBottomSheet<NewServerSheetResult>(
+        context: context,
+        isScrollControlled: true,
+        builder: (context) => NewServerSheet(
+          initialData: NewServerSheetResult(
+            label: item.label,
+            payload: payload,
+          ),
+          title: '编辑服务器',
+          submitLabel: '保存修改',
+        ),
+      );
+      if (data != null) {
+        await widget.controller.updateServerAsset(
+          item: item,
+          label: data.label,
+          payload: data.payload,
+        );
+      }
+      return;
+    }
     final payload = await widget.controller.readEntry(item);
     if (payload == null) {
       if (!mounted) {
@@ -88,6 +128,44 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Widget _tagFilterRow() {
+    final tags = widget.controller.metadata.tags;
+    if (tags.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        ChoiceChip(
+          label: const Text('全部'),
+          selected: _selectedTag == null,
+          onSelected: (_) => setState(() => _selectedTag = null),
+        ),
+        ...tags.map(
+          (tag) => ChoiceChip(
+            label: Text(tag),
+            selected: _selectedTag == tag,
+            onSelected: (_) => setState(() => _selectedTag = tag),
+          ),
+        ),
+      ],
+    );
+  }
+
+  List<VaultEntryView> _sortViews(List<VaultEntryView> views) {
+    final sorted = [...views];
+    switch (widget.controller.metadata.sortOrder) {
+      case VaultSortOrder.updatedDesc:
+        sorted.sort((a, b) => b.item.updatedAt.compareTo(a.item.updatedAt));
+        break;
+      case VaultSortOrder.labelAsc:
+        sorted.sort((a, b) => a.item.label.compareTo(b.item.label));
+        break;
+    }
+    return sorted;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -112,6 +190,15 @@ class _HomeScreenState extends State<HomeScreen> {
                   await Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => SyncSettingsScreen(
+                        controller: widget.controller,
+                      ),
+                    ),
+                  );
+                  break;
+                case _VaultMenuAction.tags:
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => TagManagementScreen(
                         controller: widget.controller,
                       ),
                     ),
@@ -195,6 +282,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Text('同步设置'),
               ),
               PopupMenuItem(
+                value: _VaultMenuAction.tags,
+                child: Text('分类管理'),
+              ),
+              PopupMenuItem(
                 value: _VaultMenuAction.export,
                 child: Text('导出数据'),
               ),
@@ -213,20 +304,34 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
-          final data = await showModalBottomSheet<NewEntryData>(
-            context: context,
-            isScrollControlled: true,
-            builder: (context) => const NewEntrySheet(),
-          );
-          if (data != null) {
-            await widget.controller.addEntry(
-              label: data.label,
-              payload: data.payload,
+          if (_mode == _VaultListMode.credentials) {
+            final data = await showModalBottomSheet<NewEntryData>(
+              context: context,
+              isScrollControlled: true,
+              builder: (context) => const NewEntrySheet(),
             );
+            if (data != null) {
+              await widget.controller.addEntry(
+                label: data.label,
+                payload: data.payload,
+              );
+            }
+          } else {
+            final data = await showModalBottomSheet<NewServerSheetResult>(
+              context: context,
+              isScrollControlled: true,
+              builder: (context) => const NewServerSheet(),
+            );
+            if (data != null) {
+              await widget.controller.addServerAsset(
+                label: data.label,
+                payload: data.payload,
+              );
+            }
           }
         },
         icon: const Icon(Icons.add),
-        label: const Text('新建条目'),
+        label: Text(_mode == _VaultListMode.credentials ? '新建账号' : '新建服务器'),
       ),
       body: Container(
         decoration: const BoxDecoration(
@@ -252,6 +357,47 @@ class _HomeScreenState extends State<HomeScreen> {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 16),
+                Row(
+                  children: [
+                    SegmentedButton<_VaultListMode>(
+                      segments: const [
+                        ButtonSegment(
+                          value: _VaultListMode.credentials,
+                          label: Text('账号'),
+                        ),
+                        ButtonSegment(
+                          value: _VaultListMode.servers,
+                          label: Text('服务器'),
+                        ),
+                      ],
+                      selected: {_mode},
+                      onSelectionChanged: (value) {
+                        setState(() => _mode = value.first);
+                      },
+                    ),
+                    const Spacer(),
+                    DropdownButton<VaultSortOrder>(
+                      value: widget.controller.metadata.sortOrder,
+                      onChanged: (value) async {
+                        if (value == null) {
+                          return;
+                        }
+                        await widget.controller.updateSortOrder(value);
+                      },
+                      items: const [
+                        DropdownMenuItem(
+                          value: VaultSortOrder.updatedDesc,
+                          child: Text('按更新时间'),
+                        ),
+                        DropdownMenuItem(
+                          value: VaultSortOrder.labelAsc,
+                          child: Text('按名称'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: _searchController,
                   onChanged: (_) => setState(() {}),
@@ -265,35 +411,49 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                 ),
+                const SizedBox(height: 12),
+                _tagFilterRow(),
                 const SizedBox(height: 16),
                 Expanded(
                   child: AnimatedBuilder(
                     animation: widget.controller,
                     builder: (context, _) {
-                      final items = widget.controller.items;
+                      final views = widget.controller.entryViews;
                       final query = _searchController.text.trim().toLowerCase();
-                      final filtered = query.isEmpty
-                          ? items
-                          : items
-                              .where(
-                                (item) =>
-                                    item.label.toLowerCase().contains(query),
-                              )
-                              .toList();
-                      if (filtered.isEmpty) {
+                      final filtered = views.where((view) {
+                        final matchesType = _mode == _VaultListMode.credentials
+                            ? view.item.type == VaultEntryType.credential
+                            : view.item.type == VaultEntryType.server;
+                        if (!matchesType) {
+                          return false;
+                        }
+                        final matchesQuery = query.isEmpty
+                            ? true
+                            : view.item.label.toLowerCase().contains(query);
+                        if (!matchesQuery) {
+                          return false;
+                        }
+                        if (_selectedTag == null || _selectedTag!.isEmpty) {
+                          return true;
+                        }
+                        return view.tags.contains(_selectedTag);
+                      }).toList();
+                      final sorted = _sortViews(filtered);
+                      if (sorted.isEmpty) {
                         return Center(
                           child: Text(
                             query.isEmpty
-                                ? '暂无条目，点击“新建条目”添加。'
+                                ? '暂无条目，点击“新建”添加。'
                                 : '未找到匹配条目',
                           ),
                         );
                       }
                       return ListView.separated(
-                        itemCount: filtered.length,
+                        itemCount: sorted.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 12),
                         itemBuilder: (context, index) {
-                          final item = filtered[index];
+                          final view = sorted[index];
+                          final item = view.item;
                           return EntryCard(
                             item: item,
                             onView: () {
@@ -322,7 +482,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-enum _VaultMenuAction { syncSettings, export, clear }
+enum _VaultMenuAction { syncSettings, tags, export, clear }
 
 class EntryCard extends StatelessWidget {
   const EntryCard({
@@ -367,3 +527,5 @@ class EntryCard extends StatelessWidget {
     );
   }
 }
+
+enum _VaultListMode { credentials, servers }

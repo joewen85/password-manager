@@ -15,6 +15,7 @@ void main() {
     final item = VaultItem(
       id: 'item-1',
       label: 'Sample',
+      type: VaultEntryType.credential,
       encryptedPayload: EncryptedPayload(
         ciphertext: Uint8List.fromList([1, 2, 3]),
         nonce: Uint8List.fromList([4, 5, 6]),

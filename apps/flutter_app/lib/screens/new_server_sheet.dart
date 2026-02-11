@@ -1,33 +1,40 @@
 import 'package:flutter/material.dart';
 import 'package:password_manager_core/password_manager_core.dart';
 
-import '../models/new_entry_data.dart';
+class NewServerSheetResult {
+  const NewServerSheetResult({required this.label, required this.payload});
 
-class NewEntrySheet extends StatefulWidget {
-  const NewEntrySheet({
+  final String label;
+  final ServerAssetPayload payload;
+}
+
+class NewServerSheet extends StatefulWidget {
+  const NewServerSheet({
     super.key,
     this.initialData,
-    this.title = '新建条目',
+    this.title = '新建服务器',
     this.submitLabel = '保存',
   });
 
-  final NewEntryData? initialData;
+  final NewServerSheetResult? initialData;
   final String title;
   final String submitLabel;
 
   @override
-  State<NewEntrySheet> createState() => _NewEntrySheetState();
+  State<NewServerSheet> createState() => _NewServerSheetState();
 }
 
-class _NewEntrySheetState extends State<NewEntrySheet> {
+class _NewServerSheetState extends State<NewServerSheet> {
   final _formKey = GlobalKey<FormState>();
-  final _labelController = TextEditingController();
+  final _nameController = TextEditingController();
+  final _ipController = TextEditingController();
+  final _portController = TextEditingController();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _tokenController = TextEditingController();
-  final _appIdController = TextEditingController();
-  final _accessTokenController = TextEditingController();
-  final _secretKeyController = TextEditingController();
+  final _configController = TextEditingController();
+  final _osController = TextEditingController();
+  final _locationController = TextEditingController();
+  final _notesController = TextEditingController();
   final _tagsController = TextEditingController();
 
   @override
@@ -35,26 +42,30 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
     super.initState();
     final data = widget.initialData;
     if (data != null) {
-      _labelController.text = data.label;
+      _nameController.text = data.payload.name;
+      _ipController.text = data.payload.ipAddress;
+      _portController.text = data.payload.port;
       _usernameController.text = data.payload.username;
       _passwordController.text = data.payload.password;
-      _tokenController.text = data.payload.token;
-      _appIdController.text = data.payload.appId;
-      _accessTokenController.text = data.payload.accessToken;
-      _secretKeyController.text = data.payload.secretKey;
+      _configController.text = data.payload.basicConfig;
+      _osController.text = data.payload.operatingSystem;
+      _locationController.text = data.payload.location;
+      _notesController.text = data.payload.notes;
       _tagsController.text = data.payload.tags.join(', ');
     }
   }
 
   @override
   void dispose() {
-    _labelController.dispose();
+    _nameController.dispose();
+    _ipController.dispose();
+    _portController.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
-    _tokenController.dispose();
-    _appIdController.dispose();
-    _accessTokenController.dispose();
-    _secretKeyController.dispose();
+    _configController.dispose();
+    _osController.dispose();
+    _locationController.dispose();
+    _notesController.dispose();
     _tagsController.dispose();
     super.dispose();
   }
@@ -81,67 +92,75 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
               ),
               const SizedBox(height: 12),
               _buildField(
-                controller: _labelController,
-                label: '标题',
-                hint: '例如 AWS 控制台',
+                controller: _nameController,
+                label: '服务器名称',
                 requiredField: true,
+              ),
+              _buildField(
+                controller: _ipController,
+                label: 'IP地址',
+                requiredField: true,
+              ),
+              _buildField(
+                controller: _portController,
+                label: '端口',
+                hint: '22',
               ),
               _buildField(
                 controller: _usernameController,
-                label: '用户名',
-                hint: 'name@example.com',
-                requiredField: true,
+                label: '登录用户名',
               ),
               _buildField(
                 controller: _passwordController,
-                label: '密码',
+                label: '登录密码',
                 obscure: true,
               ),
               _buildField(
-                controller: _tokenController,
-                label: '令牌',
-                obscure: true,
+                controller: _configController,
+                label: '基础配置',
               ),
               _buildField(
-                controller: _appIdController,
-                label: '应用ID',
+                controller: _osController,
+                label: '操作系统',
               ),
               _buildField(
-                controller: _accessTokenController,
-                label: '访问令牌',
-                obscure: true,
-              ),
-              _buildField(
-                controller: _secretKeyController,
-                label: '密钥',
-                obscure: true,
+                controller: _locationController,
+                label: '位置',
               ),
               _buildField(
                 controller: _tagsController,
                 label: '分类标签',
                 hint: '多个标签用逗号分隔',
               ),
+              _buildField(
+                controller: _notesController,
+                label: '备注项',
+                maxLines: 4,
+              ),
               const SizedBox(height: 16),
               Row(
                 children: [
                   Expanded(
-                      child: FilledButton(
-                        onPressed: () {
-                          if (!_formKey.currentState!.validate()) {
-                            return;
-                          }
-                        final payload = CredentialPayload(
+                    child: FilledButton(
+                      onPressed: () {
+                        if (!_formKey.currentState!.validate()) {
+                          return;
+                        }
+                        final payload = ServerAssetPayload(
+                          name: _nameController.text.trim(),
+                          ipAddress: _ipController.text.trim(),
+                          port: _portController.text.trim(),
                           username: _usernameController.text.trim(),
                           password: _passwordController.text.trim(),
-                          token: _tokenController.text.trim(),
-                          appId: _appIdController.text.trim(),
-                          accessToken: _accessTokenController.text.trim(),
-                          secretKey: _secretKeyController.text.trim(),
+                          basicConfig: _configController.text.trim(),
+                          operatingSystem: _osController.text.trim(),
+                          location: _locationController.text.trim(),
+                          notes: _notesController.text.trim(),
                           tags: _parseTags(_tagsController.text),
                         );
                         Navigator.of(context).pop(
-                          NewEntryData(
-                            label: _labelController.text.trim(),
+                          NewServerSheetResult(
+                            label: _nameController.text.trim(),
                             payload: payload,
                           ),
                         );
@@ -164,12 +183,14 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
     String? hint,
     bool obscure = false,
     bool requiredField = false,
+    int maxLines = 1,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: TextFormField(
         controller: controller,
         obscureText: obscure,
+        maxLines: maxLines,
         decoration: InputDecoration(
           labelText: label,
           hintText: hint,

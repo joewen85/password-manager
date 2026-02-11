@@ -11,9 +11,11 @@ import 'package:password_manager_storage/password_manager_storage.dart';
 import 'screens/home_screen.dart';
 import 'screens/unlock_screen.dart';
 import 'storage/sync_settings_store_selector.dart';
+import 'storage/vault_metadata_store_selector.dart';
 import 'storage/web_storage.dart';
 import 'state/sync_settings.dart';
 import 'state/vault_controller.dart';
+import 'state/vault_metadata.dart';
 
 class PasswordManagerApp extends StatelessWidget {
   const PasswordManagerApp({super.key, required this.controller});
@@ -48,12 +50,16 @@ class PasswordManagerApp extends StatelessWidget {
       repository: repository,
     );
     SyncSettingsStore settingsStore;
+    VaultMetadataStore metadataStore;
     if (kIsWeb) {
       settingsStore = WebSyncSettingsStore();
+      metadataStore = WebVaultMetadataStore();
     } else {
       final directory = await getApplicationSupportDirectory();
       final settingsPath = path.join(directory.path, 'sync_settings.json');
       settingsStore = FileSyncSettingsStore(filePath: settingsPath);
+      final metadataPath = path.join(directory.path, 'vault_metadata.json');
+      metadataStore = FileVaultMetadataStore(filePath: metadataPath);
     }
     final controller = VaultController(
       vaultService: vaultService,
@@ -64,6 +70,8 @@ class PasswordManagerApp extends StatelessWidget {
       masterKeyStore: masterKeyStore,
       syncSettingsStore: settingsStore,
       initialSyncSettings: SyncSettings.defaults(),
+      vaultMetadataStore: metadataStore,
+      initialMetadata: VaultMetadata.defaults(),
       requireTotp: false,
       totpSecret: null,
     );

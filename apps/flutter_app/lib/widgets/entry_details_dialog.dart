@@ -17,8 +17,10 @@ class EntryDetailsDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text(item.label),
-      content: FutureBuilder<CredentialPayload?>(
-        future: controller.readEntry(item),
+      content: FutureBuilder<Object?>(
+        future: item.type == VaultEntryType.server
+            ? controller.readServerAsset(item)
+            : controller.readEntry(item),
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
             return const SizedBox(
@@ -30,19 +32,42 @@ class EntryDetailsDialog extends StatelessWidget {
           if (payload == null) {
             return const Text('无法解密条目。');
           }
-          return SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _detailRow('用户名', payload.username),
-                _detailRow('密码', payload.password),
-                _detailRow('令牌', payload.token),
-                _detailRow('应用ID', payload.appId),
-                _detailRow('访问令牌', payload.accessToken),
-                _detailRow('密钥', payload.secretKey),
-              ],
-            ),
-          );
+          if (payload is ServerAssetPayload) {
+            return SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _detailRow('服务器名称', payload.name),
+                  _detailRow('IP地址', payload.ipAddress),
+                  _detailRow('端口', payload.port),
+                  _detailRow('登录用户名', payload.username),
+                  _detailRow('登录密码', payload.password),
+                  _detailRow('基础配置', payload.basicConfig),
+                  _detailRow('操作系统', payload.operatingSystem),
+                  _detailRow('位置', payload.location),
+                  _detailRow('备注项', payload.notes),
+                  _detailRow('分类标签', payload.tags.join(', ')),
+                ],
+              ),
+            );
+          }
+          if (payload is CredentialPayload) {
+            return SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _detailRow('用户名', payload.username),
+                  _detailRow('密码', payload.password),
+                  _detailRow('令牌', payload.token),
+                  _detailRow('应用ID', payload.appId),
+                  _detailRow('访问令牌', payload.accessToken),
+                  _detailRow('密钥', payload.secretKey),
+                  _detailRow('分类标签', payload.tags.join(', ')),
+                ],
+              ),
+            );
+          }
+          return const Text('无法识别的条目类型。');
         },
       ),
       actions: [

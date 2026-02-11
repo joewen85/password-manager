@@ -1,0 +1,4 @@
+enum VaultEntryType {
+  credential,
+  server,
+}

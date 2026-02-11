@@ -10,7 +10,9 @@ import 'package:password_manager_app/screens/home_screen.dart';
 import 'package:password_manager_app/screens/unlock_screen.dart';
 import 'package:password_manager_app/state/sync_settings.dart';
 import 'package:password_manager_app/state/vault_controller.dart';
+import 'package:password_manager_app/state/vault_metadata.dart';
 import 'package:password_manager_app/storage/sync_settings_store.dart';
+import 'package:password_manager_app/storage/vault_metadata_store.dart';
 
 class InMemoryVaultRepository implements VaultRepository {
   final Map<String, VaultItem> _store = {};
@@ -44,11 +46,24 @@ class InMemorySyncSettingsStore implements SyncSettingsStore {
   }
 }
 
+class InMemoryVaultMetadataStore implements VaultMetadataStore {
+  VaultMetadataRecord? _record;
+
+  @override
+  Future<VaultMetadataRecord?> read() async => _record;
+
+  @override
+  Future<void> save(VaultMetadataRecord record) async {
+    _record = record;
+  }
+}
+
 VaultController buildController({required bool requireTotp}) {
   final keyDerivationService = KeyDerivationService(iterations: 1000);
   final cryptoService = AesGcmCryptoService();
   final masterKeyStore = InMemoryMasterKeyStore();
   final syncSettingsStore = InMemorySyncSettingsStore();
+  final metadataStore = InMemoryVaultMetadataStore();
   final vaultService = VaultService(
     cryptoService: cryptoService,
     keyDerivationService: keyDerivationService,
@@ -63,6 +78,8 @@ VaultController buildController({required bool requireTotp}) {
     masterKeyStore: masterKeyStore,
     syncSettingsStore: syncSettingsStore,
     initialSyncSettings: SyncSettings.defaults(),
+    vaultMetadataStore: metadataStore,
+    initialMetadata: VaultMetadata.defaults(),
     requireTotp: requireTotp,
     totpSecret: requireTotp ? 'JBSWY3DPEHPK3PXP' : null,
   );
@@ -143,6 +160,7 @@ void main() {
         appId: 'appid',
         accessToken: 'access',
         secretKey: 'secret',
+        tags: ['dev'],
       ),
     );
 

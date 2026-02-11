@@ -40,6 +40,7 @@ void main() {
       appId: 'app',
       accessToken: 'access',
       secretKey: 'secret',
+      tags: const [],
     );
 
     final item = await service.addCredential(
@@ -77,6 +78,7 @@ void main() {
       appId: 'app',
       accessToken: 'access',
       secretKey: 'secret',
+      tags: const [],
     );
 
     final item = await service.addCredential(
