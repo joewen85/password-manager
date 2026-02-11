@@ -11,6 +11,7 @@ dependencies:
     sdk: flutter
   path: ^1.9.0
   path_provider: ^2.1.2
+  shared_preferences: ^2.2.3
   password_manager_core:
     path: ../../packages/core
   password_manager_crypto:

@@ -8,9 +8,11 @@ import 'package:password_manager_core/password_manager_core.dart';
 import 'package:password_manager_crypto/password_manager_crypto.dart';
 import 'package:password_manager_storage/password_manager_storage.dart';
 import 'package:password_manager_sync/password_manager_sync.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'screens/home_screen.dart';
 import 'screens/unlock_screen.dart';
+import 'storage/web_storage.dart';
 import 'state/vault_controller.dart';
 
 class PasswordManagerApp extends StatelessWidget {
@@ -22,8 +24,9 @@ class PasswordManagerApp extends StatelessWidget {
     VaultRepository repository;
     MasterKeyStore masterKeyStore;
     if (kIsWeb) {
-      repository = InMemoryVaultRepository();
-      masterKeyStore = InMemoryMasterKeyStore();
+      final preferences = await SharedPreferences.getInstance();
+      repository = WebVaultRepository(preferences: preferences);
+      masterKeyStore = WebMasterKeyStore(preferences: preferences);
     } else {
       try {
         final directory = await getApplicationSupportDirectory();
