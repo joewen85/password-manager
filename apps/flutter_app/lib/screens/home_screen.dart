@@ -450,7 +450,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         }
                         final matchesQuery = query.isEmpty
                             ? true
-                            : view.item.label.toLowerCase().contains(query);
+                            : view.item.label.toLowerCase().contains(query) ||
+                                view.tags
+                                    .any((tag) => tag.toLowerCase().contains(query));
                         if (!matchesQuery) {
                           return false;
                         }
