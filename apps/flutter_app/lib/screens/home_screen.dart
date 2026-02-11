@@ -240,14 +240,24 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '安全地保存账号信息',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final baseStyle =
+                  Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      );
+              final isNarrow = constraints.maxWidth < 340;
+              final scaledStyle = isNarrow && baseStyle?.fontSize != null
+                  ? baseStyle!.copyWith(fontSize: baseStyle.fontSize! * 0.9)
+                  : baseStyle;
+              return Text(
+                '安全地保存账号信息',
+                style: scaledStyle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              );
+            },
           ),
           const SizedBox(height: 12),
           Wrap(
