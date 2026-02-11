@@ -162,12 +162,16 @@ class _HomeScreenState extends State<HomeScreen> {
           label: const Text('全部'),
           selected: _selectedTag == null,
           onSelected: (_) => setState(() => _selectedTag = null),
+          labelStyle: const TextStyle(fontSize: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         ),
         ...tags.map(
           (tag) => ChoiceChip(
             label: Text(tag),
             selected: _selectedTag == tag,
             onSelected: (_) => setState(() => _selectedTag = tag),
+            labelStyle: const TextStyle(fontSize: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
           ),
         ),
       ],
@@ -217,7 +221,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _heroCard(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [Color(0xFF0F4C5C), Color(0xFF1B7F6E)],
@@ -238,8 +242,9 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Text(
             '安全地保存账号信息',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
                   color: Colors.white,
+                  fontWeight: FontWeight.w700,
                 ),
           ),
           const SizedBox(height: 8),
@@ -247,6 +252,7 @@ class _HomeScreenState extends State<HomeScreen> {
             'AES-256 加密，支持 2FA 与同步模块。',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Colors.white.withOpacity(0.8),
+                  fontSize: 12,
                 ),
           ),
           const SizedBox(height: 12),
@@ -461,65 +467,94 @@ class _HomeScreenState extends State<HomeScreen> {
                 FadeSlide(
                   delay: const Duration(milliseconds: 140),
                   child: _sectionCard(
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            SegmentedButton<_VaultListMode>(
-                              segments: const [
-                                ButtonSegment(
-                                  value: _VaultListMode.credentials,
-                                  label: Text('账号'),
-                                ),
-                                ButtonSegment(
-                                  value: _VaultListMode.servers,
-                                  label: Text('服务器'),
-                                ),
-                              ],
-                              selected: {_mode},
-                              onSelectionChanged: (value) {
-                                setState(() => _mode = value.first);
-                              },
-                            ),
-                            const Spacer(),
-                            DropdownButtonHideUnderline(
-                              child: DropdownButton<VaultSortOrder>(
-                                value: widget.controller.metadata.sortOrder,
-                                borderRadius: BorderRadius.circular(12),
-                                onChanged: (value) async {
-                                  if (value == null) {
-                                    return;
-                                  }
-                                  await widget.controller.updateSortOrder(
-                                    value,
-                                  );
-                                },
-                                items: const [
-                                  DropdownMenuItem(
-                                    value: VaultSortOrder.updatedDesc,
-                                    child: Text('按更新时间'),
+                    child: Theme(
+                      data: Theme.of(context).copyWith(
+                        inputDecorationTheme:
+                            Theme.of(context).inputDecorationTheme.copyWith(
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
                                   ),
-                                  DropdownMenuItem(
-                                    value: VaultSortOrder.labelAsc,
-                                    child: Text('按名称'),
+                                ),
+                      ),
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              SegmentedButton<_VaultListMode>(
+                                style: ButtonStyle(
+                                  padding: const WidgetStatePropertyAll(
+                                    EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 6,
+                                    ),
+                                  ),
+                                  textStyle: const WidgetStatePropertyAll(
+                                    TextStyle(fontSize: 12),
+                                  ),
+                                ),
+                                segments: const [
+                                  ButtonSegment(
+                                    value: _VaultListMode.credentials,
+                                    label: Text('账号'),
+                                  ),
+                                  ButtonSegment(
+                                    value: _VaultListMode.servers,
+                                    label: Text('服务器'),
                                   ),
                                 ],
+                                selected: {_mode},
+                                onSelectionChanged: (value) {
+                                  setState(() => _mode = value.first);
+                                },
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _searchController,
-                          onChanged: (_) => setState(() {}),
-                          decoration: const InputDecoration(
-                            prefixIcon: Icon(Icons.search),
-                            hintText: '按名称或标签搜索',
+                              const Spacer(),
+                              DropdownButtonHideUnderline(
+                                child: DropdownButton<VaultSortOrder>(
+                                  value: widget.controller.metadata.sortOrder,
+                                  borderRadius: BorderRadius.circular(12),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall,
+                                  onChanged: (value) async {
+                                    if (value == null) {
+                                      return;
+                                    }
+                                    await widget.controller.updateSortOrder(
+                                      value,
+                                    );
+                                  },
+                                  items: const [
+                                    DropdownMenuItem(
+                                      value: VaultSortOrder.updatedDesc,
+                                      child: Text('按更新时间'),
+                                    ),
+                                    DropdownMenuItem(
+                                      value: VaultSortOrder.labelAsc,
+                                      child: Text('按名称'),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                        const SizedBox(height: 12),
-                        _tagFilterRow(),
-                      ],
+                          const SizedBox(height: 10),
+                          TextField(
+                            controller: _searchController,
+                            onChanged: (_) => setState(() {}),
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      fontSize: 12,
+                                    ),
+                            decoration: const InputDecoration(
+                              prefixIcon: Icon(Icons.search, size: 18),
+                              hintText: '按名称或标签搜索',
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          _tagFilterRow(),
+                        ],
+                      ),
                     ),
                   ),
                 ),
