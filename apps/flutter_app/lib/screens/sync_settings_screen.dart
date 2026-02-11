@@ -261,6 +261,7 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
           controller: _webdavPathController,
           decoration: const InputDecoration(
             labelText: '远端路径',
+            helperText: '例如 /backup/password_manager/vault.json',
             border: OutlineInputBorder(),
           ),
           validator: (value) {
@@ -362,12 +363,25 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
       return;
     }
     final interval = int.tryParse(_intervalController.text.trim()) ?? 30;
+    var webdavPath = _webdavPathController.text.trim();
+    if (_providerType == SyncProviderType.webdav ||
+        _providerType == SyncProviderType.nasWebdav) {
+      if (webdavPath.isEmpty) {
+        webdavPath = '/vault.json';
+      }
+      if (!webdavPath.startsWith('/')) {
+        webdavPath = '/$webdavPath';
+      }
+      if (webdavPath.endsWith('/')) {
+        webdavPath = '${webdavPath}vault.json';
+      }
+    }
     final settings = SyncSettings(
       providerType: _providerType,
       webdavUrl: _webdavUrlController.text.trim(),
       webdavUsername: _webdavUsernameController.text.trim(),
       webdavPassword: _webdavPasswordController.text.trim(),
-      webdavPath: _webdavPathController.text.trim(),
+      webdavPath: webdavPath,
       presignedDownloadUrl: _presignedDownloadController.text.trim(),
       presignedUploadUrl: _presignedUploadController.text.trim(),
       autoSyncEnabled: _autoSyncEnabled,
@@ -381,6 +395,10 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
       logs: widget.controller.syncSettings.logs,
     );
     await widget.controller.updateSyncSettings(settings);
+    if (_providerType == SyncProviderType.webdav ||
+        _providerType == SyncProviderType.nasWebdav) {
+      _webdavPathController.text = webdavPath;
+    }
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('已保存设置')),

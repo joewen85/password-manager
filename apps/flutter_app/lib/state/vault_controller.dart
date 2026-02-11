@@ -218,7 +218,10 @@ class VaultController extends ChangeNotifier {
         );
       }
     } catch (error) {
-      await _recordSyncStatus('error', '同步失败: $error');
+      final message = error.toString().contains('Failed to fetch')
+          ? '同步失败：浏览器阻止请求，请检查 CORS、证书或混合内容'
+          : '同步失败: $error';
+      await _recordSyncStatus('error', message);
     } finally {
       _syncInProgress = false;
       notifyListeners();

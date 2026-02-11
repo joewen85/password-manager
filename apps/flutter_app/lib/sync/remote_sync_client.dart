@@ -32,11 +32,25 @@ class WebDavSyncClient implements RemoteSyncClient {
 
   Uri _buildUri() {
     final base = Uri.parse(baseUrl);
-    final path = remotePath.startsWith('/') ? remotePath : '/$remotePath';
+    final path = _normalizedPath();
     final mergedPath = base.path.endsWith('/')
         ? '${base.path.substring(0, base.path.length - 1)}$path'
         : '${base.path}$path';
     return base.replace(path: mergedPath);
+  }
+
+  String _normalizedPath() {
+    var path = remotePath.trim();
+    if (path.isEmpty) {
+      path = '/vault.json';
+    }
+    if (!path.startsWith('/')) {
+      path = '/$path';
+    }
+    if (path.endsWith('/')) {
+      path = '${path}vault.json';
+    }
+    return path;
   }
 
   Map<String, String> _headers() {
