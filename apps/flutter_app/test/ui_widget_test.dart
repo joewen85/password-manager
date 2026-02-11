@@ -47,11 +47,7 @@ VaultController buildController({required bool requireTotp}) {
 }
 
 void main() {
-  Finder _fieldWithLabel(String label) {
-    return find.byWidgetPredicate((widget) {
-      return widget is TextFormField && widget.decoration?.labelText == label;
-    });
-  }
+  Finder _fieldAt(int index) => find.byType(TextFormField).at(index);
 
   testWidgets('Unlock screen shows master password field', (tester) async {
     final controller = buildController(requireTotp: false);
@@ -95,13 +91,13 @@ void main() {
     await tester.tap(find.byIcon(Icons.add));
     await tester.pumpAndSettle();
 
-    await tester.enterText(_fieldWithLabel('Label'), 'AWS Console');
-    await tester.enterText(_fieldWithLabel('Username'), 'user@example.com');
-    await tester.enterText(_fieldWithLabel('Password'), 'secret-pass');
-    await tester.enterText(_fieldWithLabel('Token'), 'token-123');
-    await tester.enterText(_fieldWithLabel('App ID'), 'app-xyz');
-    await tester.enterText(_fieldWithLabel('Access Token'), 'access-456');
-    await tester.enterText(_fieldWithLabel('Secret Key'), 'sk-789');
+    await tester.enterText(_fieldAt(0), 'AWS Console');
+    await tester.enterText(_fieldAt(1), 'user@example.com');
+    await tester.enterText(_fieldAt(2), 'secret-pass');
+    await tester.enterText(_fieldAt(3), 'token-123');
+    await tester.enterText(_fieldAt(4), 'app-xyz');
+    await tester.enterText(_fieldAt(5), 'access-456');
+    await tester.enterText(_fieldAt(6), 'sk-789');
 
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
