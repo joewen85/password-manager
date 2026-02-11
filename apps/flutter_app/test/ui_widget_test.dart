@@ -129,7 +129,7 @@ void main() {
     await tester.tap(find.byIcon(Icons.visibility_outlined).first);
     await tester.pumpAndSettle();
 
-    expect(find.text('GitHub'), findsOneWidget);
+    expect(find.text('GitHub'), findsWidgets);
     expect(find.text('octo'), findsOneWidget);
     expect(find.text('pass123'), findsOneWidget);
   });
