@@ -249,20 +249,18 @@ class _HomeScreenState extends State<HomeScreen> {
           final labelStyle =
               Theme.of(context).textTheme.labelLarge?.copyWith(fontSize: 12) ??
                   const TextStyle(fontSize: 12);
-          final availableWidth = constraints.maxWidth - 4;
           final chips = _buildSingleLineTagWidgets(
             tags,
-            maxWidth: availableWidth,
+            maxWidth: constraints.maxWidth - 8,
             labelStyle: labelStyle,
             spacing: 15,
           );
           return SizedBox(
             height: 32,
-            child: ClipRect(
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Row(children: _withSpacing(chips, 15)),
-              ),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              physics: const NeverScrollableScrollPhysics(),
+              child: Row(children: _withSpacing(chips, 15)),
             ),
           );
         },
@@ -333,7 +331,7 @@ class _HomeScreenState extends State<HomeScreen> {
         maxLines: 1,
         textDirection: TextDirection.ltr,
       )..layout();
-      return painter.width + 48;
+      return painter.width + 56;
     }
 
     Widget buildChip(String text, bool selected, VoidCallback onTap) {
@@ -381,7 +379,8 @@ class _HomeScreenState extends State<HomeScreen> {
         chips.removeLast();
         visible -= 1;
       }
-      if (usedWidth + spacing + overflowWidth <= maxWidth) {
+      if (usedWidth + spacing + overflowWidth <= maxWidth ||
+          chips.length == 1) {
         chips.add(
           ActionChip(
             label: Text(overflowText, overflow: TextOverflow.ellipsis),
@@ -715,9 +714,11 @@ class _HomeScreenState extends State<HomeScreen> {
               ? (mediaPadding.bottom * 0.5).clamp(2.0, 8.0)
               : (mediaPadding.bottom * 0.7).clamp(3.0, 14.0);
           final topInset = isIOS ? 2.0 : 4.0;
-          final rightInset = isIOS ? 8.0 : 16.0;
+          final rightInset = isIOS ? 2.0 : 16.0;
+          final leftInset = isIOS ? 12.0 : 16.0;
           return Padding(
-            padding: EdgeInsets.fromLTRB(16, topInset, rightInset, bottomInset),
+            padding:
+                EdgeInsets.fromLTRB(leftInset, topInset, rightInset, bottomInset),
             child: Align(
               alignment: Alignment.centerRight,
               child: _buildCreateButton(context),
