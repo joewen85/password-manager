@@ -166,10 +166,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final isIOS = platform == TargetPlatform.iOS;
     final isMac = platform == TargetPlatform.macOS;
     final label = _mode == _VaultListMode.credentials ? '新建账号' : '新建服务器';
-    final padding = isMac
-        ? const EdgeInsets.symmetric(horizontal: 13, vertical: 7)
-        : const EdgeInsets.symmetric(horizontal: 13, vertical: 7);
-    final radius = isMac ? 10.0 : 14.0;
+    final padding = isIOS
+        ? const EdgeInsets.symmetric(horizontal: 12, vertical: 5)
+        : isMac
+            ? const EdgeInsets.symmetric(horizontal: 13, vertical: 7)
+            : const EdgeInsets.symmetric(horizontal: 13, vertical: 7);
+    final radius = isIOS ? 13.0 : (isMac ? 10.0 : 14.0);
     final isGlass = isIOS || isMac;
     final content = Padding(
       padding: padding,
@@ -186,7 +188,7 @@ class _HomeScreenState extends State<HomeScreen> {
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
                   color: isGlass ? colorScheme.onSurface : colorScheme.onPrimary,
                   fontWeight: FontWeight.w700,
-                  fontSize: isIOS ? 12 : 12,
+                  fontSize: isIOS ? 11 : 12,
                 ),
           ),
         ],
@@ -241,11 +243,28 @@ class _HomeScreenState extends State<HomeScreen> {
     final platform = Theme.of(context).platform;
     final isIOS = platform == TargetPlatform.iOS;
     final isApple = isIOS || platform == TargetPlatform.macOS;
-    final spacing = isIOS ? 15.0 : 8.0;
-    final runSpacing = isIOS ? 0.0 : 8.0;
+    if (isIOS) {
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final labelStyle =
+              Theme.of(context).textTheme.labelLarge?.copyWith(fontSize: 12) ??
+                  const TextStyle(fontSize: 12);
+          final chips = _buildSingleLineTagWidgets(
+            tags,
+            maxWidth: constraints.maxWidth,
+            labelStyle: labelStyle,
+            spacing: 15,
+          );
+          return SizedBox(
+            height: 34,
+            child: Row(children: _withSpacing(chips, 15)),
+          );
+        },
+      );
+    }
     return Wrap(
-      spacing: spacing,
-      runSpacing: runSpacing,
+      spacing: 8,
+      runSpacing: 8,
       children: [
         ChoiceChip(
           label: const Text('全部'),
@@ -292,6 +311,95 @@ class _HomeScreenState extends State<HomeScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         ),
     ];
+  }
+
+  List<Widget> _buildSingleLineTagWidgets(
+    List<String> tags, {
+    required double maxWidth,
+    required TextStyle labelStyle,
+    required double spacing,
+  }) {
+    final chips = <Widget>[];
+    var usedWidth = 0.0;
+    double chipWidth(String text) {
+      final painter = TextPainter(
+        text: TextSpan(text: text, style: labelStyle),
+        maxLines: 1,
+        textDirection: TextDirection.ltr,
+      )..layout();
+      return painter.width + 34;
+    }
+
+    Widget buildChip(String text, bool selected, VoidCallback onTap) {
+      return ChoiceChip(
+        label: Text(text, overflow: TextOverflow.ellipsis),
+        selected: selected,
+        onSelected: (_) => onTap(),
+        labelStyle: labelStyle,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      );
+    }
+
+    final allWidth = chipWidth('全部');
+    usedWidth += allWidth;
+    chips.add(
+      buildChip('全部', _selectedTag == null, () {
+        setState(() => _selectedTag = null);
+      }),
+    );
+
+    var visible = 0;
+    for (final tag in tags) {
+      final width = chipWidth(tag);
+      if (usedWidth + spacing + width > maxWidth) {
+        break;
+      }
+      usedWidth += spacing + width;
+      visible += 1;
+      chips.add(
+        buildChip(tag, _selectedTag == tag, () {
+          setState(() => _selectedTag = tag);
+        }),
+      );
+    }
+
+    final remaining = tags.length - visible;
+    if (remaining > 0) {
+      final overflowText = '...+$remaining';
+      final overflowWidth = chipWidth(overflowText);
+      while (chips.length > 1 &&
+          usedWidth + spacing + overflowWidth > maxWidth) {
+        final removedTag = tags[visible - 1];
+        usedWidth -= spacing + chipWidth(removedTag);
+        chips.removeLast();
+        visible -= 1;
+      }
+      if (usedWidth + spacing + overflowWidth <= maxWidth) {
+        chips.add(
+          ActionChip(
+            label: Text(overflowText, overflow: TextOverflow.ellipsis),
+            onPressed: () => _showAllTags(tags),
+            labelStyle: labelStyle,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          ),
+        );
+      }
+    }
+    return chips;
+  }
+
+  List<Widget> _withSpacing(List<Widget> items, double spacing) {
+    if (items.isEmpty) {
+      return items;
+    }
+    final spaced = <Widget>[];
+    for (var i = 0; i < items.length; i++) {
+      spaced.add(items[i]);
+      if (i != items.length - 1) {
+        spaced.add(SizedBox(width: spacing));
+      }
+    }
+    return spaced;
   }
 
   Future<void> _showAllTags(List<String> tags) async {
@@ -590,19 +698,25 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      bottomNavigationBar: SafeArea(
-        minimum: EdgeInsets.fromLTRB(
-          16,
-          Theme.of(context).platform == TargetPlatform.iOS ? 4 : 5,
-          16,
-          Theme.of(context).platform == TargetPlatform.iOS ? 5 : 7,
-        ),
-        child: Row(
-          children: [
-            const Spacer(),
-            _buildCreateButton(context),
-          ],
-        ),
+      bottomNavigationBar: Builder(
+        builder: (context) {
+          final platform = Theme.of(context).platform;
+          final isIOS = platform == TargetPlatform.iOS;
+          final mediaPadding = MediaQuery.of(context).padding;
+          final bottomInset = isIOS
+              ? (mediaPadding.bottom * 0.6).clamp(2.0, 10.0)
+              : (mediaPadding.bottom * 0.7).clamp(3.0, 14.0);
+          final topInset = isIOS ? 2.0 : 4.0;
+          return Padding(
+            padding: EdgeInsets.fromLTRB(16, topInset, 16, bottomInset),
+            child: Row(
+              children: [
+                const Spacer(),
+                _buildCreateButton(context),
+              ],
+            ),
+          );
+        },
       ),
       body: AppBackground(
         child: SafeArea(
