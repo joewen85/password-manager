@@ -167,9 +167,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final isMac = platform == TargetPlatform.macOS;
     final label = _mode == _VaultListMode.credentials ? '新建账号' : '新建服务器';
     final padding = isMac
-        ? const EdgeInsets.symmetric(horizontal: 16, vertical: 10)
-        : const EdgeInsets.symmetric(horizontal: 20, vertical: 12);
-    final radius = isMac ? 12.0 : 18.0;
+        ? const EdgeInsets.symmetric(horizontal: 14, vertical: 8)
+        : const EdgeInsets.symmetric(horizontal: 16, vertical: 9);
+    final radius = isMac ? 11.0 : 16.0;
     final isGlass = isIOS || isMac;
     final content = Padding(
       padding: padding,
@@ -186,7 +186,7 @@ class _HomeScreenState extends State<HomeScreen> {
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
                   color: isGlass ? colorScheme.onSurface : colorScheme.onPrimary,
                   fontWeight: FontWeight.w700,
-                  fontSize: isIOS ? 14 : 13,
+                  fontSize: isIOS ? 13 : 12,
                 ),
           ),
         ],
@@ -503,7 +503,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       bottomNavigationBar: SafeArea(
-        minimum: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        minimum: const EdgeInsets.fromLTRB(16, 6, 16, 8),
         child: Row(
           children: [
             const Spacer(),
