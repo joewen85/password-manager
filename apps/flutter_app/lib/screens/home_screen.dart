@@ -167,9 +167,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final isMac = platform == TargetPlatform.macOS;
     final label = _mode == _VaultListMode.credentials ? '新建账号' : '新建服务器';
     final padding = isMac
-        ? const EdgeInsets.symmetric(horizontal: 14, vertical: 8)
-        : const EdgeInsets.symmetric(horizontal: 16, vertical: 9);
-    final radius = isMac ? 11.0 : 16.0;
+        ? const EdgeInsets.symmetric(horizontal: 13, vertical: 7)
+        : const EdgeInsets.symmetric(horizontal: 13, vertical: 7);
+    final radius = isMac ? 10.0 : 14.0;
     final isGlass = isIOS || isMac;
     final content = Padding(
       padding: padding,
@@ -186,7 +186,7 @@ class _HomeScreenState extends State<HomeScreen> {
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
                   color: isGlass ? colorScheme.onSurface : colorScheme.onPrimary,
                   fontWeight: FontWeight.w700,
-                  fontSize: isIOS ? 13 : 12,
+                  fontSize: isIOS ? 12 : 12,
                 ),
           ),
         ],
@@ -238,6 +238,9 @@ class _HomeScreenState extends State<HomeScreen> {
     if (tags.isEmpty) {
       return const SizedBox.shrink();
     }
+    final platform = Theme.of(context).platform;
+    final isApple = platform == TargetPlatform.iOS ||
+        platform == TargetPlatform.macOS;
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -249,17 +252,45 @@ class _HomeScreenState extends State<HomeScreen> {
           labelStyle: const TextStyle(fontSize: 12),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         ),
-        ...tags.map(
-          (tag) => ChoiceChip(
-            label: Text(tag),
-            selected: _selectedTag == tag,
-            onSelected: (_) => setState(() => _selectedTag = tag),
-            labelStyle: const TextStyle(fontSize: 12),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-          ),
-        ),
+        ...isApple
+            ? _buildSingleLineTags(tags)
+            : tags.map(
+                (tag) => ChoiceChip(
+                  label: Text(tag),
+                  selected: _selectedTag == tag,
+                  onSelected: (_) => setState(() => _selectedTag = tag),
+                  labelStyle: const TextStyle(fontSize: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                ),
+              ),
       ],
     );
+  }
+
+  List<Widget> _buildSingleLineTags(List<String> tags) {
+    const maxVisible = 3;
+    final visible = tags.take(maxVisible).toList();
+    final remaining = tags.length - visible.length;
+    return [
+      ...visible.map(
+        (tag) => ChoiceChip(
+          label: Text(tag),
+          selected: _selectedTag == tag,
+          onSelected: (_) => setState(() => _selectedTag = tag),
+          labelStyle: const TextStyle(fontSize: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        ),
+      ),
+      if (remaining > 0)
+        ChoiceChip(
+          label: Text('...+$remaining'),
+          selected: false,
+          onSelected: (_) {},
+          labelStyle: const TextStyle(fontSize: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        ),
+    ];
   }
 
   Widget _infoPill(IconData icon, String label) {
@@ -503,7 +534,12 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       bottomNavigationBar: SafeArea(
-        minimum: const EdgeInsets.fromLTRB(16, 6, 16, 8),
+        minimum: EdgeInsets.fromLTRB(
+          16,
+          Theme.of(context).platform == TargetPlatform.iOS ? 4 : 5,
+          16,
+          Theme.of(context).platform == TargetPlatform.iOS ? 5 : 7,
+        ),
         child: Row(
           children: [
             const Spacer(),
