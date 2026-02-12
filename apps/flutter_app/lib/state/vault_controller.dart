@@ -122,13 +122,8 @@ class VaultController extends ChangeNotifier {
     }
     _masterPassword = masterPassword;
     _isUnlocked = true;
-    await _loadSyncSettings();
-    await _loadMetadata();
-    await reload();
-    if (_syncSettings.autoSyncOnUnlock) {
-      await syncNow();
-    }
     notifyListeners();
+    unawaited(_postUnlockLoad(masterPassword));
     return true;
   }
 
@@ -142,9 +137,18 @@ class VaultController extends ChangeNotifier {
   }
 
   Future<void> reload() async {
+    await reloadWithOptions();
+  }
+
+  Future<void> reloadWithOptions({bool eagerDecrypt = true}) async {
     _ensureUnlocked();
     _items = await _vaultService.listAll();
-    _entryViews = await _buildEntryViews(_items);
+    if (eagerDecrypt) {
+      _entryViews = await _buildEntryViews(_items);
+    } else {
+      _entryViews = _buildSkeletonEntryViews(_items);
+      unawaited(_hydrateEntryViews(_items));
+    }
     notifyListeners();
   }
 
@@ -333,6 +337,49 @@ class VaultController extends ChangeNotifier {
       }
     }
     return views;
+  }
+
+  List<VaultEntryView> _buildSkeletonEntryViews(List<VaultItem> items) {
+    return items
+        .map(
+          (item) => VaultEntryView(
+            item: item,
+            credential: null,
+            server: null,
+            tags: const [],
+          ),
+        )
+        .toList();
+  }
+
+  Future<void> _hydrateEntryViews(List<VaultItem> items) async {
+    if (!_isUnlocked) {
+      return;
+    }
+    final views = await _buildEntryViews(items);
+    if (!_isUnlocked) {
+      return;
+    }
+    _entryViews = views;
+    notifyListeners();
+  }
+
+  Future<void> _postUnlockLoad(String masterPassword) async {
+    await reloadWithOptions(eagerDecrypt: false);
+    if (!_isUnlocked || _masterPassword != masterPassword) {
+      return;
+    }
+    await Future.wait([
+      _loadSyncSettings(),
+      _loadMetadata(),
+    ]);
+    if (!_isUnlocked || _masterPassword != masterPassword) {
+      return;
+    }
+    notifyListeners();
+    if (_syncSettings.autoSyncOnUnlock) {
+      await syncNow();
+    }
   }
 
   Future<void> _ensureTags(List<String> tags) async {
