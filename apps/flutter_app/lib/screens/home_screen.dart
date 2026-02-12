@@ -239,11 +239,13 @@ class _HomeScreenState extends State<HomeScreen> {
       return const SizedBox.shrink();
     }
     final platform = Theme.of(context).platform;
-    final isApple = platform == TargetPlatform.iOS ||
-        platform == TargetPlatform.macOS;
+    final isIOS = platform == TargetPlatform.iOS;
+    final isApple = isIOS || platform == TargetPlatform.macOS;
+    final spacing = isIOS ? 15.0 : 8.0;
+    final runSpacing = isIOS ? 0.0 : 8.0;
     return Wrap(
-      spacing: 8,
-      runSpacing: 8,
+      spacing: spacing,
+      runSpacing: runSpacing,
       children: [
         ChoiceChip(
           label: const Text('全部'),
