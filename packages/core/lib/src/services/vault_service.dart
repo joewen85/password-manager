@@ -36,6 +36,10 @@ class VaultService {
     required String label,
     required String masterPassword,
     required Uint8List nonce,
+    Map<String, int>? version,
+    String? updatedBy,
+    bool isDeleted = false,
+    DateTime? deletedAt,
   }) async {
     final derivedKey = await _keyDerivationService.deriveKey(masterPassword);
     final jsonPayload = jsonEncode(payload.toJson());
@@ -54,6 +58,10 @@ class VaultService {
       kdfIterations: derivedKey.iterations,
       createdAt: now,
       updatedAt: now,
+      version: version ?? const <String, int>{},
+      updatedBy: updatedBy ?? 'legacy',
+      isDeleted: isDeleted,
+      deletedAt: deletedAt,
     );
     await _repository.save(item);
     return item;
@@ -93,6 +101,10 @@ class VaultService {
     required String label,
     required String masterPassword,
     required Uint8List nonce,
+    Map<String, int>? version,
+    String? updatedBy,
+    bool? isDeleted,
+    DateTime? deletedAt,
   }) async {
     return _updateItem(
       item,
@@ -101,6 +113,10 @@ class VaultService {
       payload: payload.toJson(),
       masterPassword: masterPassword,
       nonce: nonce,
+      version: version,
+      updatedBy: updatedBy,
+      isDeleted: isDeleted,
+      deletedAt: deletedAt,
     );
   }
 
@@ -109,6 +125,10 @@ class VaultService {
     required String label,
     required String masterPassword,
     required Uint8List nonce,
+    Map<String, int>? version,
+    String? updatedBy,
+    bool isDeleted = false,
+    DateTime? deletedAt,
   }) async {
     final derivedKey = await _keyDerivationService.deriveKey(masterPassword);
     final jsonPayload = jsonEncode(payload.toJson());
@@ -127,6 +147,10 @@ class VaultService {
       kdfIterations: derivedKey.iterations,
       createdAt: now,
       updatedAt: now,
+      version: version ?? const <String, int>{},
+      updatedBy: updatedBy ?? 'legacy',
+      isDeleted: isDeleted,
+      deletedAt: deletedAt,
     );
     await _repository.save(item);
     return item;
@@ -138,6 +162,10 @@ class VaultService {
     required String label,
     required String masterPassword,
     required Uint8List nonce,
+    Map<String, int>? version,
+    String? updatedBy,
+    bool? isDeleted,
+    DateTime? deletedAt,
   }) async {
     return _updateItem(
       item,
@@ -146,6 +174,10 @@ class VaultService {
       payload: payload.toJson(),
       masterPassword: masterPassword,
       nonce: nonce,
+      version: version,
+      updatedBy: updatedBy,
+      isDeleted: isDeleted,
+      deletedAt: deletedAt,
     );
   }
 
@@ -176,6 +208,10 @@ class VaultService {
     required Map<String, Object?> payload,
     required String masterPassword,
     required Uint8List nonce,
+    Map<String, int>? version,
+    String? updatedBy,
+    bool? isDeleted,
+    DateTime? deletedAt,
   }) async {
     final derivedKey = await _keyDerivationService.deriveKey(masterPassword);
     final jsonPayload = jsonEncode(payload);
@@ -194,6 +230,10 @@ class VaultService {
       kdfIterations: derivedKey.iterations,
       createdAt: item.createdAt,
       updatedAt: now,
+      version: version ?? item.version,
+      updatedBy: updatedBy ?? item.updatedBy,
+      isDeleted: isDeleted ?? item.isDeleted,
+      deletedAt: deletedAt ?? item.deletedAt,
     );
     await _repository.save(updated);
     return updated;

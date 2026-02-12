@@ -12,6 +12,10 @@ class VaultItem {
     required this.kdfIterations,
     required this.createdAt,
     required this.updatedAt,
+    this.version = const <String, int>{},
+    this.updatedBy = 'legacy',
+    this.isDeleted = false,
+    this.deletedAt,
   });
 
   final String id;
@@ -22,4 +26,8 @@ class VaultItem {
   final int kdfIterations;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final Map<String, int> version;
+  final String updatedBy;
+  final bool isDeleted;
+  final DateTime? deletedAt;
 }

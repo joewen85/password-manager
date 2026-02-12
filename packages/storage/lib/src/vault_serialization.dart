@@ -12,6 +12,10 @@ Map<String, Object?> vaultItemToJson(VaultItem item) => {
       'kdfIterations': item.kdfIterations,
       'createdAt': item.createdAt.toIso8601String(),
       'updatedAt': item.updatedAt.toIso8601String(),
+      'version': item.version,
+      'updatedBy': item.updatedBy,
+      'isDeleted': item.isDeleted,
+      'deletedAt': item.deletedAt?.toIso8601String(),
     };
 
 VaultItem vaultItemFromJson(Map<String, Object?> json) {
@@ -23,6 +27,15 @@ VaultItem vaultItemFromJson(Map<String, Object?> json) {
     (entry) => entry.name == typeName,
     orElse: () => VaultEntryType.credential,
   );
+  final rawVersion = json['version'];
+  final version = rawVersion is Map
+      ? rawVersion.map(
+          (key, value) => MapEntry(
+            key.toString(),
+            value is int ? value : int.tryParse('$value') ?? 0,
+          ),
+        )
+      : <String, int>{};
   return VaultItem(
     id: json['id'] as String? ?? '',
     label: json['label'] as String? ?? '',
@@ -34,5 +47,10 @@ VaultItem vaultItemFromJson(Map<String, Object?> json) {
         DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
     updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '')?.toUtc() ??
         DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+    version: version,
+    updatedBy: json['updatedBy'] as String? ?? 'legacy',
+    isDeleted: json['isDeleted'] as bool? ?? false,
+    deletedAt:
+        DateTime.tryParse(json['deletedAt'] as String? ?? '')?.toUtc(),
   );
 }

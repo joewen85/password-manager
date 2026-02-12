@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:password_manager_crypto/password_manager_crypto.dart';
 
@@ -57,6 +58,8 @@ class SyncSettings {
     required this.autoSyncOnUnlock,
     required this.conflictStrategy,
     required this.syncMasterKey,
+    required this.deviceId,
+    required this.lastSyncRevision,
     required this.lastSyncAt,
     required this.lastSyncStatus,
     required this.lastSyncMessage,
@@ -75,13 +78,15 @@ class SyncSettings {
   final bool autoSyncOnUnlock;
   final ConflictStrategy conflictStrategy;
   final bool syncMasterKey;
+  final String deviceId;
+  final int lastSyncRevision;
   final DateTime? lastSyncAt;
   final String? lastSyncStatus;
   final String? lastSyncMessage;
   final List<SyncLogEntry> logs;
 
   factory SyncSettings.defaults() {
-    return const SyncSettings(
+    return SyncSettings(
       providerType: SyncProviderType.none,
       webdavUrl: '',
       webdavUsername: '',
@@ -94,6 +99,8 @@ class SyncSettings {
       autoSyncOnUnlock: true,
       conflictStrategy: ConflictStrategy.remoteWins,
       syncMasterKey: true,
+      deviceId: generateDeviceId(),
+      lastSyncRevision: 0,
       lastSyncAt: null,
       lastSyncStatus: null,
       lastSyncMessage: null,
@@ -114,6 +121,8 @@ class SyncSettings {
     bool? autoSyncOnUnlock,
     ConflictStrategy? conflictStrategy,
     bool? syncMasterKey,
+    String? deviceId,
+    int? lastSyncRevision,
     DateTime? lastSyncAt,
     String? lastSyncStatus,
     String? lastSyncMessage,
@@ -133,6 +142,8 @@ class SyncSettings {
       autoSyncOnUnlock: autoSyncOnUnlock ?? this.autoSyncOnUnlock,
       conflictStrategy: conflictStrategy ?? this.conflictStrategy,
       syncMasterKey: syncMasterKey ?? this.syncMasterKey,
+      deviceId: deviceId ?? this.deviceId,
+      lastSyncRevision: lastSyncRevision ?? this.lastSyncRevision,
       lastSyncAt: lastSyncAt ?? this.lastSyncAt,
       lastSyncStatus: lastSyncStatus ?? this.lastSyncStatus,
       lastSyncMessage: lastSyncMessage ?? this.lastSyncMessage,
@@ -153,6 +164,8 @@ class SyncSettings {
         'autoSyncOnUnlock': autoSyncOnUnlock,
         'conflictStrategy': conflictStrategy.name,
         'syncMasterKey': syncMasterKey,
+        'deviceId': deviceId,
+        'lastSyncRevision': lastSyncRevision,
         'lastSyncAt': lastSyncAt?.toIso8601String(),
         'lastSyncStatus': lastSyncStatus,
         'lastSyncMessage': lastSyncMessage,
@@ -174,6 +187,8 @@ class SyncSettings {
       autoSyncOnUnlock: json['autoSyncOnUnlock'] as bool? ?? true,
       conflictStrategy: _parseConflict(json['conflictStrategy']),
       syncMasterKey: json['syncMasterKey'] as bool? ?? true,
+      deviceId: json['deviceId'] as String? ?? '',
+      lastSyncRevision: json['lastSyncRevision'] as int? ?? 0,
       lastSyncAt:
           DateTime.tryParse(json['lastSyncAt'] as String? ?? '')?.toUtc(),
       lastSyncStatus: json['lastSyncStatus'] as String?,
@@ -201,6 +216,12 @@ class SyncSettings {
       (entry) => entry.name == value,
       orElse: () => ConflictStrategy.remoteWins,
     );
+  }
+
+  static String generateDeviceId() {
+    final random = Random.secure();
+    final part = random.nextInt(1 << 32).toRadixString(16).padLeft(8, '0');
+    return '${DateTime.now().microsecondsSinceEpoch}-$part';
   }
 }
 
