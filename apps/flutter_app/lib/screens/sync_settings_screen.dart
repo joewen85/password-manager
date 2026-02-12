@@ -339,18 +339,25 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
   }
 
   Widget _logsSection(List<SyncLogEntry> logs) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('同步日志', style: TextStyle(fontWeight: FontWeight.w600)),
+        Text(
+          '同步日志',
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            color: colorScheme.onSurface,
+          ),
+        ),
         const SizedBox(height: 8),
         ...logs.map(
           (entry) => Text(
             '[${entry.timestamp.toLocal()}] ${entry.message}',
             style: TextStyle(
               color: entry.level == 'error'
-                  ? Colors.redAccent
-                  : Colors.black54,
+                  ? colorScheme.error
+                  : colorScheme.onSurfaceVariant,
             ),
           ),
         ),
