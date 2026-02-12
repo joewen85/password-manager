@@ -29,6 +29,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _fabKey = GlobalKey();
   _VaultListMode _mode = _VaultListMode.credentials;
   String? _selectedTag;
+  bool _showConflictsOnly = false;
   Size _fabSize = Size.zero;
 
   void _syncFabSize() {
@@ -522,6 +523,20 @@ class _HomeScreenState extends State<HomeScreen> {
                                   setState(() => _mode = value.first);
                                 },
                               ),
+                              const SizedBox(width: 8),
+                              if (widget.controller.hasConflicts)
+                                FilterChip(
+                                  label: const Text('仅冲突'),
+                                  selected: _showConflictsOnly,
+                                  onSelected: (value) {
+                                    setState(() => _showConflictsOnly = value);
+                                  },
+                                  labelStyle: const TextStyle(fontSize: 12),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 2,
+                                  ),
+                                ),
                               const Spacer(),
                               DropdownButtonHideUnderline(
                                 child: DropdownButton<VaultSortOrder>(
@@ -581,18 +596,21 @@ class _HomeScreenState extends State<HomeScreen> {
                       builder: (context, _) {
                         final views = widget.controller.entryViews;
                         final query = _searchController.text.trim().toLowerCase();
-                        final filtered = views.where((view) {
-                          final matchesType =
-                              _mode == _VaultListMode.credentials
-                                  ? view.item.type ==
-                                      VaultEntryType.credential
-                                  : view.item.type == VaultEntryType.server;
-                          if (!matchesType) {
-                            return false;
-                          }
-                          final matchesQuery = query.isEmpty
-                              ? true
-                              : view.item.label
+                          final filtered = views.where((view) {
+                            final matchesType =
+                                _mode == _VaultListMode.credentials
+                                    ? view.item.type ==
+                                        VaultEntryType.credential
+                                    : view.item.type == VaultEntryType.server;
+                            if (!matchesType) {
+                              return false;
+                            }
+                            if (_showConflictsOnly && !view.isConflict) {
+                              return false;
+                            }
+                            final matchesQuery = query.isEmpty
+                                ? true
+                                : view.item.label
                                       .toLowerCase()
                                       .contains(query) ||
                                   view.tags.any(
@@ -644,6 +662,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             return EntryCard(
                               item: item,
                               tags: view.tags,
+                              isConflict: view.isConflict,
                               onView: () {
                                 showDialog<void>(
                                   context: context,
@@ -678,6 +697,7 @@ class EntryCard extends StatelessWidget {
     super.key,
     required this.item,
     required this.tags,
+    required this.isConflict,
     required this.onView,
     required this.onEdit,
     required this.onDelete,
@@ -685,6 +705,7 @@ class EntryCard extends StatelessWidget {
 
   final VaultItem item;
   final List<String> tags;
+  final bool isConflict;
   final VoidCallback onView;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
@@ -738,6 +759,27 @@ class EntryCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (isConflict)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colorScheme.errorContainer,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          '冲突副本',
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelSmall
+                              ?.copyWith(
+                                color: colorScheme.onErrorContainer,
+                              ),
+                        ),
+                      ),
                     Text(
                       item.label,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(

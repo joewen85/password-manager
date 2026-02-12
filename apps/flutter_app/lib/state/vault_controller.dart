@@ -73,6 +73,7 @@ class VaultController extends ChangeNotifier {
   bool get isSyncing => _syncInProgress;
   VaultMetadata get metadata => _metadata;
   List<VaultEntryView> get entryViews => List.unmodifiable(_entryViews);
+  bool get hasConflicts => _items.any((item) => _isConflictItem(item));
 
   String get _deviceId =>
       _syncSettings.deviceId.isEmpty ? 'legacy' : _syncSettings.deviceId;
@@ -372,6 +373,7 @@ class VaultController extends ChangeNotifier {
           credential: null,
           server: payload,
           tags: payload?.tags ?? const [],
+          isConflict: _isConflictItem(item),
         ));
       } else {
         final payload = await readEntry(item);
@@ -380,6 +382,7 @@ class VaultController extends ChangeNotifier {
           credential: payload,
           server: null,
           tags: payload?.tags ?? const [],
+          isConflict: _isConflictItem(item),
         ));
       }
     }
@@ -387,17 +390,18 @@ class VaultController extends ChangeNotifier {
   }
 
   List<VaultEntryView> _buildSkeletonEntryViews(List<VaultItem> items) {
-    return items
-        .where((item) => !item.isDeleted)
-        .map(
-          (item) => VaultEntryView(
-            item: item,
-            credential: null,
-            server: null,
-            tags: const [],
-          ),
-        )
-        .toList();
+      return items
+          .where((item) => !item.isDeleted)
+          .map(
+            (item) => VaultEntryView(
+              item: item,
+              credential: null,
+              server: null,
+              tags: const [],
+              isConflict: _isConflictItem(item),
+            ),
+          )
+          .toList();
   }
 
   Future<void> _hydrateEntryViews(List<VaultItem> items) async {
@@ -941,6 +945,10 @@ class VaultController extends ChangeNotifier {
     await _saveMetadata();
   }
 
+  bool _isConflictItem(VaultItem item) {
+    return item.label.contains('(冲突-') || item.label.contains('冲突');
+  }
+
   Future<void> _softDeleteItem(VaultItem item) async {
     if (item.isDeleted) {
       return;
@@ -993,12 +1001,14 @@ class VaultEntryView {
     required this.credential,
     required this.server,
     required this.tags,
+    required this.isConflict,
   });
 
   final VaultItem item;
   final CredentialPayload? credential;
   final ServerAssetPayload? server;
   final List<String> tags;
+  final bool isConflict;
 }
 
 class _SyncMergeResult {

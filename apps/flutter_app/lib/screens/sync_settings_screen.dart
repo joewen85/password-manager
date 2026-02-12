@@ -207,6 +207,11 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
                     settings.lastSyncAt?.toLocal().toString() ?? '无'),
                 _statusRow('状态', settings.lastSyncStatus ?? '无'),
                 _statusRow('说明', settings.lastSyncMessage ?? '无'),
+                _statusRow(
+                  '设备ID',
+                  settings.deviceId.isEmpty ? '未生成' : settings.deviceId,
+                ),
+                _statusRow('修订号', settings.lastSyncRevision.toString()),
                 const SizedBox(height: 8),
                 if (settings.logs.isNotEmpty)
                   _logsSection(settings.logs),
