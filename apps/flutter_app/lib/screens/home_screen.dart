@@ -10,6 +10,7 @@ import '../utils/export_file.dart';
 import '../widgets/app_background.dart';
 import '../widgets/entry_details_dialog.dart';
 import '../widgets/fade_slide.dart';
+import '../widgets/glass_surface.dart';
 import 'new_entry_sheet.dart';
 import 'sync_settings_screen.dart';
 import 'tag_management_screen.dart';
@@ -169,51 +170,65 @@ class _HomeScreenState extends State<HomeScreen> {
         ? const EdgeInsets.symmetric(horizontal: 16, vertical: 10)
         : const EdgeInsets.symmetric(horizontal: 20, vertical: 12);
     final radius = isMac ? 12.0 : 18.0;
+    final isGlass = isIOS || isMac;
+    final content = Padding(
+      padding: padding,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.add_rounded,
+            color: isGlass ? colorScheme.onSurface : colorScheme.onPrimary,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: isGlass ? colorScheme.onSurface : colorScheme.onPrimary,
+                  fontWeight: FontWeight.w700,
+                  fontSize: isIOS ? 14 : 13,
+                ),
+          ),
+        ],
+      ),
+    );
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: _openCreateSheet,
         borderRadius: BorderRadius.circular(radius),
-        child: Ink(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                colorScheme.primary,
-                colorScheme.secondary,
-              ],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(radius),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(
-                  Theme.of(context).brightness == Brightness.dark ? 0.4 : 0.15,
-                ),
-                blurRadius: 18,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: Padding(
-            padding: padding,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.add_rounded, color: colorScheme.onPrimary),
-                const SizedBox(width: 8),
-                Text(
-                  label,
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        color: colorScheme.onPrimary,
-                        fontWeight: FontWeight.w700,
-                        fontSize: isIOS ? 14 : 13,
+        child: isGlass
+            ? GlassSurface(
+                borderRadius: radius,
+                padding: EdgeInsets.zero,
+                tint: colorScheme.primary.withOpacity(0.22),
+                child: content,
+              )
+            : Ink(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      colorScheme.primary,
+                      colorScheme.secondary,
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(radius),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(
+                        Theme.of(context).brightness == Brightness.dark
+                            ? 0.4
+                            : 0.15,
                       ),
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-        ),
+                child: content,
+              ),
       ),
     );
   }
@@ -273,24 +288,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _sectionCard({required Widget child}) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
+    return GlassSurface(
+      borderRadius: 20,
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: colorScheme.surface.withOpacity(isDark ? 0.92 : 0.96),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withOpacity(isDark ? 0.7 : 0.6),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
-            blurRadius: 16,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
       child: child,
     );
   }
@@ -751,27 +751,14 @@ class EntryCard extends StatelessWidget {
         : colorScheme.secondary;
     final visibleTags = tags.take(3).toList();
     final remaining = tags.length - visibleTags.length;
-    return Material(
-      color: colorScheme.surface,
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(20),
-        onTap: onView,
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: colorScheme.outlineVariant),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(
-                  Theme.of(context).brightness == Brightness.dark ? 0.3 : 0.04,
-                ),
-                blurRadius: 12,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
+    return GlassSurface(
+      borderRadius: 20,
+      padding: const EdgeInsets.all(16),
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: onView,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
