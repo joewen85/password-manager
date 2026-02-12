@@ -8,13 +8,16 @@ class AppBackground extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Stack(
       children: [
-        const Positioned.fill(
+        Positioned.fill(
           child: DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: [Color(0xFFF4F6F0), Color(0xFFE7EEF1)],
+                colors: isDark
+                    ? const [Color(0xFF0E1416), Color(0xFF111B1E)]
+                    : const [Color(0xFFF4F6F0), Color(0xFFE7EEF1)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
@@ -28,7 +31,9 @@ class AppBackground extends StatelessWidget {
                 top: -80,
                 right: -60,
                 child: _GlowBlob(
-                  color: Color(0xFF1B7F6E),
+                  color: isDark
+                      ? colorScheme.primary.withOpacity(0.8)
+                      : const Color(0xFF1B7F6E),
                   size: 220,
                 ),
               ),
@@ -36,7 +41,9 @@ class AppBackground extends StatelessWidget {
                 bottom: -120,
                 left: -40,
                 child: _GlowBlob(
-                  color: Color(0xFF0F4C5C),
+                  color: isDark
+                      ? colorScheme.secondary.withOpacity(0.6)
+                      : const Color(0xFF0F4C5C),
                   size: 260,
                 ),
               ),
@@ -44,7 +51,7 @@ class AppBackground extends StatelessWidget {
                 top: 220,
                 left: -30,
                 child: _GlowBlob(
-                  color: colorScheme.tertiary.withOpacity(0.35),
+                  color: colorScheme.tertiary.withOpacity(isDark ? 0.2 : 0.35),
                   size: 160,
                 ),
               ),

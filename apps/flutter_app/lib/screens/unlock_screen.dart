@@ -42,12 +42,24 @@ class _UnlockScreenState extends State<UnlockScreen> {
                 child: Container(
                   padding: const EdgeInsets.all(24),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.96),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .surface
+                        .withOpacity(0.96),
                     borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: Colors.white.withOpacity(0.6)),
+                    border: Border.all(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .outlineVariant
+                          .withOpacity(0.7),
+                    ),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.08),
+                        color: Colors.black.withOpacity(
+                          Theme.of(context).brightness == Brightness.dark
+                              ? 0.35
+                              : 0.08,
+                        ),
                         blurRadius: 24,
                         offset: const Offset(0, 12),
                       ),

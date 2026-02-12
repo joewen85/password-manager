@@ -82,27 +82,37 @@ class PasswordManagerApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final baseScheme = ColorScheme.fromSeed(
-      seedColor: const Color(0xFF0F4C5C),
-      brightness: Brightness.light,
-    );
-    final colorScheme = baseScheme.copyWith(
-      primary: const Color(0xFF0F4C5C),
-      secondary: const Color(0xFF2F7F79),
-      tertiary: const Color(0xFFF2B880),
-      surface: const Color(0xFFFDFBF6),
-      surfaceVariant: const Color(0xFFF0F2F0),
-      background: const Color(0xFFF4F6F0),
-      outline: const Color(0xFFC6D1D5),
-      outlineVariant: const Color(0xFFE1E6E8),
-    );
-    final textTheme = GoogleFonts.notoSansScTextTheme().apply(
-      bodyColor: colorScheme.onSurface,
-      displayColor: colorScheme.onSurface,
-    );
-    return MaterialApp(
-      title: '密码管理器',
-      theme: ThemeData(
+    ThemeData buildTheme(Brightness brightness) {
+      final baseScheme = ColorScheme.fromSeed(
+        seedColor: const Color(0xFF0F4C5C),
+        brightness: brightness,
+      );
+      final colorScheme = brightness == Brightness.light
+          ? baseScheme.copyWith(
+              primary: const Color(0xFF0F4C5C),
+              secondary: const Color(0xFF2F7F79),
+              tertiary: const Color(0xFFF2B880),
+              surface: const Color(0xFFFDFBF6),
+              surfaceVariant: const Color(0xFFF0F2F0),
+              background: const Color(0xFFF4F6F0),
+              outline: const Color(0xFFC6D1D5),
+              outlineVariant: const Color(0xFFE1E6E8),
+            )
+          : baseScheme.copyWith(
+              primary: const Color(0xFF73D6C7),
+              secondary: const Color(0xFF4DB2A1),
+              tertiary: const Color(0xFFF2B880),
+              surface: const Color(0xFF141A1D),
+              surfaceVariant: const Color(0xFF1F2528),
+              background: const Color(0xFF0E1416),
+              outline: const Color(0xFF394246),
+              outlineVariant: const Color(0xFF2B3438),
+            );
+      final textTheme = GoogleFonts.notoSansScTextTheme().apply(
+        bodyColor: colorScheme.onSurface,
+        displayColor: colorScheme.onSurface,
+      );
+      return ThemeData(
         colorScheme: colorScheme,
         useMaterial3: true,
         scaffoldBackgroundColor: colorScheme.background,
@@ -128,7 +138,7 @@ class PasswordManagerApp extends StatelessWidget {
           iconTheme: IconThemeData(color: colorScheme.onSurface),
         ),
         cardTheme: CardThemeData(
-          color: Colors.white,
+          color: colorScheme.surface,
           elevation: 0,
           margin: EdgeInsets.zero,
           shape: RoundedRectangleBorder(
@@ -137,7 +147,7 @@ class PasswordManagerApp extends StatelessWidget {
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: const Color(0xFFF8F7F4),
+          fillColor: colorScheme.surfaceVariant,
           contentPadding: const EdgeInsets.symmetric(
             horizontal: 16,
             vertical: 14,
@@ -174,7 +184,7 @@ class PasswordManagerApp extends StatelessWidget {
           ),
         ),
         chipTheme: ChipThemeData(
-          backgroundColor: const Color(0xFFF0F2F0),
+          backgroundColor: colorScheme.surfaceVariant,
           selectedColor: colorScheme.primaryContainer,
           labelStyle: textTheme.labelLarge,
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -185,7 +195,7 @@ class PasswordManagerApp extends StatelessWidget {
         ),
         floatingActionButtonTheme: FloatingActionButtonThemeData(
           backgroundColor: colorScheme.primary,
-          foregroundColor: Colors.white,
+          foregroundColor: colorScheme.onPrimary,
           elevation: 4,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
@@ -204,7 +214,7 @@ class PasswordManagerApp extends StatelessWidget {
             backgroundColor: WidgetStateProperty.resolveWith(
               (states) => states.contains(WidgetState.selected)
                   ? colorScheme.primaryContainer
-                  : Colors.white,
+                  : colorScheme.surface,
             ),
             foregroundColor: WidgetStateProperty.resolveWith(
               (states) => states.contains(WidgetState.selected)
@@ -216,7 +226,13 @@ class PasswordManagerApp extends StatelessWidget {
             ),
           ),
         ),
-      ),
+      );
+    }
+    return MaterialApp(
+      title: '密码管理器',
+      theme: buildTheme(Brightness.light),
+      darkTheme: buildTheme(Brightness.dark),
+      themeMode: ThemeMode.system,
       home: VaultShell(controller: controller),
     );
   }

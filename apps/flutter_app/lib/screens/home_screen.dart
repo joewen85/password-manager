@@ -179,12 +179,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _infoPill(IconData icon, String label) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.16),
+        color: (isDark ? Colors.black : Colors.white).withOpacity(0.18),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white.withOpacity(0.3)),
+        border: Border.all(
+          color: (isDark ? Colors.white : Colors.white).withOpacity(0.3),
+        ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -201,15 +204,19 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _sectionCard({required Widget child}) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.92),
+        color: colorScheme.surface.withOpacity(isDark ? 0.92 : 0.96),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.5)),
+        border: Border.all(
+          color: colorScheme.outlineVariant.withOpacity(isDark ? 0.7 : 0.6),
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
             blurRadius: 16,
             offset: const Offset(0, 8),
           ),
@@ -220,18 +227,21 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _heroCard(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF0F4C5C), Color(0xFF1B7F6E)],
+        gradient: LinearGradient(
+          colors: isDark
+              ? const [Color(0xFF11343C), Color(0xFF0B2C31)]
+              : const [Color(0xFF0F4C5C), Color(0xFF1B7F6E)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.12),
+            color: Colors.black.withOpacity(isDark ? 0.4 : 0.12),
             blurRadius: 20,
             offset: const Offset(0, 10),
           ),
@@ -691,7 +701,7 @@ class EntryCard extends StatelessWidget {
     final visibleTags = tags.take(3).toList();
     final remaining = tags.length - visibleTags.length;
     return Material(
-      color: Colors.white,
+      color: colorScheme.surface,
       borderRadius: BorderRadius.circular(20),
       child: InkWell(
         borderRadius: BorderRadius.circular(20),
@@ -703,7 +713,9 @@ class EntryCard extends StatelessWidget {
             border: Border.all(color: colorScheme.outlineVariant),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.04),
+                color: Colors.black.withOpacity(
+                  Theme.of(context).brightness == Brightness.dark ? 0.3 : 0.04,
+                ),
                 blurRadius: 12,
                 offset: const Offset(0, 8),
               ),
