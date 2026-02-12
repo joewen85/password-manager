@@ -26,28 +26,9 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _searchController = TextEditingController();
-  final _fabKey = GlobalKey();
   _VaultListMode _mode = _VaultListMode.credentials;
   String? _selectedTag;
   bool _showConflictsOnly = false;
-  Size _fabSize = Size.zero;
-
-  void _syncFabSize() {
-    final context = _fabKey.currentContext;
-    if (context == null) {
-      return;
-    }
-    final renderBox = context.findRenderObject() as RenderBox?;
-    final size = renderBox?.size ?? Size.zero;
-    if (!mounted) {
-      return;
-    }
-    if (size.height > 0 &&
-        ((size.height - _fabSize.height).abs() > 0.5 ||
-            (size.width - _fabSize.width).abs() > 0.5)) {
-      setState(() => _fabSize = size);
-    }
-  }
 
   @override
   void dispose() {
@@ -148,6 +129,93 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     }
+  }
+
+  Future<void> _openCreateSheet() async {
+    if (_mode == _VaultListMode.credentials) {
+      final data = await showModalBottomSheet<NewEntryData>(
+        context: context,
+        isScrollControlled: true,
+        builder: (context) => const NewEntrySheet(),
+      );
+      if (data != null) {
+        await widget.controller.addEntry(
+          label: data.label,
+          payload: data.payload,
+        );
+      }
+      return;
+    }
+    final data = await showModalBottomSheet<NewServerSheetResult>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => const NewServerSheet(),
+    );
+    if (data != null) {
+      await widget.controller.addServerAsset(
+        label: data.label,
+        payload: data.payload,
+      );
+    }
+  }
+
+  Widget _buildCreateButton(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final platform = Theme.of(context).platform;
+    final isIOS = platform == TargetPlatform.iOS;
+    final isMac = platform == TargetPlatform.macOS;
+    final label = _mode == _VaultListMode.credentials ? '新建账号' : '新建服务器';
+    final padding = isMac
+        ? const EdgeInsets.symmetric(horizontal: 16, vertical: 10)
+        : const EdgeInsets.symmetric(horizontal: 20, vertical: 12);
+    final radius = isMac ? 12.0 : 18.0;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _openCreateSheet,
+        borderRadius: BorderRadius.circular(radius),
+        child: Ink(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                colorScheme.primary,
+                colorScheme.secondary,
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(radius),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(
+                  Theme.of(context).brightness == Brightness.dark ? 0.4 : 0.15,
+                ),
+                blurRadius: 18,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: padding,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.add_rounded, color: colorScheme.onPrimary),
+                const SizedBox(width: 8),
+                Text(
+                  label,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: colorScheme.onPrimary,
+                        fontWeight: FontWeight.w700,
+                        fontSize: isIOS ? 14 : 13,
+                      ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _tagFilterRow() {
@@ -300,7 +368,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    WidgetsBinding.instance.addPostFrameCallback((_) => _syncFabSize());
     return Scaffold(
       appBar: AppBar(
         title: const Text('密码库'),
@@ -435,37 +502,14 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        key: _fabKey,
-        onPressed: () async {
-          if (_mode == _VaultListMode.credentials) {
-            final data = await showModalBottomSheet<NewEntryData>(
-              context: context,
-              isScrollControlled: true,
-              builder: (context) => const NewEntrySheet(),
-            );
-            if (data != null) {
-              await widget.controller.addEntry(
-                label: data.label,
-                payload: data.payload,
-              );
-            }
-          } else {
-            final data = await showModalBottomSheet<NewServerSheetResult>(
-              context: context,
-              isScrollControlled: true,
-              builder: (context) => const NewServerSheet(),
-            );
-            if (data != null) {
-              await widget.controller.addServerAsset(
-                label: data.label,
-                payload: data.payload,
-              );
-            }
-          }
-        },
-        icon: const Icon(Icons.add),
-        label: Text(_mode == _VaultListMode.credentials ? '新建账号' : '新建服务器'),
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: Row(
+          children: [
+            const Spacer(),
+            _buildCreateButton(context),
+          ],
+        ),
       ),
       body: AppBackground(
         child: SafeArea(
@@ -635,23 +679,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           );
                         }
-                        final mediaPadding = MediaQuery.of(context).padding;
-                        final fabHeight =
-                            _fabSize.height > 0 ? _fabSize.height : 56.0;
-                        final fabWidth =
-                            _fabSize.width > 0 ? _fabSize.width : 120.0;
-                        final bottomPadding = mediaPadding.bottom +
-                            fabHeight +
-                            kFloatingActionButtonMargin +
-                            8;
-                        final rightPadding = mediaPadding.right +
-                            fabWidth +
-                            kFloatingActionButtonMargin +
-                            8;
                         return ListView.separated(
                           padding: EdgeInsets.only(
-                            bottom: bottomPadding,
-                            right: rightPadding,
+                            bottom: MediaQuery.of(context).padding.bottom + 12,
                           ),
                           itemCount: sorted.length,
                           separatorBuilder: (_, __) =>
