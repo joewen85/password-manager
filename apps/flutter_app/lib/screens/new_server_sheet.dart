@@ -194,11 +194,6 @@ class _NewServerSheetState extends State<NewServerSheet> {
         decoration: InputDecoration(
           labelText: label,
           hintText: hint,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          filled: true,
-          fillColor: Colors.white,
         ),
         validator: requiredField
             ? (value) => (value == null || value.trim().isEmpty)
