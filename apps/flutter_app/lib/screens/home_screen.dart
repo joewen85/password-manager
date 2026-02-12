@@ -283,14 +283,69 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
       if (remaining > 0)
-        ChoiceChip(
+        ActionChip(
           label: Text('...+$remaining'),
-          selected: false,
-          onSelected: (_) {},
+          onPressed: () => _showAllTags(tags),
           labelStyle: const TextStyle(fontSize: 12),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         ),
     ];
+  }
+
+  Future<void> _showAllTags(List<String> tags) async {
+    if (!mounted) {
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.outlineVariant,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              '全部分类标签',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 12),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: tags.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final tag = tags[index];
+                  final selected = _selectedTag == tag;
+                  return ListTile(
+                    title: Text(tag),
+                    trailing: selected
+                        ? Icon(
+                            Icons.check_rounded,
+                            color: Theme.of(context).colorScheme.primary,
+                          )
+                        : null,
+                    onTap: () {
+                      setState(() => _selectedTag = tag);
+                      Navigator.of(context).pop();
+                    },
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _infoPill(IconData icon, String label) {
