@@ -249,15 +249,21 @@ class _HomeScreenState extends State<HomeScreen> {
           final labelStyle =
               Theme.of(context).textTheme.labelLarge?.copyWith(fontSize: 12) ??
                   const TextStyle(fontSize: 12);
+          final availableWidth = constraints.maxWidth - 4;
           final chips = _buildSingleLineTagWidgets(
             tags,
-            maxWidth: constraints.maxWidth,
+            maxWidth: availableWidth,
             labelStyle: labelStyle,
             spacing: 15,
           );
           return SizedBox(
-            height: 34,
-            child: Row(children: _withSpacing(chips, 15)),
+            height: 32,
+            child: ClipRect(
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Row(children: _withSpacing(chips, 15)),
+              ),
+            ),
           );
         },
       );
@@ -327,7 +333,7 @@ class _HomeScreenState extends State<HomeScreen> {
         maxLines: 1,
         textDirection: TextDirection.ltr,
       )..layout();
-      return painter.width + 34;
+      return painter.width + 48;
     }
 
     Widget buildChip(String text, bool selected, VoidCallback onTap) {
@@ -337,6 +343,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onSelected: (_) => onTap(),
         labelStyle: labelStyle,
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        visualDensity: VisualDensity.compact,
       );
     }
 
@@ -381,6 +388,7 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () => _showAllTags(tags),
             labelStyle: labelStyle,
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            visualDensity: VisualDensity.compact,
           ),
         );
       }
@@ -704,16 +712,15 @@ class _HomeScreenState extends State<HomeScreen> {
           final isIOS = platform == TargetPlatform.iOS;
           final mediaPadding = MediaQuery.of(context).padding;
           final bottomInset = isIOS
-              ? (mediaPadding.bottom * 0.6).clamp(2.0, 10.0)
+              ? (mediaPadding.bottom * 0.5).clamp(2.0, 8.0)
               : (mediaPadding.bottom * 0.7).clamp(3.0, 14.0);
           final topInset = isIOS ? 2.0 : 4.0;
+          final rightInset = isIOS ? 8.0 : 16.0;
           return Padding(
-            padding: EdgeInsets.fromLTRB(16, topInset, 16, bottomInset),
-            child: Row(
-              children: [
-                const Spacer(),
-                _buildCreateButton(context),
-              ],
+            padding: EdgeInsets.fromLTRB(16, topInset, rightInset, bottomInset),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: _buildCreateButton(context),
             ),
           );
         },
