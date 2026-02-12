@@ -13,6 +13,7 @@ import 'package:password_manager_storage/password_manager_storage.dart';
 import '../storage/sync_settings_store.dart';
 import '../storage/vault_metadata_store.dart';
 import '../sync/remote_sync_client.dart';
+import '../sync/vault_sync_merger.dart';
 import 'sync_settings.dart';
 import 'vault_metadata.dart';
 
@@ -72,6 +73,9 @@ class VaultController extends ChangeNotifier {
   bool get isSyncing => _syncInProgress;
   VaultMetadata get metadata => _metadata;
   List<VaultEntryView> get entryViews => List.unmodifiable(_entryViews);
+
+  String get _deviceId =>
+      _syncSettings.deviceId.isEmpty ? 'legacy' : _syncSettings.deviceId;
 
   Future<void> initialize() async {
     _masterKeyRecord = await _masterKeyStore.read();
@@ -158,11 +162,14 @@ class VaultController extends ChangeNotifier {
   }) async {
     _ensureUnlocked();
     await _ensureTags(payload.tags);
+    final version = _bumpVersion(const <String, int>{});
     final item = await _vaultService.addCredential(
       payload,
       label: label,
       masterPassword: _masterPassword!,
       nonce: _generateNonce(),
+      version: version,
+      updatedBy: _deviceId,
     );
     await reload();
     return item;
@@ -175,12 +182,17 @@ class VaultController extends ChangeNotifier {
   }) async {
     _ensureUnlocked();
     await _ensureTags(payload.tags);
+    final version = _bumpVersion(item.version);
     final updated = await _vaultService.updateCredential(
       item,
       payload,
       label: label,
       masterPassword: _masterPassword!,
       nonce: _generateNonce(),
+      version: version,
+      updatedBy: _deviceId,
+      isDeleted: false,
+      deletedAt: null,
     );
     await reload();
     return updated;
@@ -200,11 +212,14 @@ class VaultController extends ChangeNotifier {
   }) async {
     _ensureUnlocked();
     await _ensureTags(payload.tags);
+    final version = _bumpVersion(const <String, int>{});
     final item = await _vaultService.addServerAsset(
       payload,
       label: label,
       masterPassword: _masterPassword!,
       nonce: _generateNonce(),
+      version: version,
+      updatedBy: _deviceId,
     );
     await reload();
     return item;
@@ -217,12 +232,17 @@ class VaultController extends ChangeNotifier {
   }) async {
     _ensureUnlocked();
     await _ensureTags(payload.tags);
+    final version = _bumpVersion(item.version);
     final updated = await _vaultService.updateServerAsset(
       item,
       payload,
       label: label,
       masterPassword: _masterPassword!,
       nonce: _generateNonce(),
+      version: version,
+      updatedBy: _deviceId,
+      isDeleted: false,
+      deletedAt: null,
     );
     await reload();
     return updated;
@@ -238,7 +258,11 @@ class VaultController extends ChangeNotifier {
 
   Future<void> deleteEntry(String id) async {
     _ensureUnlocked();
-    await _vaultService.delete(id);
+    final item = await _vaultService.getById(id);
+    if (item == null) {
+      return;
+    }
+    await _softDeleteItem(item);
     await reload();
   }
 
@@ -263,22 +287,42 @@ class VaultController extends ChangeNotifier {
         await _recordSyncStatus('error', '同步配置不完整');
         return;
       }
-      final localPayload = await _buildSyncPayload();
-      final remoteResult = await client.download();
-      final mergedPayload = await _mergeWithRemote(
-        localPayload: localPayload,
-        remotePayload: remoteResult.payload,
-      );
-      await _applySyncPayload(mergedPayload);
-      final uploadResult = await client.upload(mergedPayload);
-      if (uploadResult.statusCode >= 200 &&
-          uploadResult.statusCode < 300) {
-        await _recordSyncStatus('success', '同步完成');
-      } else {
-        await _recordSyncStatus(
-          'error',
-          '上传失败(${uploadResult.statusCode})',
+      const maxAttempts = 3;
+      _SyncMergeResult? mergeResult;
+      for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+        final localPayload = await _buildSyncPayload();
+        final remoteResult = await client.download();
+        mergeResult = await _mergeWithRemote(
+          localPayload: localPayload,
+          remotePayload: remoteResult.payload,
         );
+        await _applySyncPayload(mergeResult.payload);
+        final uploadResult = await client.upload(mergeResult.payload);
+        if (uploadResult.statusCode < 200 ||
+            uploadResult.statusCode >= 300) {
+          await _recordSyncStatus(
+            'error',
+            '上传失败(${uploadResult.statusCode})',
+          );
+          return;
+        }
+        final verify = await client.download();
+        final verifyRevision = _decodePayload(verify.payload ?? '').revision;
+        if (verifyRevision == mergeResult.revision) {
+          await _updateSyncRevision(mergeResult.revision);
+          await _recordSyncStatus(
+            'success',
+            '同步完成：合并${mergeResult.stats.total}项，冲突${mergeResult.stats.conflicts}项，删除${mergeResult.stats.deletes}项，修订${mergeResult.revision}',
+          );
+          return;
+        }
+        if (attempt == maxAttempts) {
+          await _recordSyncStatus(
+            'error',
+            '同步冲突：远端在上传后发生变化，请重试',
+          );
+          return;
+        }
       }
     } catch (error) {
       final message = error.toString().contains('Failed to fetch')
@@ -308,7 +352,7 @@ class VaultController extends ChangeNotifier {
     _ensureUnlocked();
     final items = await _vaultService.listAll();
     for (final item in items) {
-      await _vaultService.delete(item.id);
+      await _softDeleteItem(item);
     }
     await reload();
   }
@@ -318,6 +362,9 @@ class VaultController extends ChangeNotifier {
   ) async {
     final views = <VaultEntryView>[];
     for (final item in items) {
+      if (item.isDeleted) {
+        continue;
+      }
       if (item.type == VaultEntryType.server) {
         final payload = await readServerAsset(item);
         views.add(VaultEntryView(
@@ -341,6 +388,7 @@ class VaultController extends ChangeNotifier {
 
   List<VaultEntryView> _buildSkeletonEntryViews(List<VaultItem> items) {
     return items
+        .where((item) => !item.isDeleted)
         .map(
           (item) => VaultEntryView(
             item: item,
@@ -395,6 +443,9 @@ class VaultController extends ChangeNotifier {
   Future<void> _removeTagFromEntries(String tag) async {
     final items = await _vaultService.listAll();
     for (final item in items) {
+      if (item.isDeleted) {
+        continue;
+      }
       if (item.type == VaultEntryType.server) {
         final payload = await readServerAsset(item);
         if (payload == null || !payload.tags.contains(tag)) {
@@ -447,6 +498,9 @@ class VaultController extends ChangeNotifier {
   Future<void> _replaceTagInEntries(String oldTag, String newTag) async {
     final items = await _vaultService.listAll();
     for (final item in items) {
+      if (item.isDeleted) {
+        continue;
+      }
       if (item.type == VaultEntryType.server) {
         final payload = await readServerAsset(item);
         if (payload == null || !payload.tags.contains(oldTag)) {
@@ -570,6 +624,12 @@ class VaultController extends ChangeNotifier {
   Future<void> _loadSyncSettings() async {
     final record = await _syncSettingsStore.read();
     if (record == null) {
+      if (_syncSettings.deviceId.isEmpty) {
+        _syncSettings = _syncSettings.copyWith(
+          deviceId: SyncSettings.generateDeviceId(),
+        );
+        await _saveSyncSettings();
+      }
       _configureAutoSync();
       return;
     }
@@ -588,6 +648,12 @@ class VaultController extends ChangeNotifier {
         _syncSettings = SyncSettings.fromJson(
           Map<String, Object?>.from(decoded),
         );
+        if (_syncSettings.deviceId.isEmpty) {
+          _syncSettings = _syncSettings.copyWith(
+            deviceId: SyncSettings.generateDeviceId(),
+          );
+          await _saveSyncSettings();
+        }
       }
     } catch (_) {}
     _configureAutoSync();
@@ -693,8 +759,10 @@ class VaultController extends ChangeNotifier {
     final items = await _vaultService.listAll();
     final record = await _masterKeyStore.read();
     final payload = {
-      'version': 1,
+      'version': 2,
       'exportedAt': DateTime.now().toUtc().toIso8601String(),
+      'deviceId': _deviceId,
+      'revision': _syncSettings.lastSyncRevision,
       'masterKey': _syncSettings.syncMasterKey ? record?.toJson() : null,
       'metadata': {'tags': _metadata.tags},
       'items': items.map(vaultItemToJson).toList(),
@@ -702,43 +770,67 @@ class VaultController extends ChangeNotifier {
     return jsonEncode(payload);
   }
 
-  Future<String> _mergeWithRemote({
+  Future<_SyncMergeResult> _mergeWithRemote({
     required String localPayload,
     required String? remotePayload,
   }) async {
     if (remotePayload == null || remotePayload.trim().isEmpty) {
-      return localPayload;
+      final decoded = _decodePayload(localPayload);
+      final deleteCount =
+          decoded.items.where((item) => item.isDeleted).length;
+      return _SyncMergeResult(
+        payload: localPayload,
+        stats: MergeStats(
+          total: decoded.items.length,
+          conflicts: 0,
+          deletes: deleteCount,
+        ),
+        revision: decoded.revision,
+      );
     }
     final local = _decodePayload(localPayload);
     final remote = _decodePayload(remotePayload);
-    final mergedItems = _mergeItems(
+    final merger = VaultSyncMerger(
+      idGenerator: _generateId,
+      conflictStrategy: _syncSettings.conflictStrategy,
+      conflictLabelBuilder: (item, isRemote) {
+        final source = isRemote ? '远端' : '本地';
+        final who = item.updatedBy.isEmpty ? 'unknown' : item.updatedBy;
+        final shortId =
+            who.length > 6 ? who.substring(who.length - 6) : who;
+        final time = item.updatedAt.toLocal().toIso8601String();
+        return '(冲突-$source-$shortId-$time)';
+      },
+    );
+    final mergeResult = merger.merge(
       localItems: local.items,
       remoteItems: remote.items,
-      strategy: _syncSettings.conflictStrategy,
     );
     final mergedTags = {...local.tags, ...remote.tags}.toList()..sort();
+    final mergedRevision =
+        (local.revision > remote.revision ? local.revision : remote.revision) +
+            1;
     final mergedPayload = {
-      'version': 1,
+      'version': 2,
       'exportedAt': DateTime.now().toUtc().toIso8601String(),
+      'deviceId': _deviceId,
+      'revision': mergedRevision,
       'masterKey': _syncSettings.syncMasterKey
           ? (remote.masterKey ?? local.masterKey)
           : null,
       'metadata': {'tags': mergedTags},
-      'items': mergedItems.map(vaultItemToJson).toList(),
+      'items': mergeResult.items.map(vaultItemToJson).toList(),
     };
-    return jsonEncode(mergedPayload);
+    return _SyncMergeResult(
+      payload: jsonEncode(mergedPayload),
+      stats: mergeResult.stats,
+      revision: mergedRevision,
+    );
   }
 
   Future<void> _applySyncPayload(String payload) async {
     final decoded = _decodePayload(payload);
     final merged = decoded.items;
-    final existing = await _vaultService.listAll();
-    final incomingIds = merged.map((entry) => entry.id).toSet();
-    for (final item in existing) {
-      if (!incomingIds.contains(item.id)) {
-        await _vaultService.delete(item.id);
-      }
-    }
     for (final item in merged) {
       await _vaultService.saveItem(item);
     }
@@ -766,15 +858,40 @@ class VaultController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _updateSyncRevision(int revision) async {
+    if (revision == _syncSettings.lastSyncRevision) {
+      return;
+    }
+    _syncSettings = _syncSettings.copyWith(lastSyncRevision: revision);
+    await _saveSyncSettings();
+  }
+
   _DecodedPayload _decodePayload(String payload) {
+    if (payload.trim().isEmpty) {
+      return const _DecodedPayload(
+        items: [],
+        masterKey: null,
+        tags: [],
+        revision: 0,
+        deviceId: '',
+      );
+    }
     final decoded = jsonDecode(payload);
     if (decoded is! Map) {
-      return const _DecodedPayload(items: [], masterKey: null, tags: []);
+      return const _DecodedPayload(
+        items: [],
+        masterKey: null,
+        tags: [],
+        revision: 0,
+        deviceId: '',
+      );
     }
     final masterKey = decoded['masterKey'] as Map?;
     final metadata = decoded['metadata'] as Map?;
     final tags =
         (metadata?['tags'] as List?)?.whereType<String>().toList() ?? [];
+    final revision = decoded['revision'] as int? ?? 0;
+    final deviceId = decoded['deviceId'] as String? ?? '';
     final items = (decoded['items'] as List? ?? [])
         .whereType<Map>()
         .map((entry) => vaultItemFromJson(Map<String, Object?>.from(entry)))
@@ -785,6 +902,8 @@ class VaultController extends ChangeNotifier {
           ? Map<String, Object?>.from(masterKey)
           : null,
       tags: tags,
+      revision: revision,
+      deviceId: deviceId,
     );
   }
 
@@ -794,6 +913,9 @@ class VaultController extends ChangeNotifier {
   }) async {
     final tagSet = <String>{..._metadata.tags, ...extraTags};
     for (final item in items) {
+      if (item.isDeleted) {
+        continue;
+      }
       if (item.type == VaultEntryType.server) {
         final payload = await readServerAsset(item);
         if (payload != null) {
@@ -819,59 +941,38 @@ class VaultController extends ChangeNotifier {
     await _saveMetadata();
   }
 
-  List<VaultItem> _mergeItems({
-    required List<VaultItem> localItems,
-    required List<VaultItem> remoteItems,
-    required ConflictStrategy strategy,
-  }) {
-    final localMap = {for (final item in localItems) item.id: item};
-    final remoteMap = {for (final item in remoteItems) item.id: item};
-    final allIds = {...localMap.keys, ...remoteMap.keys};
-    final result = <VaultItem>[];
-    for (final id in allIds) {
-      final local = localMap[id];
-      final remote = remoteMap[id];
-      if (local == null) {
-        result.add(remote!);
-        continue;
-      }
-      if (remote == null) {
-        result.add(local);
-        continue;
-      }
-      if (local.updatedAt.isAtSameMomentAs(remote.updatedAt)) {
-        result.add(local);
-        continue;
-      }
-      switch (strategy) {
-        case ConflictStrategy.remoteWins:
-          result.add(remote);
-          break;
-        case ConflictStrategy.localWins:
-          result.add(local);
-          break;
-        case ConflictStrategy.keepBoth:
-          result.add(local);
-          final cloned = VaultItem(
-            id: _generateId(),
-            label: '${remote.label} (冲突-远端)',
-            type: remote.type,
-            encryptedPayload: remote.encryptedPayload,
-            kdfSalt: remote.kdfSalt,
-            kdfIterations: remote.kdfIterations,
-            createdAt: remote.createdAt,
-            updatedAt: remote.updatedAt,
-          );
-          result.add(cloned);
-          break;
-      }
+  Future<void> _softDeleteItem(VaultItem item) async {
+    if (item.isDeleted) {
+      return;
     }
-    return result;
+    final now = DateTime.now().toUtc();
+    final tombstone = VaultItem(
+      id: item.id,
+      label: item.label,
+      type: item.type,
+      encryptedPayload: item.encryptedPayload,
+      kdfSalt: item.kdfSalt,
+      kdfIterations: item.kdfIterations,
+      createdAt: item.createdAt,
+      updatedAt: now,
+      version: _bumpVersion(item.version),
+      updatedBy: _deviceId,
+      isDeleted: true,
+      deletedAt: now,
+    );
+    await _vaultService.saveItem(tombstone);
   }
 
   String _generateId() {
     final random = Random.secure();
     return '${DateTime.now().microsecondsSinceEpoch}-${random.nextInt(1 << 32)}';
+  }
+
+  Map<String, int> _bumpVersion(Map<String, int> current) {
+    final updated = Map<String, int>.from(current);
+    final next = (updated[_deviceId] ?? 0) + 1;
+    updated[_deviceId] = next;
+    return updated;
   }
 
   bool _bytesEqual(Uint8List a, Uint8List b) {
@@ -900,14 +1001,30 @@ class VaultEntryView {
   final List<String> tags;
 }
 
+class _SyncMergeResult {
+  const _SyncMergeResult({
+    required this.payload,
+    required this.stats,
+    required this.revision,
+  });
+
+  final String payload;
+  final MergeStats stats;
+  final int revision;
+}
+
 class _DecodedPayload {
   const _DecodedPayload({
     required this.items,
     required this.masterKey,
     required this.tags,
+    required this.revision,
+    required this.deviceId,
   });
 
   final List<VaultItem> items;
   final Map<String, Object?>? masterKey;
   final List<String> tags;
+  final int revision;
+  final String deviceId;
 }

@@ -80,6 +80,8 @@ class VaultService {
 
   Future<List<VaultItem>> listAll() => _repository.listAll();
 
+  Future<VaultItem?> getById(String id) => _repository.getById(id);
+
   Future<void> delete(String id) => _repository.delete(id);
 
   Future<void> saveItem(VaultItem item) => _repository.save(item);

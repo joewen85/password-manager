@@ -396,6 +396,8 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
       autoSyncOnUnlock: _autoSyncOnUnlock,
       conflictStrategy: _conflictStrategy,
       syncMasterKey: _syncMasterKey,
+      deviceId: widget.controller.syncSettings.deviceId,
+      lastSyncRevision: widget.controller.syncSettings.lastSyncRevision,
       lastSyncAt: widget.controller.syncSettings.lastSyncAt,
       lastSyncStatus: widget.controller.syncSettings.lastSyncStatus,
       lastSyncMessage: widget.controller.syncSettings.lastSyncMessage,
