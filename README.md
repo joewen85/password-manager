@@ -62,6 +62,14 @@
 - `cd apps/flutter_app`
 - `flutter run`
 
+#### 3.1 指定运行平台（可选）
+- `flutter devices` 查看可用设备
+- `flutter run -d macos`
+- `flutter run -d windows`
+- `flutter run -d linux`
+- `flutter run -d ios`（需 Xcode / 真机或模拟器）
+- `flutter run -d android`（需 Android SDK）
+
 ### 4. 测试
 - `cd apps/flutter_app`
 - `flutter test`
@@ -119,6 +127,63 @@
 4) 公证并装订 DMG（推荐）  
    - `xcrun notarytool submit dist/password_manager_app.dmg --keychain-profile "AC_PROFILE" --wait`  
    - `xcrun stapler staple dist/password_manager_app.dmg`
+
+### 4.3 iOS 打包发布（App Store / TestFlight）
+1) 依赖准备  
+   - macOS + Xcode + CocoaPods  
+   - `flutter doctor` 无报错  
+2) 构建 Release  
+   - `cd apps/flutter_app`  
+   - `flutter build ipa --release`  
+3) 产物位置  
+   - `apps/flutter_app/build/ios/ipa/`  
+4) 上架说明  
+   - 需 Apple 开发者账号、Bundle ID、证书、Provisioning Profile  
+   - 通过 Xcode / Transporter 上传到 App Store Connect  
+
+### 4.4 Android 打包发布（APK / AAB）
+1) 依赖准备  
+   - 安装 Android Studio / SDK / NDK  
+   - `flutter doctor` 无报错  
+2) 构建 APK（直接安装）  
+   - `cd apps/flutter_app`  
+   - `flutter build apk --release`  
+3) 构建 AAB（上架推荐）  
+   - `cd apps/flutter_app`  
+   - `flutter build appbundle --release`  
+4) 产物位置  
+   - APK: `apps/flutter_app/build/app/outputs/flutter-apk/`  
+   - AAB: `apps/flutter_app/build/app/outputs/bundle/release/`  
+5) 签名说明  
+   - Release 需配置 keystore 与签名信息（Android 官方流程）  
+
+### 4.5 Windows 打包发布（桌面）
+1) 依赖准备  
+   - Windows 10/11  
+   - Visual Studio（安装 “Desktop development with C++”）  
+   - `flutter doctor` 无报错  
+2) 构建 Release  
+   - `cd apps/flutter_app`  
+   - `flutter build windows --release`  
+3) 产物位置  
+   - `apps/flutter_app/build/windows/runner/Release/`  
+
+### 4.6 Linux 打包发布（桌面）
+1) 依赖准备  
+   - 参考 Flutter Linux 依赖：clang、cmake、ninja、pkg-config、gtk 等  
+   - `flutter doctor` 无报错  
+2) 构建 Release  
+   - `cd apps/flutter_app`  
+   - `flutter build linux --release`  
+3) 产物位置  
+   - `apps/flutter_app/build/linux/x64/release/`  
+
+### 4.7 Web 打包发布
+1) 构建 Release  
+   - `cd apps/flutter_app`  
+   - `flutter build web --release`  
+2) 产物位置  
+   - `apps/flutter_app/build/web/`  
 
 ### 5. 全量测试（推荐）
 - macOS/Linux：`./scripts/test_all.sh`
