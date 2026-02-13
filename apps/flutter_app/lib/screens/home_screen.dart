@@ -162,75 +162,26 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildCreateButton(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final platform = Theme.of(context).platform;
-    final isIOS = platform == TargetPlatform.iOS;
-    final isMac = platform == TargetPlatform.macOS;
-    final label = _mode == _VaultListMode.credentials ? '新建账号' : '新建服务器';
-    final padding = isIOS
-        ? const EdgeInsets.symmetric(horizontal: 12, vertical: 5)
-        : isMac
-            ? const EdgeInsets.symmetric(horizontal: 13, vertical: 7)
-            : const EdgeInsets.symmetric(horizontal: 13, vertical: 7);
-    final radius = isIOS ? 13.0 : (isMac ? 10.0 : 14.0);
-    final isGlass = isIOS || isMac;
-    final content = Padding(
-      padding: padding,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.add_rounded,
-            color: isGlass ? colorScheme.onSurface : colorScheme.onPrimary,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: isGlass ? colorScheme.onSurface : colorScheme.onPrimary,
-                  fontWeight: FontWeight.w700,
-                  fontSize: isIOS ? 11 : 12,
-                ),
-          ),
-        ],
-      ),
+    final gradient = LinearGradient(
+      colors: [
+        colorScheme.primary,
+        colorScheme.secondary,
+      ],
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
     );
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: _openCreateSheet,
-        borderRadius: BorderRadius.circular(radius),
-        child: isGlass
-            ? GlassSurface(
-                borderRadius: radius,
-                padding: EdgeInsets.zero,
-                tint: colorScheme.primary.withOpacity(0.22),
-                child: content,
-              )
-            : Ink(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      colorScheme.primary,
-                      colorScheme.secondary,
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(radius),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(
-                        Theme.of(context).brightness == Brightness.dark
-                            ? 0.4
-                            : 0.15,
-                      ),
-                      blurRadius: 18,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: content,
-              ),
+    final label = _mode == _VaultListMode.credentials ? '新建账号' : '新建服务器';
+    return IconButton(
+      tooltip: label,
+      onPressed: _openCreateSheet,
+      icon: ShaderMask(
+        blendMode: BlendMode.srcIn,
+        shaderCallback: (bounds) {
+          return gradient.createShader(
+            Rect.fromLTWH(0, 0, bounds.width, bounds.height),
+          );
+        },
+        child: const Icon(Icons.add_rounded, color: Colors.white),
       ),
     );
   }
@@ -251,17 +202,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   const TextStyle(fontSize: 12);
           final chips = _buildSingleLineTagWidgets(
             tags,
-            maxWidth: constraints.maxWidth - 8,
+            maxWidth: constraints.maxWidth,
             labelStyle: labelStyle,
             spacing: 15,
           );
           return SizedBox(
-            height: 32,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              physics: const NeverScrollableScrollPhysics(),
-              child: Row(children: _withSpacing(chips, 15)),
-            ),
+            height: 34,
+            child: Row(children: _withSpacing(chips, 15)),
           );
         },
       );
@@ -325,13 +272,33 @@ class _HomeScreenState extends State<HomeScreen> {
   }) {
     final chips = <Widget>[];
     var usedWidth = 0.0;
-    double chipWidth(String text) {
+    const chipPadding = EdgeInsets.symmetric(horizontal: 8, vertical: 2);
+    final defaultFontSize = labelStyle.fontSize ?? 14.0;
+    final effectiveTextScale =
+        MediaQuery.textScalerOf(context).scale(defaultFontSize) / 14.0;
+    final defaultLabelPadding = EdgeInsets.lerp(
+      const EdgeInsets.symmetric(horizontal: 8.0),
+      const EdgeInsets.symmetric(horizontal: 4.0),
+      clampDouble(effectiveTextScale - 1.0, 0.0, 1.0),
+    )!;
+    final chipLabelPadding = (ChipTheme.of(context).labelPadding ??
+            defaultLabelPadding)
+        .resolve(Directionality.of(context));
+    const checkmarkSize = 18.0;
+    const checkmarkGap = 4.0;
+    double chipWidth(String text, {required bool selected}) {
       final painter = TextPainter(
         text: TextSpan(text: text, style: labelStyle),
         maxLines: 1,
         textDirection: TextDirection.ltr,
       )..layout();
-      return painter.width + 56;
+      final checkmarkWidth =
+          selected ? (checkmarkSize + checkmarkGap) : 0.0;
+      return painter.width +
+          chipPadding.horizontal +
+          chipLabelPadding.horizontal +
+          checkmarkWidth +
+          2;
     }
 
     Widget buildChip(String text, bool selected, VoidCallback onTap) {
@@ -340,12 +307,12 @@ class _HomeScreenState extends State<HomeScreen> {
         selected: selected,
         onSelected: (_) => onTap(),
         labelStyle: labelStyle,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        visualDensity: VisualDensity.compact,
+        padding: chipPadding,
+        labelPadding: chipLabelPadding,
       );
     }
 
-    final allWidth = chipWidth('全部');
+    final allWidth = chipWidth('全部', selected: _selectedTag == null);
     usedWidth += allWidth;
     chips.add(
       buildChip('全部', _selectedTag == null, () {
@@ -355,7 +322,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     var visible = 0;
     for (final tag in tags) {
-      final width = chipWidth(tag);
+      final width = chipWidth(tag, selected: _selectedTag == tag);
       if (usedWidth + spacing + width > maxWidth) {
         break;
       }
@@ -371,23 +338,25 @@ class _HomeScreenState extends State<HomeScreen> {
     final remaining = tags.length - visible;
     if (remaining > 0) {
       final overflowText = '...+$remaining';
-      final overflowWidth = chipWidth(overflowText);
+      final overflowWidth = chipWidth(overflowText, selected: false);
       while (chips.length > 1 &&
           usedWidth + spacing + overflowWidth > maxWidth) {
         final removedTag = tags[visible - 1];
-        usedWidth -= spacing + chipWidth(removedTag);
+        usedWidth -= spacing + chipWidth(
+          removedTag,
+          selected: _selectedTag == removedTag,
+        );
         chips.removeLast();
         visible -= 1;
       }
-      if (usedWidth + spacing + overflowWidth <= maxWidth ||
-          chips.length == 1) {
+      if (usedWidth + spacing + overflowWidth <= maxWidth) {
         chips.add(
           ActionChip(
             label: Text(overflowText, overflow: TextOverflow.ellipsis),
             onPressed: () => _showAllTags(tags),
             labelStyle: labelStyle,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            visualDensity: VisualDensity.compact,
+            padding: chipPadding,
+            labelPadding: chipLabelPadding,
           ),
         );
       }
@@ -501,6 +470,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _heroCard(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -571,10 +541,29 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final platform = Theme.of(context).platform;
+    final isIOS = platform == TargetPlatform.iOS;
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final appBarIconColor =
+        isIOS && !isDark ? colorScheme.onSurface.withOpacity(0.85) : null;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('密码库'),
+        centerTitle: !isIOS,
+        titleSpacing: isIOS ? 20.0 : null,
+        iconTheme:
+            appBarIconColor == null ? null : IconThemeData(color: appBarIconColor),
+        actionsIconTheme: appBarIconColor == null
+            ? null
+            : IconThemeData(color: appBarIconColor),
+        title: isIOS
+            ? const SizedBox(
+                width: double.infinity,
+                child: Text('密码库'),
+              )
+            : const Text('密码库'),
         actions: [
+          _buildCreateButton(context),
           IconButton(
             onPressed: widget.controller.syncNow,
             icon: const Icon(Icons.sync),
@@ -705,27 +694,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      bottomNavigationBar: Builder(
-        builder: (context) {
-          final platform = Theme.of(context).platform;
-          final isIOS = platform == TargetPlatform.iOS;
-          final mediaPadding = MediaQuery.of(context).padding;
-          final bottomInset = isIOS
-              ? (mediaPadding.bottom * 0.5).clamp(2.0, 8.0)
-              : (mediaPadding.bottom * 0.7).clamp(3.0, 14.0);
-          final topInset = isIOS ? 2.0 : 4.0;
-          final rightInset = isIOS ? 2.0 : 16.0;
-          final leftInset = isIOS ? 12.0 : 16.0;
-          return Padding(
-            padding:
-                EdgeInsets.fromLTRB(leftInset, topInset, rightInset, bottomInset),
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: _buildCreateButton(context),
-            ),
-          );
-        },
-      ),
       body: AppBackground(
         child: SafeArea(
           child: Padding(
@@ -788,7 +756,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                   label: const Text('仅冲突'),
                                   selected: _showConflictsOnly,
                                   onSelected: (value) {
-                                    setState(() => _showConflictsOnly = value);
+                                    setState(
+                                      () => _showConflictsOnly = value,
+                                    );
                                   },
                                   labelStyle: const TextStyle(fontSize: 12),
                                   padding: const EdgeInsets.symmetric(
@@ -855,26 +825,25 @@ class _HomeScreenState extends State<HomeScreen> {
                       builder: (context, _) {
                         final views = widget.controller.entryViews;
                         final query = _searchController.text.trim().toLowerCase();
-                          final filtered = views.where((view) {
-                            final matchesType =
-                                _mode == _VaultListMode.credentials
-                                    ? view.item.type ==
-                                        VaultEntryType.credential
-                                    : view.item.type == VaultEntryType.server;
-                            if (!matchesType) {
-                              return false;
-                            }
-                            if (_showConflictsOnly && !view.isConflict) {
-                              return false;
-                            }
-                            final matchesQuery = query.isEmpty
-                                ? true
-                                : view.item.label
+                        final filtered = views.where((view) {
+                          final matchesType =
+                              _mode == _VaultListMode.credentials
+                                  ? view.item.type ==
+                                      VaultEntryType.credential
+                                  : view.item.type == VaultEntryType.server;
+                          if (!matchesType) {
+                            return false;
+                          }
+                          if (_showConflictsOnly && !view.isConflict) {
+                            return false;
+                          }
+                          final matchesQuery = query.isEmpty
+                              ? true
+                              : view.item.label
                                       .toLowerCase()
                                       .contains(query) ||
                                   view.tags.any(
-                                    (tag) =>
-                                        tag.toLowerCase().contains(query),
+                                    (tag) => tag.toLowerCase().contains(query),
                                   );
                           if (!matchesQuery) {
                             return false;
@@ -896,7 +865,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         }
                         return ListView.separated(
                           padding: EdgeInsets.only(
-                            bottom: MediaQuery.of(context).padding.bottom + 12,
+                            bottom:
+                                MediaQuery.of(context).padding.bottom + 12,
                           ),
                           itemCount: sorted.length,
                           separatorBuilder: (_, __) =>
