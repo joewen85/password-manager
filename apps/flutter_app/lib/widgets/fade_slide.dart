@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 class FadeSlide extends StatefulWidget {
@@ -7,12 +10,14 @@ class FadeSlide extends StatefulWidget {
     this.delay = Duration.zero,
     this.duration = const Duration(milliseconds: 480),
     this.offset = const Offset(0, 16),
+    this.enable = !kDebugMode,
   });
 
   final Widget child;
   final Duration delay;
   final Duration duration;
   final Offset offset;
+  final bool enable;
 
   @override
   State<FadeSlide> createState() => _FadeSlideState();
@@ -20,23 +25,28 @@ class FadeSlide extends StatefulWidget {
 
 class _FadeSlideState extends State<FadeSlide>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late final Animation<double> _opacity;
-  late final Animation<Offset> _slide;
+  AnimationController? _controller;
+  Animation<double>? _opacity;
+  Animation<Offset>? _slide;
+  Timer? _delayTimer;
 
   @override
   void initState() {
     super.initState();
+    if (!widget.enable) {
+      return;
+    }
     _controller = AnimationController(vsync: this, duration: widget.duration);
-    final curve = CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic);
+    final curve =
+        CurvedAnimation(parent: _controller!, curve: Curves.easeOutCubic);
     _opacity = Tween<double>(begin: 0, end: 1).animate(curve);
     _slide = Tween<Offset>(begin: widget.offset, end: Offset.zero).animate(curve);
     if (widget.delay == Duration.zero) {
-      _controller.forward();
+      _controller!.forward();
     } else {
-      Future.delayed(widget.delay, () {
+      _delayTimer = Timer(widget.delay, () {
         if (mounted) {
-          _controller.forward();
+          _controller?.forward();
         }
       });
     }
@@ -44,16 +54,20 @@ class _FadeSlideState extends State<FadeSlide>
 
   @override
   void dispose() {
-    _controller.dispose();
+    _delayTimer?.cancel();
+    _controller?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.enable) {
+      return widget.child;
+    }
     return FadeTransition(
-      opacity: _opacity,
+      opacity: _opacity!,
       child: SlideTransition(
-        position: _slide,
+        position: _slide!,
         child: widget.child,
       ),
     );

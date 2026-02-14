@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:idb_shim/idb_browser.dart';
 import 'package:idb_shim/idb.dart';
 import 'package:password_manager_core/password_manager_core.dart';
@@ -42,15 +40,28 @@ class WebVaultRepository implements VaultRepository {
   final Database _db;
 
   @override
-  Future<void> save(VaultItem item) async {
+  Future<void> save(VaultItemRecord item) async {
     final txn = _db.transaction('vault_items', idbModeReadWrite);
     final store = txn.objectStore('vault_items');
-    await store.put(vaultItemToJson(item));
+    await store.put(vaultRecordToJson(item));
     await txn.completed;
   }
 
   @override
-  Future<VaultItem?> getById(String id) async {
+  Future<void> saveAll(List<VaultItemRecord> items) async {
+    if (items.isEmpty) {
+      return;
+    }
+    final txn = _db.transaction('vault_items', idbModeReadWrite);
+    final store = txn.objectStore('vault_items');
+    for (final item in items) {
+      await store.put(vaultRecordToJson(item));
+    }
+    await txn.completed;
+  }
+
+  @override
+  Future<VaultItemRecord?> getById(String id) async {
     final txn = _db.transaction('vault_items', idbModeReadOnly);
     final store = txn.objectStore('vault_items');
     final raw = await store.getObject(id);
@@ -58,18 +69,18 @@ class WebVaultRepository implements VaultRepository {
     if (raw is! Map) {
       return null;
     }
-    return vaultItemFromJson(Map<String, Object?>.from(raw));
+    return vaultRecordFromJson(Map<String, Object?>.from(raw));
   }
 
   @override
-  Future<List<VaultItem>> listAll() async {
+  Future<List<VaultItemRecord>> listAll() async {
     final txn = _db.transaction('vault_items', idbModeReadOnly);
     final store = txn.objectStore('vault_items');
     final rawList = await store.getAll();
     await txn.completed;
     return rawList
         .whereType<Map>()
-        .map((entry) => vaultItemFromJson(Map<String, Object?>.from(entry)))
+        .map((entry) => vaultRecordFromJson(Map<String, Object?>.from(entry)))
         .toList();
   }
 

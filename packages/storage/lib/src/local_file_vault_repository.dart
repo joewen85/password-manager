@@ -11,7 +11,7 @@ class LocalFileVaultRepository implements VaultRepository {
   final String filePath;
 
   @override
-  Future<void> save(VaultItem item) async {
+  Future<void> save(VaultItemRecord item) async {
     final items = await listAll();
     final index = items.indexWhere((entry) => entry.id == item.id);
     if (index >= 0) {
@@ -23,16 +23,29 @@ class LocalFileVaultRepository implements VaultRepository {
   }
 
   @override
-  Future<VaultItem?> getById(String id) async {
+  Future<void> saveAll(List<VaultItemRecord> items) async {
+    if (items.isEmpty) {
+      return;
+    }
+    final existing = await listAll();
+    final map = {for (final item in existing) item.id: item};
+    for (final item in items) {
+      map[item.id] = item;
+    }
+    await _writeAll(map.values.toList());
+  }
+
+  @override
+  Future<VaultItemRecord?> getById(String id) async {
     final items = await listAll();
-    return items.cast<VaultItem?>().firstWhere(
+    return items.cast<VaultItemRecord?>().firstWhere(
           (entry) => entry?.id == id,
           orElse: () => null,
         );
   }
 
   @override
-  Future<List<VaultItem>> listAll() async {
+  Future<List<VaultItemRecord>> listAll() async {
     final file = await _ensureFile();
     final contents = await file.readAsString();
     if (contents.trim().isEmpty) {
@@ -44,7 +57,7 @@ class LocalFileVaultRepository implements VaultRepository {
     }
     return decoded
         .whereType<Map>()
-        .map((entry) => vaultItemFromJson(Map<String, Object?>.from(entry)))
+        .map((entry) => vaultRecordFromJson(Map<String, Object?>.from(entry)))
         .toList();
   }
 
@@ -64,9 +77,9 @@ class LocalFileVaultRepository implements VaultRepository {
     return file;
   }
 
-  Future<void> _writeAll(List<VaultItem> items) async {
+  Future<void> _writeAll(List<VaultItemRecord> items) async {
     final file = await _ensureFile();
-    final encoded = jsonEncode(items.map(vaultItemToJson).toList());
+    final encoded = jsonEncode(items.map(vaultRecordToJson).toList());
     await file.writeAsString(encoded);
   }
 }

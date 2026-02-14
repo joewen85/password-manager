@@ -50,85 +50,85 @@ class VaultSyncMerger {
     required List<VaultItem> localItems,
     required List<VaultItem> remoteItems,
   }) {
-    final localMap = {for (final item in localItems) item.id: _ensureVersion(item)};
-    final remoteMap = {
-      for (final item in remoteItems) item.id: _ensureVersion(item)
-    };
-    final allIds = {...localMap.keys, ...remoteMap.keys};
     final merged = <VaultItem>[];
     var conflicts = 0;
     var deletes = 0;
 
-    for (final id in allIds) {
-      final local = localMap[id];
-      final remote = remoteMap[id];
-      if (local == null) {
-        merged.add(remote!);
-        if (remote.isDeleted) {
-          deletes += 1;
-        }
-        continue;
+    void addItem(VaultItem item) {
+      merged.add(item);
+      if (item.isDeleted) {
+        deletes += 1;
       }
+    }
+
+    final versionCache = <String, Map<String, int>>{};
+    Map<String, int> effectiveVersion(VaultItem item) {
+      if (item.version.isNotEmpty) {
+        return item.version;
+      }
+      return versionCache.putIfAbsent(item.id, () {
+        final updater = item.updatedBy.isEmpty ? 'legacy' : item.updatedBy;
+        return {updater: 1};
+      });
+    }
+
+    final localMap = {
+      for (final item in localItems) item.id: item,
+    };
+    final remoteMap = {
+      for (final item in remoteItems) item.id: item,
+    };
+
+    for (final entry in localMap.entries) {
+      final local = entry.value;
+      final remote = remoteMap.remove(entry.key);
       if (remote == null) {
-        merged.add(local);
-        if (local.isDeleted) {
-          deletes += 1;
-        }
+        addItem(local);
         continue;
       }
 
-      final comparison = compareVersion(local.version, remote.version);
+      final comparison =
+          compareVersion(effectiveVersion(local), effectiveVersion(remote));
       if (comparison == VersionComparison.equal) {
         final picked = _pickLatest(local, remote);
-        merged.add(picked);
-        if (picked.isDeleted) {
-          deletes += 1;
-        }
+        addItem(picked);
         continue;
       }
 
       if (comparison == VersionComparison.localDominates) {
-        merged.add(local);
-        if (local.isDeleted) {
-          deletes += 1;
-        }
+        addItem(local);
         continue;
       }
 
       if (comparison == VersionComparison.remoteDominates) {
-        merged.add(remote);
-        if (remote.isDeleted) {
-          deletes += 1;
-        }
+        addItem(remote);
         continue;
       }
 
       // concurrent updates
+      if (local.isDeleted != remote.isDeleted) {
+        conflicts += 1;
+        final deleted = local.isDeleted ? local : remote;
+        final active = local.isDeleted ? remote : local;
+        addItem(deleted);
+        merged.add(_conflictClone(active, isRemote: active == remote));
+        continue;
+      }
       if (_isSamePayload(local, remote)) {
         final picked = _pickLatest(local, remote);
-        merged.add(picked);
-        if (picked.isDeleted) {
-          deletes += 1;
-        }
+        addItem(picked);
         continue;
       }
 
       conflicts += 1;
-      if (local.isDeleted || remote.isDeleted) {
-        final deleted = local.isDeleted ? local : remote;
-        final active = local.isDeleted ? remote : local;
-        merged.add(deleted);
-        if (deleted.isDeleted) {
-          deletes += 1;
-        }
-        merged.add(_conflictClone(active, isRemote: active == remote));
-        continue;
-      }
-
       final primary = _choosePrimary(local, remote);
       final secondary = primary == local ? remote : local;
       merged.add(primary);
       merged.add(_conflictClone(secondary, isRemote: secondary == remote));
+    }
+
+    for (final remote in remoteMap.values) {
+      addItem(remote);
     }
 
     return MergeResult(
@@ -156,6 +156,9 @@ class VaultSyncMerger {
       } else if (remoteValue > localValue) {
         remoteGreater = true;
       }
+      if (localGreater && remoteGreater) {
+        return VersionComparison.concurrent;
+      }
     }
     if (!localGreater && !remoteGreater) {
       return VersionComparison.equal;
@@ -167,28 +170,6 @@ class VaultSyncMerger {
       return VersionComparison.remoteDominates;
     }
     return VersionComparison.concurrent;
-  }
-
-  VaultItem _ensureVersion(VaultItem item) {
-    if (item.version.isNotEmpty) {
-      return item;
-    }
-    final updater = item.updatedBy.isEmpty ? 'legacy' : item.updatedBy;
-    final version = {updater: 1};
-    return VaultItem(
-      id: item.id,
-      label: item.label,
-      type: item.type,
-      encryptedPayload: item.encryptedPayload,
-      kdfSalt: item.kdfSalt,
-      kdfIterations: item.kdfIterations,
-      createdAt: item.createdAt,
-      updatedAt: item.updatedAt,
-      version: version,
-      updatedBy: updater,
-      isDeleted: item.isDeleted,
-      deletedAt: item.deletedAt,
-    );
   }
 
   VaultItem _pickLatest(VaultItem local, VaultItem remote) {

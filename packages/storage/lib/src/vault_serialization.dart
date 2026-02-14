@@ -3,54 +3,58 @@ import 'dart:convert';
 import 'package:password_manager_core/password_manager_core.dart';
 import 'package:password_manager_crypto/password_manager_crypto.dart';
 
-Map<String, Object?> vaultItemToJson(VaultItem item) => {
-      'id': item.id,
-      'label': item.label,
-      'type': item.type.name,
-      'encryptedPayload': item.encryptedPayload.toJson(),
-      'kdfSalt': base64Encode(item.kdfSalt),
-      'kdfIterations': item.kdfIterations,
-      'createdAt': item.createdAt.toIso8601String(),
-      'updatedAt': item.updatedAt.toIso8601String(),
-      'version': item.version,
-      'updatedBy': item.updatedBy,
-      'isDeleted': item.isDeleted,
-      'deletedAt': item.deletedAt?.toIso8601String(),
+Map<String, Object?> vaultRecordToJson(VaultItemRecord record) => {
+      'id': record.id,
+      'encryptedPayload': record.encryptedPayload.toJson(),
+      'encryptedMetadata': record.encryptedMetadata?.toJson(),
+      'kdfSalt': base64Encode(record.kdfSalt),
+      'kdfIterations': record.kdfIterations,
     };
 
-VaultItem vaultItemFromJson(Map<String, Object?> json) {
+VaultItemRecord vaultRecordFromJson(Map<String, Object?> json) {
   final payloadJson = Map<String, Object?>.from(
     json['encryptedPayload'] as Map? ?? <String, Object?>{},
   );
-  final typeName = json['type'] as String? ?? 'credential';
-  final type = VaultEntryType.values.firstWhere(
-    (entry) => entry.name == typeName,
-    orElse: () => VaultEntryType.credential,
-  );
-  final rawVersion = json['version'];
-  final version = rawVersion is Map
-      ? rawVersion.map(
-          (key, value) => MapEntry(
-            key.toString(),
-            value is int ? value : int.tryParse('$value') ?? 0,
-          ),
+  final encryptedMetadataRaw = json['encryptedMetadata'];
+  final encryptedMetadata = encryptedMetadataRaw is Map
+      ? EncryptedPayload.fromJson(
+          Map<String, Object?>.from(encryptedMetadataRaw),
         )
-      : <String, int>{};
-  return VaultItem(
+      : null;
+  final legacyMetadata =
+      encryptedMetadata == null ? _legacyMetadataFromJson(json) : null;
+  return VaultItemRecord(
     id: json['id'] as String? ?? '',
-    label: json['label'] as String? ?? '',
-    type: type,
     encryptedPayload: EncryptedPayload.fromJson(payloadJson),
+    encryptedMetadata: encryptedMetadata,
     kdfSalt: base64Decode(json['kdfSalt'] as String? ?? ''),
     kdfIterations: json['kdfIterations'] as int? ?? 120000,
-    createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '')?.toUtc() ??
-        DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
-    updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '')?.toUtc() ??
-        DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
-    version: version,
-    updatedBy: json['updatedBy'] as String? ?? 'legacy',
-    isDeleted: json['isDeleted'] as bool? ?? false,
-    deletedAt:
-        DateTime.tryParse(json['deletedAt'] as String? ?? '')?.toUtc(),
+    legacyMetadata: legacyMetadata,
+  );
+}
+
+Map<String, Object?> _legacyMetadataFromJson(Map<String, Object?> json) {
+  return {
+    'label': json['label'] as String? ?? '',
+    'type': json['type'] as String? ?? 'credential',
+    'createdAt': json['createdAt'] as String? ?? '',
+    'updatedAt': json['updatedAt'] as String? ?? '',
+    'version': _parseVersion(json['version']),
+    'updatedBy': json['updatedBy'] as String? ?? 'legacy',
+    'isDeleted': json['isDeleted'] as bool? ?? false,
+    'deletedAt': json['deletedAt'] as String?,
+  };
+}
+
+Map<String, int> _parseVersion(Object? rawVersion) {
+  final rawMap = rawVersion is Map ? rawVersion : null;
+  if (rawMap == null) {
+    return <String, int>{};
+  }
+  return rawMap.map(
+    (key, value) => MapEntry(
+      key.toString(),
+      value is int ? value : int.tryParse('$value') ?? 0,
+    ),
   );
 }

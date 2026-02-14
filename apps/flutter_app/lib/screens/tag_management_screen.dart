@@ -18,41 +18,48 @@ class TagManagementScreen extends StatelessWidget {
         icon: const Icon(Icons.add),
         label: const Text('新建标签'),
       ),
-      body: AnimatedBuilder(
-        animation: controller,
-        builder: (context, _) {
-          final tags = controller.metadata.tags;
-          if (tags.isEmpty) {
-            return const Center(child: Text('暂无标签'));
-          }
-          return ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: tags.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final tag = tags[index];
-              return Card(
-                child: ListTile(
-                  title: Text(tag),
-                  trailing: Wrap(
-                    children: [
-                      IconButton(
-                        tooltip: '编辑',
-                        icon: const Icon(Icons.edit_outlined),
-                        onPressed: () => _renameTag(context, tag),
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: AnimatedBuilder(
+              animation: controller,
+              builder: (context, _) {
+                final tags = controller.metadata.tags;
+                if (tags.isEmpty) {
+                  return const Center(child: Text('暂无标签'));
+                }
+                return ListView.separated(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: tags.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemBuilder: (context, index) {
+                    final tag = tags[index];
+                    return Card(
+                      child: ListTile(
+                        title: Text(tag),
+                        trailing: Wrap(
+                          children: [
+                            IconButton(
+                              tooltip: '编辑',
+                              icon: const Icon(Icons.edit_outlined),
+                              onPressed: () => _renameTag(context, tag),
+                            ),
+                            IconButton(
+                              tooltip: '删除',
+                              icon: const Icon(Icons.delete_outline),
+                              onPressed: () => _deleteTag(context, tag),
+                            ),
+                          ],
+                        ),
                       ),
-                      IconButton(
-                        tooltip: '删除',
-                        icon: const Icon(Icons.delete_outline),
-                        onPressed: () => _deleteTag(context, tag),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          );
-        },
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ),
       ),
     );
   }

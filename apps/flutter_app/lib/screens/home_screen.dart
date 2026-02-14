@@ -6,6 +6,7 @@ import 'package:password_manager_core/password_manager_core.dart';
 import '../models/new_entry_data.dart';
 import '../state/vault_metadata.dart';
 import '../state/vault_controller.dart';
+import '../utils/adaptive_layout.dart';
 import '../utils/export_file.dart';
 import '../widgets/app_background.dart';
 import '../widgets/entry_details_dialog.dart';
@@ -30,6 +31,7 @@ class _HomeScreenState extends State<HomeScreen> {
   _VaultListMode _mode = _VaultListMode.credentials;
   String? _selectedTag;
   bool _showConflictsOnly = false;
+  VaultItem? _selectedItem;
 
   @override
   void dispose() {
@@ -124,12 +126,36 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (confirmed == true) {
       await widget.controller.deleteEntry(item.id);
+      if (_selectedItem?.id == item.id) {
+        _clearSelection();
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('已删除')),
         );
       }
     }
+  }
+
+  Future<void> _showEntryDetailsDialog(VaultItem item) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => EntryDetailsDialog(
+        controller: widget.controller,
+        item: item,
+      ),
+    );
+  }
+
+  void _selectItem(VaultItem item) {
+    setState(() => _selectedItem = item);
+  }
+
+  void _clearSelection() {
+    if (_selectedItem == null) {
+      return;
+    }
+    setState(() => _selectedItem = null);
   }
 
   Future<void> _openCreateSheet() async {
@@ -186,7 +212,10 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _tagFilterRow() {
+  Widget _tagFilterRow({
+    required bool singleLine,
+    int maxVisible = 999,
+  }) {
     final tags = widget.controller.metadata.tags;
     if (tags.isEmpty) {
       return const SizedBox.shrink();
@@ -194,7 +223,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final platform = Theme.of(context).platform;
     final isIOS = platform == TargetPlatform.iOS;
     final isApple = isIOS || platform == TargetPlatform.macOS;
-    if (isIOS) {
+    if (singleLine) {
       return LayoutBuilder(
         builder: (context, constraints) {
           final labelStyle =
@@ -205,6 +234,7 @@ class _HomeScreenState extends State<HomeScreen> {
             maxWidth: constraints.maxWidth,
             labelStyle: labelStyle,
             spacing: 15,
+            maxVisible: maxVisible,
           );
           return SizedBox(
             height: 34,
@@ -269,6 +299,7 @@ class _HomeScreenState extends State<HomeScreen> {
     required double maxWidth,
     required TextStyle labelStyle,
     required double spacing,
+    int maxVisible = 999,
   }) {
     final chips = <Widget>[];
     var usedWidth = 0.0;
@@ -320,8 +351,9 @@ class _HomeScreenState extends State<HomeScreen> {
       }),
     );
 
+    final displayTags = tags.take(maxVisible).toList();
     var visible = 0;
-    for (final tag in tags) {
+    for (final tag in displayTags) {
       final width = chipWidth(tag, selected: _selectedTag == tag);
       if (usedWidth + spacing + width > maxWidth) {
         break;
@@ -341,7 +373,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final overflowWidth = chipWidth(overflowText, selected: false);
       while (chips.length > 1 &&
           usedWidth + spacing + overflowWidth > maxWidth) {
-        final removedTag = tags[visible - 1];
+        final removedTag = displayTags[visible - 1];
         usedWidth -= spacing + chipWidth(
           removedTag,
           selected: _selectedTag == removedTag,
@@ -539,6 +571,313 @@ class _HomeScreenState extends State<HomeScreen> {
     return sorted;
   }
 
+  Widget _buildAdaptiveBody(BuildContext context) {
+    const basePadding = EdgeInsets.fromLTRB(20, 12, 20, 20);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableSize = Size(
+          constraints.maxWidth,
+          constraints.maxHeight,
+        );
+        final sizeClass = windowSizeClassFor(constraints.maxWidth);
+        final paneSplit = foldablePaneSplitFor(
+          context: context,
+          availableSize: availableSize,
+        );
+        final platform = Theme.of(context).platform;
+        final isAndroid = platform == TargetPlatform.android;
+        final singleLineTags = isAndroid || platform == TargetPlatform.iOS;
+        final maxVisibleTags = isAndroid ? 3 : 999;
+        final useDetailsPane =
+            paneSplit != null || sizeClass == WindowSizeClass.expanded;
+        final listPane =
+            _buildVaultListPane(
+          context,
+          useDetailsPane: useDetailsPane,
+          singleLineTags: singleLineTags,
+          maxVisibleTags: maxVisibleTags,
+        );
+        final detailsPane = EntryDetailsPanel(
+          controller: widget.controller,
+          item: _selectedItem,
+          onClear: _selectedItem == null ? null : _clearSelection,
+        );
+
+        if (!useDetailsPane) {
+          return Padding(
+            padding: basePadding,
+            child: listPane,
+          );
+        }
+
+        if (paneSplit != null) {
+          if (paneSplit.axis == Axis.vertical) {
+            return Row(
+              children: [
+                SizedBox(
+                  width: paneSplit.startExtent,
+                  height: constraints.maxHeight,
+                  child: Padding(
+                    padding: basePadding.copyWith(right: 12),
+                    child: listPane,
+                  ),
+                ),
+                SizedBox(width: paneSplit.gapExtent),
+                SizedBox(
+                  width: paneSplit.endExtent,
+                  height: constraints.maxHeight,
+                  child: Padding(
+                    padding: basePadding.copyWith(left: 12),
+                    child: detailsPane,
+                  ),
+                ),
+              ],
+            );
+          }
+          return Column(
+            children: [
+              SizedBox(
+                height: paneSplit.startExtent,
+                width: constraints.maxWidth,
+                child: Padding(
+                  padding: basePadding.copyWith(bottom: 12),
+                  child: listPane,
+                ),
+              ),
+              SizedBox(height: paneSplit.gapExtent),
+              SizedBox(
+                height: paneSplit.endExtent,
+                width: constraints.maxWidth,
+                child: Padding(
+                  padding: basePadding.copyWith(top: 12),
+                  child: detailsPane,
+                ),
+              ),
+            ],
+          );
+        }
+
+        return Padding(
+          padding: basePadding,
+          child: Row(
+            children: [
+              Expanded(child: listPane),
+              const SizedBox(width: 20),
+              Expanded(child: detailsPane),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildVaultListPane(
+    BuildContext context, {
+    required bool useDetailsPane,
+    required bool singleLineTags,
+    required int maxVisibleTags,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        FadeSlide(
+          delay: const Duration(milliseconds: 60),
+          child: _heroCard(context),
+        ),
+        const SizedBox(height: 16),
+        FadeSlide(
+          delay: const Duration(milliseconds: 140),
+          child: _sectionCard(
+            child: Theme(
+              data: Theme.of(context).copyWith(
+                inputDecorationTheme:
+                    Theme.of(context).inputDecorationTheme.copyWith(
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                        ),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      SegmentedButton<_VaultListMode>(
+                        style: ButtonStyle(
+                          padding: const WidgetStatePropertyAll(
+                            EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                          ),
+                          textStyle: const WidgetStatePropertyAll(
+                            TextStyle(fontSize: 12),
+                          ),
+                        ),
+                        segments: const [
+                          ButtonSegment(
+                            value: _VaultListMode.credentials,
+                            label: Text('账号'),
+                          ),
+                          ButtonSegment(
+                            value: _VaultListMode.servers,
+                            label: Text('服务器'),
+                          ),
+                        ],
+                        selected: {_mode},
+                        onSelectionChanged: (value) {
+                          setState(() {
+                            _mode = value.first;
+                            _selectedItem = null;
+                          });
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      if (widget.controller.hasConflicts)
+                        FilterChip(
+                          label: const Text('仅冲突'),
+                          selected: _showConflictsOnly,
+                          onSelected: (value) {
+                            setState(
+                              () => _showConflictsOnly = value,
+                            );
+                          },
+                          labelStyle: const TextStyle(fontSize: 12),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                        ),
+                      const Spacer(),
+                      DropdownButtonHideUnderline(
+                        child: DropdownButton<VaultSortOrder>(
+                          value: widget.controller.metadata.sortOrder,
+                          borderRadius: BorderRadius.circular(12),
+                          style: Theme.of(context).textTheme.bodySmall,
+                          onChanged: (value) async {
+                            if (value == null) {
+                              return;
+                            }
+                            await widget.controller.updateSortOrder(value);
+                          },
+                          items: const [
+                            DropdownMenuItem(
+                              value: VaultSortOrder.updatedDesc,
+                              child: Text('按更新时间'),
+                            ),
+                            DropdownMenuItem(
+                              value: VaultSortOrder.labelAsc,
+                              child: Text('按名称'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _searchController,
+                    onChanged: (_) => setState(() {}),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontSize: 12,
+                        ),
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search, size: 18),
+                      hintText: '按名称或标签搜索',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _tagFilterRow(
+                    singleLine: singleLineTags,
+                    maxVisible: maxVisibleTags,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Expanded(
+          child: FadeSlide(
+            delay: const Duration(milliseconds: 220),
+            child: _buildEntryList(context, useDetailsPane: useDetailsPane),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEntryList(
+    BuildContext context, {
+    required bool useDetailsPane,
+  }) {
+    return AnimatedBuilder(
+      animation: widget.controller,
+      builder: (context, _) {
+        final views = widget.controller.entryViews;
+        final query = _searchController.text.trim().toLowerCase();
+        final filtered = views.where((view) {
+          final matchesType = _mode == _VaultListMode.credentials
+              ? view.item.type == VaultEntryType.credential
+              : view.item.type == VaultEntryType.server;
+          if (!matchesType) {
+            return false;
+          }
+          if (_showConflictsOnly && !view.isConflict) {
+            return false;
+          }
+          final matchesQuery = query.isEmpty
+              ? true
+              : view.item.label.toLowerCase().contains(query) ||
+                  view.tags.any(
+                    (tag) => tag.toLowerCase().contains(query),
+                  );
+          if (!matchesQuery) {
+            return false;
+          }
+          if (_selectedTag == null || _selectedTag!.isEmpty) {
+            return true;
+          }
+          return view.tags.contains(_selectedTag);
+        }).toList();
+        final sorted = _sortViews(filtered);
+        if (sorted.isEmpty) {
+          return Center(
+            child: Text(
+              query.isEmpty ? '暂无条目，点击“新建”添加。' : '未找到匹配条目',
+            ),
+          );
+        }
+        return ListView.separated(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).padding.bottom + 12,
+          ),
+          itemCount: sorted.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 12),
+          itemBuilder: (context, index) {
+            final view = sorted[index];
+            final item = view.item;
+            return EntryCard(
+              item: item,
+              tags: view.tags,
+              isConflict: view.isConflict,
+              isSelected: useDetailsPane && _selectedItem?.id == item.id,
+              onView: () {
+                if (useDetailsPane) {
+                  _selectItem(item);
+                } else {
+                  _showEntryDetailsDialog(item);
+                }
+              },
+              onEdit: () => _editEntry(item),
+              onDelete: () => _deleteEntry(item),
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final platform = Theme.of(context).platform;
@@ -661,6 +1000,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   );
                   if (confirmed == true) {
                     await widget.controller.clearAllEntries();
+                    _clearSelection();
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('已清空')),
                     );
@@ -696,209 +1036,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: AppBackground(
         child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                FadeSlide(
-                  delay: const Duration(milliseconds: 60),
-                  child: _heroCard(context),
-                ),
-                const SizedBox(height: 16),
-                FadeSlide(
-                  delay: const Duration(milliseconds: 140),
-                  child: _sectionCard(
-                    child: Theme(
-                      data: Theme.of(context).copyWith(
-                        inputDecorationTheme:
-                            Theme.of(context).inputDecorationTheme.copyWith(
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 10,
-                                  ),
-                                ),
-                      ),
-                      child: Column(
-                        children: [
-                          Row(
-                            children: [
-                              SegmentedButton<_VaultListMode>(
-                                style: ButtonStyle(
-                                  padding: const WidgetStatePropertyAll(
-                                    EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 6,
-                                    ),
-                                  ),
-                                  textStyle: const WidgetStatePropertyAll(
-                                    TextStyle(fontSize: 12),
-                                  ),
-                                ),
-                                segments: const [
-                                  ButtonSegment(
-                                    value: _VaultListMode.credentials,
-                                    label: Text('账号'),
-                                  ),
-                                  ButtonSegment(
-                                    value: _VaultListMode.servers,
-                                    label: Text('服务器'),
-                                  ),
-                                ],
-                                selected: {_mode},
-                                onSelectionChanged: (value) {
-                                  setState(() => _mode = value.first);
-                                },
-                              ),
-                              const SizedBox(width: 8),
-                              if (widget.controller.hasConflicts)
-                                FilterChip(
-                                  label: const Text('仅冲突'),
-                                  selected: _showConflictsOnly,
-                                  onSelected: (value) {
-                                    setState(
-                                      () => _showConflictsOnly = value,
-                                    );
-                                  },
-                                  labelStyle: const TextStyle(fontSize: 12),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 2,
-                                  ),
-                                ),
-                              const Spacer(),
-                              DropdownButtonHideUnderline(
-                                child: DropdownButton<VaultSortOrder>(
-                                  value: widget.controller.metadata.sortOrder,
-                                  borderRadius: BorderRadius.circular(12),
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodySmall,
-                                  onChanged: (value) async {
-                                    if (value == null) {
-                                      return;
-                                    }
-                                    await widget.controller.updateSortOrder(
-                                      value,
-                                    );
-                                  },
-                                  items: const [
-                                    DropdownMenuItem(
-                                      value: VaultSortOrder.updatedDesc,
-                                      child: Text('按更新时间'),
-                                    ),
-                                    DropdownMenuItem(
-                                      value: VaultSortOrder.labelAsc,
-                                      child: Text('按名称'),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          TextField(
-                            controller: _searchController,
-                            onChanged: (_) => setState(() {}),
-                            style:
-                                Theme.of(context).textTheme.bodySmall?.copyWith(
-                                      fontSize: 12,
-                                    ),
-                            decoration: const InputDecoration(
-                              prefixIcon: Icon(Icons.search, size: 18),
-                              hintText: '按名称或标签搜索',
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          _tagFilterRow(),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Expanded(
-                  child: FadeSlide(
-                    delay: const Duration(milliseconds: 220),
-                    child: AnimatedBuilder(
-                      animation: widget.controller,
-                      builder: (context, _) {
-                        final views = widget.controller.entryViews;
-                        final query = _searchController.text.trim().toLowerCase();
-                        final filtered = views.where((view) {
-                          final matchesType =
-                              _mode == _VaultListMode.credentials
-                                  ? view.item.type ==
-                                      VaultEntryType.credential
-                                  : view.item.type == VaultEntryType.server;
-                          if (!matchesType) {
-                            return false;
-                          }
-                          if (_showConflictsOnly && !view.isConflict) {
-                            return false;
-                          }
-                          final matchesQuery = query.isEmpty
-                              ? true
-                              : view.item.label
-                                      .toLowerCase()
-                                      .contains(query) ||
-                                  view.tags.any(
-                                    (tag) => tag.toLowerCase().contains(query),
-                                  );
-                          if (!matchesQuery) {
-                            return false;
-                          }
-                          if (_selectedTag == null || _selectedTag!.isEmpty) {
-                            return true;
-                          }
-                          return view.tags.contains(_selectedTag);
-                        }).toList();
-                        final sorted = _sortViews(filtered);
-                        if (sorted.isEmpty) {
-                          return Center(
-                            child: Text(
-                              query.isEmpty
-                                  ? '暂无条目，点击“新建”添加。'
-                                  : '未找到匹配条目',
-                            ),
-                          );
-                        }
-                        return ListView.separated(
-                          padding: EdgeInsets.only(
-                            bottom:
-                                MediaQuery.of(context).padding.bottom + 12,
-                          ),
-                          itemCount: sorted.length,
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(height: 12),
-                          itemBuilder: (context, index) {
-                            final view = sorted[index];
-                            final item = view.item;
-                            return EntryCard(
-                              item: item,
-                              tags: view.tags,
-                              isConflict: view.isConflict,
-                              onView: () {
-                                showDialog<void>(
-                                  context: context,
-                                  builder: (context) => EntryDetailsDialog(
-                                    controller: widget.controller,
-                                    item: item,
-                                  ),
-                                );
-                              },
-                              onEdit: () => _editEntry(item),
-                              onDelete: () => _deleteEntry(item),
-                            );
-                          },
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          child: _buildAdaptiveBody(context),
         ),
       ),
     );
@@ -913,6 +1051,7 @@ class EntryCard extends StatelessWidget {
     required this.item,
     required this.tags,
     required this.isConflict,
+    this.isSelected = false,
     required this.onView,
     required this.onEdit,
     required this.onDelete,
@@ -921,6 +1060,7 @@ class EntryCard extends StatelessWidget {
   final VaultItem item;
   final List<String> tags;
   final bool isConflict;
+  final bool isSelected;
   final VoidCallback onView;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
@@ -936,135 +1076,146 @@ class EntryCard extends StatelessWidget {
         : colorScheme.secondary;
     final visibleTags = tags.take(3).toList();
     final remaining = tags.length - visibleTags.length;
-    return GlassSurface(
-      borderRadius: 20,
-      padding: const EdgeInsets.all(16),
-      child: Material(
-        type: MaterialType.transparency,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: onView,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: accent.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(14),
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        border: isSelected
+            ? Border.all(color: colorScheme.primary, width: 1.3)
+            : null,
+      ),
+      padding: isSelected ? const EdgeInsets.all(1) : EdgeInsets.zero,
+      child: GlassSurface(
+        borderRadius: 20,
+        padding: const EdgeInsets.all(16),
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: onView,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: accent.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(icon, color: accent),
                 ),
-                child: Icon(icon, color: accent),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (isConflict)
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 6),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (isConflict)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 6),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: colorScheme.errorContainer,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            '冲突副本',
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(
+                                  color: colorScheme.onErrorContainer,
+                                ),
+                          ),
                         ),
-                        decoration: BoxDecoration(
-                          color: colorScheme.errorContainer,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          '冲突副本',
-                          style: Theme.of(context)
-                              .textTheme
-                              .labelSmall
-                              ?.copyWith(
-                                color: colorScheme.onErrorContainer,
-                              ),
-                        ),
+                      Text(
+                        item.label,
+                        style:
+                            Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
                       ),
-                    Text(
-                      item.label,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '更新于 ${item.updatedAt.toLocal()}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                    ),
-                    if (tags.isNotEmpty) ...[
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: [
-                          ...visibleTags.map(
-                            (tag) => Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: colorScheme.primaryContainer
-                                    .withOpacity(0.55),
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Text(
-                                tag,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .labelSmall
-                                    ?.copyWith(
-                                      color: colorScheme.onPrimaryContainer,
-                                    ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '更新于 ${item.updatedAt.toLocal()}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                      ),
+                      if (tags.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            ...visibleTags.map(
+                              (tag) => Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.primaryContainer
+                                      .withOpacity(0.55),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  tag,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelSmall
+                                      ?.copyWith(
+                                        color: colorScheme.onPrimaryContainer,
+                                      ),
+                                ),
                               ),
                             ),
-                          ),
-                          if (remaining > 0)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 4,
+                            if (remaining > 0)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.surfaceVariant,
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  '+$remaining',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelSmall
+                                      ?.copyWith(
+                                        color: colorScheme.onSurfaceVariant,
+                                      ),
+                                ),
                               ),
-                              decoration: BoxDecoration(
-                                color: colorScheme.surfaceVariant,
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Text(
-                                '+$remaining',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .labelSmall
-                                    ?.copyWith(
-                                      color: colorScheme.onSurfaceVariant,
-                                    ),
-                              ),
-                            ),
-                        ],
-                      ),
+                          ],
+                        ),
+                      ],
                     ],
+                  ),
+                ),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.edit_outlined),
+                      tooltip: '编辑',
+                      onPressed: onEdit,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      tooltip: '删除',
+                      onPressed: onDelete,
+                    ),
                   ],
                 ),
-              ),
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.edit_outlined),
-                    tooltip: '编辑',
-                    onPressed: onEdit,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline),
-                    tooltip: '删除',
-                    onPressed: onDelete,
-                  ),
-                ],
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

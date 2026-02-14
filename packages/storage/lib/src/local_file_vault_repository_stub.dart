@@ -11,17 +11,22 @@ class LocalFileVaultRepository implements VaultRepository {
   }
 
   @override
-  Future<VaultItem?> getById(String id) async {
+  Future<VaultItemRecord?> getById(String id) async {
     throw UnsupportedError('LocalFileVaultRepository is not supported on web');
   }
 
   @override
-  Future<List<VaultItem>> listAll() async {
+  Future<List<VaultItemRecord>> listAll() async {
     throw UnsupportedError('LocalFileVaultRepository is not supported on web');
   }
 
   @override
-  Future<void> save(VaultItem item) async {
+  Future<void> save(VaultItemRecord item) async {
+    throw UnsupportedError('LocalFileVaultRepository is not supported on web');
+  }
+
+  @override
+  Future<void> saveAll(List<VaultItemRecord> items) async {
     throw UnsupportedError('LocalFileVaultRepository is not supported on web');
   }
 }

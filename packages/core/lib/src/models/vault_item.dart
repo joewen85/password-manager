@@ -31,3 +31,21 @@ class VaultItem {
   final bool isDeleted;
   final DateTime? deletedAt;
 }
+
+class VaultItemRecord {
+  const VaultItemRecord({
+    required this.id,
+    required this.encryptedPayload,
+    required this.kdfSalt,
+    required this.kdfIterations,
+    this.encryptedMetadata,
+    this.legacyMetadata,
+  });
+
+  final String id;
+  final EncryptedPayload encryptedPayload;
+  final EncryptedPayload? encryptedMetadata;
+  final List<int> kdfSalt;
+  final int kdfIterations;
+  final Map<String, Object?>? legacyMetadata;
+}

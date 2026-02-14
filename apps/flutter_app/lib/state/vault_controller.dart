@@ -60,10 +60,13 @@ class VaultController extends ChangeNotifier {
   bool _isUnlocked = false;
   String? _masterPassword;
   MasterKeyRecord? _masterKeyRecord;
+  Uint8List? _metadataKey;
+  final Map<String, Uint8List> _derivedKeyCache = {};
   List<VaultItem> _items = [];
   List<VaultEntryView> _entryViews = [];
   bool _syncInProgress = false;
   Timer? _syncTimer;
+  Timer? _syncDebounceTimer;
 
   bool get isUnlocked => _isUnlocked;
   bool get requireTotp => _requireTotp;
@@ -78,6 +81,14 @@ class VaultController extends ChangeNotifier {
   String get _deviceId =>
       _syncSettings.deviceId.isEmpty ? 'legacy' : _syncSettings.deviceId;
 
+  @override
+  void dispose() {
+    _syncTimer?.cancel();
+    _syncDebounceTimer?.cancel();
+    _vaultService.setSessionMetadataKey(null);
+    super.dispose();
+  }
+
   Future<void> initialize() async {
     _masterKeyRecord = await _masterKeyStore.read();
     notifyListeners();
@@ -88,14 +99,33 @@ class VaultController extends ChangeNotifier {
       return false;
     }
     final derived = await _keyDerivationService.deriveKey(password);
+    _cacheDerivedKey(derived.salt, derived.iterations, derived.bytes);
+    final metadataSalt = _generateSalt();
+    final metadataDerived = await _keyDerivationService.deriveKey(
+      password,
+      salt: metadataSalt,
+      iterations: derived.iterations,
+    );
+    _cacheDerivedKey(
+      metadataDerived.salt,
+      metadataDerived.iterations,
+      metadataDerived.bytes,
+    );
     final record = MasterKeyRecord(
       salt: derived.salt,
       iterations: derived.iterations,
       verifier: base64Encode(derived.bytes),
+      metadataSalt: metadataSalt,
+      metadataIterations: derived.iterations,
     );
     await _masterKeyStore.save(record);
     _masterKeyRecord = record;
     _masterPassword = password;
+    _metadataKey = Uint8List.fromList(metadataDerived.bytes);
+    _vaultService.setSessionMetadataKey(
+      _metadataKey,
+      allowEncryption: _syncSettings.syncMasterKey,
+    );
     _isUnlocked = true;
     _metadata = VaultMetadata.defaults();
     await _saveMetadata();
@@ -121,11 +151,23 @@ class VaultController extends ChangeNotifier {
       salt: Uint8List.fromList(_masterKeyRecord!.salt),
       iterations: _masterKeyRecord!.iterations,
     );
+    _cacheDerivedKey(
+      derived.salt,
+      derived.iterations,
+      derived.bytes,
+    );
     final storedVerifier = base64Decode(_masterKeyRecord!.verifier);
     if (!_bytesEqual(Uint8List.fromList(derived.bytes), storedVerifier)) {
       return false;
     }
     _masterPassword = masterPassword;
+    await _loadSyncSettings();
+    final metadataKey = await _ensureMetadataKey(masterPassword);
+    _metadataKey = metadataKey;
+    _vaultService.setSessionMetadataKey(
+      _metadataKey,
+      allowEncryption: _syncSettings.syncMasterKey,
+    );
     _isUnlocked = true;
     notifyListeners();
     unawaited(_postUnlockLoad(masterPassword));
@@ -134,10 +176,15 @@ class VaultController extends ChangeNotifier {
 
   Future<void> lock() async {
     _masterPassword = null;
+    _metadataKey = null;
+    _derivedKeyCache.clear();
+    _vaultService.setSessionMetadataKey(null);
     _isUnlocked = false;
     _items = [];
     _syncTimer?.cancel();
     _syncTimer = null;
+    _syncDebounceTimer?.cancel();
+    _syncDebounceTimer = null;
     notifyListeners();
   }
 
@@ -147,7 +194,7 @@ class VaultController extends ChangeNotifier {
 
   Future<void> reloadWithOptions({bool eagerDecrypt = true}) async {
     _ensureUnlocked();
-    _items = await _vaultService.listAll();
+    _items = await _vaultService.listAll(masterPassword: _masterPassword!);
     if (eagerDecrypt) {
       _entryViews = await _buildEntryViews(_items);
     } else {
@@ -172,7 +219,8 @@ class VaultController extends ChangeNotifier {
       version: version,
       updatedBy: _deviceId,
     );
-    await reload();
+    _applyLocalItemUpdate(item, tags: payload.tags);
+    _scheduleSyncSoon();
     return item;
   }
 
@@ -195,7 +243,8 @@ class VaultController extends ChangeNotifier {
       isDeleted: false,
       deletedAt: null,
     );
-    await reload();
+    _applyLocalItemUpdate(updated, tags: payload.tags);
+    _scheduleSyncSoon();
     return updated;
   }
 
@@ -222,7 +271,8 @@ class VaultController extends ChangeNotifier {
       version: version,
       updatedBy: _deviceId,
     );
-    await reload();
+    _applyLocalItemUpdate(item, tags: payload.tags);
+    _scheduleSyncSoon();
     return item;
   }
 
@@ -245,7 +295,8 @@ class VaultController extends ChangeNotifier {
       isDeleted: false,
       deletedAt: null,
     );
-    await reload();
+    _applyLocalItemUpdate(updated, tags: payload.tags);
+    _scheduleSyncSoon();
     return updated;
   }
 
@@ -259,12 +310,18 @@ class VaultController extends ChangeNotifier {
 
   Future<void> deleteEntry(String id) async {
     _ensureUnlocked();
-    final item = await _vaultService.getById(id);
+    final item = await _vaultService.getById(
+      id,
+      masterPassword: _masterPassword!,
+    );
     if (item == null) {
       return;
     }
-    await _softDeleteItem(item);
-    await reload();
+    final tombstone = await _softDeleteItem(item);
+    if (tombstone != null) {
+      _applyLocalItemUpdate(tombstone, tags: const <String>[]);
+    }
+    _scheduleSyncSoon();
   }
 
   Future<void> runBackup() async {
@@ -291,25 +348,50 @@ class VaultController extends ChangeNotifier {
       const maxAttempts = 3;
       _SyncMergeResult? mergeResult;
       for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+        final timings = <String, Duration>{};
+        final overall = Stopwatch()..start();
         final localPayload = await _buildSyncPayload();
+        timings['local'] = overall.elapsed;
+        final downloadWatch = Stopwatch()..start();
         final remoteResult = await client.download();
+        timings['download'] = downloadWatch.elapsed;
+        final mergeWatch = Stopwatch()..start();
         mergeResult = await _mergeWithRemote(
           localPayload: localPayload,
           remotePayload: remoteResult.payload,
         );
+        timings['merge'] = mergeWatch.elapsed;
+        final applyWatch = Stopwatch()..start();
         await _applySyncPayload(mergeResult.payload);
+        timings['apply'] = applyWatch.elapsed;
+        final uploadWatch = Stopwatch()..start();
         final uploadResult = await client.upload(mergeResult.payload);
+        timings['upload'] = uploadWatch.elapsed;
         if (uploadResult.statusCode < 200 ||
             uploadResult.statusCode >= 300) {
+          await _appendSyncLog(_formatSyncTimings(
+            timings,
+            total: overall.elapsed,
+            attempt: attempt,
+            mergeDetails: mergeResult?.timings,
+          ));
           await _recordSyncStatus(
             'error',
             '上传失败(${uploadResult.statusCode})',
           );
           return;
         }
+        final verifyWatch = Stopwatch()..start();
         final verify = await client.download();
+        timings['verify'] = verifyWatch.elapsed;
         final verifyRevision = _decodePayload(verify.payload ?? '').revision;
         if (verifyRevision == mergeResult.revision) {
+          await _appendSyncLog(_formatSyncTimings(
+            timings,
+            total: overall.elapsed,
+            attempt: attempt,
+            mergeDetails: mergeResult?.timings,
+          ));
           await _updateSyncRevision(mergeResult.revision);
           await _recordSyncStatus(
             'success',
@@ -318,6 +400,12 @@ class VaultController extends ChangeNotifier {
           return;
         }
         if (attempt == maxAttempts) {
+          await _appendSyncLog(_formatSyncTimings(
+            timings,
+            total: overall.elapsed,
+            attempt: attempt,
+            mergeDetails: mergeResult?.timings,
+          ));
           await _recordSyncStatus(
             'error',
             '同步冲突：远端在上传后发生变化，请重试',
@@ -338,24 +426,28 @@ class VaultController extends ChangeNotifier {
 
   Future<String> exportEncryptedData() async {
     _ensureUnlocked();
-    final items = await _vaultService.listAll();
+    await _vaultService.migrateLegacyRecords(_masterPassword!);
+    final records = await _vaultService.listAllRecords();
     final record = await _masterKeyStore.read();
+    final metadataRecord = await _encryptMetadataRecord(_metadata);
     final payload = {
-      'version': 1,
+      'version': 2,
       'exportedAt': DateTime.now().toUtc().toIso8601String(),
       'masterKey': record?.toJson(),
-      'items': items.map(vaultItemToJson).toList(),
+      'metadataRecord': metadataRecord.toJson(),
+      'items': records.map(vaultRecordToJson).toList(),
     };
     return jsonEncode(payload);
   }
 
   Future<void> clearAllEntries() async {
     _ensureUnlocked();
-    final items = await _vaultService.listAll();
+    final items = await _vaultService.listAll(masterPassword: _masterPassword!);
     for (final item in items) {
       await _softDeleteItem(item);
     }
-    await reload();
+    await reloadWithOptions(eagerDecrypt: false);
+    _scheduleSyncSoon();
   }
 
   Future<List<VaultEntryView>> _buildEntryViews(
@@ -417,6 +509,10 @@ class VaultController extends ChangeNotifier {
   }
 
   Future<void> _postUnlockLoad(String masterPassword) async {
+    await _vaultService.migrateLegacyRecords(masterPassword);
+    if (!_syncSettings.syncMasterKey) {
+      await _vaultService.migrateMetadataToRecordKey(masterPassword);
+    }
     await reloadWithOptions(eagerDecrypt: false);
     if (!_isUnlocked || _masterPassword != masterPassword) {
       return;
@@ -445,7 +541,7 @@ class VaultController extends ChangeNotifier {
   }
 
   Future<void> _removeTagFromEntries(String tag) async {
-    final items = await _vaultService.listAll();
+    final items = await _vaultService.listAll(masterPassword: _masterPassword!);
     for (final item in items) {
       if (item.isDeleted) {
         continue;
@@ -500,7 +596,7 @@ class VaultController extends ChangeNotifier {
   }
 
   Future<void> _replaceTagInEntries(String oldTag, String newTag) async {
-    final items = await _vaultService.listAll();
+    final items = await _vaultService.listAll(masterPassword: _masterPassword!);
     for (final item in items) {
       if (item.isDeleted) {
         continue;
@@ -558,9 +654,20 @@ class VaultController extends ChangeNotifier {
 
   Future<void> updateSyncSettings(SyncSettings settings) async {
     _ensureUnlocked();
+    final wasSyncingMasterKey = _syncSettings.syncMasterKey;
     _syncSettings = settings;
     await _saveSyncSettings();
     _configureAutoSync();
+    if (_syncSettings.syncMasterKey && _metadataKey == null) {
+      _metadataKey = await _ensureMetadataKey(_masterPassword!);
+    }
+    _vaultService.setSessionMetadataKey(
+      _metadataKey,
+      allowEncryption: _syncSettings.syncMasterKey,
+    );
+    if (wasSyncingMasterKey && !_syncSettings.syncMasterKey) {
+      await _vaultService.migrateMetadataToRecordKey(_masterPassword!);
+    }
     notifyListeners();
   }
 
@@ -576,6 +683,7 @@ class VaultController extends ChangeNotifier {
     final updated = [..._metadata.tags, trimmed]..sort();
     _metadata = _metadata.copyWith(tags: updated);
     await _saveMetadata();
+    _scheduleSyncSoon();
     notifyListeners();
   }
 
@@ -594,6 +702,7 @@ class VaultController extends ChangeNotifier {
     await _saveMetadata();
     await _replaceTagInEntries(oldTag, trimmed);
     await reload();
+    _scheduleSyncSoon();
   }
 
   Future<void> deleteTag(String tag) async {
@@ -604,12 +713,14 @@ class VaultController extends ChangeNotifier {
     await _saveMetadata();
     await _removeTagFromEntries(tag);
     await reload();
+    _scheduleSyncSoon();
   }
 
   Future<void> updateSortOrder(VaultSortOrder order) async {
     _ensureUnlocked();
     _metadata = _metadata.copyWith(sortOrder: order);
     await _saveMetadata();
+    _scheduleSyncSoon();
     notifyListeners();
   }
 
@@ -623,6 +734,47 @@ class VaultController extends ChangeNotifier {
     final random = Random.secure();
     final bytes = List<int>.generate(12, (_) => random.nextInt(256));
     return Uint8List.fromList(bytes);
+  }
+
+  Uint8List _generateSalt() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    return Uint8List.fromList(bytes);
+  }
+
+  Future<Uint8List?> _ensureMetadataKey(String masterPassword) async {
+    final record = _masterKeyRecord;
+    if (record == null) {
+      return null;
+    }
+    var metadataSalt = record.metadataSalt;
+    var metadataIterations = record.metadataIterations;
+    if (metadataSalt == null || metadataSalt.isEmpty) {
+      if (!_syncSettings.syncMasterKey) {
+        return null;
+      }
+      final existingMetadata = await _vaultMetadataStore.read();
+      if (existingMetadata != null &&
+          existingMetadata.kdfSalt.isNotEmpty) {
+        metadataSalt = existingMetadata.kdfSalt;
+        metadataIterations = existingMetadata.kdfIterations;
+      } else {
+        metadataSalt = _generateSalt();
+        metadataIterations = record.iterations;
+      }
+      _masterKeyRecord = MasterKeyRecord(
+        salt: record.salt,
+        iterations: record.iterations,
+        verifier: record.verifier,
+        metadataSalt: metadataSalt,
+        metadataIterations: metadataIterations,
+      );
+      await _masterKeyStore.save(_masterKeyRecord!);
+    }
+    return _deriveKeyCached(
+      salt: metadataSalt,
+      iterations: metadataIterations ?? record.iterations,
+    );
   }
 
   Future<void> _loadSyncSettings() async {
@@ -669,38 +821,271 @@ class VaultController extends ChangeNotifier {
       return;
     }
     try {
-      final derived = await _keyDerivationService.deriveKey(
-        _masterPassword!,
-        salt: Uint8List.fromList(record.kdfSalt),
-        iterations: record.kdfIterations,
-      );
-      final decrypted = await _cryptoService.decrypt(
-        record.encryptedPayload,
-        derived.bytes,
-      );
-      final decoded = jsonDecode(utf8.decode(decrypted));
-      if (decoded is Map) {
-        _metadata = VaultMetadata.fromJson(
-          Map<String, Object?>.from(decoded),
-        );
+      final decoded = await _decryptMetadataRecord(record);
+      if (decoded != null) {
+        _metadata = decoded;
       }
     } catch (_) {}
   }
 
   Future<void> _saveMetadata() async {
-    final jsonPayload = jsonEncode(_metadata.toJson());
-    final derived = await _keyDerivationService.deriveKey(_masterPassword!);
+    final record = await _encryptMetadataRecord(_metadata);
+    await _vaultMetadataStore.save(record);
+  }
+
+  Future<VaultMetadata?> _decryptMetadataRecord(
+    VaultMetadataRecord record, {
+    Uint8List? key,
+  }) async {
+    Uint8List? decrypted;
+    final sessionKey = key ?? _metadataKey;
+    if (sessionKey != null) {
+      try {
+        decrypted = await _cryptoService.decrypt(
+          record.encryptedPayload,
+          sessionKey,
+        );
+      } catch (_) {}
+    }
+    decrypted ??= await _cryptoService.decrypt(
+      record.encryptedPayload,
+      (await _keyDerivationService.deriveKey(
+        _masterPassword!,
+        salt: Uint8List.fromList(record.kdfSalt),
+        iterations: record.kdfIterations,
+      ))
+          .bytes,
+    );
+    final decoded = jsonDecode(utf8.decode(decrypted));
+    if (decoded is! Map) {
+      return null;
+    }
+    return VaultMetadata.fromJson(Map<String, Object?>.from(decoded));
+  }
+
+  Future<_ResolvedMasterKey?> _resolveRemoteMasterKey(
+    Map<String, Object?>? raw,
+  ) async {
+    if (raw == null || _masterPassword == null) {
+      return null;
+    }
+    final remoteRecord = MasterKeyRecord.fromJson(raw);
+    if (_masterKeyRecord != null &&
+        _sameMasterKey(_masterKeyRecord!, remoteRecord)) {
+      final metadataKey = _metadataKey ??
+          await _deriveKeyCached(
+            salt: remoteRecord.metadataSalt ?? remoteRecord.salt,
+            iterations:
+                remoteRecord.metadataIterations ?? remoteRecord.iterations,
+          );
+      return _ResolvedMasterKey(
+        record: _masterKeyRecord!,
+        metadataKey: metadataKey,
+      );
+    }
+    final derived = await _deriveKeyCached(
+      salt: remoteRecord.salt,
+      iterations: remoteRecord.iterations,
+    );
+    final verifier = base64Decode(remoteRecord.verifier);
+    if (!_bytesEqual(derived, verifier)) {
+      return null;
+    }
+    final metadataKey = await _deriveMetadataKeyFromRecord(remoteRecord);
+    return _ResolvedMasterKey(record: remoteRecord, metadataKey: metadataKey);
+  }
+
+  Future<Uint8List> _deriveMetadataKeyFromRecord(
+    MasterKeyRecord record,
+  ) async {
+    return _deriveKeyCached(
+      salt: record.metadataSalt ?? record.salt,
+      iterations: record.metadataIterations ?? record.iterations,
+    );
+  }
+
+  Future<Uint8List?> _resolveRemoteMetadataKey(
+    VaultMetadataRecord? record,
+  ) async {
+    if (record == null || _masterPassword == null) {
+      return null;
+    }
+    if (_metadataKey != null &&
+        _masterKeyRecord != null &&
+        listEquals(record.kdfSalt, _masterKeyRecord!.metadataSalt) &&
+        record.kdfIterations ==
+            (_masterKeyRecord!.metadataIterations ??
+                _masterKeyRecord!.iterations)) {
+      return _metadataKey;
+    }
+    final derived = await _deriveKeyCached(
+      salt: record.kdfSalt,
+      iterations: record.kdfIterations,
+    );
+    try {
+      await _cryptoService.decrypt(record.encryptedPayload, derived);
+    } catch (_) {
+      return null;
+    }
+    return Uint8List.fromList(derived);
+  }
+
+  void _cacheDerivedKey(
+    List<int> salt,
+    int iterations,
+    Uint8List bytes,
+  ) {
+    _derivedKeyCache[_kdfCacheKey(salt, iterations)] =
+        Uint8List.fromList(bytes);
+  }
+
+  Future<Uint8List> _deriveKeyCached({
+    required List<int> salt,
+    required int iterations,
+  }) async {
+    final key = _kdfCacheKey(salt, iterations);
+    final cached = _derivedKeyCache[key];
+    if (cached != null) {
+      return cached;
+    }
+    final derived = await _keyDerivationService.deriveKey(
+      _masterPassword!,
+      salt: Uint8List.fromList(salt),
+      iterations: iterations,
+    );
+    _cacheDerivedKey(derived.salt, derived.iterations, derived.bytes);
+    return Uint8List.fromList(derived.bytes);
+  }
+
+  String _kdfCacheKey(List<int> salt, int iterations) {
+    return '${base64Encode(salt)}:$iterations';
+  }
+
+  Future<List<VaultItem>> _decryptRecordsWithFallbackKeys(
+    List<VaultItemRecord> records, {
+    Uint8List? primaryKey,
+    Uint8List? secondaryKey,
+  }) async {
+    if (records.isEmpty) {
+      return [];
+    }
+    final originalKey = _metadataKey;
+    final items = <VaultItem>[];
+    Object? lastError;
+
+    Future<List<VaultItemRecord>> attempt(
+      List<VaultItemRecord> pending,
+      Uint8List? key,
+    ) async {
+      if (pending.isEmpty) {
+        return pending;
+      }
+      _vaultService.setSessionMetadataKey(
+        key,
+        allowEncryption: _syncSettings.syncMasterKey,
+      );
+      final failed = <VaultItemRecord>[];
+      for (final record in pending) {
+        try {
+          items.add(
+            await _vaultService.decryptRecord(
+              record,
+              masterPassword: _masterPassword!,
+            ),
+          );
+        } catch (error) {
+          lastError = error;
+          failed.add(record);
+        }
+      }
+      return failed;
+    }
+
+    var pending = records;
+    if (primaryKey != null) {
+      pending = await attempt(pending, primaryKey);
+    }
+    if (secondaryKey != null &&
+        pending.isNotEmpty &&
+        (primaryKey == null || !_sameKey(primaryKey, secondaryKey))) {
+      pending = await attempt(pending, secondaryKey);
+    }
+    if (pending.isNotEmpty) {
+      pending = await attempt(pending, null);
+    }
+
+    _vaultService.setSessionMetadataKey(
+      originalKey,
+      allowEncryption: _syncSettings.syncMasterKey,
+    );
+    if (pending.isNotEmpty) {
+      throw lastError ?? StateError('远端数据解密失败');
+    }
+    return items;
+  }
+
+  Future<List<VaultItem>> _resolveLocalItems(
+    List<VaultItemRecord> records,
+    Uint8List? sessionKey,
+  ) async {
+    if (_items.length == records.length) {
+      final ids = <String>{};
+      var matches = true;
+      for (final item in _items) {
+        if (!ids.add(item.id)) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches) {
+        for (final record in records) {
+          if (!ids.contains(record.id)) {
+            matches = false;
+            break;
+          }
+        }
+      }
+      if (matches) {
+        return List<VaultItem>.from(_items);
+      }
+    }
+    _vaultService.setSessionMetadataKey(
+      sessionKey,
+      allowEncryption: _syncSettings.syncMasterKey,
+    );
+    return _vaultService.decryptRecords(
+      records,
+      masterPassword: _masterPassword!,
+    );
+  }
+
+  Future<VaultMetadataRecord> _encryptMetadataRecord(
+    VaultMetadata metadata,
+  ) async {
+    final jsonPayload = jsonEncode(metadata.toJson());
+    final kdfSalt =
+        _masterKeyRecord?.metadataSalt ?? _masterKeyRecord?.salt ?? [];
+    final kdfIterations =
+        _masterKeyRecord?.metadataIterations ??
+        _masterKeyRecord?.iterations ??
+        120000;
+    final keyBytes = _metadataKey ??
+        (await _keyDerivationService.deriveKey(
+          _masterPassword!,
+          salt: Uint8List.fromList(kdfSalt),
+          iterations: kdfIterations,
+        ))
+            .bytes;
     final encrypted = await _cryptoService.encrypt(
       Uint8List.fromList(utf8.encode(jsonPayload)),
-      derived.bytes,
+      keyBytes,
       nonce: _generateNonce(),
     );
-    final record = VaultMetadataRecord(
+    return VaultMetadataRecord(
       encryptedPayload: encrypted,
-      kdfSalt: derived.salt,
-      kdfIterations: derived.iterations,
+      kdfSalt: kdfSalt,
+      kdfIterations: kdfIterations,
     );
-    await _vaultMetadataStore.save(record);
   }
 
   Future<void> _saveSyncSettings() async {
@@ -728,6 +1113,16 @@ class VaultController extends ChangeNotifier {
     final minutes = _syncSettings.autoSyncIntervalMinutes;
     final interval = Duration(minutes: minutes <= 0 ? 30 : minutes);
     _syncTimer = Timer.periodic(interval, (_) async {
+      await syncNow();
+    });
+  }
+
+  void _scheduleSyncSoon() {
+    if (!_isUnlocked || !_syncSettings.autoSyncEnabled) {
+      return;
+    }
+    _syncDebounceTimer?.cancel();
+    _syncDebounceTimer = Timer(const Duration(seconds: 5), () async {
       await syncNow();
     });
   }
@@ -760,16 +1155,18 @@ class VaultController extends ChangeNotifier {
   }
 
   Future<String> _buildSyncPayload() async {
-    final items = await _vaultService.listAll();
-    final record = await _masterKeyStore.read();
+    await _vaultService.migrateLegacyRecords(_masterPassword!);
+    final records = await _vaultService.listAllRecords();
+    final masterRecord = await _masterKeyStore.read();
+    final metadataRecord = await _encryptMetadataRecord(_metadata);
     final payload = {
       'version': 2,
       'exportedAt': DateTime.now().toUtc().toIso8601String(),
       'deviceId': _deviceId,
       'revision': _syncSettings.lastSyncRevision,
-      'masterKey': _syncSettings.syncMasterKey ? record?.toJson() : null,
-      'metadata': {'tags': _metadata.tags},
-      'items': items.map(vaultItemToJson).toList(),
+      'masterKey': _syncSettings.syncMasterKey ? masterRecord?.toJson() : null,
+      'metadataRecord': metadataRecord.toJson(),
+      'items': records.map(vaultRecordToJson).toList(),
     };
     return jsonEncode(payload);
   }
@@ -778,22 +1175,43 @@ class VaultController extends ChangeNotifier {
     required String localPayload,
     required String? remotePayload,
   }) async {
+    final local = _decodePayload(localPayload);
+    final localSessionKey = _metadataKey;
+    final mergeTimings = <String, Duration>{};
+    final localWatch = Stopwatch()..start();
+    final localItems =
+        await _resolveLocalItems(local.records, localSessionKey);
+    mergeTimings['local'] = localWatch.elapsed;
     if (remotePayload == null || remotePayload.trim().isEmpty) {
-      final decoded = _decodePayload(localPayload);
       final deleteCount =
-          decoded.items.where((item) => item.isDeleted).length;
+          localItems.where((item) => item.isDeleted).length;
       return _SyncMergeResult(
         payload: localPayload,
         stats: MergeStats(
-          total: decoded.items.length,
+          total: localItems.length,
           conflicts: 0,
           deletes: deleteCount,
         ),
-        revision: decoded.revision,
+        revision: local.revision,
+        timings: mergeTimings,
       );
     }
-    final local = _decodePayload(localPayload);
     final remote = _decodePayload(remotePayload);
+    final remoteResolution = await _resolveRemoteMasterKey(remote.masterKey);
+    final remoteSessionKey = remoteResolution?.metadataKey ??
+        await _resolveRemoteMetadataKey(remote.metadataRecord);
+    final remoteWatch = Stopwatch()..start();
+    final List<VaultItem> remoteItems;
+    try {
+      remoteItems = await _decryptRecordsWithFallbackKeys(
+        remote.records,
+        primaryKey: remoteSessionKey,
+        secondaryKey: localSessionKey,
+      );
+    } catch (_) {
+      throw StateError('远端数据解密失败，可能未同步主密钥或主密码不一致');
+    }
+    mergeTimings['remote'] = remoteWatch.elapsed;
     final merger = VaultSyncMerger(
       idGenerator: _generateId,
       conflictStrategy: _syncSettings.conflictStrategy,
@@ -806,11 +1224,76 @@ class VaultController extends ChangeNotifier {
         return '(冲突-$source-$shortId-$time)';
       },
     );
+    final mergeWatch = Stopwatch()..start();
     final mergeResult = merger.merge(
-      localItems: local.items,
-      remoteItems: remote.items,
+      localItems: localItems,
+      remoteItems: remoteItems,
     );
-    final mergedTags = {...local.tags, ...remote.tags}.toList()..sort();
+    mergeTimings['compute'] = mergeWatch.elapsed;
+    final metadataWatch = Stopwatch()..start();
+    final mergedTags = await _mergeTags(
+      items: mergeResult.items,
+      localRecord: local.metadataRecord,
+      remoteRecord: remote.metadataRecord,
+      localMetadataKey: localSessionKey,
+      remoteMetadataKey: remoteSessionKey,
+    );
+    mergedTags.addAll(local.legacyTags);
+    mergedTags.addAll(remote.legacyTags);
+    final mergedMetadata = _metadata.copyWith(
+      tags: mergedTags.toList()..sort(),
+    );
+    if (remoteResolution != null && _syncSettings.syncMasterKey) {
+      if (_masterKeyRecord == null ||
+          !_sameMasterKey(_masterKeyRecord!, remoteResolution.record)) {
+        _masterKeyRecord = remoteResolution.record;
+        await _masterKeyStore.save(remoteResolution.record);
+      }
+      _metadataKey = remoteResolution.metadataKey;
+      _vaultService.setSessionMetadataKey(
+        _metadataKey,
+        allowEncryption: _syncSettings.syncMasterKey,
+      );
+    }
+    final mergedMetadataRecord = await _encryptMetadataRecord(mergedMetadata);
+    mergeTimings['metadata'] = metadataWatch.elapsed;
+    final mergedRecords = <VaultItemRecord>[];
+    final localItemById = {for (final item in localItems) item.id: item};
+    final remoteItemById = {for (final item in remoteItems) item.id: item};
+    final localRecordById = {
+      for (final record in local.records) record.id: record,
+    };
+    final remoteRecordById = {
+      for (final record in remote.records) record.id: record,
+    };
+    final recordsWatch = Stopwatch()..start();
+    for (final item in mergeResult.items) {
+      VaultItemRecord? record;
+      final localItem = localItemById[item.id];
+      if (localItem != null &&
+          identical(item, localItem) &&
+          (remoteSessionKey == null ||
+              _sameKey(remoteSessionKey, localSessionKey))) {
+        record = localRecordById[item.id];
+      }
+      if (record == null) {
+        final remoteItem = remoteItemById[item.id];
+        if (remoteItem != null && identical(item, remoteItem)) {
+          record = remoteRecordById[item.id];
+        }
+      }
+      if (record != null && record.encryptedMetadata != null) {
+        mergedRecords.add(record);
+        continue;
+      }
+      mergedRecords.add(
+        await _vaultService.encryptRecord(
+          item,
+          masterPassword: _masterPassword!,
+        ),
+      );
+    }
+    mergeTimings['records'] = recordsWatch.elapsed;
     final mergedRevision =
         (local.revision > remote.revision ? local.revision : remote.revision) +
             1;
@@ -820,26 +1303,71 @@ class VaultController extends ChangeNotifier {
       'deviceId': _deviceId,
       'revision': mergedRevision,
       'masterKey': _syncSettings.syncMasterKey
-          ? (remote.masterKey ?? local.masterKey)
+          ? (remoteResolution != null ? remote.masterKey : local.masterKey)
           : null,
-      'metadata': {'tags': mergedTags},
-      'items': mergeResult.items.map(vaultItemToJson).toList(),
+      'metadataRecord': mergedMetadataRecord.toJson(),
+      'items': mergedRecords.map(vaultRecordToJson).toList(),
     };
     return _SyncMergeResult(
       payload: jsonEncode(mergedPayload),
       stats: mergeResult.stats,
       revision: mergedRevision,
+      timings: mergeTimings,
     );
   }
 
   Future<void> _applySyncPayload(String payload) async {
     final decoded = _decodePayload(payload);
-    final merged = decoded.items;
-    for (final item in merged) {
-      await _vaultService.saveItem(item);
+    final upgradedRecords = <VaultItemRecord>[];
+    for (final record in decoded.records) {
+      if (record.encryptedMetadata == null) {
+        final item = await _vaultService.decryptRecord(
+          record,
+          masterPassword: _masterPassword!,
+        );
+        upgradedRecords.add(
+          await _vaultService.encryptRecord(
+            item,
+            masterPassword: _masterPassword!,
+          ),
+        );
+        continue;
+      }
+      final sessionKey = _metadataKey;
+      if (sessionKey != null) {
+        try {
+          await _cryptoService.decrypt(record.encryptedMetadata!, sessionKey);
+          upgradedRecords.add(record);
+          continue;
+        } catch (_) {}
+      }
+      final item = await _vaultService.decryptRecord(
+        record,
+        masterPassword: _masterPassword!,
+      );
+      upgradedRecords.add(
+        await _vaultService.encryptRecord(
+          item,
+          masterPassword: _masterPassword!,
+        ),
+      );
     }
-    await _refreshMetadataTags(items: merged, extraTags: decoded.tags);
-    await reload();
+    await _vaultService.saveRecords(upgradedRecords);
+    if (decoded.metadataRecord != null) {
+      await _vaultMetadataStore.save(decoded.metadataRecord!);
+      final decodedMeta =
+          await _decryptMetadataRecord(decoded.metadataRecord!);
+      if (decodedMeta != null) {
+        _metadata = decodedMeta;
+      }
+    } else {
+      final items = await _vaultService.decryptRecords(
+        upgradedRecords,
+        masterPassword: _masterPassword!,
+      );
+      await _refreshMetadataTags(items: items, extraTags: decoded.legacyTags);
+    }
+    await reloadWithOptions(eagerDecrypt: false);
   }
 
   Future<void> _recordSyncStatus(String status, String message) async {
@@ -862,6 +1390,60 @@ class VaultController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _appendSyncLog(String message, {String level = 'info'}) async {
+    final entry = SyncLogEntry(
+      timestamp: DateTime.now().toUtc(),
+      message: message,
+      level: level,
+    );
+    final updatedLogs = [entry, ..._syncSettings.logs];
+    final trimmedLogs = updatedLogs.length > 50
+        ? updatedLogs.sublist(0, 50)
+        : updatedLogs;
+    _syncSettings = _syncSettings.copyWith(logs: trimmedLogs);
+    await _saveSyncSettings();
+    notifyListeners();
+  }
+
+  String _formatSyncTimings(
+    Map<String, Duration> timings, {
+    required Duration total,
+    required int attempt,
+    Map<String, Duration>? mergeDetails,
+  }) {
+    final parts = <String>[
+      'local=${_formatDuration(timings['local'])}',
+      'download=${_formatDuration(timings['download'])}',
+      'merge=${_formatDuration(timings['merge'])}',
+      'apply=${_formatDuration(timings['apply'])}',
+      'upload=${_formatDuration(timings['upload'])}',
+      'verify=${_formatDuration(timings['verify'])}',
+      'total=${_formatDuration(total)}',
+    ];
+    if (mergeDetails != null && mergeDetails.isNotEmpty) {
+      final mergeParts = <String>[
+        'local=${_formatDuration(mergeDetails['local'])}',
+        'remote=${_formatDuration(mergeDetails['remote'])}',
+        'compute=${_formatDuration(mergeDetails['compute'])}',
+        'metadata=${_formatDuration(mergeDetails['metadata'])}',
+        'records=${_formatDuration(mergeDetails['records'])}',
+      ];
+      parts.add('mergeDetail=${mergeParts.join(',')}');
+    }
+    return '同步耗时(第$attempt次): ${parts.join(' ')}';
+  }
+
+  String _formatDuration(Duration? duration) {
+    if (duration == null) {
+      return '-';
+    }
+    if (duration.inMilliseconds < 1000) {
+      return '${duration.inMilliseconds}ms';
+    }
+    final seconds = duration.inMilliseconds / 1000.0;
+    return '${seconds.toStringAsFixed(1)}s';
+  }
+
   Future<void> _updateSyncRevision(int revision) async {
     if (revision == _syncSettings.lastSyncRevision) {
       return;
@@ -873,9 +1455,10 @@ class VaultController extends ChangeNotifier {
   _DecodedPayload _decodePayload(String payload) {
     if (payload.trim().isEmpty) {
       return const _DecodedPayload(
-        items: [],
+        records: [],
         masterKey: null,
-        tags: [],
+        metadataRecord: null,
+        legacyTags: [],
         revision: 0,
         deviceId: '',
       );
@@ -883,32 +1466,92 @@ class VaultController extends ChangeNotifier {
     final decoded = jsonDecode(payload);
     if (decoded is! Map) {
       return const _DecodedPayload(
-        items: [],
+        records: [],
         masterKey: null,
-        tags: [],
+        metadataRecord: null,
+        legacyTags: [],
         revision: 0,
         deviceId: '',
       );
     }
     final masterKey = decoded['masterKey'] as Map?;
-    final metadata = decoded['metadata'] as Map?;
-    final tags =
-        (metadata?['tags'] as List?)?.whereType<String>().toList() ?? [];
+    final legacyMetadata = decoded['metadata'] as Map?;
+    final legacyTags =
+        (legacyMetadata?['tags'] as List?)?.whereType<String>().toList() ?? [];
+    final metadataRecordRaw = decoded['metadataRecord'] as Map?;
+    final metadataRecord = metadataRecordRaw == null
+        ? null
+        : VaultMetadataRecord.fromJson(
+            Map<String, Object?>.from(metadataRecordRaw),
+          );
     final revision = decoded['revision'] as int? ?? 0;
     final deviceId = decoded['deviceId'] as String? ?? '';
-    final items = (decoded['items'] as List? ?? [])
+    final records = (decoded['items'] as List? ?? [])
         .whereType<Map>()
-        .map((entry) => vaultItemFromJson(Map<String, Object?>.from(entry)))
+        .map((entry) => vaultRecordFromJson(Map<String, Object?>.from(entry)))
         .toList();
     return _DecodedPayload(
-      items: items,
+      records: records,
       masterKey: masterKey != null
           ? Map<String, Object?>.from(masterKey)
           : null,
-      tags: tags,
+      metadataRecord: metadataRecord,
+      legacyTags: legacyTags,
       revision: revision,
       deviceId: deviceId,
     );
+  }
+
+  Future<Set<String>> _mergeTags({
+    required List<VaultItem> items,
+    VaultMetadataRecord? localRecord,
+    VaultMetadataRecord? remoteRecord,
+    Uint8List? localMetadataKey,
+    Uint8List? remoteMetadataKey,
+  }) async {
+    final tagSet = <String>{};
+    if (localRecord != null) {
+      final metadata =
+          await _decryptMetadataRecord(localRecord, key: localMetadataKey);
+      if (metadata != null) {
+        tagSet.addAll(metadata.tags);
+      }
+    }
+    if (remoteRecord != null) {
+      final metadata =
+          await _decryptMetadataRecord(remoteRecord, key: remoteMetadataKey);
+      if (metadata != null) {
+        tagSet.addAll(metadata.tags);
+      }
+    }
+    if (localRecord == null && remoteRecord == null) {
+      tagSet.addAll(await _collectTagsFromItems(items));
+    }
+    return tagSet
+        .map((tag) => tag.trim())
+        .where((tag) => tag.isNotEmpty)
+        .toSet();
+  }
+
+  Future<Set<String>> _collectTagsFromItems(List<VaultItem> items) async {
+    final tagSet = <String>{};
+    for (final item in items) {
+      if (item.isDeleted) {
+        continue;
+      }
+      if (item.type == VaultEntryType.server) {
+        final payload = await readServerAsset(item);
+        if (payload != null) {
+          tagSet.addAll(payload.tags);
+        }
+      } else {
+        final payload = await readEntry(item);
+        if (payload != null) {
+          tagSet.addAll(payload.tags);
+        }
+      }
+    }
+    return tagSet;
   }
 
   Future<void> _refreshMetadataTags({
@@ -949,9 +1592,47 @@ class VaultController extends ChangeNotifier {
     return item.label.contains('(冲突-') || item.label.contains('冲突');
   }
 
-  Future<void> _softDeleteItem(VaultItem item) async {
+  void _applyLocalItemUpdate(
+    VaultItem item, {
+    required List<String> tags,
+  }) {
+    final updatedItems = List<VaultItem>.from(_items);
+    final itemIndex = updatedItems.indexWhere((entry) => entry.id == item.id);
+    if (itemIndex >= 0) {
+      updatedItems[itemIndex] = item;
+    } else {
+      updatedItems.add(item);
+    }
+    _items = updatedItems;
+
+    final updatedViews = List<VaultEntryView>.from(_entryViews);
+    final viewIndex =
+        updatedViews.indexWhere((entry) => entry.item.id == item.id);
     if (item.isDeleted) {
-      return;
+      if (viewIndex >= 0) {
+        updatedViews.removeAt(viewIndex);
+      }
+    } else {
+      final view = VaultEntryView(
+        item: item,
+        credential: null,
+        server: null,
+        tags: tags,
+        isConflict: _isConflictItem(item),
+      );
+      if (viewIndex >= 0) {
+        updatedViews[viewIndex] = view;
+      } else {
+        updatedViews.add(view);
+      }
+    }
+    _entryViews = updatedViews;
+    notifyListeners();
+  }
+
+  Future<VaultItem?> _softDeleteItem(VaultItem item) async {
+    if (item.isDeleted) {
+      return null;
     }
     final now = DateTime.now().toUtc();
     final tombstone = VaultItem(
@@ -968,7 +1649,11 @@ class VaultController extends ChangeNotifier {
       isDeleted: true,
       deletedAt: now,
     );
-    await _vaultService.saveItem(tombstone);
+    await _vaultService.saveItem(
+      tombstone,
+      masterPassword: _masterPassword!,
+    );
+    return tombstone;
   }
 
   String _generateId() {
@@ -993,6 +1678,24 @@ class VaultController extends ChangeNotifier {
     }
     return diff == 0;
   }
+
+  bool _sameKey(Uint8List? a, Uint8List? b) {
+    if (a == null && b == null) {
+      return true;
+    }
+    if (a == null || b == null) {
+      return false;
+    }
+    return _bytesEqual(a, b);
+  }
+
+  bool _sameMasterKey(MasterKeyRecord a, MasterKeyRecord b) {
+    return listEquals(a.salt, b.salt) &&
+        a.iterations == b.iterations &&
+        a.verifier == b.verifier &&
+        listEquals(a.metadataSalt, b.metadataSalt) &&
+        a.metadataIterations == b.metadataIterations;
+  }
 }
 
 class VaultEntryView {
@@ -1016,25 +1719,39 @@ class _SyncMergeResult {
     required this.payload,
     required this.stats,
     required this.revision,
+    this.timings = const <String, Duration>{},
   });
 
   final String payload;
   final MergeStats stats;
   final int revision;
+  final Map<String, Duration> timings;
+}
+
+class _ResolvedMasterKey {
+  const _ResolvedMasterKey({
+    required this.record,
+    required this.metadataKey,
+  });
+
+  final MasterKeyRecord record;
+  final Uint8List metadataKey;
 }
 
 class _DecodedPayload {
   const _DecodedPayload({
-    required this.items,
+    required this.records,
     required this.masterKey,
-    required this.tags,
+    required this.metadataRecord,
+    required this.legacyTags,
     required this.revision,
     required this.deviceId,
   });
 
-  final List<VaultItem> items;
+  final List<VaultItemRecord> records;
   final Map<String, Object?>? masterKey;
-  final List<String> tags;
+  final VaultMetadataRecord? metadataRecord;
+  final List<String> legacyTags;
   final int revision;
   final String deviceId;
 }

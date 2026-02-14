@@ -15,7 +15,7 @@ import 'package:password_manager_app/storage/sync_settings_store.dart';
 import 'package:password_manager_app/storage/vault_metadata_store.dart';
 
 class InMemoryVaultRepository implements VaultRepository {
-  final Map<String, VaultItem> _store = {};
+  final Map<String, VaultItemRecord> _store = {};
 
   @override
   Future<void> delete(String id) async {
@@ -23,14 +23,21 @@ class InMemoryVaultRepository implements VaultRepository {
   }
 
   @override
-  Future<VaultItem?> getById(String id) async => _store[id];
+  Future<VaultItemRecord?> getById(String id) async => _store[id];
 
   @override
-  Future<List<VaultItem>> listAll() async => _store.values.toList();
+  Future<List<VaultItemRecord>> listAll() async => _store.values.toList();
 
   @override
-  Future<void> save(VaultItem item) async {
+  Future<void> save(VaultItemRecord item) async {
     _store[item.id] = item;
+  }
+
+  @override
+  Future<void> saveAll(List<VaultItemRecord> items) async {
+    for (final item in items) {
+      _store[item.id] = item;
+    }
   }
 }
 
@@ -118,6 +125,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: HomeScreen(controller: controller)),
     );
+    await tester.pumpAndSettle();
 
     expect(find.textContaining('暂无条目'), findsOneWidget);
   });
@@ -130,7 +138,7 @@ void main() {
       MaterialApp(home: HomeScreen(controller: controller)),
     );
 
-    await tester.tap(find.byIcon(Icons.add));
+    await tester.tap(find.byIcon(Icons.add_rounded));
     await tester.pumpAndSettle();
 
     await tester.enterText(_fieldAt(0), 'AWS Console');
@@ -141,7 +149,8 @@ void main() {
     await tester.enterText(_fieldAt(5), 'access-456');
     await tester.enterText(_fieldAt(6), 'sk-789');
 
-    await tester.tap(find.text('Save'));
+    await tester.ensureVisible(find.text('保存'));
+    await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
 
     expect(find.text('AWS Console'), findsOneWidget);
@@ -169,7 +178,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(ListTile, 'GitHub'));
+    await tester.tap(find.text('GitHub').first);
     await tester.pumpAndSettle();
 
     expect(find.text('GitHub'), findsWidgets);

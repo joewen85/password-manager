@@ -5,7 +5,7 @@ import 'package:password_manager_crypto/password_manager_crypto.dart';
 import 'package:test/test.dart';
 
 class InMemoryVaultRepository implements VaultRepository {
-  final Map<String, VaultItem> _store = {};
+  final Map<String, VaultItemRecord> _store = {};
 
   @override
   Future<void> delete(String id) async {
@@ -13,14 +13,21 @@ class InMemoryVaultRepository implements VaultRepository {
   }
 
   @override
-  Future<VaultItem?> getById(String id) async => _store[id];
+  Future<VaultItemRecord?> getById(String id) async => _store[id];
 
   @override
-  Future<List<VaultItem>> listAll() async => _store.values.toList();
+  Future<List<VaultItemRecord>> listAll() async => _store.values.toList();
 
   @override
-  Future<void> save(VaultItem item) async {
+  Future<void> save(VaultItemRecord item) async {
     _store[item.id] = item;
+  }
+
+  @override
+  Future<void> saveAll(List<VaultItemRecord> items) async {
+    for (final item in items) {
+      _store[item.id] = item;
+    }
   }
 }
 
@@ -53,8 +60,12 @@ void main() {
     final stored = await repository.getById(item.id);
     expect(stored, isNotNull);
 
-    final decrypted = await service.readCredential(
+    final decryptedItem = await service.decryptRecord(
       stored!,
+      masterPassword: 'master',
+    );
+    final decrypted = await service.readCredential(
+      decryptedItem,
       masterPassword: 'master',
     );
 

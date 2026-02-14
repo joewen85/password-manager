@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 class GlassSurface extends StatelessWidget {
@@ -33,12 +34,22 @@ class GlassSurface extends StatelessWidget {
     final platform = Theme.of(context).platform;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final colorScheme = Theme.of(context).colorScheme;
+    final reduceEffects =
+        kDebugMode && platform == TargetPlatform.android;
     final baseColor = tint ?? colorScheme.surface;
     final backgroundColor =
         baseColor.withOpacity(isDark ? opacityDark : opacityLight);
     final borderColor = colorScheme.outlineVariant.withOpacity(
       isDark ? 0.7 : 0.45,
     );
+    final shadowBlur = reduceEffects ? 8.0 : 16.0;
+    final shadowOpacity = reduceEffects
+        ? (isDark ? 0.12 : 0.04)
+        : (isDark ? 0.25 : 0.08);
+    final shadowBlurGlass = reduceEffects ? 10.0 : 18.0;
+    final shadowOpacityGlass = reduceEffects
+        ? (isDark ? 0.18 : 0.06)
+        : (isDark ? 0.35 : 0.12);
 
     final content = Padding(
       padding: padding ?? EdgeInsets.zero,
@@ -54,8 +65,8 @@ class GlassSurface extends StatelessWidget {
           boxShadow: showShadow
               ? [
                   BoxShadow(
-                    color: Colors.black.withOpacity(isDark ? 0.25 : 0.08),
-                    blurRadius: 16,
+                    color: Colors.black.withOpacity(shadowOpacity),
+                    blurRadius: shadowBlur,
                     offset: const Offset(0, 8),
                   ),
                 ]
@@ -77,12 +88,12 @@ class GlassSurface extends StatelessWidget {
             boxShadow: showShadow
                 ? [
                     BoxShadow(
-                      color: Colors.black.withOpacity(isDark ? 0.35 : 0.12),
-                      blurRadius: 18,
-                      offset: const Offset(0, 8),
-                    ),
-                  ]
-                : null,
+                    color: Colors.black.withOpacity(shadowOpacityGlass),
+                    blurRadius: shadowBlurGlass,
+                    offset: const Offset(0, 8),
+                  ),
+                ]
+            : null,
           ),
           child: content,
         ),

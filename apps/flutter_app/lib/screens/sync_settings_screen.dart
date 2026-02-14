@@ -90,140 +90,144 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
         ],
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _sectionTitle('同步方式'),
-                DropdownButtonFormField<SyncProviderType>(
-                  value: _providerType,
-                  items: const [
-                    DropdownMenuItem(
-                      value: SyncProviderType.none,
-                      child: Text('不启用'),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _sectionTitle('同步方式'),
+                    DropdownButtonFormField<SyncProviderType>(
+                      value: _providerType,
+                      items: const [
+                        DropdownMenuItem(
+                          value: SyncProviderType.none,
+                          child: Text('不启用'),
+                        ),
+                        DropdownMenuItem(
+                          value: SyncProviderType.webdav,
+                          child: Text('WebDAV（云盘）'),
+                        ),
+                        DropdownMenuItem(
+                          value: SyncProviderType.nasWebdav,
+                          child: Text('NAS（WebDAV）'),
+                        ),
+                        DropdownMenuItem(
+                          value: SyncProviderType.s3Presigned,
+                          child: Text('S3 预签名 URL'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) {
+                          return;
+                        }
+                        setState(() => _providerType = value);
+                      },
                     ),
-                    DropdownMenuItem(
-                      value: SyncProviderType.webdav,
-                      child: Text('WebDAV（云盘）'),
+                    const SizedBox(height: 16),
+                    if (_providerType == SyncProviderType.webdav ||
+                        _providerType == SyncProviderType.nasWebdav)
+                      _webdavFields(),
+                    if (_providerType == SyncProviderType.s3Presigned)
+                      _presignedFields(),
+                    const SizedBox(height: 16),
+                    _sectionTitle('自动同步'),
+                    SwitchListTile(
+                      title: const Text('启用自动同步'),
+                      value: _autoSyncEnabled,
+                      onChanged: (value) {
+                        setState(() => _autoSyncEnabled = value);
+                      },
                     ),
-                    DropdownMenuItem(
-                      value: SyncProviderType.nasWebdav,
-                      child: Text('NAS（WebDAV）'),
+                    TextFormField(
+                      controller: _intervalController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: '同步间隔（分钟）',
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return '必填';
+                        }
+                        final parsed = int.tryParse(value);
+                        if (parsed == null || parsed <= 0) {
+                          return '请输入大于 0 的整数';
+                        }
+                        return null;
+                      },
                     ),
-                    DropdownMenuItem(
-                      value: SyncProviderType.s3Presigned,
-                      child: Text('S3 预签名 URL'),
+                    const SizedBox(height: 8),
+                    SwitchListTile(
+                      title: const Text('解锁后立即同步'),
+                      value: _autoSyncOnUnlock,
+                      onChanged: (value) {
+                        setState(() => _autoSyncOnUnlock = value);
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    _sectionTitle('冲突策略'),
+                    DropdownButtonFormField<ConflictStrategy>(
+                      value: _conflictStrategy,
+                      items: const [
+                        DropdownMenuItem(
+                          value: ConflictStrategy.remoteWins,
+                          child: Text('以远端为准'),
+                        ),
+                        DropdownMenuItem(
+                          value: ConflictStrategy.localWins,
+                          child: Text('以本地为准'),
+                        ),
+                        DropdownMenuItem(
+                          value: ConflictStrategy.keepBoth,
+                          child: Text('保留两个副本'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) {
+                          return;
+                        }
+                        setState(() => _conflictStrategy = value);
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    _sectionTitle('加密与密钥'),
+                    SwitchListTile(
+                      title: const Text('同步主密钥参数（推荐）'),
+                      subtitle: const Text('用于在其他设备验证主密码'),
+                      value: _syncMasterKey,
+                      onChanged: (value) {
+                        setState(() => _syncMasterKey = value);
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    _sectionTitle('同步状态'),
+                    _statusRow('上次同步时间',
+                        settings.lastSyncAt?.toLocal().toString() ?? '无'),
+                    _statusRow('状态', settings.lastSyncStatus ?? '无'),
+                    _statusRow('说明', settings.lastSyncMessage ?? '无'),
+                    _statusRow(
+                      '设备ID',
+                      settings.deviceId.isEmpty ? '未生成' : settings.deviceId,
+                    ),
+                    _statusRow('修订号', settings.lastSyncRevision.toString()),
+                    const SizedBox(height: 8),
+                    if (settings.logs.isNotEmpty) _logsSection(settings.logs),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: _saveSettings,
+                        child: const Text('保存设置'),
+                      ),
                     ),
                   ],
-                  onChanged: (value) {
-                    if (value == null) {
-                      return;
-                    }
-                    setState(() => _providerType = value);
-                  },
                 ),
-                const SizedBox(height: 16),
-                if (_providerType == SyncProviderType.webdav ||
-                    _providerType == SyncProviderType.nasWebdav)
-                  _webdavFields(),
-                if (_providerType == SyncProviderType.s3Presigned)
-                  _presignedFields(),
-                const SizedBox(height: 16),
-                _sectionTitle('自动同步'),
-                SwitchListTile(
-                  title: const Text('启用自动同步'),
-                  value: _autoSyncEnabled,
-                  onChanged: (value) {
-                    setState(() => _autoSyncEnabled = value);
-                  },
-                ),
-                TextFormField(
-                  controller: _intervalController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: '同步间隔（分钟）',
-                    border: OutlineInputBorder(),
-                  ),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return '必填';
-                    }
-                    final parsed = int.tryParse(value);
-                    if (parsed == null || parsed <= 0) {
-                      return '请输入大于 0 的整数';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 8),
-                SwitchListTile(
-                  title: const Text('解锁后立即同步'),
-                  value: _autoSyncOnUnlock,
-                  onChanged: (value) {
-                    setState(() => _autoSyncOnUnlock = value);
-                  },
-                ),
-                const SizedBox(height: 16),
-                _sectionTitle('冲突策略'),
-                DropdownButtonFormField<ConflictStrategy>(
-                  value: _conflictStrategy,
-                  items: const [
-                    DropdownMenuItem(
-                      value: ConflictStrategy.remoteWins,
-                      child: Text('以远端为准'),
-                    ),
-                    DropdownMenuItem(
-                      value: ConflictStrategy.localWins,
-                      child: Text('以本地为准'),
-                    ),
-                    DropdownMenuItem(
-                      value: ConflictStrategy.keepBoth,
-                      child: Text('保留两个副本'),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    if (value == null) {
-                      return;
-                    }
-                    setState(() => _conflictStrategy = value);
-                  },
-                ),
-                const SizedBox(height: 16),
-                _sectionTitle('加密与密钥'),
-                SwitchListTile(
-                  title: const Text('同步主密钥参数（推荐）'),
-                  subtitle: const Text('用于在其他设备验证主密码'),
-                  value: _syncMasterKey,
-                  onChanged: (value) {
-                    setState(() => _syncMasterKey = value);
-                  },
-                ),
-                const SizedBox(height: 16),
-                _sectionTitle('同步状态'),
-                _statusRow('上次同步时间',
-                    settings.lastSyncAt?.toLocal().toString() ?? '无'),
-                _statusRow('状态', settings.lastSyncStatus ?? '无'),
-                _statusRow('说明', settings.lastSyncMessage ?? '无'),
-                _statusRow(
-                  '设备ID',
-                  settings.deviceId.isEmpty ? '未生成' : settings.deviceId,
-                ),
-                _statusRow('修订号', settings.lastSyncRevision.toString()),
-                const SizedBox(height: 8),
-                if (settings.logs.isNotEmpty)
-                  _logsSection(settings.logs),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: _saveSettings,
-                    child: const Text('保存设置'),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ),

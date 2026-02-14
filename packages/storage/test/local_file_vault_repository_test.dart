@@ -12,27 +12,29 @@ void main() {
     final filePath = '${directory.path}/vault.json';
     final repository = LocalFileVaultRepository(filePath: filePath);
 
-    final item = VaultItem(
+    final record = VaultItemRecord(
       id: 'item-1',
-      label: 'Sample',
-      type: VaultEntryType.credential,
       encryptedPayload: EncryptedPayload(
         ciphertext: Uint8List.fromList([1, 2, 3]),
-        nonce: Uint8List.fromList([4, 5, 6]),
+        nonce: Uint8List.fromList([4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]),
         mac: Uint8List.fromList([7, 8, 9]),
+        version: 1,
+      ),
+      encryptedMetadata: EncryptedPayload(
+        ciphertext: Uint8List.fromList([9, 8, 7]),
+        nonce: Uint8List.fromList([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]),
+        mac: Uint8List.fromList([6, 6, 6]),
         version: 1,
       ),
       kdfSalt: Uint8List.fromList(List<int>.generate(16, (i) => i)),
       kdfIterations: 1000,
-      createdAt: DateTime.utc(2024, 1, 1),
-      updatedAt: DateTime.utc(2024, 1, 2),
     );
 
-    await repository.save(item);
+    await repository.save(record);
 
     final fetched = await repository.getById('item-1');
     expect(fetched, isNotNull);
-    expect(fetched!.label, equals('Sample'));
+    expect(fetched!.kdfIterations, equals(1000));
 
     final all = await repository.listAll();
     expect(all.length, equals(1));
