@@ -78,6 +78,7 @@
 - **全量测试** 需要同时具备 `dart` 与 `flutter` 命令（Flutter SDK 已包含 Dart）
 - **仅 Dart 包测试** 只需要 `dart` 命令（不依赖 Flutter）
 - 如果提示 `dart: command not found`，说明尚未安装 Dart/Flutter 或未正确配置 PATH
+- macOS 测试在sandbox中运行，请勿将敏感数据保存在沙盒目录中.路径: `~/Library/Containers/com.example.passwordManagerApp/Data/Library/Application Support/`
 
 ### 4.2 macOS 打包发布（App）
 1) 安装并验证依赖  
