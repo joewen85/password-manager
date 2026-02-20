@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:password_manager_core/password_manager_core.dart';
 
@@ -26,17 +27,69 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen>
+    with SingleTickerProviderStateMixin {
+  static const double _searchFieldHeight = 52.0;
+  static const double _searchHelpSpacing = 8.0;
+  static const double _searchHelpBottomGap = 10.0;
+  static const int _reduceEffectsThreshold = 20;
+
   final _searchController = TextEditingController();
+  final _searchFocusNode = FocusNode();
+  final LayerLink _searchFieldLink = LayerLink();
+  final GlobalKey _searchFieldKey = GlobalKey();
+  final GlobalKey _searchHelpKey = GlobalKey();
+  late final Listenable _entryListListenable;
+  late final AnimationController _syncRotationController;
   _VaultListMode _mode = _VaultListMode.credentials;
   String? _selectedTag;
   bool _showConflictsOnly = false;
   VaultItem? _selectedItem;
+  bool _showSearchHelp = false;
+  bool _isSyncing = false;
+  bool _searchHelpMetricsScheduled = false;
+  bool _reduceEffectsForScroll = false;
+  String _searchQuery = '';
+  List<_SearchTerm> _searchTerms = const [];
+  double _searchHelpHeight = 0;
+  double _searchHelpDyAdjustment = 0;
+  Offset _searchFieldOffset = Offset.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchFocusNode.addListener(_handleSearchFocusChanged);
+    _searchController.addListener(_handleSearchTextChanged);
+    _entryListListenable =
+        Listenable.merge([widget.controller, _searchController]);
+    _isSyncing = widget.controller.isSyncing;
+    _syncRotationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    );
+    if (_isSyncing) {
+      _syncRotationController.repeat();
+    }
+    widget.controller.addListener(_handleSyncStateChanged);
+  }
 
   @override
   void dispose() {
+    widget.controller.removeListener(_handleSyncStateChanged);
+    _searchFocusNode.removeListener(_handleSearchFocusChanged);
+    _searchController.removeListener(_handleSearchTextChanged);
     _searchController.dispose();
+    _searchFocusNode.dispose();
+    _syncRotationController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_showSearchHelp) {
+      _scheduleSearchHelpMetricsUpdate();
+    }
   }
 
   Future<void> _editEntry(VaultItem item) async {
@@ -147,6 +200,55 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _copyEntry(VaultEntryView view) async {
+    final item = view.item;
+    VaultItem? created;
+    if (item.type == VaultEntryType.server) {
+      final payload = await widget.controller.readServerAsset(item);
+      if (payload == null) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('无法解密条目')),
+        );
+        return;
+      }
+      created = await widget.controller.addServerAsset(
+        label: _buildCopyLabel(item.label),
+        payload: payload,
+      );
+    } else {
+      final payload = await widget.controller.readEntry(item);
+      if (payload == null) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('无法解密条目')),
+        );
+        return;
+      }
+      created = await widget.controller.addEntry(
+        label: _buildCopyLabel(item.label),
+        payload: payload,
+      );
+    }
+    if (mounted) {
+      if (created != null) {
+        await _editEntry(created);
+      }
+    }
+  }
+
+  String _buildCopyLabel(String label) {
+    final trimmed = label.trim();
+    if (trimmed.isEmpty) {
+      return '未命名副本';
+    }
+    return '$trimmed 副本';
+  }
+
   void _selectItem(VaultItem item) {
     setState(() => _selectedItem = item);
   }
@@ -156,6 +258,453 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
     setState(() => _selectedItem = null);
+  }
+
+  void _handleSearchFocusChanged() {
+    final shouldShow = _searchFocusNode.hasFocus &&
+        _searchController.text.trim().isEmpty;
+    if (shouldShow == _showSearchHelp) {
+      return;
+    }
+    setState(() => _showSearchHelp = shouldShow);
+    if (shouldShow) {
+      _scheduleSearchHelpMetricsUpdate();
+    }
+  }
+
+  void _handleSearchTextChanged() {
+    final trimmed = _searchController.text.trim();
+    if (trimmed != _searchQuery) {
+      _searchQuery = trimmed;
+      _searchTerms = _parseSearchTerms(trimmed);
+    }
+    final shouldShow = _searchFocusNode.hasFocus && trimmed.isEmpty;
+    if (shouldShow != _showSearchHelp) {
+      setState(() => _showSearchHelp = shouldShow);
+      if (shouldShow) {
+        _scheduleSearchHelpMetricsUpdate();
+      }
+    }
+  }
+
+  void _handleTagSelection(String? tag) {
+    final previousTag = _selectedTag;
+    setState(() => _selectedTag = tag);
+    _updateSearchForTagChange(
+      previousTag: previousTag,
+      nextTag: tag,
+    );
+  }
+
+  void _updateSearchForTagChange({
+    required String? previousTag,
+    required String? nextTag,
+  }) {
+    var updated = _stripTagToken(_searchController.text, previousTag);
+    if (nextTag != null && nextTag.trim().isNotEmpty) {
+      final token = '#${nextTag.trim()}';
+      if (!_containsTagToken(updated, nextTag)) {
+        updated = updated.trim().isEmpty ? token : '${updated.trim()} $token';
+      }
+    }
+    updated = updated.trim();
+    if (updated == _searchController.text) {
+      return;
+    }
+    _searchController.value = TextEditingValue(
+      text: updated,
+      selection: TextSelection.collapsed(offset: updated.length),
+    );
+  }
+
+  bool _containsTagToken(String input, String tag) {
+    final trimmed = input.trim();
+    if (trimmed.isEmpty) {
+      return false;
+    }
+    final lowerTag = tag.toLowerCase();
+    final tokens = trimmed.split(RegExp(r'[\s,]+'));
+    for (final token in tokens) {
+      final lower = token.toLowerCase();
+      if (lower == '#$lowerTag' || lower == 'tag:$lowerTag') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  String _stripTagToken(String input, String? tag) {
+    final trimmed = input.trim();
+    if (trimmed.isEmpty || tag == null || tag.trim().isEmpty) {
+      return trimmed;
+    }
+    final lowerTag = tag.toLowerCase();
+    final tokens = trimmed.split(RegExp(r'[\s,]+'));
+    final remaining = tokens.where((token) {
+      final lower = token.toLowerCase();
+      return lower != '#$lowerTag' && lower != 'tag:$lowerTag';
+    }).toList();
+    return remaining.join(' ');
+  }
+
+  void _setReduceEffectsForScroll(bool value) {
+    if (_reduceEffectsForScroll == value || !mounted) {
+      return;
+    }
+    setState(() => _reduceEffectsForScroll = value);
+  }
+
+  bool _handleScrollNotification(ScrollNotification notification) {
+    if (notification is ScrollStartNotification ||
+        notification is ScrollUpdateNotification) {
+      _setReduceEffectsForScroll(true);
+    } else if (notification is ScrollEndNotification) {
+      _setReduceEffectsForScroll(false);
+    } else if (notification is UserScrollNotification &&
+        notification.direction == ScrollDirection.idle) {
+      _setReduceEffectsForScroll(false);
+    }
+    return false;
+  }
+
+  void _scheduleSearchHelpMetricsUpdate() {
+    if (_searchHelpMetricsScheduled) {
+      return;
+    }
+    _searchHelpMetricsScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _searchHelpMetricsScheduled = false;
+      if (!mounted || !_showSearchHelp) {
+        return;
+      }
+      _updateSearchHelpMetrics(
+        searchFieldHeight: _searchFieldHeight,
+        searchHelpSpacing: _searchHelpSpacing,
+        searchHelpBottomGap: _searchHelpBottomGap,
+      );
+    });
+  }
+
+  void _handleSyncStateChanged() {
+    final syncing = widget.controller.isSyncing;
+    if (syncing == _isSyncing) {
+      return;
+    }
+    _isSyncing = syncing;
+    if (syncing) {
+      _syncRotationController.repeat();
+    } else {
+      _syncRotationController.stop();
+      _syncRotationController.value = 0;
+    }
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Widget _buildSyncAction(BuildContext context) {
+    final labelStyle = Theme.of(context).textTheme.labelMedium?.copyWith(
+          fontWeight: FontWeight.w600,
+        );
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      transitionBuilder: (child, animation) =>
+          FadeTransition(opacity: animation, child: child),
+      child: _isSyncing
+          ? Row(
+              key: const ValueKey('syncing'),
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('同步中', style: labelStyle),
+                const SizedBox(width: 6),
+                IconButton(
+                  onPressed: null,
+                  icon: RotationTransition(
+                    turns: _syncRotationController,
+                    child: const Icon(Icons.sync),
+                  ),
+                  tooltip: '同步中',
+                ),
+              ],
+            )
+          : Row(
+              key: const ValueKey('sync-idle'),
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  onPressed: () =>
+                      widget.controller.syncNow(notifyProgress: true),
+                  icon: const Icon(Icons.sync),
+                  tooltip: '同步',
+                ),
+              ],
+            ),
+    );
+  }
+
+  void _updateSearchHelpMetrics({
+    required double searchFieldHeight,
+    required double searchHelpSpacing,
+    required double searchHelpBottomGap,
+  }) {
+    final fieldContext = _searchFieldKey.currentContext;
+    if (fieldContext == null) {
+      return;
+    }
+    final fieldBox = fieldContext.findRenderObject();
+    if (fieldBox is! RenderBox || !fieldBox.hasSize) {
+      return;
+    }
+    var helpHeight = _searchHelpHeight;
+    final helpContext = _searchHelpKey.currentContext;
+    if (helpContext != null) {
+      final helpBox = helpContext.findRenderObject();
+      if (helpBox is RenderBox && helpBox.hasSize) {
+        helpHeight = helpBox.size.height;
+      }
+    }
+    final fieldOffset = fieldBox.localToGlobal(Offset.zero);
+    final mediaQuery = MediaQuery.of(context);
+    final screenHeight = mediaQuery.size.height;
+    final safeBottom = mediaQuery.padding.bottom;
+    final desiredTop = fieldOffset.dy + searchFieldHeight + searchHelpSpacing;
+    final maxTop =
+        screenHeight - safeBottom - searchHelpBottomGap - helpHeight;
+    final adjustment = desiredTop > maxTop ? maxTop - desiredTop : 0.0;
+    if ((helpHeight - _searchHelpHeight).abs() > 0.5 ||
+        (adjustment - _searchHelpDyAdjustment).abs() > 0.5 ||
+        (fieldOffset - _searchFieldOffset).distance > 0.5) {
+      setState(() {
+        _searchHelpHeight = helpHeight;
+        _searchHelpDyAdjustment = adjustment;
+        _searchFieldOffset = fieldOffset;
+      });
+    }
+  }
+
+  List<_SearchTerm> _parseSearchTerms(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) {
+      return const <_SearchTerm>[];
+    }
+    final parts = trimmed.split(RegExp(r'[\s,]+'));
+    final terms = <_SearchTerm>[];
+    for (final part in parts) {
+      if (part.isEmpty) {
+        continue;
+      }
+      if (part.startsWith('#') && part.length > 1) {
+        terms.add(
+          _SearchTerm(_SearchField.tag, part.substring(1).toLowerCase()),
+        );
+        continue;
+      }
+      final splitIndex = part.indexOf(':');
+      if (splitIndex > 0 && splitIndex < part.length - 1) {
+        final prefix = part.substring(0, splitIndex).toLowerCase();
+        final value = part.substring(splitIndex + 1).trim();
+        if (value.isEmpty) {
+          continue;
+        }
+        final lowerValue = value.toLowerCase();
+        switch (prefix) {
+          case 'title':
+          case 'name':
+          case 'label':
+            terms.add(_SearchTerm(_SearchField.title, lowerValue));
+            continue;
+          case 'app':
+          case 'appid':
+            terms.add(_SearchTerm(_SearchField.appId, lowerValue));
+            continue;
+          case 'server':
+          case 'srv':
+            terms.add(_SearchTerm(_SearchField.serverName, lowerValue));
+            continue;
+          case 'ip':
+            terms.add(_SearchTerm(_SearchField.serverIp, lowerValue));
+            continue;
+          case 'tag':
+          case 'tags':
+            terms.add(_SearchTerm(_SearchField.tag, lowerValue));
+            continue;
+        }
+      }
+      terms.add(_SearchTerm(_SearchField.any, part.toLowerCase()));
+    }
+    return terms;
+  }
+
+  bool _matchesSearch(VaultEntryView view, List<_SearchTerm> terms) {
+    if (terms.isEmpty) {
+      return true;
+    }
+    final index = view.searchIndex;
+
+    bool contains(String? valueLower, String term) =>
+        valueLower?.contains(term) ?? false;
+
+    bool matchesTagTerm(String term) {
+      for (final tag in index.tagsLower) {
+        if (tag.contains(term)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    for (final term in terms) {
+      switch (term.field) {
+        case _SearchField.title:
+          if (!contains(index.labelLower, term.value)) {
+            return false;
+          }
+          break;
+        case _SearchField.appId:
+          if (!contains(index.appIdLower, term.value)) {
+            return false;
+          }
+          break;
+        case _SearchField.serverName:
+          final nameMatch = contains(index.serverNameLower, term.value);
+          final labelMatch =
+              view.item.type == VaultEntryType.server &&
+              contains(index.labelLower, term.value);
+          if (!nameMatch && !labelMatch) {
+            return false;
+          }
+          break;
+        case _SearchField.serverIp:
+          if (!contains(index.serverIpLower, term.value)) {
+            return false;
+          }
+          break;
+        case _SearchField.tag:
+          if (!matchesTagTerm(term.value)) {
+            return false;
+          }
+          break;
+        case _SearchField.any:
+          if (!index.anyLower.contains(term.value)) {
+            return false;
+          }
+          break;
+      }
+    }
+    return true;
+  }
+
+  Widget _buildSearchHelp(BuildContext context) {
+    final platform = Theme.of(context).platform;
+    final isAndroid = platform == TargetPlatform.android;
+    final textStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
+          fontSize: 14,
+          height: 1.5,
+        );
+    final labelStyle = textStyle?.copyWith(fontWeight: FontWeight.w600);
+    final titleStyle = textStyle?.copyWith(
+      fontSize: 15,
+      fontWeight: FontWeight.w700,
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.maxWidth * (2 / 3);
+        final width = maxWidth < 260
+            ? maxWidth
+            : maxWidth > 560
+                ? 560.0
+                : maxWidth;
+        return Align(
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: width,
+            child: KeyedSubtree(
+              key: _searchHelpKey,
+              child: GlassSurface(
+                borderRadius: 14,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                blur: 16,
+                opacityLight: isAndroid ? 0.9 : 0.75,
+                opacityDark: isAndroid ? 0.9 : 0.55,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Search 用法', style: titleStyle),
+                    const SizedBox(height: 6),
+                    Text(
+                      '普通关键词会在标题/应用ID/服务器名称/IP/标签里匹配，多个词按 AND 过滤。',
+                      style: textStyle,
+                    ),
+                    const SizedBox(height: 6),
+                    Text('指定字段前缀：', style: labelStyle),
+                    const SizedBox(height: 4),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final isNarrow = constraints.maxWidth < 360;
+                        final leftColumn = [
+                          'title:xxx / label:xxx 标题',
+                          'appid:xxx 应用ID',
+                          'server:xxx 服务器名称',
+                        ];
+                        final rightColumn = [
+                          'ip:xxx 服务器IP',
+                          'tag:xxx 或 #xxx 标签',
+                        ];
+                        if (isNarrow) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              for (final line in leftColumn)
+                                Text(line, style: textStyle),
+                              for (final line in rightColumn)
+                                Text(line, style: textStyle),
+                            ],
+                          );
+                        }
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  for (final line in leftColumn)
+                                    Text(line, style: textStyle),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  for (final line in rightColumn)
+                                    Text(line, style: textStyle),
+                                ],
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '多标签示例：tag:prod tag:cn 或 #prod #cn',
+                      style: textStyle,
+                    ),
+                    Text(
+                      '多条件示例：title:aws tag:prod ip:10.0',
+                      style: textStyle,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _openCreateSheet() async {
@@ -250,7 +799,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ChoiceChip(
           label: const Text('全部'),
           selected: _selectedTag == null,
-          onSelected: (_) => setState(() => _selectedTag = null),
+          onSelected: (_) => _handleTagSelection(null),
           labelStyle: const TextStyle(fontSize: 12),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         ),
@@ -260,7 +809,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 (tag) => ChoiceChip(
                   label: Text(tag),
                   selected: _selectedTag == tag,
-                  onSelected: (_) => setState(() => _selectedTag = tag),
+                  onSelected: (_) => _handleTagSelection(tag),
                   labelStyle: const TextStyle(fontSize: 12),
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -279,7 +828,7 @@ class _HomeScreenState extends State<HomeScreen> {
         (tag) => ChoiceChip(
           label: Text(tag),
           selected: _selectedTag == tag,
-          onSelected: (_) => setState(() => _selectedTag = tag),
+          onSelected: (_) => _handleTagSelection(tag),
           labelStyle: const TextStyle(fontSize: 12),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         ),
@@ -347,7 +896,7 @@ class _HomeScreenState extends State<HomeScreen> {
     usedWidth += allWidth;
     chips.add(
       buildChip('全部', _selectedTag == null, () {
-        setState(() => _selectedTag = null);
+        _handleTagSelection(null);
       }),
     );
 
@@ -362,7 +911,7 @@ class _HomeScreenState extends State<HomeScreen> {
       visible += 1;
       chips.add(
         buildChip(tag, _selectedTag == tag, () {
-          setState(() => _selectedTag = tag);
+          _handleTagSelection(tag);
         }),
       );
     }
@@ -452,7 +1001,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           )
                         : null,
                     onTap: () {
-                      setState(() => _selectedTag = tag);
+                      _handleTagSelection(tag);
                       Navigator.of(context).pop();
                     },
                   );
@@ -559,16 +1108,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   List<VaultEntryView> _sortViews(List<VaultEntryView> views) {
-    final sorted = [...views];
+    if (views.length < 2) {
+      return views;
+    }
     switch (widget.controller.metadata.sortOrder) {
       case VaultSortOrder.updatedDesc:
-        sorted.sort((a, b) => b.item.updatedAt.compareTo(a.item.updatedAt));
+        views.sort((a, b) => b.item.updatedAt.compareTo(a.item.updatedAt));
         break;
       case VaultSortOrder.labelAsc:
-        sorted.sort((a, b) => a.item.label.compareTo(b.item.label));
+        views.sort((a, b) => a.item.label.compareTo(b.item.label));
         break;
     }
-    return sorted;
+    return views;
   }
 
   Widget _buildAdaptiveBody(BuildContext context) {
@@ -677,130 +1228,167 @@ class _HomeScreenState extends State<HomeScreen> {
     required bool singleLineTags,
     required int maxVisibleTags,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Stack(
+      clipBehavior: Clip.none,
       children: [
-        FadeSlide(
-          delay: const Duration(milliseconds: 60),
-          child: _heroCard(context),
-        ),
-        const SizedBox(height: 16),
-        FadeSlide(
-          delay: const Duration(milliseconds: 140),
-          child: _sectionCard(
-            child: Theme(
-              data: Theme.of(context).copyWith(
-                inputDecorationTheme:
-                    Theme.of(context).inputDecorationTheme.copyWith(
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                        ),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      SegmentedButton<_VaultListMode>(
-                        style: ButtonStyle(
-                          padding: const WidgetStatePropertyAll(
-                            EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 6,
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            FadeSlide(
+              delay: const Duration(milliseconds: 60),
+              child: _heroCard(context),
+            ),
+            const SizedBox(height: 16),
+            FadeSlide(
+              delay: const Duration(milliseconds: 140),
+              child: _sectionCard(
+                child: Theme(
+                  data: Theme.of(context).copyWith(
+                    inputDecorationTheme:
+                        Theme.of(context).inputDecorationTheme.copyWith(
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
                             ),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          SegmentedButton<_VaultListMode>(
+                            style: ButtonStyle(
+                              padding: const WidgetStatePropertyAll(
+                                EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
+                                ),
+                              ),
+                              textStyle: const WidgetStatePropertyAll(
+                                TextStyle(fontSize: 12),
+                              ),
+                            ),
+                            segments: const [
+                              ButtonSegment(
+                                value: _VaultListMode.credentials,
+                                label: Text('账号'),
+                              ),
+                              ButtonSegment(
+                                value: _VaultListMode.servers,
+                                label: Text('服务器'),
+                              ),
+                            ],
+                            selected: {_mode},
+                            onSelectionChanged: (value) {
+                              setState(() {
+                                _mode = value.first;
+                                _selectedItem = null;
+                              });
+                            },
                           ),
-                          textStyle: const WidgetStatePropertyAll(
-                            TextStyle(fontSize: 12),
-                          ),
-                        ),
-                        segments: const [
-                          ButtonSegment(
-                            value: _VaultListMode.credentials,
-                            label: Text('账号'),
-                          ),
-                          ButtonSegment(
-                            value: _VaultListMode.servers,
-                            label: Text('服务器'),
+                          const SizedBox(width: 8),
+                          if (widget.controller.hasConflicts)
+                            FilterChip(
+                              label: const Text('仅冲突'),
+                              selected: _showConflictsOnly,
+                              onSelected: (value) {
+                                setState(
+                                  () => _showConflictsOnly = value,
+                                );
+                              },
+                              labelStyle: const TextStyle(fontSize: 12),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
+                            ),
+                          const Spacer(),
+                          DropdownButtonHideUnderline(
+                            child: DropdownButton<VaultSortOrder>(
+                              value: widget.controller.metadata.sortOrder,
+                              borderRadius: BorderRadius.circular(12),
+                              style: Theme.of(context).textTheme.bodySmall,
+                              onChanged: (value) async {
+                                if (value == null) {
+                                  return;
+                                }
+                                await widget.controller.updateSortOrder(value);
+                              },
+                              items: const [
+                                DropdownMenuItem(
+                                  value: VaultSortOrder.updatedDesc,
+                                  child: Text('按更新时间'),
+                                ),
+                                DropdownMenuItem(
+                                  value: VaultSortOrder.labelAsc,
+                                  child: Text('按名称'),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
-                        selected: {_mode},
-                        onSelectionChanged: (value) {
-                          setState(() {
-                            _mode = value.first;
-                            _selectedItem = null;
-                          });
-                        },
                       ),
-                      const SizedBox(width: 8),
-                      if (widget.controller.hasConflicts)
-                        FilterChip(
-                          label: const Text('仅冲突'),
-                          selected: _showConflictsOnly,
-                          onSelected: (value) {
-                            setState(
-                              () => _showConflictsOnly = value,
-                            );
-                          },
-                          labelStyle: const TextStyle(fontSize: 12),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 2,
+                      const SizedBox(height: 10),
+                      CompositedTransformTarget(
+                        key: _searchFieldKey,
+                        link: _searchFieldLink,
+                        child: SizedBox(
+                          height: _searchFieldHeight,
+                          child: TextField(
+                            controller: _searchController,
+                            focusNode: _searchFocusNode,
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      fontSize: 12,
+                                    ),
+                            decoration: const InputDecoration(
+                              prefixIcon: Icon(Icons.search, size: 18),
+                              hintText: '支持标题、应用ID、服务器名称/IP、标签搜索',
+                            ),
                           ),
                         ),
-                      const Spacer(),
-                      DropdownButtonHideUnderline(
-                        child: DropdownButton<VaultSortOrder>(
-                          value: widget.controller.metadata.sortOrder,
-                          borderRadius: BorderRadius.circular(12),
-                          style: Theme.of(context).textTheme.bodySmall,
-                          onChanged: (value) async {
-                            if (value == null) {
-                              return;
-                            }
-                            await widget.controller.updateSortOrder(value);
-                          },
-                          items: const [
-                            DropdownMenuItem(
-                              value: VaultSortOrder.updatedDesc,
-                              child: Text('按更新时间'),
-                            ),
-                            DropdownMenuItem(
-                              value: VaultSortOrder.labelAsc,
-                              child: Text('按名称'),
-                            ),
-                          ],
-                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      _tagFilterRow(
+                        singleLine: singleLineTags,
+                        maxVisible: maxVisibleTags,
                       ),
                     ],
                   ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _searchController,
-                    onChanged: (_) => setState(() {}),
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          fontSize: 12,
-                        ),
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.search, size: 18),
-                      hintText: '按名称或标签搜索',
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  _tagFilterRow(
-                    singleLine: singleLineTags,
-                    maxVisible: maxVisibleTags,
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: FadeSlide(
+                delay: const Duration(milliseconds: 220),
+                child: _buildEntryList(context, useDetailsPane: useDetailsPane),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 16),
-        Expanded(
-          child: FadeSlide(
-            delay: const Duration(milliseconds: 220),
-            child: _buildEntryList(context, useDetailsPane: useDetailsPane),
+        Positioned.fill(
+          child: IgnorePointer(
+            ignoring: !_showSearchHelp,
+            child: CompositedTransformFollower(
+              link: _searchFieldLink,
+              showWhenUnlinked: false,
+              targetAnchor: Alignment.bottomLeft,
+              followerAnchor: Alignment.topLeft,
+              offset: Offset(0, _searchHelpSpacing + _searchHelpDyAdjustment),
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOut,
+                opacity: _showSearchHelp ? 1 : 0,
+                child: AnimatedSlide(
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeOut,
+                  offset:
+                      _showSearchHelp ? Offset.zero : const Offset(0, -0.04),
+                  child: _buildSearchHelp(context),
+                ),
+              ),
+            ),
           ),
         ),
       ],
@@ -812,33 +1400,33 @@ class _HomeScreenState extends State<HomeScreen> {
     required bool useDetailsPane,
   }) {
     return AnimatedBuilder(
-      animation: widget.controller,
+      animation: _entryListListenable,
       builder: (context, _) {
         final views = widget.controller.entryViews;
-        final query = _searchController.text.trim().toLowerCase();
+        final query = _searchQuery;
+        final terms = _searchTerms;
+        final hasSearch = query.isNotEmpty;
+        final hasTagFilter =
+            !hasSearch && _selectedTag != null && _selectedTag!.isNotEmpty;
         final filtered = views.where((view) {
-          final matchesType = _mode == _VaultListMode.credentials
-              ? view.item.type == VaultEntryType.credential
-              : view.item.type == VaultEntryType.server;
-          if (!matchesType) {
-            return false;
+          if (!hasSearch) {
+            final matchesType = _mode == _VaultListMode.credentials
+                ? view.item.type == VaultEntryType.credential
+                : view.item.type == VaultEntryType.server;
+            if (!matchesType) {
+              return false;
+            }
           }
           if (_showConflictsOnly && !view.isConflict) {
             return false;
           }
-          final matchesQuery = query.isEmpty
-              ? true
-              : view.item.label.toLowerCase().contains(query) ||
-                  view.tags.any(
-                    (tag) => tag.toLowerCase().contains(query),
-                  );
-          if (!matchesQuery) {
+          if (hasTagFilter && !view.tags.contains(_selectedTag)) {
             return false;
           }
-          if (_selectedTag == null || _selectedTag!.isEmpty) {
-            return true;
+          if (terms.isNotEmpty && !_matchesSearch(view, terms)) {
+            return false;
           }
-          return view.tags.contains(_selectedTag);
+          return true;
         }).toList();
         final sorted = _sortViews(filtered);
         if (sorted.isEmpty) {
@@ -848,31 +1436,38 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           );
         }
-        return ListView.separated(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).padding.bottom + 12,
+        final reduceEffects = _reduceEffectsForScroll ||
+            sorted.length >= _reduceEffectsThreshold;
+        return NotificationListener<ScrollNotification>(
+          onNotification: _handleScrollNotification,
+          child: ListView.separated(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).padding.bottom + 12,
+            ),
+            itemCount: sorted.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            itemBuilder: (context, index) {
+              final view = sorted[index];
+              final item = view.item;
+              return EntryCard(
+                item: item,
+                tags: view.tags,
+                isConflict: view.isConflict,
+                isSelected: useDetailsPane && _selectedItem?.id == item.id,
+                reduceEffects: reduceEffects,
+                onView: () {
+                  if (useDetailsPane) {
+                    _selectItem(item);
+                  } else {
+                    _showEntryDetailsDialog(item);
+                  }
+                },
+                onEdit: () => _editEntry(item),
+                onDelete: () => _deleteEntry(item),
+                onCopy: () => _copyEntry(view),
+              );
+            },
           ),
-          itemCount: sorted.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 12),
-          itemBuilder: (context, index) {
-            final view = sorted[index];
-            final item = view.item;
-            return EntryCard(
-              item: item,
-              tags: view.tags,
-              isConflict: view.isConflict,
-              isSelected: useDetailsPane && _selectedItem?.id == item.id,
-              onView: () {
-                if (useDetailsPane) {
-                  _selectItem(item);
-                } else {
-                  _showEntryDetailsDialog(item);
-                }
-              },
-              onEdit: () => _editEntry(item),
-              onDelete: () => _deleteEntry(item),
-            );
-          },
         );
       },
     );
@@ -903,11 +1498,7 @@ class _HomeScreenState extends State<HomeScreen> {
             : const Text('密码库'),
         actions: [
           _buildCreateButton(context),
-          IconButton(
-            onPressed: widget.controller.syncNow,
-            icon: const Icon(Icons.sync),
-            tooltip: '同步',
-          ),
+          _buildSyncAction(context),
           IconButton(
             onPressed: widget.controller.runBackup,
             icon: const Icon(Icons.backup_outlined),
@@ -1043,6 +1634,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+enum _SearchField { any, title, appId, serverName, serverIp, tag }
+
+class _SearchTerm {
+  const _SearchTerm(this.field, this.value);
+
+  final _SearchField field;
+  final String value;
+}
+
 enum _VaultMenuAction { syncSettings, tags, export, clear }
 
 class EntryCard extends StatelessWidget {
@@ -1052,21 +1652,28 @@ class EntryCard extends StatelessWidget {
     required this.tags,
     required this.isConflict,
     this.isSelected = false,
+    this.reduceEffects = false,
     required this.onView,
     required this.onEdit,
     required this.onDelete,
+    required this.onCopy,
   });
 
   final VaultItem item;
   final List<String> tags;
   final bool isConflict;
   final bool isSelected;
+  final bool reduceEffects;
   final VoidCallback onView;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+  final Future<void> Function() onCopy;
 
   @override
   Widget build(BuildContext context) {
+    final disableAnimations =
+        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final useAnimations = !disableAnimations && !reduceEffects;
     final colorScheme = Theme.of(context).colorScheme;
     final icon = item.type == VaultEntryType.server
         ? Icons.dns_rounded
@@ -1077,7 +1684,8 @@ class EntryCard extends StatelessWidget {
     final visibleTags = tags.take(3).toList();
     final remaining = tags.length - visibleTags.length;
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
+      duration:
+          useAnimations ? const Duration(milliseconds: 180) : Duration.zero,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
         border: isSelected
@@ -1088,139 +1696,171 @@ class EntryCard extends StatelessWidget {
       child: GlassSurface(
         borderRadius: 20,
         padding: const EdgeInsets.all(16),
+        reduceEffects: reduceEffects,
         child: Material(
           type: MaterialType.transparency,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(20),
-            onTap: onView,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: accent.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(14),
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onLongPressStart: (details) =>
+                _showCopyMenu(context, details.globalPosition),
+            onSecondaryTapDown: (details) =>
+                _showCopyMenu(context, details.globalPosition),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: onView,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: accent.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(icon, color: accent),
                   ),
-                  child: Icon(icon, color: accent),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (isConflict)
-                        Container(
-                          margin: const EdgeInsets.only(bottom: 6),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: colorScheme.errorContainer,
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            '冲突副本',
-                            style: Theme.of(context)
-                                .textTheme
-                                .labelSmall
-                                ?.copyWith(
-                                  color: colorScheme.onErrorContainer,
-                                ),
-                          ),
-                        ),
-                      Text(
-                        item.label,
-                        style:
-                            Theme.of(context).textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w700,
-                                ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        '更新于 ${item.updatedAt.toLocal()}',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: colorScheme.onSurfaceVariant,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (isConflict)
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 6),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
                             ),
-                      ),
-                      if (tags.isNotEmpty) ...[
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: [
-                            ...visibleTags.map(
-                              (tag) => Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: colorScheme.primaryContainer
-                                      .withOpacity(0.55),
-                                  borderRadius: BorderRadius.circular(999),
-                                ),
-                                child: Text(
-                                  tag,
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .labelSmall
-                                      ?.copyWith(
-                                        color: colorScheme.onPrimaryContainer,
-                                      ),
+                            decoration: BoxDecoration(
+                              color: colorScheme.errorContainer,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              '冲突副本',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(
+                                    color: colorScheme.onErrorContainer,
+                                  ),
+                            ),
+                          ),
+                        Text(
+                          item.label,
+                          style:
+                              Theme.of(context).textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '更新于 ${item.updatedAt.toLocal()}',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                        if (tags.isNotEmpty) ...[
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              ...visibleTags.map(
+                                (tag) => Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: colorScheme.primaryContainer
+                                        .withOpacity(0.55),
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                  child: Text(
+                                    tag,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelSmall
+                                        ?.copyWith(
+                                          color:
+                                              colorScheme.onPrimaryContainer,
+                                        ),
+                                  ),
                                 ),
                               ),
-                            ),
-                            if (remaining > 0)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 4,
+                              if (remaining > 0)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: colorScheme.surfaceVariant,
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                  child: Text(
+                                    '+$remaining',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelSmall
+                                        ?.copyWith(
+                                          color:
+                                              colorScheme.onSurfaceVariant,
+                                        ),
+                                  ),
                                 ),
-                                decoration: BoxDecoration(
-                                  color: colorScheme.surfaceVariant,
-                                  borderRadius: BorderRadius.circular(999),
-                                ),
-                                child: Text(
-                                  '+$remaining',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .labelSmall
-                                      ?.copyWith(
-                                        color: colorScheme.onSurfaceVariant,
-                                      ),
-                                ),
-                              ),
-                          ],
-                        ),
+                            ],
+                          ),
+                        ],
                       ],
+                    ),
+                  ),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.edit_outlined),
+                        tooltip: '编辑',
+                        onPressed: onEdit,
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        tooltip: '删除',
+                        onPressed: onDelete,
+                      ),
                     ],
                   ),
-                ),
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.edit_outlined),
-                      tooltip: '编辑',
-                      onPressed: onEdit,
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline),
-                      tooltip: '删除',
-                      onPressed: onDelete,
-                    ),
-                  ],
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
       ),
     );
   }
+
+  Future<void> _showCopyMenu(BuildContext context, Offset position) async {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final selected = await showMenu<_EntryMenuAction>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromPoints(position, position),
+        Offset.zero & overlay.size,
+      ),
+      items: const [
+        PopupMenuItem(
+          value: _EntryMenuAction.copy,
+          child: Text('复制条目'),
+        ),
+      ],
+    );
+    if (selected == _EntryMenuAction.copy) {
+      await onCopy();
+    }
+  }
 }
 
 enum _VaultListMode { credentials, servers }
+
+enum _EntryMenuAction { copy }

@@ -22,6 +22,7 @@ class PasswordManagerApp extends StatelessWidget {
   const PasswordManagerApp({super.key, required this.controller});
 
   final VaultController controller;
+  static const bool _isTest = bool.fromEnvironment('FLUTTER_TEST');
 
   static Future<PasswordManagerApp> bootstrap() async {
     VaultRepository repository;
@@ -115,6 +116,7 @@ class PasswordManagerApp extends StatelessWidget {
       return ThemeData(
         colorScheme: colorScheme,
         useMaterial3: true,
+        splashFactory: _isTest ? NoSplash.splashFactory : null,
         scaffoldBackgroundColor: colorScheme.background,
         textTheme: textTheme.copyWith(
           headlineMedium: textTheme.headlineMedium?.copyWith(

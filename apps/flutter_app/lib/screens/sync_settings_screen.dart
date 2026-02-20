@@ -79,7 +79,7 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
             onPressed: widget.controller.isSyncing
                 ? null
                 : () async {
-                    await widget.controller.syncNow();
+                    await widget.controller.syncNow(notifyProgress: true);
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(content: Text('同步完成')),

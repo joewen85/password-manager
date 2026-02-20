@@ -47,6 +47,7 @@ void main() {
       appId: 'app',
       accessToken: 'access',
       secretKey: 'secret',
+      notes: 'notes',
       tags: const [],
     );
 
@@ -89,6 +90,7 @@ void main() {
       appId: 'app',
       accessToken: 'access',
       secretKey: 'secret',
+      notes: 'notes',
       tags: const [],
     );
 

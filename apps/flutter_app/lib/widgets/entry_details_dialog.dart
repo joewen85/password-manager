@@ -187,6 +187,7 @@ class EntryDetailsContent extends StatelessWidget {
                   _detailRow('应用ID', payload.appId),
                   _detailRow('访问令牌', payload.accessToken),
                   _detailRow('密钥', payload.secretKey),
+                  _detailRow('备注项', payload.notes),
                   _detailRow('分类标签', payload.tags.join(', ')),
                 ],
               ),

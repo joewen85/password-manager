@@ -6,41 +6,55 @@ class VaultMetadata {
   const VaultMetadata({
     required this.tags,
     required this.sortOrder,
+    required this.tagsUpdatedAt,
   });
 
   final List<String> tags;
   final VaultSortOrder sortOrder;
+  final int tagsUpdatedAt;
 
   factory VaultMetadata.defaults() {
     return const VaultMetadata(
       tags: <String>[],
       sortOrder: VaultSortOrder.updatedDesc,
+      tagsUpdatedAt: 0,
     );
   }
 
   VaultMetadata copyWith({
     List<String>? tags,
     VaultSortOrder? sortOrder,
+    int? tagsUpdatedAt,
   }) {
     return VaultMetadata(
       tags: tags ?? this.tags,
       sortOrder: sortOrder ?? this.sortOrder,
+      tagsUpdatedAt: tagsUpdatedAt ?? this.tagsUpdatedAt,
     );
   }
 
   Map<String, Object?> toJson() => {
         'tags': tags,
         'sortOrder': sortOrder.name,
+        'tagsUpdatedAt': tagsUpdatedAt,
       };
 
   static VaultMetadata fromJson(Map<String, Object?> json) {
     final rawTags = (json['tags'] as List?)?.whereType<String>().toList() ?? [];
     final sortName = json['sortOrder'] as String? ?? 'updatedDesc';
+    final rawUpdatedAt = json['tagsUpdatedAt'];
+    final tagsUpdatedAt = rawUpdatedAt is num
+        ? rawUpdatedAt.toInt()
+        : int.tryParse(rawUpdatedAt?.toString() ?? '') ?? 0;
     final sortOrder = VaultSortOrder.values.firstWhere(
       (entry) => entry.name == sortName,
       orElse: () => VaultSortOrder.updatedDesc,
     );
-    return VaultMetadata(tags: rawTags, sortOrder: sortOrder);
+    return VaultMetadata(
+      tags: rawTags,
+      sortOrder: sortOrder,
+      tagsUpdatedAt: tagsUpdatedAt,
+    );
   }
 }
 

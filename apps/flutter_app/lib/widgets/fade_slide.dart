@@ -61,7 +61,9 @@ class _FadeSlideState extends State<FadeSlide>
 
   @override
   Widget build(BuildContext context) {
-    if (!widget.enable) {
+    final disableAnimations =
+        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    if (!widget.enable || disableAnimations) {
       return widget.child;
     }
     return FadeTransition(

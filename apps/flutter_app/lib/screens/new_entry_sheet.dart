@@ -28,6 +28,7 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
   final _appIdController = TextEditingController();
   final _accessTokenController = TextEditingController();
   final _secretKeyController = TextEditingController();
+  final _notesController = TextEditingController();
   final _tagsController = TextEditingController();
 
   @override
@@ -42,6 +43,7 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
       _appIdController.text = data.payload.appId;
       _accessTokenController.text = data.payload.accessToken;
       _secretKeyController.text = data.payload.secretKey;
+      _notesController.text = data.payload.notes;
       _tagsController.text = data.payload.tags.join(', ');
     }
   }
@@ -55,6 +57,7 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
     _appIdController.dispose();
     _accessTokenController.dispose();
     _secretKeyController.dispose();
+    _notesController.dispose();
     _tagsController.dispose();
     super.dispose();
   }
@@ -117,6 +120,11 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
                 obscure: true,
               ),
               _buildField(
+                controller: _notesController,
+                label: '备注项',
+                maxLines: 4,
+              ),
+              _buildField(
                 controller: _tagsController,
                 label: '分类标签',
                 hint: '多个标签用逗号分隔',
@@ -137,6 +145,7 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
                           appId: _appIdController.text.trim(),
                           accessToken: _accessTokenController.text.trim(),
                           secretKey: _secretKeyController.text.trim(),
+                          notes: _notesController.text.trim(),
                           tags: _parseTags(_tagsController.text),
                         );
                         Navigator.of(context).pop(
@@ -164,12 +173,14 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
     String? hint,
     bool obscure = false,
     bool requiredField = false,
+    int maxLines = 1,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: TextFormField(
         controller: controller,
         obscureText: obscure,
+        maxLines: maxLines,
         decoration: InputDecoration(
           labelText: label,
           hintText: hint,

@@ -17,6 +17,9 @@ class _UnlockScreenState extends State<UnlockScreen> {
   final _passwordController = TextEditingController();
   final _totpController = TextEditingController();
   final _confirmController = TextEditingController();
+  final _passwordFocusNode = FocusNode();
+  final _totpFocusNode = FocusNode();
+  final _confirmFocusNode = FocusNode();
   final _formKey = GlobalKey<FormState>();
 
   @override
@@ -24,7 +27,33 @@ class _UnlockScreenState extends State<UnlockScreen> {
     _passwordController.dispose();
     _totpController.dispose();
     _confirmController.dispose();
+    _passwordFocusNode.dispose();
+    _totpFocusNode.dispose();
+    _confirmFocusNode.dispose();
     super.dispose();
+  }
+
+  Future<void> _handleSubmit({required bool isInitialized}) async {
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+    final password = _passwordController.text.trim();
+    final success = isInitialized
+        ? await widget.controller.unlock(
+            password,
+            totpCode: _totpController.text.trim(),
+          )
+        : await widget.controller.setupMasterPassword(
+            password,
+            _confirmController.text.trim(),
+          );
+    if (!success && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('操作失败'),
+        ),
+      );
+    }
   }
 
   @override
@@ -115,10 +144,29 @@ class _UnlockScreenState extends State<UnlockScreen> {
                         const SizedBox(height: 20),
                         TextFormField(
                           controller: _passwordController,
+                          focusNode: _passwordFocusNode,
                           obscureText: true,
+                          textInputAction: !isInitialized
+                              ? TextInputAction.next
+                              : widget.controller.requireTotp
+                                  ? TextInputAction.next
+                                  : TextInputAction.done,
                           decoration: const InputDecoration(
                             labelText: '主密码',
                           ),
+                          onFieldSubmitted: (_) {
+                            if (!isInitialized) {
+                              FocusScope.of(context)
+                                  .requestFocus(_confirmFocusNode);
+                              return;
+                            }
+                            if (widget.controller.requireTotp) {
+                              FocusScope.of(context)
+                                  .requestFocus(_totpFocusNode);
+                              return;
+                            }
+                            _handleSubmit(isInitialized: true);
+                          },
                           validator: (value) =>
                               (value == null || value.isEmpty)
                                   ? '必填'
@@ -128,10 +176,14 @@ class _UnlockScreenState extends State<UnlockScreen> {
                           const SizedBox(height: 12),
                           TextFormField(
                             controller: _confirmController,
+                            focusNode: _confirmFocusNode,
                             obscureText: true,
+                            textInputAction: TextInputAction.done,
                             decoration: const InputDecoration(
                               labelText: '确认主密码',
                             ),
+                            onFieldSubmitted: (_) =>
+                                _handleSubmit(isInitialized: false),
                             validator: (value) {
                               if (value == null || value.isEmpty) {
                                 return '必填';
@@ -147,10 +199,14 @@ class _UnlockScreenState extends State<UnlockScreen> {
                           const SizedBox(height: 12),
                           TextFormField(
                             controller: _totpController,
+                            focusNode: _totpFocusNode,
                             keyboardType: TextInputType.number,
+                            textInputAction: TextInputAction.done,
                             decoration: const InputDecoration(
                               labelText: '2FA 验证码',
                             ),
+                            onFieldSubmitted: (_) =>
+                                _handleSubmit(isInitialized: true),
                             validator: (value) =>
                                 (value == null || value.isEmpty)
                                     ? '必填'
@@ -161,28 +217,8 @@ class _UnlockScreenState extends State<UnlockScreen> {
                         SizedBox(
                           width: double.infinity,
                           child: FilledButton(
-                            onPressed: () async {
-                              if (!_formKey.currentState!.validate()) {
-                                return;
-                              }
-                              final password = _passwordController.text.trim();
-                              final success = isInitialized
-                                  ? await widget.controller.unlock(
-                                      password,
-                                      totpCode: _totpController.text.trim(),
-                                    )
-                                  : await widget.controller.setupMasterPassword(
-                                      password,
-                                      _confirmController.text.trim(),
-                                    );
-                              if (!success && mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('操作失败'),
-                                  ),
-                                );
-                              }
-                            },
+                            onPressed: () =>
+                                _handleSubmit(isInitialized: isInitialized),
                             child: Text(isInitialized ? '解锁' : '初始化'),
                           ),
                         ),

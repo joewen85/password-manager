@@ -6,6 +6,7 @@ class CredentialPayload {
     required this.appId,
     required this.accessToken,
     required this.secretKey,
+    required this.notes,
     required this.tags,
   });
 
@@ -15,6 +16,7 @@ class CredentialPayload {
   final String appId;
   final String accessToken;
   final String secretKey;
+  final String notes;
   final List<String> tags;
 
   Map<String, Object> toJson() => {
@@ -24,6 +26,7 @@ class CredentialPayload {
         'appId': appId,
         'accessToken': accessToken,
         'secretKey': secretKey,
+        'notes': notes,
         'tags': tags,
       };
 
@@ -36,6 +39,7 @@ class CredentialPayload {
       appId: json['appId'] as String? ?? '',
       accessToken: json['accessToken'] as String? ?? '',
       secretKey: json['secretKey'] as String? ?? '',
+      notes: json['notes'] as String? ?? '',
       tags: rawTags,
     );
   }

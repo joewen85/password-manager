@@ -92,13 +92,23 @@ VaultController buildController({required bool requireTotp}) {
   );
 }
 
+Widget _wrapApp(Widget home) {
+  return MaterialApp(
+    theme: ThemeData(
+      useMaterial3: true,
+      splashFactory: NoSplash.splashFactory,
+    ),
+    home: home,
+  );
+}
+
 void main() {
   Finder _fieldAt(int index) => find.byType(TextFormField).at(index);
 
   testWidgets('Unlock screen shows master password field', (tester) async {
     final controller = buildController(requireTotp: false);
     await tester.pumpWidget(
-      MaterialApp(home: UnlockScreen(controller: controller)),
+      _wrapApp(UnlockScreen(controller: controller)),
     );
 
     expect(find.text('初始化密码库'), findsOneWidget);
@@ -112,7 +122,7 @@ void main() {
     await controller.setupMasterPassword('master', 'master');
     await controller.lock();
     await tester.pumpWidget(
-      MaterialApp(home: UnlockScreen(controller: controller)),
+      _wrapApp(UnlockScreen(controller: controller)),
     );
 
     expect(find.text('2FA 验证码'), findsOneWidget);
@@ -123,7 +133,7 @@ void main() {
     await controller.setupMasterPassword('master', 'master');
 
     await tester.pumpWidget(
-      MaterialApp(home: HomeScreen(controller: controller)),
+      _wrapApp(HomeScreen(controller: controller)),
     );
     await tester.pumpAndSettle();
 
@@ -135,7 +145,7 @@ void main() {
     await controller.setupMasterPassword('master', 'master');
 
     await tester.pumpWidget(
-      MaterialApp(home: HomeScreen(controller: controller)),
+      _wrapApp(HomeScreen(controller: controller)),
     );
 
     await tester.tap(find.byIcon(Icons.add_rounded));
@@ -169,12 +179,13 @@ void main() {
         appId: 'appid',
         accessToken: 'access',
         secretKey: 'secret',
+        notes: 'note',
         tags: ['dev'],
       ),
     );
 
     await tester.pumpWidget(
-      MaterialApp(home: HomeScreen(controller: controller)),
+      _wrapApp(HomeScreen(controller: controller)),
     );
     await tester.pumpAndSettle();
 

@@ -67,6 +67,8 @@ class VaultController extends ChangeNotifier {
   bool _syncInProgress = false;
   Timer? _syncTimer;
   Timer? _syncDebounceTimer;
+  int _notificationDepth = 0;
+  bool _pendingNotify = false;
 
   bool get isUnlocked => _isUnlocked;
   bool get requireTotp => _requireTotp;
@@ -74,6 +76,49 @@ class VaultController extends ChangeNotifier {
   List<VaultItem> get items => List.unmodifiable(_items);
   SyncSettings get syncSettings => _syncSettings;
   bool get isSyncing => _syncInProgress;
+
+  void _notifyListeners() {
+    if (_notificationDepth > 0) {
+      _pendingNotify = true;
+      return;
+    }
+    notifyListeners();
+  }
+
+  void _notifyOnce() {
+    if (_notificationDepth > 0) {
+      _pendingNotify = true;
+      return;
+    }
+    if (_pendingNotify) {
+      _pendingNotify = false;
+      notifyListeners();
+      return;
+    }
+    notifyListeners();
+  }
+
+  void _flushPendingNotifications() {
+    if (_notificationDepth == 0 && _pendingNotify) {
+      _pendingNotify = false;
+      notifyListeners();
+    }
+  }
+
+  Future<T> _runWithNotificationsSuppressed<T>(
+    Future<T> Function() action, {
+    bool autoFlush = true,
+  }) async {
+    _notificationDepth++;
+    try {
+      return await action();
+    } finally {
+      _notificationDepth--;
+      if (_notificationDepth == 0 && autoFlush) {
+        _flushPendingNotifications();
+      }
+    }
+  }
   VaultMetadata get metadata => _metadata;
   List<VaultEntryView> get entryViews => List.unmodifiable(_entryViews);
   bool get hasConflicts => _items.any((item) => _isConflictItem(item));
@@ -91,7 +136,7 @@ class VaultController extends ChangeNotifier {
 
   Future<void> initialize() async {
     _masterKeyRecord = await _masterKeyStore.read();
-    notifyListeners();
+    _notifyListeners();
   }
 
   Future<bool> setupMasterPassword(String password, String confirm) async {
@@ -130,7 +175,7 @@ class VaultController extends ChangeNotifier {
     _metadata = VaultMetadata.defaults();
     await _saveMetadata();
     await reload();
-    notifyListeners();
+    _notifyListeners();
     return true;
   }
 
@@ -169,7 +214,7 @@ class VaultController extends ChangeNotifier {
       allowEncryption: _syncSettings.syncMasterKey,
     );
     _isUnlocked = true;
-    notifyListeners();
+    _notifyListeners();
     unawaited(_postUnlockLoad(masterPassword));
     return true;
   }
@@ -185,7 +230,7 @@ class VaultController extends ChangeNotifier {
     _syncTimer = null;
     _syncDebounceTimer?.cancel();
     _syncDebounceTimer = null;
-    notifyListeners();
+    _notifyListeners();
   }
 
   Future<void> reload() async {
@@ -201,7 +246,7 @@ class VaultController extends ChangeNotifier {
       _entryViews = _buildSkeletonEntryViews(_items);
       unawaited(_hydrateEntryViews(_items));
     }
-    notifyListeners();
+    _notifyListeners();
   }
 
   Future<VaultItem> addEntry({
@@ -326,10 +371,10 @@ class VaultController extends ChangeNotifier {
 
   Future<void> runBackup() async {
     await _backupService.runBackup();
-    notifyListeners();
+    _notifyListeners();
   }
 
-  Future<void> syncNow() async {
+  Future<void> syncNow({bool notifyProgress = false}) async {
     if (!_isUnlocked || _syncInProgress) {
       return;
     }
@@ -337,8 +382,27 @@ class VaultController extends ChangeNotifier {
       await _recordSyncStatus('skipped', '未配置同步');
       return;
     }
-    _syncInProgress = true;
-    notifyListeners();
+    if (notifyProgress) {
+      _syncInProgress = true;
+      _notifyListeners();
+      await _runWithNotificationsSuppressed(
+        () async => _performSync(),
+        autoFlush: false,
+      );
+      _syncInProgress = false;
+      _notifyOnce();
+      return;
+    }
+    await _runWithNotificationsSuppressed(() async {
+      _syncInProgress = true;
+      _notifyListeners();
+      await _performSync();
+      _syncInProgress = false;
+      _notifyListeners();
+    });
+  }
+
+  Future<void> _performSync() async {
     try {
       final client = _buildSyncClient(_syncSettings);
       if (client == null) {
@@ -361,9 +425,29 @@ class VaultController extends ChangeNotifier {
           remotePayload: remoteResult.payload,
         );
         timings['merge'] = mergeWatch.elapsed;
-        final applyWatch = Stopwatch()..start();
-        await _applySyncPayload(mergeResult.payload);
-        timings['apply'] = applyWatch.elapsed;
+        if (mergeResult.shouldApply) {
+          final applyWatch = Stopwatch()..start();
+          await _applySyncPayload(mergeResult.payload);
+          timings['apply'] = applyWatch.elapsed;
+        }
+        if (!mergeResult.shouldUpload) {
+          await _appendSyncLog(_formatSyncTimings(
+            timings,
+            total: overall.elapsed,
+            attempt: attempt,
+            mergeDetails: mergeResult?.timings,
+          ));
+          final resolvedRevision =
+              mergeResult.revision > _syncSettings.lastSyncRevision
+                  ? mergeResult.revision
+                  : _syncSettings.lastSyncRevision;
+          await _updateSyncRevision(resolvedRevision);
+          final message = mergeResult.shouldApply
+              ? '同步完成：已更新本地数据，修订$resolvedRevision'
+              : '同步完成：无变更，修订$resolvedRevision';
+          await _recordSyncStatus('success', message);
+          return;
+        }
         final uploadWatch = Stopwatch()..start();
         final uploadResult = await client.upload(mergeResult.payload);
         timings['upload'] = uploadWatch.elapsed;
@@ -418,9 +502,6 @@ class VaultController extends ChangeNotifier {
           ? '同步失败：浏览器阻止请求，请检查 CORS、证书或混合内容'
           : '同步失败: $error';
       await _recordSyncStatus('error', message);
-    } finally {
-      _syncInProgress = false;
-      notifyListeners();
     }
   }
 
@@ -460,7 +541,7 @@ class VaultController extends ChangeNotifier {
       }
       if (item.type == VaultEntryType.server) {
         final payload = await readServerAsset(item);
-        views.add(VaultEntryView(
+        views.add(_buildEntryView(
           item: item,
           credential: null,
           server: payload,
@@ -469,7 +550,7 @@ class VaultController extends ChangeNotifier {
         ));
       } else {
         final payload = await readEntry(item);
-        views.add(VaultEntryView(
+        views.add(_buildEntryView(
           item: item,
           credential: payload,
           server: null,
@@ -481,11 +562,104 @@ class VaultController extends ChangeNotifier {
     return views;
   }
 
+  VaultEntryView _buildEntryView({
+    required VaultItem item,
+    required CredentialPayload? credential,
+    required ServerAssetPayload? server,
+    required List<String> tags,
+    required bool isConflict,
+  }) {
+    return VaultEntryView(
+      item: item,
+      credential: credential,
+      server: server,
+      tags: tags,
+      isConflict: isConflict,
+      searchIndex: _buildSearchIndex(
+        item: item,
+        credential: credential,
+        server: server,
+        tags: tags,
+      ),
+    );
+  }
+
+  VaultEntrySearchIndex _buildSearchIndex({
+    required VaultItem item,
+    required CredentialPayload? credential,
+    required ServerAssetPayload? server,
+    required List<String> tags,
+  }) {
+    String? lowerOrNull(String? value) {
+      if (value == null) {
+        return null;
+      }
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) {
+        return null;
+      }
+      return trimmed.toLowerCase();
+    }
+
+    final labelLower = item.label.toLowerCase();
+    final appIdLower = lowerOrNull(credential?.appId);
+    final serverNameLower = lowerOrNull(server?.name);
+    final serverIpLower = lowerOrNull(server?.ipAddress);
+    final tagsLower = tags.isEmpty
+        ? const <String>[]
+        : tags.map((tag) => tag.toLowerCase()).toList(growable: false);
+    final anyLower = _buildAnyLower(
+      labelLower: labelLower,
+      appIdLower: appIdLower,
+      serverNameLower: serverNameLower,
+      serverIpLower: serverIpLower,
+      tagsLower: tagsLower,
+    );
+    return VaultEntrySearchIndex(
+      labelLower: labelLower,
+      appIdLower: appIdLower,
+      serverNameLower: serverNameLower,
+      serverIpLower: serverIpLower,
+      tagsLower: tagsLower,
+      anyLower: anyLower,
+    );
+  }
+
+  String _buildAnyLower({
+    required String labelLower,
+    required String? appIdLower,
+    required String? serverNameLower,
+    required String? serverIpLower,
+    required List<String> tagsLower,
+  }) {
+    final buffer = StringBuffer(labelLower);
+    if (appIdLower != null && appIdLower.isNotEmpty) {
+      buffer.write('\n');
+      buffer.write(appIdLower);
+    }
+    if (serverNameLower != null && serverNameLower.isNotEmpty) {
+      buffer.write('\n');
+      buffer.write(serverNameLower);
+    }
+    if (serverIpLower != null && serverIpLower.isNotEmpty) {
+      buffer.write('\n');
+      buffer.write(serverIpLower);
+    }
+    for (final tag in tagsLower) {
+      if (tag.isEmpty) {
+        continue;
+      }
+      buffer.write('\n');
+      buffer.write(tag);
+    }
+    return buffer.toString();
+  }
+
   List<VaultEntryView> _buildSkeletonEntryViews(List<VaultItem> items) {
       return items
           .where((item) => !item.isDeleted)
           .map(
-            (item) => VaultEntryView(
+            (item) => _buildEntryView(
               item: item,
               credential: null,
               server: null,
@@ -505,7 +679,7 @@ class VaultController extends ChangeNotifier {
       return;
     }
     _entryViews = views;
-    notifyListeners();
+    _notifyListeners();
   }
 
   Future<void> _postUnlockLoad(String masterPassword) async {
@@ -524,7 +698,7 @@ class VaultController extends ChangeNotifier {
     if (!_isUnlocked || _masterPassword != masterPassword) {
       return;
     }
-    notifyListeners();
+    _notifyListeners();
     if (_syncSettings.autoSyncOnUnlock) {
       await syncNow();
     }
@@ -536,7 +710,10 @@ class VaultController extends ChangeNotifier {
       return;
     }
     final newTags = {..._metadata.tags, ...additions}.toList()..sort();
-    _metadata = _metadata.copyWith(tags: newTags);
+    if (listEquals(newTags, _metadata.tags)) {
+      return;
+    }
+    _metadata = _withUpdatedTags(newTags);
     await _saveMetadata();
   }
 
@@ -584,6 +761,7 @@ class VaultController extends ChangeNotifier {
           appId: payload.appId,
           accessToken: payload.accessToken,
           secretKey: payload.secretKey,
+          notes: payload.notes,
           tags: updatedTags,
         );
         await updateEntry(
@@ -641,6 +819,7 @@ class VaultController extends ChangeNotifier {
           appId: payload.appId,
           accessToken: payload.accessToken,
           secretKey: payload.secretKey,
+          notes: payload.notes,
           tags: updatedTags,
         );
         await updateEntry(
@@ -668,7 +847,7 @@ class VaultController extends ChangeNotifier {
     if (wasSyncingMasterKey && !_syncSettings.syncMasterKey) {
       await _vaultService.migrateMetadataToRecordKey(_masterPassword!);
     }
-    notifyListeners();
+    _notifyListeners();
   }
 
   Future<void> addTag(String tag) async {
@@ -681,10 +860,10 @@ class VaultController extends ChangeNotifier {
       return;
     }
     final updated = [..._metadata.tags, trimmed]..sort();
-    _metadata = _metadata.copyWith(tags: updated);
+    _metadata = _withUpdatedTags(updated);
     await _saveMetadata();
     _scheduleSyncSoon();
-    notifyListeners();
+    _notifyListeners();
   }
 
   Future<void> renameTag(String oldTag, String newTag) async {
@@ -698,8 +877,10 @@ class VaultController extends ChangeNotifier {
         .toSet()
         .toList()
       ..sort();
-    _metadata = _metadata.copyWith(tags: updatedTags);
-    await _saveMetadata();
+    if (!listEquals(updatedTags, _metadata.tags)) {
+      _metadata = _withUpdatedTags(updatedTags);
+      await _saveMetadata();
+    }
     await _replaceTagInEntries(oldTag, trimmed);
     await reload();
     _scheduleSyncSoon();
@@ -709,8 +890,10 @@ class VaultController extends ChangeNotifier {
     _ensureUnlocked();
     final updatedTags = _metadata.tags.where((entry) => entry != tag).toList()
       ..sort();
-    _metadata = _metadata.copyWith(tags: updatedTags);
-    await _saveMetadata();
+    if (!listEquals(updatedTags, _metadata.tags)) {
+      _metadata = _withUpdatedTags(updatedTags);
+      await _saveMetadata();
+    }
     await _removeTagFromEntries(tag);
     await reload();
     _scheduleSyncSoon();
@@ -721,13 +904,21 @@ class VaultController extends ChangeNotifier {
     _metadata = _metadata.copyWith(sortOrder: order);
     await _saveMetadata();
     _scheduleSyncSoon();
-    notifyListeners();
+    _notifyListeners();
   }
 
   void _ensureUnlocked() {
     if (!_isUnlocked || _masterPassword == null) {
       throw StateError('Vault is locked');
     }
+  }
+
+  int _nowUtcMillis() {
+    return DateTime.now().toUtc().millisecondsSinceEpoch;
+  }
+
+  VaultMetadata _withUpdatedTags(List<String> tags) {
+    return _metadata.copyWith(tags: tags, tagsUpdatedAt: _nowUtcMillis());
   }
 
   Uint8List _generateNonce() {
@@ -1194,6 +1385,7 @@ class VaultController extends ChangeNotifier {
         ),
         revision: local.revision,
         timings: mergeTimings,
+        shouldApply: false,
       );
     }
     final remote = _decodePayload(remotePayload);
@@ -1238,10 +1430,16 @@ class VaultController extends ChangeNotifier {
       localMetadataKey: localSessionKey,
       remoteMetadataKey: remoteSessionKey,
     );
-    mergedTags.addAll(local.legacyTags);
-    mergedTags.addAll(remote.legacyTags);
+    final legacyBaseCount = mergedTags.tags.length;
+    mergedTags.tags.addAll(local.legacyTags);
+    mergedTags.tags.addAll(remote.legacyTags);
+    var mergedTagsUpdatedAt = mergedTags.updatedAt;
+    if (mergedTags.tags.length != legacyBaseCount) {
+      mergedTagsUpdatedAt = _nowUtcMillis();
+    }
     final mergedMetadata = _metadata.copyWith(
-      tags: mergedTags.toList()..sort(),
+      tags: mergedTags.tags.toList()..sort(),
+      tagsUpdatedAt: mergedTagsUpdatedAt,
     );
     if (remoteResolution != null && _syncSettings.syncMasterKey) {
       if (_masterKeyRecord == null ||
@@ -1253,6 +1451,28 @@ class VaultController extends ChangeNotifier {
       _vaultService.setSessionMetadataKey(
         _metadataKey,
         allowEncryption: _syncSettings.syncMasterKey,
+      );
+    }
+    final localMetadata = mergedTags.localMetadata ?? _metadata;
+    final remoteMetadata = mergedTags.remoteMetadata;
+    final mergedMasterKeyPayload = _syncSettings.syncMasterKey
+        ? (remoteResolution != null ? remote.masterKey : local.masterKey)
+        : null;
+    final matchesLocal = _sameItemList(mergeResult.items, localItems) &&
+        _sameMetadata(mergedMetadata, localMetadata) &&
+        _sameMasterKeyPayload(mergedMasterKeyPayload, local.masterKey);
+    final matchesRemote = _sameItemList(mergeResult.items, remoteItems) &&
+        _sameMetadata(mergedMetadata, remoteMetadata) &&
+        _sameMasterKeyPayload(mergedMasterKeyPayload, remote.masterKey);
+    if (matchesRemote) {
+      mergeTimings['metadata'] = metadataWatch.elapsed;
+      return _SyncMergeResult(
+        payload: remotePayload!,
+        stats: mergeResult.stats,
+        revision: remote.revision,
+        timings: mergeTimings,
+        shouldUpload: false,
+        shouldApply: !matchesLocal,
       );
     }
     final mergedMetadataRecord = await _encryptMetadataRecord(mergedMetadata);
@@ -1302,9 +1522,7 @@ class VaultController extends ChangeNotifier {
       'exportedAt': DateTime.now().toUtc().toIso8601String(),
       'deviceId': _deviceId,
       'revision': mergedRevision,
-      'masterKey': _syncSettings.syncMasterKey
-          ? (remoteResolution != null ? remote.masterKey : local.masterKey)
-          : null,
+      'masterKey': mergedMasterKeyPayload,
       'metadataRecord': mergedMetadataRecord.toJson(),
       'items': mergedRecords.map(vaultRecordToJson).toList(),
     };
@@ -1313,6 +1531,7 @@ class VaultController extends ChangeNotifier {
       stats: mergeResult.stats,
       revision: mergedRevision,
       timings: mergeTimings,
+      shouldApply: !matchesLocal,
     );
   }
 
@@ -1387,7 +1606,7 @@ class VaultController extends ChangeNotifier {
       logs: trimmedLogs,
     );
     await _saveSyncSettings();
-    notifyListeners();
+    _notifyListeners();
   }
 
   Future<void> _appendSyncLog(String message, {String level = 'info'}) async {
@@ -1402,7 +1621,7 @@ class VaultController extends ChangeNotifier {
         : updatedLogs;
     _syncSettings = _syncSettings.copyWith(logs: trimmedLogs);
     await _saveSyncSettings();
-    notifyListeners();
+    _notifyListeners();
   }
 
   String _formatSyncTimings(
@@ -1502,35 +1721,65 @@ class VaultController extends ChangeNotifier {
     );
   }
 
-  Future<Set<String>> _mergeTags({
+  Future<_MergedTags> _mergeTags({
     required List<VaultItem> items,
     VaultMetadataRecord? localRecord,
     VaultMetadataRecord? remoteRecord,
     Uint8List? localMetadataKey,
     Uint8List? remoteMetadataKey,
   }) async {
-    final tagSet = <String>{};
+    final itemTags =
+        _normalizeTags(await _collectTagsFromItems(items));
+    VaultMetadata? localMetadata;
+    VaultMetadata? remoteMetadata;
     if (localRecord != null) {
-      final metadata =
+      localMetadata =
           await _decryptMetadataRecord(localRecord, key: localMetadataKey);
-      if (metadata != null) {
-        tagSet.addAll(metadata.tags);
-      }
     }
     if (remoteRecord != null) {
-      final metadata =
+      remoteMetadata =
           await _decryptMetadataRecord(remoteRecord, key: remoteMetadataKey);
-      if (metadata != null) {
-        tagSet.addAll(metadata.tags);
+    }
+
+    var baseTags = <String>{};
+    var baseUpdatedAt = 0;
+    if (localMetadata != null && remoteMetadata != null) {
+      final localTags = _normalizeTags(localMetadata.tags);
+      final remoteTags = _normalizeTags(remoteMetadata.tags);
+      if (localMetadata.tagsUpdatedAt != remoteMetadata.tagsUpdatedAt) {
+        if (localMetadata.tagsUpdatedAt > remoteMetadata.tagsUpdatedAt) {
+          baseTags = localTags;
+          baseUpdatedAt = localMetadata.tagsUpdatedAt;
+        } else {
+          baseTags = remoteTags;
+          baseUpdatedAt = remoteMetadata.tagsUpdatedAt;
+        }
+      } else {
+        baseTags = {...localTags, ...remoteTags};
+        baseUpdatedAt = localMetadata.tagsUpdatedAt;
       }
+    } else if (localMetadata != null) {
+      baseTags = _normalizeTags(localMetadata.tags);
+      baseUpdatedAt = localMetadata.tagsUpdatedAt;
+    } else if (remoteMetadata != null) {
+      baseTags = _normalizeTags(remoteMetadata.tags);
+      baseUpdatedAt = remoteMetadata.tagsUpdatedAt;
     }
-    if (localRecord == null && remoteRecord == null) {
-      tagSet.addAll(await _collectTagsFromItems(items));
+
+    final mergedTags = {...baseTags, ...itemTags};
+    var mergedUpdatedAt = baseUpdatedAt;
+    if (mergedUpdatedAt == 0 && mergedTags.isNotEmpty) {
+      mergedUpdatedAt = _nowUtcMillis();
     }
-    return tagSet
-        .map((tag) => tag.trim())
-        .where((tag) => tag.isNotEmpty)
-        .toSet();
+    if (!_setEquals(mergedTags, baseTags)) {
+      mergedUpdatedAt = _nowUtcMillis();
+    }
+    return _MergedTags(
+      tags: mergedTags,
+      updatedAt: mergedUpdatedAt,
+      localMetadata: localMetadata,
+      remoteMetadata: remoteMetadata,
+    );
   }
 
   Future<Set<String>> _collectTagsFromItems(List<VaultItem> items) async {
@@ -1552,6 +1801,10 @@ class VaultController extends ChangeNotifier {
       }
     }
     return tagSet;
+  }
+
+  Set<String> _normalizeTags(Iterable<String> tags) {
+    return tags.map((tag) => tag.trim()).where((tag) => tag.isNotEmpty).toSet();
   }
 
   Future<void> _refreshMetadataTags({
@@ -1584,7 +1837,7 @@ class VaultController extends ChangeNotifier {
     if (listEquals(updated, _metadata.tags)) {
       return;
     }
-    _metadata = _metadata.copyWith(tags: updated);
+    _metadata = _withUpdatedTags(updated);
     await _saveMetadata();
   }
 
@@ -1613,7 +1866,7 @@ class VaultController extends ChangeNotifier {
         updatedViews.removeAt(viewIndex);
       }
     } else {
-      final view = VaultEntryView(
+      final view = _buildEntryView(
         item: item,
         credential: null,
         server: null,
@@ -1627,7 +1880,7 @@ class VaultController extends ChangeNotifier {
       }
     }
     _entryViews = updatedViews;
-    notifyListeners();
+    _notifyListeners();
   }
 
   Future<VaultItem?> _softDeleteItem(VaultItem item) async {
@@ -1679,6 +1932,100 @@ class VaultController extends ChangeNotifier {
     return diff == 0;
   }
 
+  bool _sameEncryptedPayload(EncryptedPayload a, EncryptedPayload b) {
+    return a.version == b.version &&
+        _bytesEqual(a.ciphertext, b.ciphertext) &&
+        _bytesEqual(a.nonce, b.nonce) &&
+        _bytesEqual(a.mac, b.mac);
+  }
+
+  bool _sameMetadata(VaultMetadata? a, VaultMetadata? b) {
+    if (a == null && b == null) {
+      return true;
+    }
+    if (a == null || b == null) {
+      return false;
+    }
+    return a.sortOrder == b.sortOrder &&
+        a.tagsUpdatedAt == b.tagsUpdatedAt &&
+        listEquals(a.tags, b.tags);
+  }
+
+  bool _sameVersionMap(Map<String, int> a, Map<String, int> b) {
+    if (a.length != b.length) {
+      return false;
+    }
+    for (final entry in a.entries) {
+      if (b[entry.key] != entry.value) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _sameItem(VaultItem a, VaultItem b) {
+    return a.id == b.id &&
+        a.label == b.label &&
+        a.type == b.type &&
+        a.isDeleted == b.isDeleted &&
+        a.kdfIterations == b.kdfIterations &&
+        listEquals(a.kdfSalt, b.kdfSalt) &&
+        a.createdAt.isAtSameMomentAs(b.createdAt) &&
+        a.updatedAt.isAtSameMomentAs(b.updatedAt) &&
+        _sameEncryptedPayload(a.encryptedPayload, b.encryptedPayload) &&
+        _sameVersionMap(a.version, b.version) &&
+        a.updatedBy == b.updatedBy &&
+        ((a.deletedAt == null && b.deletedAt == null) ||
+            (a.deletedAt != null &&
+                b.deletedAt != null &&
+                a.deletedAt!.isAtSameMomentAs(b.deletedAt!)));
+  }
+
+  bool _sameItemList(List<VaultItem> a, List<VaultItem> b) {
+    if (a.length != b.length) {
+      return false;
+    }
+    final bById = {for (final item in b) item.id: item};
+    if (bById.length != b.length) {
+      return false;
+    }
+    for (final item in a) {
+      final other = bById[item.id];
+      if (other == null || !_sameItem(item, other)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _sameMasterKeyPayload(
+    Map<String, Object?>? a,
+    Map<String, Object?>? b,
+  ) {
+    if (a == null && b == null) {
+      return true;
+    }
+    if (a == null || b == null) {
+      return false;
+    }
+    return _sameMasterKey(
+      MasterKeyRecord.fromJson(a),
+      MasterKeyRecord.fromJson(b),
+    );
+  }
+
+  bool _setEquals(Set<String> a, Set<String> b) {
+    if (a.length != b.length) {
+      return false;
+    }
+    for (final value in a) {
+      if (!b.contains(value)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   bool _sameKey(Uint8List? a, Uint8List? b) {
     if (a == null && b == null) {
       return true;
@@ -1705,6 +2052,7 @@ class VaultEntryView {
     required this.server,
     required this.tags,
     required this.isConflict,
+    required this.searchIndex,
   });
 
   final VaultItem item;
@@ -1712,6 +2060,39 @@ class VaultEntryView {
   final ServerAssetPayload? server;
   final List<String> tags;
   final bool isConflict;
+  final VaultEntrySearchIndex searchIndex;
+}
+
+class VaultEntrySearchIndex {
+  const VaultEntrySearchIndex({
+    required this.labelLower,
+    required this.appIdLower,
+    required this.serverNameLower,
+    required this.serverIpLower,
+    required this.tagsLower,
+    required this.anyLower,
+  });
+
+  final String labelLower;
+  final String? appIdLower;
+  final String? serverNameLower;
+  final String? serverIpLower;
+  final List<String> tagsLower;
+  final String anyLower;
+}
+
+class _MergedTags {
+  const _MergedTags({
+    required this.tags,
+    required this.updatedAt,
+    this.localMetadata,
+    this.remoteMetadata,
+  });
+
+  final Set<String> tags;
+  final int updatedAt;
+  final VaultMetadata? localMetadata;
+  final VaultMetadata? remoteMetadata;
 }
 
 class _SyncMergeResult {
@@ -1719,12 +2100,16 @@ class _SyncMergeResult {
     required this.payload,
     required this.stats,
     required this.revision,
+    this.shouldUpload = true,
+    this.shouldApply = true,
     this.timings = const <String, Duration>{},
   });
 
   final String payload;
   final MergeStats stats;
   final int revision;
+  final bool shouldUpload;
+  final bool shouldApply;
   final Map<String, Duration> timings;
 }
 

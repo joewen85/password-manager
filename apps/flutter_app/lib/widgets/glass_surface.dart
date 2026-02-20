@@ -1,6 +1,5 @@
 import 'dart:ui';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 class GlassSurface extends StatelessWidget {
@@ -14,6 +13,7 @@ class GlassSurface extends StatelessWidget {
     this.opacityDark = 0.55,
     this.tint,
     this.showShadow = true,
+    this.reduceEffects = false,
   });
 
   final Widget child;
@@ -24,6 +24,7 @@ class GlassSurface extends StatelessWidget {
   final double opacityDark;
   final Color? tint;
   final bool showShadow;
+  final bool reduceEffects;
 
   bool _useGlass(TargetPlatform platform) {
     return platform == TargetPlatform.iOS || platform == TargetPlatform.macOS;
@@ -31,23 +32,24 @@ class GlassSurface extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.maybeOf(context);
     final platform = Theme.of(context).platform;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final colorScheme = Theme.of(context).colorScheme;
-    final reduceEffects =
-        kDebugMode && platform == TargetPlatform.android;
+    final reduceEffectsResolved =
+        reduceEffects || (mediaQuery?.disableAnimations ?? false);
     final baseColor = tint ?? colorScheme.surface;
     final backgroundColor =
         baseColor.withOpacity(isDark ? opacityDark : opacityLight);
     final borderColor = colorScheme.outlineVariant.withOpacity(
       isDark ? 0.7 : 0.45,
     );
-    final shadowBlur = reduceEffects ? 8.0 : 16.0;
-    final shadowOpacity = reduceEffects
+    final shadowBlur = reduceEffectsResolved ? 8.0 : 16.0;
+    final shadowOpacity = reduceEffectsResolved
         ? (isDark ? 0.12 : 0.04)
         : (isDark ? 0.25 : 0.08);
-    final shadowBlurGlass = reduceEffects ? 10.0 : 18.0;
-    final shadowOpacityGlass = reduceEffects
+    final shadowBlurGlass = reduceEffectsResolved ? 10.0 : 18.0;
+    final shadowOpacityGlass = reduceEffectsResolved
         ? (isDark ? 0.18 : 0.06)
         : (isDark ? 0.35 : 0.12);
 
@@ -56,7 +58,7 @@ class GlassSurface extends StatelessWidget {
       child: child,
     );
 
-    if (!_useGlass(platform)) {
+    if (!_useGlass(platform) || reduceEffectsResolved) {
       return Container(
         decoration: BoxDecoration(
           color: backgroundColor,
@@ -88,12 +90,12 @@ class GlassSurface extends StatelessWidget {
             boxShadow: showShadow
                 ? [
                     BoxShadow(
-                    color: Colors.black.withOpacity(shadowOpacityGlass),
-                    blurRadius: shadowBlurGlass,
-                    offset: const Offset(0, 8),
-                  ),
-                ]
-            : null,
+                      color: Colors.black.withOpacity(shadowOpacityGlass),
+                      blurRadius: shadowBlurGlass,
+                      offset: const Offset(0, 8),
+                    ),
+                  ]
+                : null,
           ),
           child: content,
         ),
