@@ -1228,6 +1228,7 @@ class _HomeScreenState extends State<HomeScreen>
     required bool singleLineTags,
     required int maxVisibleTags,
   }) {
+    final hasSearch = _searchQuery.isNotEmpty;
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -1279,12 +1280,14 @@ class _HomeScreenState extends State<HomeScreen>
                               ),
                             ],
                             selected: {_mode},
-                            onSelectionChanged: (value) {
-                              setState(() {
-                                _mode = value.first;
-                                _selectedItem = null;
-                              });
-                            },
+                            onSelectionChanged: hasSearch
+                                ? null
+                                : (value) {
+                                    setState(() {
+                                      _mode = value.first;
+                                      _selectedItem = null;
+                                    });
+                                  },
                           ),
                           const SizedBox(width: 8),
                           if (widget.controller.hasConflicts)
@@ -1348,7 +1351,22 @@ class _HomeScreenState extends State<HomeScreen>
                           ),
                         ),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 6),
+                      if (hasSearch)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            '当前为全局搜索',
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      fontSize: 11,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
+                                    ),
+                          ),
+                        ),
+                      const SizedBox(height: 8),
                       _tagFilterRow(
                         singleLine: singleLineTags,
                         maxVisible: maxVisibleTags,
