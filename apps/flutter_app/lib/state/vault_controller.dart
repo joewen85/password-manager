@@ -353,6 +353,58 @@ class VaultController extends ChangeNotifier {
     );
   }
 
+  Future<VaultItem> addService({
+    required String label,
+    required ServicePayload payload,
+  }) async {
+    _ensureUnlocked();
+    await _ensureTags(payload.tags);
+    final version = _bumpVersion(const <String, int>{});
+    final item = await _vaultService.addService(
+      payload,
+      label: label,
+      masterPassword: _masterPassword!,
+      nonce: _generateNonce(),
+      version: version,
+      updatedBy: _deviceId,
+    );
+    _applyLocalItemUpdate(item, tags: payload.tags);
+    _scheduleSyncSoon();
+    return item;
+  }
+
+  Future<VaultItem> updateService({
+    required VaultItem item,
+    required String label,
+    required ServicePayload payload,
+  }) async {
+    _ensureUnlocked();
+    await _ensureTags(payload.tags);
+    final version = _bumpVersion(item.version);
+    final updated = await _vaultService.updateService(
+      item,
+      payload,
+      label: label,
+      masterPassword: _masterPassword!,
+      nonce: _generateNonce(),
+      version: version,
+      updatedBy: _deviceId,
+      isDeleted: false,
+      deletedAt: null,
+    );
+    _applyLocalItemUpdate(updated, tags: payload.tags);
+    _scheduleSyncSoon();
+    return updated;
+  }
+
+  Future<ServicePayload?> readService(VaultItem item) async {
+    _ensureUnlocked();
+    return _vaultService.readService(
+      item,
+      masterPassword: _masterPassword!,
+    );
+  }
+
   Future<void> deleteEntry(String id) async {
     _ensureUnlocked();
     final item = await _vaultService.getById(
@@ -548,16 +600,27 @@ class VaultController extends ChangeNotifier {
           tags: payload?.tags ?? const [],
           isConflict: _isConflictItem(item),
         ));
-      } else {
-        final payload = await readEntry(item);
+        continue;
+      }
+      if (item.type == VaultEntryType.service) {
+        final payload = await readService(item);
         views.add(_buildEntryView(
           item: item,
-          credential: payload,
+          credential: null,
           server: null,
           tags: payload?.tags ?? const [],
           isConflict: _isConflictItem(item),
         ));
+        continue;
       }
+      final payload = await readEntry(item);
+      views.add(_buildEntryView(
+        item: item,
+        credential: payload,
+        server: null,
+        tags: payload?.tags ?? const [],
+        isConflict: _isConflictItem(item),
+      ));
     }
     return views;
   }
@@ -747,6 +810,28 @@ class VaultController extends ChangeNotifier {
           label: item.label,
           payload: updatedPayload,
         );
+      } else if (item.type == VaultEntryType.service) {
+        final payload = await readService(item);
+        if (payload == null || !payload.tags.contains(tag)) {
+          continue;
+        }
+        final updatedTags =
+            payload.tags.where((entry) => entry != tag).toList();
+        final updatedPayload = ServicePayload(
+          name: payload.name,
+          connectionAddress: payload.connectionAddress,
+          connectionPort: payload.connectionPort,
+          accountId: payload.accountId,
+          serverIds: payload.serverIds,
+          accounts: payload.accounts,
+          notes: payload.notes,
+          tags: updatedTags,
+        );
+        await updateService(
+          item: item,
+          label: item.label,
+          payload: updatedPayload,
+        );
       } else {
         final payload = await readEntry(item);
         if (payload == null || !payload.tags.contains(tag)) {
@@ -800,6 +885,29 @@ class VaultController extends ChangeNotifier {
           tags: updatedTags,
         );
         await updateServerAsset(
+          item: item,
+          label: item.label,
+          payload: updatedPayload,
+        );
+      } else if (item.type == VaultEntryType.service) {
+        final payload = await readService(item);
+        if (payload == null || !payload.tags.contains(oldTag)) {
+          continue;
+        }
+        final updatedTags = payload.tags
+            .map((entry) => entry == oldTag ? newTag : entry)
+            .toList();
+        final updatedPayload = ServicePayload(
+          name: payload.name,
+          connectionAddress: payload.connectionAddress,
+          connectionPort: payload.connectionPort,
+          accountId: payload.accountId,
+          serverIds: payload.serverIds,
+          accounts: payload.accounts,
+          notes: payload.notes,
+          tags: updatedTags,
+        );
+        await updateService(
           item: item,
           label: item.label,
           payload: updatedPayload,
@@ -1793,6 +1901,11 @@ class VaultController extends ChangeNotifier {
         if (payload != null) {
           tagSet.addAll(payload.tags);
         }
+      } else if (item.type == VaultEntryType.service) {
+        final payload = await readService(item);
+        if (payload != null) {
+          tagSet.addAll(payload.tags);
+        }
       } else {
         final payload = await readEntry(item);
         if (payload != null) {
@@ -1818,6 +1931,11 @@ class VaultController extends ChangeNotifier {
       }
       if (item.type == VaultEntryType.server) {
         final payload = await readServerAsset(item);
+        if (payload != null) {
+          tagSet.addAll(payload.tags);
+        }
+      } else if (item.type == VaultEntryType.service) {
+        final payload = await readService(item);
         if (payload != null) {
           tagSet.addAll(payload.tags);
         }

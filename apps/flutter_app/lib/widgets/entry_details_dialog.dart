@@ -139,10 +139,18 @@ class EntryDetailsContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    Future<Object?> loadPayload() {
+      if (item.type == VaultEntryType.server) {
+        return controller.readServerAsset(item);
+      }
+      if (item.type == VaultEntryType.service) {
+        return controller.readService(item);
+      }
+      return controller.readEntry(item);
+    }
+
     return FutureBuilder<Object?>(
-      future: item.type == VaultEntryType.server
-          ? controller.readServerAsset(item)
-          : controller.readEntry(item),
+      future: loadPayload(),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const SizedBox(
@@ -169,6 +177,32 @@ class EntryDetailsContent extends StatelessWidget {
                   _detailRow('操作系统', payload.operatingSystem),
                   _detailRow('位置', payload.location),
                   _detailRow('备注项', payload.notes),
+                  _detailRow('分类标签', payload.tags.join(', ')),
+                ],
+              ),
+            ),
+          );
+        }
+        if (payload is ServicePayload) {
+          final accountLabel = _resolveLinkedAccountLabel(
+            controller,
+            payload.accountId,
+          );
+          final serverLabels =
+              _resolveLinkedServerLabels(controller, payload.serverIds);
+          final accountDetails = _formatServiceAccounts(payload.accounts);
+          return SelectionArea(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _detailRow('服务名称', payload.name),
+                  _detailRow('连接地址', payload.connectionAddress),
+                  _detailRow('端口', payload.connectionPort),
+                  _detailRow('关联账号', accountLabel),
+                  _detailRow('关联服务器', serverLabels),
+                  _detailRow('服务账号列表', accountDetails),
+                  _detailRow('备注', payload.notes),
                   _detailRow('分类标签', payload.tags.join(', ')),
                 ],
               ),
@@ -213,4 +247,61 @@ Widget _detailRow(String label, String value) {
       ],
     ),
   );
+}
+
+String _resolveLinkedAccountLabel(
+  VaultController controller,
+  String? accountId,
+) {
+  if (accountId == null || accountId.trim().isEmpty) {
+    return '';
+  }
+  for (final item in controller.items) {
+    if (item.id == accountId && !item.isDeleted) {
+      return item.label.isEmpty ? accountId : item.label;
+    }
+  }
+  return '已删除账号';
+}
+
+String _resolveLinkedServerLabels(
+  VaultController controller,
+  List<String> serverIds,
+) {
+  if (serverIds.isEmpty) {
+    return '';
+  }
+  final labelMap = <String, String>{
+    for (final item in controller.items)
+      if (!item.isDeleted && item.type == VaultEntryType.server)
+        item.id: item.label.isEmpty ? item.id : item.label,
+  };
+  final labels = serverIds
+      .map((id) => labelMap[id] ?? '已删除服务器')
+      .toList();
+  return labels.join(', ');
+}
+
+String _formatServiceAccounts(List<ServiceAccount> accounts) {
+  if (accounts.isEmpty) {
+    return '';
+  }
+  final buffer = StringBuffer();
+  for (var i = 0; i < accounts.length; i++) {
+    final entry = accounts[i];
+    if (i > 0) {
+      buffer.writeln();
+    }
+    final username = entry.username.trim();
+    final password = entry.password.trim();
+    final note = entry.note.trim();
+    buffer.writeln('账号${i + 1}: ${username.isEmpty ? '-' : username}');
+    if (password.isNotEmpty) {
+      buffer.writeln('密码: $password');
+    }
+    if (note.isNotEmpty) {
+      buffer.writeln('备注: $note');
+    }
+  }
+  return buffer.toString();
 }

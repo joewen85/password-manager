@@ -6,6 +6,7 @@ import 'package:password_manager_crypto/password_manager_crypto.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/credential_payload.dart';
+import '../models/service_payload.dart';
 import '../models/server_asset_payload.dart';
 import '../models/vault_entry_type.dart';
 import '../models/vault_item.dart';
@@ -162,6 +163,17 @@ class VaultService {
     return ServerAssetPayload.fromJson(decoded);
   }
 
+  Future<ServicePayload?> readService(
+    VaultItem item, {
+    required String masterPassword,
+  }) async {
+    final decoded = await _decryptPayload(item, masterPassword);
+    if (decoded == null) {
+      return null;
+    }
+    return ServicePayload.fromJson(decoded);
+  }
+
   Future<VaultItem> updateCredential(
     VaultItem item,
     CredentialPayload payload, {
@@ -243,6 +255,62 @@ class VaultService {
     return item;
   }
 
+  Future<VaultItem> addService(
+    ServicePayload payload, {
+    required String label,
+    required String masterPassword,
+    required Uint8List nonce,
+    Map<String, int>? version,
+    String? updatedBy,
+    bool isDeleted = false,
+    DateTime? deletedAt,
+  }) async {
+    final derivedKey = await _keyDerivationService.deriveKey(masterPassword);
+    final jsonPayload = jsonEncode(payload.toJson());
+    final encrypted = await _cryptoService.encrypt(
+      Uint8List.fromList(utf8.encode(jsonPayload)),
+      derivedKey.bytes,
+      nonce: nonce,
+    );
+    final now = DateTime.now().toUtc();
+    final encryptedMetadata = await _encryptMetadata(
+      _metadataToJson(
+        label: label,
+        type: VaultEntryType.service,
+        createdAt: now,
+        updatedAt: now,
+        version: version ?? const <String, int>{},
+        updatedBy: updatedBy ?? 'legacy',
+        isDeleted: isDeleted,
+        deletedAt: deletedAt,
+      ),
+      _metadataKeyBytes(derivedKey.bytes),
+    );
+    final item = VaultItem(
+      id: _uuid.v4(),
+      label: label,
+      type: VaultEntryType.service,
+      encryptedPayload: encrypted,
+      kdfSalt: derivedKey.salt,
+      kdfIterations: derivedKey.iterations,
+      createdAt: now,
+      updatedAt: now,
+      version: version ?? const <String, int>{},
+      updatedBy: updatedBy ?? 'legacy',
+      isDeleted: isDeleted,
+      deletedAt: deletedAt,
+    );
+    final record = VaultItemRecord(
+      id: item.id,
+      encryptedPayload: encrypted,
+      encryptedMetadata: encryptedMetadata,
+      kdfSalt: derivedKey.salt,
+      kdfIterations: derivedKey.iterations,
+    );
+    await _repository.save(record);
+    return item;
+  }
+
   Future<VaultItem> updateServerAsset(
     VaultItem item,
     ServerAssetPayload payload, {
@@ -258,6 +326,31 @@ class VaultService {
       item,
       label: label,
       type: VaultEntryType.server,
+      payload: payload.toJson(),
+      masterPassword: masterPassword,
+      nonce: nonce,
+      version: version,
+      updatedBy: updatedBy,
+      isDeleted: isDeleted,
+      deletedAt: deletedAt,
+    );
+  }
+
+  Future<VaultItem> updateService(
+    VaultItem item,
+    ServicePayload payload, {
+    required String label,
+    required String masterPassword,
+    required Uint8List nonce,
+    Map<String, int>? version,
+    String? updatedBy,
+    bool? isDeleted,
+    DateTime? deletedAt,
+  }) async {
+    return _updateItem(
+      item,
+      label: label,
+      type: VaultEntryType.service,
       payload: payload.toJson(),
       masterPassword: masterPassword,
       nonce: nonce,

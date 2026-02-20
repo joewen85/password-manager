@@ -14,6 +14,7 @@ import '../widgets/entry_details_dialog.dart';
 import '../widgets/fade_slide.dart';
 import '../widgets/glass_surface.dart';
 import 'new_entry_sheet.dart';
+import 'new_service_sheet.dart';
 import 'sync_settings_screen.dart';
 import 'tag_management_screen.dart';
 import 'new_server_sheet.dart';
@@ -128,6 +129,43 @@ class _HomeScreenState extends State<HomeScreen>
       }
       return;
     }
+    if (item.type == VaultEntryType.service) {
+      final payload = await widget.controller.readService(item);
+      if (payload == null) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('无法解密条目')),
+        );
+        return;
+      }
+      if (!mounted) {
+        return;
+      }
+      final data = await showModalBottomSheet<NewServiceSheetResult>(
+        context: context,
+        isScrollControlled: true,
+        builder: (context) => NewServiceSheet(
+          availableAccounts: _availableAccountItems(),
+          availableServers: _availableServerItems(),
+          initialData: NewServiceSheetResult(
+            label: item.label,
+            payload: payload,
+          ),
+          title: '编辑服务',
+          submitLabel: '保存修改',
+        ),
+      );
+      if (data != null) {
+        await widget.controller.updateService(
+          item: item,
+          label: data.label,
+          payload: data.payload,
+        );
+      }
+      return;
+    }
     final payload = await widget.controller.readEntry(item);
     if (payload == null) {
       if (!mounted) {
@@ -218,6 +256,21 @@ class _HomeScreenState extends State<HomeScreen>
         label: _buildCopyLabel(item.label),
         payload: payload,
       );
+    } else if (item.type == VaultEntryType.service) {
+      final payload = await widget.controller.readService(item);
+      if (payload == null) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('无法解密条目')),
+        );
+        return;
+      }
+      created = await widget.controller.addService(
+        label: _buildCopyLabel(item.label),
+        payload: payload,
+      );
     } else {
       final payload = await widget.controller.readEntry(item);
       if (payload == null) {
@@ -247,6 +300,27 @@ class _HomeScreenState extends State<HomeScreen>
       return '未命名副本';
     }
     return '$trimmed 副本';
+  }
+
+  List<VaultItem> _availableAccountItems() {
+    final items = widget.controller.items
+        .where(
+          (item) =>
+              !item.isDeleted && item.type == VaultEntryType.credential,
+        )
+        .toList();
+    items.sort((a, b) => a.label.compareTo(b.label));
+    return items;
+  }
+
+  List<VaultItem> _availableServerItems() {
+    final items = widget.controller.items
+        .where(
+          (item) => !item.isDeleted && item.type == VaultEntryType.server,
+        )
+        .toList();
+    items.sort((a, b) => a.label.compareTo(b.label));
+    return items;
   }
 
   void _selectItem(VaultItem item) {
@@ -513,6 +587,10 @@ class _HomeScreenState extends State<HomeScreen>
           case 'label':
             terms.add(_SearchTerm(_SearchField.title, lowerValue));
             continue;
+          case 'service':
+          case 'svc':
+            terms.add(_SearchTerm(_SearchField.serviceName, lowerValue));
+            continue;
           case 'app':
           case 'appid':
             terms.add(_SearchTerm(_SearchField.appId, lowerValue));
@@ -556,6 +634,12 @@ class _HomeScreenState extends State<HomeScreen>
       switch (term.field) {
         case _SearchField.title:
           if (!contains(index.labelLower, term.value)) {
+            return false;
+          }
+          break;
+        case _SearchField.serviceName:
+          if (view.item.type != VaultEntryType.service ||
+              !contains(index.labelLower, term.value)) {
             return false;
           }
           break;
@@ -633,7 +717,7 @@ class _HomeScreenState extends State<HomeScreen>
                     Text('Search 用法', style: titleStyle),
                     const SizedBox(height: 6),
                     Text(
-                      '普通关键词会在标题/应用ID/服务器名称/IP/标签里匹配，多个词按 AND 过滤。',
+                      '普通关键词会在标题/服务名称/应用ID/服务器名称/IP/标签里匹配，多个词按 AND 过滤。',
                       style: textStyle,
                     ),
                     const SizedBox(height: 6),
@@ -644,10 +728,11 @@ class _HomeScreenState extends State<HomeScreen>
                         final isNarrow = constraints.maxWidth < 360;
                         final leftColumn = [
                           'title:xxx / label:xxx 标题',
+                          'service:xxx 服务名称',
                           'appid:xxx 应用ID',
-                          'server:xxx 服务器名称',
                         ];
                         final rightColumn = [
+                          'server:xxx 服务器名称',
                           'ip:xxx 服务器IP',
                           'tag:xxx 或 #xxx 标签',
                         ];
@@ -722,6 +807,23 @@ class _HomeScreenState extends State<HomeScreen>
       }
       return;
     }
+    if (_mode == _VaultListMode.services) {
+      final data = await showModalBottomSheet<NewServiceSheetResult>(
+        context: context,
+        isScrollControlled: true,
+        builder: (context) => NewServiceSheet(
+          availableAccounts: _availableAccountItems(),
+          availableServers: _availableServerItems(),
+        ),
+      );
+      if (data != null) {
+        await widget.controller.addService(
+          label: data.label,
+          payload: data.payload,
+        );
+      }
+      return;
+    }
     final data = await showModalBottomSheet<NewServerSheetResult>(
       context: context,
       isScrollControlled: true,
@@ -745,7 +847,11 @@ class _HomeScreenState extends State<HomeScreen>
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
     );
-    final label = _mode == _VaultListMode.credentials ? '新建账号' : '新建服务器';
+    final label = _mode == _VaultListMode.credentials
+        ? '新建账号'
+        : _mode == _VaultListMode.services
+            ? '新建服务'
+            : '新建服务器';
     return IconButton(
       tooltip: label,
       onPressed: _openCreateSheet,
@@ -1278,6 +1384,10 @@ class _HomeScreenState extends State<HomeScreen>
                                 value: _VaultListMode.servers,
                                 label: Text('服务器'),
                               ),
+                              ButtonSegment(
+                                value: _VaultListMode.services,
+                                label: Text('服务'),
+                              ),
                             ],
                             selected: {_mode},
                             onSelectionChanged: hasSearch
@@ -1346,7 +1456,7 @@ class _HomeScreenState extends State<HomeScreen>
                                     ),
                             decoration: const InputDecoration(
                               prefixIcon: Icon(Icons.search, size: 18),
-                              hintText: '支持标题、应用ID、服务器名称/IP、标签搜索',
+                              hintText: '支持标题/服务名称、应用ID、服务器名称/IP、标签搜索',
                             ),
                           ),
                         ),
@@ -1430,7 +1540,9 @@ class _HomeScreenState extends State<HomeScreen>
           if (!hasSearch) {
             final matchesType = _mode == _VaultListMode.credentials
                 ? view.item.type == VaultEntryType.credential
-                : view.item.type == VaultEntryType.server;
+                : _mode == _VaultListMode.services
+                    ? view.item.type == VaultEntryType.service
+                    : view.item.type == VaultEntryType.server;
             if (!matchesType) {
               return false;
             }
@@ -1652,7 +1764,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 }
 
-enum _SearchField { any, title, appId, serverName, serverIp, tag }
+enum _SearchField { any, title, serviceName, appId, serverName, serverIp, tag }
 
 class _SearchTerm {
   const _SearchTerm(this.field, this.value);
@@ -1695,10 +1807,14 @@ class EntryCard extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final icon = item.type == VaultEntryType.server
         ? Icons.dns_rounded
-        : Icons.key_rounded;
+        : item.type == VaultEntryType.service
+            ? Icons.miscellaneous_services_rounded
+            : Icons.key_rounded;
     final accent = item.type == VaultEntryType.server
         ? colorScheme.tertiary
-        : colorScheme.secondary;
+        : item.type == VaultEntryType.service
+            ? colorScheme.primary
+            : colorScheme.secondary;
     final visibleTags = tags.take(3).toList();
     final remaining = tags.length - visibleTags.length;
     return AnimatedContainer(
@@ -1879,6 +1995,6 @@ class EntryCard extends StatelessWidget {
   }
 }
 
-enum _VaultListMode { credentials, servers }
+enum _VaultListMode { credentials, services, servers }
 
 enum _EntryMenuAction { copy }
