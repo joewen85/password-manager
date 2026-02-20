@@ -80,6 +80,12 @@
 - 如果提示 `dart: command not found`，说明尚未安装 Dart/Flutter 或未正确配置 PATH
 - macOS 测试在sandbox中运行，请勿将敏感数据保存在沙盒目录中.路径: `~/Library/Containers/com.example.passwordManagerApp/Data/Library/Application Support/`
 
+### 4.1.1 发版版本号
+1. 发版前修改 `apps/flutter_app/pubspec.yaml` 的 `version` 字段，格式为 `x.y.z+build`。
+2. `x.y.z` 为对外版本号；`build` 为构建号，必须是整数，每次发版递增（Android 的 `versionCode` 由此生成）。
+3. Flutter 构建时会自动注入版本到平台包信息中（Android: `versionName` / `versionCode`；iOS/macOS: `CFBundleShortVersionString` / `CFBundleVersion`，来源于 `Info.plist` 的 `FLUTTER_BUILD_NAME/NUMBER`）。
+4. CI 或临时构建可用命令行覆盖，例如 `flutter build <platform> --build-name 1.2.3 --build-number 45`。
+
 ### 4.2 macOS 打包发布（App）
 1) 安装并验证依赖  
    - `flutter doctor`  
