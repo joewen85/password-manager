@@ -706,14 +706,14 @@ class _HomeScreenState extends State<HomeScreen>
             width: width,
             child: KeyedSubtree(
               key: _searchHelpKey,
-              child: GlassSurface(
-                borderRadius: 14,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                blur: 16,
-                opacityLight: isAndroid ? 0.9 : 0.75,
-                opacityDark: isAndroid ? 0.9 : 0.55,
-                child: Column(
+                child: GlassSurface(
+                  borderRadius: 14,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  blur: 16,
+                  opacityLight: isAndroid ? 0.9 : 0.88,
+                  opacityDark: isAndroid ? 0.9 : 0.75,
+                  child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
