@@ -77,10 +77,13 @@ class VaultController extends ChangeNotifier {
   SyncSettings get syncSettings => _syncSettings;
   bool get isSyncing => _syncInProgress;
 
-  void _notifyListeners() {
-    if (_notificationDepth > 0) {
+  void _notifyListeners({bool allowWhileSuppressed = false}) {
+    if (_notificationDepth > 0 && !allowWhileSuppressed) {
       _pendingNotify = true;
       return;
+    }
+    if (_notificationDepth > 0) {
+      _pendingNotify = true;
     }
     notifyListeners();
   }
@@ -264,7 +267,7 @@ class VaultController extends ChangeNotifier {
       version: version,
       updatedBy: _deviceId,
     );
-    _applyLocalItemUpdate(item, tags: payload.tags);
+    _applyLocalItemUpdate(item, tags: payload.tags, forceNotify: true);
     _scheduleSyncSoon();
     return item;
   }
@@ -288,7 +291,7 @@ class VaultController extends ChangeNotifier {
       isDeleted: false,
       deletedAt: null,
     );
-    _applyLocalItemUpdate(updated, tags: payload.tags);
+    _applyLocalItemUpdate(updated, tags: payload.tags, forceNotify: true);
     _scheduleSyncSoon();
     return updated;
   }
@@ -316,7 +319,7 @@ class VaultController extends ChangeNotifier {
       version: version,
       updatedBy: _deviceId,
     );
-    _applyLocalItemUpdate(item, tags: payload.tags);
+    _applyLocalItemUpdate(item, tags: payload.tags, forceNotify: true);
     _scheduleSyncSoon();
     return item;
   }
@@ -340,7 +343,7 @@ class VaultController extends ChangeNotifier {
       isDeleted: false,
       deletedAt: null,
     );
-    _applyLocalItemUpdate(updated, tags: payload.tags);
+    _applyLocalItemUpdate(updated, tags: payload.tags, forceNotify: true);
     _scheduleSyncSoon();
     return updated;
   }
@@ -368,7 +371,7 @@ class VaultController extends ChangeNotifier {
       version: version,
       updatedBy: _deviceId,
     );
-    _applyLocalItemUpdate(item, tags: payload.tags);
+    _applyLocalItemUpdate(item, tags: payload.tags, forceNotify: true);
     _scheduleSyncSoon();
     return item;
   }
@@ -392,7 +395,7 @@ class VaultController extends ChangeNotifier {
       isDeleted: false,
       deletedAt: null,
     );
-    _applyLocalItemUpdate(updated, tags: payload.tags);
+    _applyLocalItemUpdate(updated, tags: payload.tags, forceNotify: true);
     _scheduleSyncSoon();
     return updated;
   }
@@ -416,7 +419,11 @@ class VaultController extends ChangeNotifier {
     }
     final tombstone = await _softDeleteItem(item);
     if (tombstone != null) {
-      _applyLocalItemUpdate(tombstone, tags: const <String>[]);
+      _applyLocalItemUpdate(
+        tombstone,
+        tags: const <String>[],
+        forceNotify: true,
+      );
     }
     _scheduleSyncSoon();
   }
@@ -1025,6 +1032,12 @@ class VaultController extends ChangeNotifier {
     return DateTime.now().toUtc().millisecondsSinceEpoch;
   }
 
+  Future<void> _yieldIfNeeded(int index, {int stride = 25}) async {
+    if (index % stride == 0) {
+      await Future<void>.delayed(Duration.zero);
+    }
+  }
+
   VaultMetadata _withUpdatedTags(List<String> tags) {
     return _metadata.copyWith(tags: tags, tagsUpdatedAt: _nowUtcMillis());
   }
@@ -1284,7 +1297,9 @@ class VaultController extends ChangeNotifier {
         allowEncryption: _syncSettings.syncMasterKey,
       );
       final failed = <VaultItemRecord>[];
+      var index = 0;
       for (final record in pending) {
+        await _yieldIfNeeded(index);
         try {
           items.add(
             await _vaultService.decryptRecord(
@@ -1296,6 +1311,7 @@ class VaultController extends ChangeNotifier {
           lastError = error;
           failed.add(record);
         }
+        index++;
       }
       return failed;
     }
@@ -1595,7 +1611,9 @@ class VaultController extends ChangeNotifier {
       for (final record in remote.records) record.id: record,
     };
     final recordsWatch = Stopwatch()..start();
-    for (final item in mergeResult.items) {
+    for (var index = 0; index < mergeResult.items.length; index++) {
+      await _yieldIfNeeded(index);
+      final item = mergeResult.items[index];
       VaultItemRecord? record;
       final localItem = localItemById[item.id];
       if (localItem != null &&
@@ -1646,7 +1664,9 @@ class VaultController extends ChangeNotifier {
   Future<void> _applySyncPayload(String payload) async {
     final decoded = _decodePayload(payload);
     final upgradedRecords = <VaultItemRecord>[];
-    for (final record in decoded.records) {
+    for (var index = 0; index < decoded.records.length; index++) {
+      await _yieldIfNeeded(index);
+      final record = decoded.records[index];
       if (record.encryptedMetadata == null) {
         final item = await _vaultService.decryptRecord(
           record,
@@ -1836,8 +1856,6 @@ class VaultController extends ChangeNotifier {
     Uint8List? localMetadataKey,
     Uint8List? remoteMetadataKey,
   }) async {
-    final itemTags =
-        _normalizeTags(await _collectTagsFromItems(items));
     VaultMetadata? localMetadata;
     VaultMetadata? remoteMetadata;
     if (localRecord != null) {
@@ -1848,6 +1866,13 @@ class VaultController extends ChangeNotifier {
       remoteMetadata =
           await _decryptMetadataRecord(remoteRecord, key: remoteMetadataKey);
     }
+    final shouldScanItems = _shouldScanItemTags(
+      localMetadata,
+      remoteMetadata,
+    );
+    final itemTags = shouldScanItems
+        ? _normalizeTags(await _collectTagsFromItems(items))
+        : <String>{};
 
     var baseTags = <String>{};
     var baseUpdatedAt = 0;
@@ -1890,9 +1915,28 @@ class VaultController extends ChangeNotifier {
     );
   }
 
+  bool _shouldScanItemTags(
+    VaultMetadata? localMetadata,
+    VaultMetadata? remoteMetadata,
+  ) {
+    if (localMetadata == null || remoteMetadata == null) {
+      return true;
+    }
+    final hasUpdatedAt =
+        localMetadata.tagsUpdatedAt > 0 || remoteMetadata.tagsUpdatedAt > 0;
+    if (hasUpdatedAt) {
+      return false;
+    }
+    final hasTags =
+        localMetadata.tags.isNotEmpty || remoteMetadata.tags.isNotEmpty;
+    return !hasTags;
+  }
+
   Future<Set<String>> _collectTagsFromItems(List<VaultItem> items) async {
     final tagSet = <String>{};
-    for (final item in items) {
+    for (var index = 0; index < items.length; index++) {
+      await _yieldIfNeeded(index);
+      final item = items[index];
       if (item.isDeleted) {
         continue;
       }
@@ -1925,7 +1969,9 @@ class VaultController extends ChangeNotifier {
     required List<String> extraTags,
   }) async {
     final tagSet = <String>{..._metadata.tags, ...extraTags};
-    for (final item in items) {
+    for (var index = 0; index < items.length; index++) {
+      await _yieldIfNeeded(index);
+      final item = items[index];
       if (item.isDeleted) {
         continue;
       }
@@ -1966,6 +2012,7 @@ class VaultController extends ChangeNotifier {
   void _applyLocalItemUpdate(
     VaultItem item, {
     required List<String> tags,
+    bool forceNotify = false,
   }) {
     final updatedItems = List<VaultItem>.from(_items);
     final itemIndex = updatedItems.indexWhere((entry) => entry.id == item.id);
@@ -1998,7 +2045,7 @@ class VaultController extends ChangeNotifier {
       }
     }
     _entryViews = updatedViews;
-    _notifyListeners();
+    _notifyListeners(allowWhileSuppressed: forceNotify);
   }
 
   Future<VaultItem?> _softDeleteItem(VaultItem item) async {
