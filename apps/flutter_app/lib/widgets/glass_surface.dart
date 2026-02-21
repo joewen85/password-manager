@@ -27,7 +27,7 @@ class GlassSurface extends StatelessWidget {
   final bool reduceEffects;
 
   bool _useGlass(TargetPlatform platform) {
-    return platform == TargetPlatform.iOS || platform == TargetPlatform.macOS;
+    return false;
   }
 
   @override

@@ -12,6 +12,13 @@ class AppBackground extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final reduceEffects =
         kDebugMode && Theme.of(context).platform == TargetPlatform.android;
+    final platform = Theme.of(context).platform;
+    if (platform == TargetPlatform.android) {
+      return ColoredBox(
+        color: colorScheme.surface,
+        child: child,
+      );
+    }
     return Stack(
       children: [
         RepaintBoundary(
