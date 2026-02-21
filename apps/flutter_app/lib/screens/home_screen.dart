@@ -1457,6 +1457,9 @@ class _HomeScreenState extends State<HomeScreen>
                                 Theme.of(context).textTheme.bodySmall?.copyWith(
                                       fontSize: 12,
                                     ),
+                            onTapOutside: (_) {
+                              _searchFocusNode.unfocus();
+                            },
                             decoration: const InputDecoration(
                               prefixIcon: Icon(Icons.search, size: 18),
                               hintText: '支持标题/服务名称、应用ID、服务器名称/IP、标签搜索',
