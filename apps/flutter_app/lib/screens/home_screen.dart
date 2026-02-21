@@ -1358,11 +1358,17 @@ class _HomeScreenState extends State<HomeScreen>
           children: [
             FadeSlide(
               delay: const Duration(milliseconds: 60),
+              curve: _isAndroid
+                  ? MotionTokens.standardDecelerate
+                  : Curves.easeOutCubic,
               child: _heroCard(context),
             ),
             const SizedBox(height: 16),
             FadeSlide(
               delay: const Duration(milliseconds: 140),
+              curve: _isAndroid
+                  ? MotionTokens.standardDecelerate
+                  : Curves.easeOutCubic,
               child: _sectionCard(
                 child: Theme(
                   data: Theme.of(context).copyWith(
@@ -1508,6 +1514,9 @@ class _HomeScreenState extends State<HomeScreen>
             Expanded(
               child: FadeSlide(
                 delay: const Duration(milliseconds: 220),
+                curve: _isAndroid
+                    ? MotionTokens.standardDecelerate
+                    : Curves.easeOutCubic,
                 child: _buildEntryList(context, useDetailsPane: useDetailsPane),
               ),
             ),

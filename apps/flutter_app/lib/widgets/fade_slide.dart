@@ -12,6 +12,7 @@ class FadeSlide extends StatefulWidget {
     this.delay = Duration.zero,
     this.duration = defaultDuration,
     this.offset = const Offset(0, 16),
+    this.curve,
     this.enable = !kDebugMode,
   });
 
@@ -21,6 +22,7 @@ class FadeSlide extends StatefulWidget {
   final Duration delay;
   final Duration duration;
   final Offset offset;
+  final Curve? curve;
   final bool enable;
 
   @override
@@ -45,9 +47,11 @@ class _FadeSlideState extends State<FadeSlide>
         ? MotionTokens.medium2
         : widget.duration;
     _controller = AnimationController(vsync: this, duration: duration);
+    final resolvedCurve = widget.curve ??
+        (isAndroid ? MotionTokens.emphasizedDecelerate : Curves.easeOutCubic);
     final curve = CurvedAnimation(
       parent: _controller!,
-      curve: isAndroid ? MotionTokens.emphasizedDecelerate : Curves.easeOutCubic,
+      curve: resolvedCurve,
     );
     _opacity = Tween<double>(begin: 0, end: 1).animate(curve);
     _slide = Tween<Offset>(begin: widget.offset, end: Offset.zero).animate(curve);
