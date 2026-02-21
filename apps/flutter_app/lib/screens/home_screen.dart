@@ -486,15 +486,17 @@ class _HomeScreenState extends State<HomeScreen>
     final isAndroid = _isAndroid;
     final switchDuration =
         isAndroid ? MotionTokens.short4 : const Duration(milliseconds: 180);
-    final switchCurve =
-        isAndroid ? MotionTokens.standardDecelerate : Curves.easeOut;
+    final switchInCurve =
+        isAndroid ? MotionTokens.emphasizedDecelerate : Curves.easeOut;
+    final switchOutCurve =
+        isAndroid ? MotionTokens.emphasizedAccelerate : Curves.easeOut;
     final labelStyle = Theme.of(context).textTheme.labelMedium?.copyWith(
           fontWeight: FontWeight.w600,
         );
     return AnimatedSwitcher(
       duration: switchDuration,
-      switchInCurve: switchCurve,
-      switchOutCurve: switchCurve,
+      switchInCurve: switchInCurve,
+      switchOutCurve: switchOutCurve,
       transitionBuilder: (child, animation) =>
           FadeTransition(opacity: animation, child: child),
       child: _isSyncing
@@ -1520,25 +1522,36 @@ class _HomeScreenState extends State<HomeScreen>
               targetAnchor: Alignment.bottomLeft,
               followerAnchor: Alignment.topLeft,
               offset: Offset(0, _searchHelpSpacing + _searchHelpDyAdjustment),
-              child: AnimatedOpacity(
+              child: AnimatedSwitcher(
                 duration: _isAndroid
-                    ? MotionTokens.short4
+                    ? MotionTokens.medium1
                     : const Duration(milliseconds: 180),
-                curve: _isAndroid
-                    ? MotionTokens.standardDecelerate
+                switchInCurve: _isAndroid
+                    ? MotionTokens.emphasizedDecelerate
                     : Curves.easeOut,
-                opacity: _showSearchHelp ? 1 : 0,
-                child: AnimatedSlide(
-                  duration: _isAndroid
-                      ? MotionTokens.short4
-                      : const Duration(milliseconds: 180),
-                  curve: _isAndroid
-                      ? MotionTokens.standardDecelerate
-                      : Curves.easeOut,
-                  offset:
-                      _showSearchHelp ? Offset.zero : const Offset(0, -0.04),
-                  child: _buildSearchHelp(context),
-                ),
+                switchOutCurve: _isAndroid
+                    ? MotionTokens.emphasizedAccelerate
+                    : Curves.easeOut,
+                transitionBuilder: (child, animation) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0, -0.04),
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: child,
+                    ),
+                  );
+                },
+                child: _showSearchHelp
+                    ? KeyedSubtree(
+                        key: const ValueKey('search-help'),
+                        child: _buildSearchHelp(context),
+                      )
+                    : const SizedBox.shrink(
+                        key: ValueKey('search-help-hidden'),
+                      ),
               ),
             ),
           ),
