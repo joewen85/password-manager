@@ -83,6 +83,7 @@ class PasswordManagerApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isAndroid = defaultTargetPlatform == TargetPlatform.android;
     ThemeData buildTheme(Brightness brightness) {
       final baseScheme = ColorScheme.fromSeed(
         seedColor: const Color(0xFF0F4C5C),
@@ -109,15 +110,33 @@ class PasswordManagerApp extends StatelessWidget {
               outline: const Color(0xFF394246),
               outlineVariant: const Color(0xFF2B3438),
             );
-      final textTheme = GoogleFonts.notoSansScTextTheme().apply(
+      final baseTypography = isAndroid
+          ? Typography.material2021(platform: TargetPlatform.android)
+          : Typography.material2021(platform: defaultTargetPlatform);
+      final baseTextTheme = isAndroid
+          ? (brightness == Brightness.dark
+              ? baseTypography.white
+              : baseTypography.black)
+          : null;
+      final rawTextTheme = baseTextTheme == null
+          ? GoogleFonts.notoSansScTextTheme()
+          : GoogleFonts.notoSansScTextTheme(baseTextTheme);
+      final textTheme = rawTextTheme.apply(
         bodyColor: colorScheme.onSurface,
         displayColor: colorScheme.onSurface,
       );
-      return ThemeData(
+      final baseTheme = ThemeData(
         colorScheme: colorScheme,
         useMaterial3: true,
+        typography: baseTypography,
         splashFactory: _isTest ? NoSplash.splashFactory : null,
         scaffoldBackgroundColor: colorScheme.background,
+        textTheme: textTheme,
+      );
+      if (isAndroid) {
+        return baseTheme;
+      }
+      return baseTheme.copyWith(
         textTheme: textTheme.copyWith(
           headlineMedium: textTheme.headlineMedium?.copyWith(
             fontWeight: FontWeight.w700,
