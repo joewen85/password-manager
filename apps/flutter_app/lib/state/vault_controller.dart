@@ -269,7 +269,11 @@ class VaultController extends ChangeNotifier {
       version: version,
       updatedBy: _deviceId,
     );
-    _applyLocalItemUpdate(item, tags: payload.tags, forceNotify: true);
+    _applyLocalItemUpdate(
+      item,
+      tags: payload.tags,
+      forceNotify: true,
+    );
     _scheduleSyncSoon();
     return item;
   }
@@ -293,7 +297,11 @@ class VaultController extends ChangeNotifier {
       isDeleted: false,
       deletedAt: null,
     );
-    _applyLocalItemUpdate(updated, tags: payload.tags, forceNotify: true);
+    _applyLocalItemUpdate(
+      updated,
+      tags: payload.tags,
+      forceNotify: true,
+    );
     _scheduleSyncSoon();
     return updated;
   }
@@ -606,6 +614,7 @@ class VaultController extends ChangeNotifier {
           item: item,
           credential: null,
           server: payload,
+          service: null,
           tags: payload?.tags ?? const [],
           isConflict: _isConflictItem(item),
         ));
@@ -617,6 +626,7 @@ class VaultController extends ChangeNotifier {
           item: item,
           credential: null,
           server: null,
+          service: payload,
           tags: payload?.tags ?? const [],
           isConflict: _isConflictItem(item),
         ));
@@ -627,6 +637,7 @@ class VaultController extends ChangeNotifier {
         item: item,
         credential: payload,
         server: null,
+        service: null,
         tags: payload?.tags ?? const [],
         isConflict: _isConflictItem(item),
       ));
@@ -638,6 +649,7 @@ class VaultController extends ChangeNotifier {
     required VaultItem item,
     required CredentialPayload? credential,
     required ServerAssetPayload? server,
+    required ServicePayload? service,
     required List<String> tags,
     required bool isConflict,
   }) {
@@ -645,6 +657,7 @@ class VaultController extends ChangeNotifier {
       item: item,
       credential: credential,
       server: server,
+      service: service,
       tags: tags,
       isConflict: isConflict,
       searchIndex: _buildSearchIndex(
@@ -735,6 +748,7 @@ class VaultController extends ChangeNotifier {
               item: item,
               credential: null,
               server: null,
+              service: null,
               tags: const [],
               isConflict: _isConflictItem(item),
             ),
@@ -2018,6 +2032,7 @@ class VaultController extends ChangeNotifier {
   void _applyLocalItemUpdate(
     VaultItem item, {
     required List<String> tags,
+    ServicePayload? service,
     bool forceNotify = false,
   }) {
     final updatedItems = List<VaultItem>.from(_items);
@@ -2041,6 +2056,7 @@ class VaultController extends ChangeNotifier {
         item: item,
         credential: null,
         server: null,
+        service: service,
         tags: tags,
         isConflict: _isConflictItem(item),
       );
@@ -2226,6 +2242,7 @@ class VaultEntryView {
     required this.item,
     required this.credential,
     required this.server,
+    required this.service,
     required this.tags,
     required this.isConflict,
     required this.searchIndex,
@@ -2234,6 +2251,7 @@ class VaultEntryView {
   final VaultItem item;
   final CredentialPayload? credential;
   final ServerAssetPayload? server;
+  final ServicePayload? service;
   final List<String> tags;
   final bool isConflict;
   final VaultEntrySearchIndex searchIndex;

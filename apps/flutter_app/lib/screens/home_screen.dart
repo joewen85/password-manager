@@ -1569,6 +1569,7 @@ class _HomeScreenState extends State<HomeScreen>
               final item = view.item;
               return EntryCard(
                 item: item,
+                service: view.service,
                 tags: view.tags,
                 isConflict: view.isConflict,
                 isSelected: useDetailsPane && _selectedItem?.id == item.id,
@@ -1833,6 +1834,7 @@ class EntryCard extends StatelessWidget {
   const EntryCard({
     super.key,
     required this.item,
+    this.service,
     required this.tags,
     required this.isConflict,
     this.isSelected = false,
@@ -1844,6 +1846,7 @@ class EntryCard extends StatelessWidget {
   });
 
   final VaultItem item;
+  final ServicePayload? service;
   final List<String> tags;
   final bool isConflict;
   final bool isSelected;
@@ -1869,6 +1872,7 @@ class EntryCard extends StatelessWidget {
         : item.type == VaultEntryType.service
             ? colorScheme.primary
             : colorScheme.secondary;
+    final serviceInfo = _buildServiceInfo(service);
     final visibleTags = tags.take(3).toList();
     final remaining = tags.length - visibleTags.length;
     return AnimatedContainer(
@@ -1941,6 +1945,20 @@ class EntryCard extends StatelessWidget {
                                     fontWeight: FontWeight.w700,
                                   ),
                         ),
+                        if (serviceInfo != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            serviceInfo,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
                         const SizedBox(height: 6),
                         Text(
                           '更新于 ${item.updatedAt.toLocal()}',
@@ -2046,6 +2064,28 @@ class EntryCard extends StatelessWidget {
     if (selected == _EntryMenuAction.copy) {
       await onCopy();
     }
+  }
+
+  String? _buildServiceInfo(ServicePayload? payload) {
+    if (payload == null) {
+      return null;
+    }
+    final parts = <String>[];
+    final address = payload.connectionAddress.trim();
+    final port = payload.connectionPort.trim();
+    if (address.isNotEmpty) {
+      parts.add(port.isEmpty ? address : '$address:$port');
+    }
+    if (payload.serverIds.isNotEmpty) {
+      parts.add('服务器 ${payload.serverIds.length}');
+    }
+    if (payload.accounts.isNotEmpty) {
+      parts.add('账号 ${payload.accounts.length}');
+    }
+    if (parts.isEmpty) {
+      return null;
+    }
+    return parts.join(' · ');
   }
 }
 
