@@ -1907,6 +1907,10 @@ class VaultController extends ChangeNotifier {
     if (!_setEquals(mergedTags, baseTags)) {
       mergedUpdatedAt = _nowUtcMillis();
     }
+    if (shouldScanItems && mergedUpdatedAt == 0) {
+      // Scanned items but still empty: mark as up-to-date to avoid re-scan.
+      mergedUpdatedAt = _nowUtcMillis();
+    }
     return _MergedTags(
       tags: mergedTags,
       updatedAt: mergedUpdatedAt,
