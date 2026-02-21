@@ -52,6 +52,9 @@ class _HomeScreenState extends State<HomeScreen>
   bool _reduceEffectsForScroll = false;
   String _searchQuery = '';
   List<_SearchTerm> _searchTerms = const [];
+  int _cachedViewsVersion = -1;
+  String _cachedFilterKey = '';
+  List<VaultEntryView> _cachedSortedViews = const [];
   double _searchHelpHeight = 0;
   double _searchHelpDyAdjustment = 0;
   Offset _searchFieldOffset = Offset.zero;
@@ -1531,34 +1534,19 @@ class _HomeScreenState extends State<HomeScreen>
       animation: _entryListListenable,
       builder: (context, _) {
         final views = widget.controller.entryViews;
+        final viewsVersion = widget.controller.entryViewsVersion;
         final query = _searchQuery;
         final terms = _searchTerms;
         final hasSearch = query.isNotEmpty;
         final hasTagFilter =
             !hasSearch && _selectedTag != null && _selectedTag!.isNotEmpty;
-        final filtered = views.where((view) {
-          if (!hasSearch) {
-            final matchesType = _mode == _VaultListMode.credentials
-                ? view.item.type == VaultEntryType.credential
-                : _mode == _VaultListMode.services
-                    ? view.item.type == VaultEntryType.service
-                    : view.item.type == VaultEntryType.server;
-            if (!matchesType) {
-              return false;
-            }
-          }
-          if (_showConflictsOnly && !view.isConflict) {
-            return false;
-          }
-          if (hasTagFilter && !view.tags.contains(_selectedTag)) {
-            return false;
-          }
-          if (terms.isNotEmpty && !_matchesSearch(view, terms)) {
-            return false;
-          }
-          return true;
-        }).toList();
-        final sorted = _sortViews(filtered);
+        final sorted = _buildSortedViews(
+          views: views,
+          viewsVersion: viewsVersion,
+          hasSearch: hasSearch,
+          hasTagFilter: hasTagFilter,
+          terms: terms,
+        );
         if (sorted.isEmpty) {
           return Center(
             child: Text(
@@ -1601,6 +1589,54 @@ class _HomeScreenState extends State<HomeScreen>
         );
       },
     );
+  }
+
+  List<VaultEntryView> _buildSortedViews({
+    required List<VaultEntryView> views,
+    required int viewsVersion,
+    required bool hasSearch,
+    required bool hasTagFilter,
+    required List<_SearchTerm> terms,
+  }) {
+    final sortOrder = widget.controller.metadata.sortOrder;
+    final key = [
+      viewsVersion,
+      _mode.name,
+      _showConflictsOnly,
+      _selectedTag ?? '',
+      _searchQuery,
+      sortOrder.name,
+    ].join('|');
+    if (key == _cachedFilterKey && viewsVersion == _cachedViewsVersion) {
+      return _cachedSortedViews;
+    }
+    final filtered = views.where((view) {
+      if (!hasSearch) {
+        final matchesType = _mode == _VaultListMode.credentials
+            ? view.item.type == VaultEntryType.credential
+            : _mode == _VaultListMode.services
+                ? view.item.type == VaultEntryType.service
+                : view.item.type == VaultEntryType.server;
+        if (!matchesType) {
+          return false;
+        }
+      }
+      if (_showConflictsOnly && !view.isConflict) {
+        return false;
+      }
+      if (hasTagFilter && !view.tags.contains(_selectedTag)) {
+        return false;
+      }
+      if (terms.isNotEmpty && !_matchesSearch(view, terms)) {
+        return false;
+      }
+      return true;
+    }).toList();
+    final sorted = _sortViews(filtered);
+    _cachedFilterKey = key;
+    _cachedViewsVersion = viewsVersion;
+    _cachedSortedViews = sorted;
+    return sorted;
   }
 
   @override

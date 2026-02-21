@@ -64,6 +64,7 @@ class VaultController extends ChangeNotifier {
   final Map<String, Uint8List> _derivedKeyCache = {};
   List<VaultItem> _items = [];
   List<VaultEntryView> _entryViews = [];
+  int _entryViewsVersion = 0;
   bool _syncInProgress = false;
   Timer? _syncTimer;
   Timer? _syncDebounceTimer;
@@ -124,6 +125,7 @@ class VaultController extends ChangeNotifier {
   }
   VaultMetadata get metadata => _metadata;
   List<VaultEntryView> get entryViews => List.unmodifiable(_entryViews);
+  int get entryViewsVersion => _entryViewsVersion;
   bool get hasConflicts => _items.any((item) => _isConflictItem(item));
 
   String get _deviceId =>
@@ -244,9 +246,9 @@ class VaultController extends ChangeNotifier {
     _ensureUnlocked();
     _items = await _vaultService.listAll(masterPassword: _masterPassword!);
     if (eagerDecrypt) {
-      _entryViews = await _buildEntryViews(_items);
+      _setEntryViews(await _buildEntryViews(_items));
     } else {
-      _entryViews = _buildSkeletonEntryViews(_items);
+      _setEntryViews(_buildSkeletonEntryViews(_items));
       unawaited(_hydrateEntryViews(_items));
     }
     _notifyListeners();
@@ -748,7 +750,7 @@ class VaultController extends ChangeNotifier {
     if (!_isUnlocked) {
       return;
     }
-    _entryViews = views;
+    _setEntryViews(views);
     _notifyListeners();
   }
 
@@ -2048,8 +2050,13 @@ class VaultController extends ChangeNotifier {
         updatedViews.add(view);
       }
     }
-    _entryViews = updatedViews;
+    _setEntryViews(updatedViews);
     _notifyListeners(allowWhileSuppressed: forceNotify);
+  }
+
+  void _setEntryViews(List<VaultEntryView> views) {
+    _entryViews = views;
+    _entryViewsVersion += 1;
   }
 
   Future<VaultItem?> _softDeleteItem(VaultItem item) async {
