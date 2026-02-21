@@ -9,6 +9,7 @@ import '../state/vault_metadata.dart';
 import '../state/vault_controller.dart';
 import '../utils/adaptive_layout.dart';
 import '../utils/export_file.dart';
+import '../theme/motion_tokens.dart';
 import '../widgets/app_background.dart';
 import '../widgets/entry_details_dialog.dart';
 import '../widgets/fade_slide.dart';
@@ -30,6 +31,8 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
+  bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
+
   static const double _searchFieldHeight = 52.0;
   static const double _searchHelpSpacing = 8.0;
   static const double _searchHelpBottomGap = 10.0;
@@ -480,11 +483,18 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _buildSyncAction(BuildContext context) {
+    final isAndroid = _isAndroid;
+    final switchDuration =
+        isAndroid ? MotionTokens.short4 : const Duration(milliseconds: 180);
+    final switchCurve =
+        isAndroid ? MotionTokens.standardDecelerate : Curves.easeOut;
     final labelStyle = Theme.of(context).textTheme.labelMedium?.copyWith(
           fontWeight: FontWeight.w600,
         );
     return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 180),
+      duration: switchDuration,
+      switchInCurve: switchCurve,
+      switchOutCurve: switchCurve,
       transitionBuilder: (child, animation) =>
           FadeTransition(opacity: animation, child: child),
       child: _isSyncing
@@ -1511,12 +1521,20 @@ class _HomeScreenState extends State<HomeScreen>
               followerAnchor: Alignment.topLeft,
               offset: Offset(0, _searchHelpSpacing + _searchHelpDyAdjustment),
               child: AnimatedOpacity(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOut,
+                duration: _isAndroid
+                    ? MotionTokens.short4
+                    : const Duration(milliseconds: 180),
+                curve: _isAndroid
+                    ? MotionTokens.standardDecelerate
+                    : Curves.easeOut,
                 opacity: _showSearchHelp ? 1 : 0,
                 child: AnimatedSlide(
-                  duration: const Duration(milliseconds: 180),
-                  curve: Curves.easeOut,
+                  duration: _isAndroid
+                      ? MotionTokens.short4
+                      : const Duration(milliseconds: 180),
+                  curve: _isAndroid
+                      ? MotionTokens.standardDecelerate
+                      : Curves.easeOut,
                   offset:
                       _showSearchHelp ? Offset.zero : const Offset(0, -0.04),
                   child: _buildSearchHelp(context),
@@ -1861,6 +1879,7 @@ class EntryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isAndroid = defaultTargetPlatform == TargetPlatform.android;
     final disableAnimations =
         MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     final useAnimations = !disableAnimations && !reduceEffects;
@@ -1879,8 +1898,12 @@ class EntryCard extends StatelessWidget {
     final visibleTags = tags.take(3).toList();
     final remaining = tags.length - visibleTags.length;
     return AnimatedContainer(
-      duration:
-          useAnimations ? const Duration(milliseconds: 180) : Duration.zero,
+      duration: useAnimations
+          ? (isAndroid
+              ? MotionTokens.short4
+              : const Duration(milliseconds: 180))
+          : Duration.zero,
+      curve: isAndroid ? MotionTokens.standard : Curves.linear,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
         border: isSelected
