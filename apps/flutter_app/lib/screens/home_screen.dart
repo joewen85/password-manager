@@ -1556,7 +1556,7 @@ class _HomeScreenState extends State<HomeScreen>
         }
         final reduceEffects = _reduceEffectsForScroll ||
             sorted.length >= _reduceEffectsThreshold;
-        return NotificationListener<ScrollNotification>(
+        final listView = NotificationListener<ScrollNotification>(
           onNotification: _handleScrollNotification,
           child: ListView.separated(
             padding: EdgeInsets.only(
@@ -1586,6 +1586,24 @@ class _HomeScreenState extends State<HomeScreen>
               );
             },
           ),
+        );
+        if (!hasSearch && !hasTagFilter && !_showConflictsOnly) {
+          return listView;
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                '找到 ${sorted.length} 条',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ),
+            Expanded(child: listView),
+          ],
         );
       },
     );
