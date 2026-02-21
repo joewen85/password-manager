@@ -65,6 +65,7 @@ class VaultController extends ChangeNotifier {
   List<VaultItem> _items = [];
   List<VaultEntryView> _entryViews = [];
   int _entryViewsVersion = 0;
+  static const int _tagScanSkipThreshold = 500;
   bool _syncInProgress = false;
   Timer? _syncTimer;
   Timer? _syncDebounceTimer;
@@ -1882,7 +1883,12 @@ class VaultController extends ChangeNotifier {
       remoteMetadata =
           await _decryptMetadataRecord(remoteRecord, key: remoteMetadataKey);
     }
-    final shouldScanItems = _shouldScanItemTags(
+    final skipLargeEmptyTags = _shouldSkipLargeEmptyTagScan(
+      localMetadata,
+      remoteMetadata,
+      items.length,
+    );
+    final shouldScanItems = !skipLargeEmptyTags && _shouldScanItemTags(
       localMetadata,
       remoteMetadata,
     );
@@ -1927,12 +1933,34 @@ class VaultController extends ChangeNotifier {
       // Scanned items but still empty: mark as up-to-date to avoid re-scan.
       mergedUpdatedAt = _nowUtcMillis();
     }
+    if (skipLargeEmptyTags && mergedUpdatedAt == 0) {
+      // Aggressive mode: skip expensive scan for large empty tag sets.
+      mergedUpdatedAt = _nowUtcMillis();
+    }
     return _MergedTags(
       tags: mergedTags,
       updatedAt: mergedUpdatedAt,
       localMetadata: localMetadata,
       remoteMetadata: remoteMetadata,
     );
+  }
+
+  bool _shouldSkipLargeEmptyTagScan(
+    VaultMetadata? localMetadata,
+    VaultMetadata? remoteMetadata,
+    int itemCount,
+  ) {
+    if (itemCount < _tagScanSkipThreshold) {
+      return false;
+    }
+    final localUpdatedAt = localMetadata?.tagsUpdatedAt ?? 0;
+    final remoteUpdatedAt = remoteMetadata?.tagsUpdatedAt ?? 0;
+    if (localUpdatedAt > 0 || remoteUpdatedAt > 0) {
+      return false;
+    }
+    final hasTags = (localMetadata?.tags.isNotEmpty ?? false) ||
+        (remoteMetadata?.tags.isNotEmpty ?? false);
+    return !hasTags;
   }
 
   bool _shouldScanItemTags(
