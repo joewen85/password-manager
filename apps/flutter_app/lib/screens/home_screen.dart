@@ -723,8 +723,8 @@ class _HomeScreenState extends State<HomeScreen>
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   blur: 16,
-                  opacityLight: isAndroid ? 0.9 : 0.94,
-                  opacityDark: isAndroid ? 0.9 : 0.86,
+                  opacityLight: isAndroid ? 0.9 : 0.97,
+                  opacityDark: isAndroid ? 0.9 : 0.9,
                   child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
