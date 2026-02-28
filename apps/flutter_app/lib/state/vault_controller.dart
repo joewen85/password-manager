@@ -272,6 +272,7 @@ class VaultController extends ChangeNotifier {
     );
     _applyLocalItemUpdate(
       item,
+      credential: payload,
       tags: payload.tags,
       forceNotify: true,
     );
@@ -300,6 +301,7 @@ class VaultController extends ChangeNotifier {
     );
     _applyLocalItemUpdate(
       updated,
+      credential: payload,
       tags: payload.tags,
       forceNotify: true,
     );
@@ -330,7 +332,12 @@ class VaultController extends ChangeNotifier {
       version: version,
       updatedBy: _deviceId,
     );
-    _applyLocalItemUpdate(item, tags: payload.tags, forceNotify: true);
+    _applyLocalItemUpdate(
+      item,
+      server: payload,
+      tags: payload.tags,
+      forceNotify: true,
+    );
     _scheduleSyncSoon();
     return item;
   }
@@ -354,7 +361,12 @@ class VaultController extends ChangeNotifier {
       isDeleted: false,
       deletedAt: null,
     );
-    _applyLocalItemUpdate(updated, tags: payload.tags, forceNotify: true);
+    _applyLocalItemUpdate(
+      updated,
+      server: payload,
+      tags: payload.tags,
+      forceNotify: true,
+    );
     _scheduleSyncSoon();
     return updated;
   }
@@ -382,7 +394,12 @@ class VaultController extends ChangeNotifier {
       version: version,
       updatedBy: _deviceId,
     );
-    _applyLocalItemUpdate(item, tags: payload.tags, forceNotify: true);
+    _applyLocalItemUpdate(
+      item,
+      service: payload,
+      tags: payload.tags,
+      forceNotify: true,
+    );
     _scheduleSyncSoon();
     return item;
   }
@@ -406,7 +423,12 @@ class VaultController extends ChangeNotifier {
       isDeleted: false,
       deletedAt: null,
     );
-    _applyLocalItemUpdate(updated, tags: payload.tags, forceNotify: true);
+    _applyLocalItemUpdate(
+      updated,
+      service: payload,
+      tags: payload.tags,
+      forceNotify: true,
+    );
     _scheduleSyncSoon();
     return updated;
   }
@@ -2059,6 +2081,8 @@ class VaultController extends ChangeNotifier {
 
   void _applyLocalItemUpdate(
     VaultItem item, {
+    CredentialPayload? credential,
+    ServerAssetPayload? server,
     required List<String> tags,
     ServicePayload? service,
     bool forceNotify = false,
@@ -2082,8 +2106,8 @@ class VaultController extends ChangeNotifier {
     } else {
       final view = _buildEntryView(
         item: item,
-        credential: null,
-        server: null,
+        credential: credential,
+        server: server,
         service: service,
         tags: tags,
         isConflict: _isConflictItem(item),

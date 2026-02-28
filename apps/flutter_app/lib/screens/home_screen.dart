@@ -369,6 +369,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _handleTagSelection(String? tag) {
     final previousTag = _selectedTag;
+    _searchFocusNode.unfocus();
     setState(() => _selectedTag = tag);
     _updateSearchForTagChange(
       previousTag: previousTag,
@@ -1411,14 +1412,13 @@ class _HomeScreenState extends State<HomeScreen>
                               ),
                             ],
                             selected: {_mode},
-                            onSelectionChanged: hasSearch
-                                ? null
-                                : (value) {
-                                    setState(() {
-                                      _mode = value.first;
-                                      _selectedItem = null;
-                                    });
-                                  },
+                            onSelectionChanged: (value) {
+                              _searchFocusNode.unfocus();
+                              setState(() {
+                                _mode = value.first;
+                                _selectedItem = null;
+                              });
+                            },
                           ),
                           const SizedBox(width: 8),
                           if (widget.controller.hasConflicts)
@@ -1468,20 +1468,42 @@ class _HomeScreenState extends State<HomeScreen>
                         link: _searchFieldLink,
                         child: SizedBox(
                           height: _searchFieldHeight,
-                          child: TextField(
-                            controller: _searchController,
-                            focusNode: _searchFocusNode,
-                            style:
-                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                          child: ValueListenableBuilder<TextEditingValue>(
+                            valueListenable: _searchController,
+                            builder: (context, value, _) {
+                              final hasText = value.text.trim().isNotEmpty;
+                              return TextField(
+                                controller: _searchController,
+                                focusNode: _searchFocusNode,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(
                                       fontSize: 12,
                                     ),
-                            onTapOutside: (_) {
-                              _searchFocusNode.unfocus();
+                                onTapOutside: (_) {
+                                  _searchFocusNode.unfocus();
+                                },
+                                decoration: InputDecoration(
+                                  prefixIcon: const Icon(Icons.search, size: 18),
+                                  hintText:
+                                      '支持标题/服务名称、应用ID、服务器名称/IP、标签搜索',
+                                  suffixIcon: hasText
+                                      ? IconButton(
+                                          tooltip: '清空搜索',
+                                          onPressed: () {
+                                            _searchController.clear();
+                                            _searchFocusNode.requestFocus();
+                                          },
+                                          icon: const Icon(
+                                            Icons.clear_rounded,
+                                            size: 18,
+                                          ),
+                                        )
+                                      : null,
+                                ),
+                              );
                             },
-                            decoration: const InputDecoration(
-                              prefixIcon: Icon(Icons.search, size: 18),
-                              hintText: '支持标题/服务名称、应用ID、服务器名称/IP、标签搜索',
-                            ),
                           ),
                         ),
                       ),
@@ -1490,7 +1512,7 @@ class _HomeScreenState extends State<HomeScreen>
                         Align(
                           alignment: Alignment.centerLeft,
                           child: Text(
-                            '当前为全局搜索',
+                            '当前为搜索模式，可配合分类/标签筛选',
                             style:
                                 Theme.of(context).textTheme.bodySmall?.copyWith(
                                       fontSize: 11,
@@ -1581,12 +1603,10 @@ class _HomeScreenState extends State<HomeScreen>
         final query = _searchQuery;
         final terms = _searchTerms;
         final hasSearch = query.isNotEmpty;
-        final hasTagFilter =
-            !hasSearch && _selectedTag != null && _selectedTag!.isNotEmpty;
+        final hasTagFilter = _selectedTag != null && _selectedTag!.isNotEmpty;
         final sorted = _buildSortedViews(
           views: views,
           viewsVersion: viewsVersion,
-          hasSearch: hasSearch,
           hasTagFilter: hasTagFilter,
           terms: terms,
         );
@@ -1656,7 +1676,6 @@ class _HomeScreenState extends State<HomeScreen>
   List<VaultEntryView> _buildSortedViews({
     required List<VaultEntryView> views,
     required int viewsVersion,
-    required bool hasSearch,
     required bool hasTagFilter,
     required List<_SearchTerm> terms,
   }) {
@@ -1673,15 +1692,13 @@ class _HomeScreenState extends State<HomeScreen>
       return _cachedSortedViews;
     }
     final filtered = views.where((view) {
-      if (!hasSearch) {
-        final matchesType = _mode == _VaultListMode.credentials
-            ? view.item.type == VaultEntryType.credential
-            : _mode == _VaultListMode.services
-                ? view.item.type == VaultEntryType.service
-                : view.item.type == VaultEntryType.server;
-        if (!matchesType) {
-          return false;
-        }
+      final matchesType = _mode == _VaultListMode.credentials
+          ? view.item.type == VaultEntryType.credential
+          : _mode == _VaultListMode.services
+              ? view.item.type == VaultEntryType.service
+              : view.item.type == VaultEntryType.server;
+      if (!matchesType) {
+        return false;
       }
       if (_showConflictsOnly && !view.isConflict) {
         return false;
