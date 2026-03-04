@@ -1,6 +1,6 @@
 # 跨平台密码管理器
 
-一个跨平台密码管理器，用于保存用户名、密码、token、appid、access token、secret key。目标是构建安全、现代、可扩展的系统，覆盖 Windows、macOS、Linux、iOS、Android。
+一个跨平台密码管理器，用于保存用户名、密码、token、appid、access token、secret key。目标是构建安全、现代、可扩展的系统，覆盖 Windows、macOS、Linux、iOS、Android、HarmonyOS 6。
 
 ## 目标
 - 所有敏感数据使用 AES‑256 加密
@@ -11,6 +11,7 @@
 
 ## 项目结构
 - `apps/flutter_app`: 跨平台 UI（Flutter）
+- `apps/harmony_app`: 鸿蒙 6（Stage 模型）应用
 - `packages/crypto`: AES‑256 加密服务
 - `packages/storage`: 加密本地存储
 - `packages/sync`: 云 / NAS 同步接口
@@ -191,6 +192,37 @@
    - `flutter build web --release`  
 2) 产物位置  
    - `apps/flutter_app/build/web/`  
+
+### 4.8 HarmonyOS 6 打包发布（HAP）
+1) 预检与构建  
+   - `./scripts/harmony_preflight.sh`  
+   - `./scripts/harmony_build_hap.sh`（生成 unsigned HAP）  
+   - `./scripts/harmony_build_signed_hap.sh`（生成 signed HAP）  
+2) 签名配置文件  
+   - 签名变量文件：`apps/harmony_app/signing/signing.env`  
+   - 模板文件：`apps/harmony_app/signing/signing.env.example`  
+3) 签名链路文件说明（`signing.env` 关键字段）  
+   - `HARMONY_SIGN_STORE_FILE`：签名密钥库文件（通常是 `release.p12`）。  
+     作用：保存私钥，用于最终给 HAP 签名。  
+     获取方式：在 DevEco Studio 生成密钥库（创建 Key/CSR 时产生），或由团队统一下发。  
+   - `HARMONY_SIGN_KEY_ALIAS`：`release.p12` 内的密钥别名（`KEY_ALIAS`）。  
+     作用：告诉构建系统使用密钥库中的哪把私钥。  
+     获取方式：创建 `p12` 时自定义；若忘记可在团队签名记录或密钥管理页面查询。  
+   - `HARMONY_SIGN_PROFILE`：应用签名 Profile 文件（通常为 `.p7b`）。  
+     作用：绑定应用包名、证书与发布配置，控制可安装/可发布范围。  
+     获取方式：在 AppGallery Connect 证书/Profile 管理中按应用包名生成并下载。  
+   - `HARMONY_SIGN_CERTPATH`：证书文件（通常为 `.cer`）。  
+     作用：提供公钥证书链信息，与 Profile/私钥组合形成完整签名链路。  
+     获取方式：在 AppGallery Connect 下载与当前签名配置匹配的证书文件。  
+   - `HARMONY_SIGN_STORE_PASSWORD` / `HARMONY_SIGN_KEY_PASSWORD`：密钥库密码与私钥密码。  
+     作用：解锁 `p12` 与私钥。  
+     获取方式：创建密钥库时设置，需与团队签名管理记录一致。  
+4) 安全要求  
+   - `release.p12`、密码、`.p7b`、`.cer` 均为发布敏感材料，不得提交到 Git。  
+   - 建议将签名材料存放在受控目录，按环境分开管理（开发/测试/生产）。  
+5) 参考文档  
+   - `apps/harmony_app/docs/SIGNING_SETUP.md`  
+   - `apps/harmony_app/docs/DEVECO_BUILD_AND_DEVICE_VALIDATION.md`  
 
 ### 5. 全量测试（推荐）
 - macOS/Linux：`./scripts/test_all.sh`

@@ -1,0 +1,144 @@
+export enum VaultEntryType {
+  CREDENTIAL = 'credential',
+  SERVER = 'server',
+  SERVICE = 'service'
+}
+
+export interface CredentialPayload {
+  username: string;
+  password: string;
+  token: string;
+  appId: string;
+  accessToken: string;
+  secretKey: string;
+  notes: string;
+  tags: string[];
+}
+
+export interface ServerPayload {
+  name: string;
+  ipAddress: string;
+  port: string;
+  username: string;
+  password: string;
+  basicConfig: string;
+  operatingSystem: string;
+  location: string;
+  notes: string;
+  tags: string[];
+}
+
+export interface ServiceAccount {
+  username: string;
+  password: string;
+  note: string;
+}
+
+export interface ServicePayload {
+  name: string;
+  connectionAddress: string;
+  connectionPort: string;
+  accountId: string;
+  serverIds: string[];
+  accounts: ServiceAccount[];
+  notes: string;
+  tags: string[];
+}
+
+export type VaultPayload = CredentialPayload | ServerPayload | ServicePayload;
+
+export interface VaultEntry {
+  id: string;
+  label: string;
+  type: VaultEntryType;
+  payload: VaultPayload;
+  tags: string[];
+  createdAt: number;
+  updatedAt: number;
+  isDeleted: boolean;
+}
+
+export interface MasterKeyRecord {
+  saltBase64: string;
+  iterations: number;
+  verifierBase64: string;
+  metadataSaltBase64?: string;
+  metadataIterations?: number;
+}
+
+export interface VaultSnapshot {
+  masterKeyRecord: MasterKeyRecord | null;
+  tags: string[];
+  entries: VaultEntry[];
+  updatedAt: number;
+}
+
+export interface EncryptedPayloadRecord {
+  ciphertext: string;
+  nonce: string;
+  mac: string;
+  version: number;
+}
+
+export interface VaultPayloadRecord {
+  tags: string[];
+  entries: VaultEntry[];
+  security?: SecuritySettings;
+  updatedAt: number;
+}
+
+export interface VaultPersistenceEnvelope {
+  schemaVersion: number;
+  masterKeyRecord: MasterKeyRecord | null;
+  encryptedVault: EncryptedPayloadRecord | null;
+  unlockGuard?: UnlockGuardState;
+  updatedAt: number;
+}
+
+export interface SecuritySettings {
+  requireTotp: boolean;
+  totpSecret: string;
+}
+
+export interface UnlockGuardState {
+  failedAttempts: number;
+  lockUntil: number;
+}
+
+export interface CreateCredentialInput {
+  label: string;
+  username: string;
+  password: string;
+  token: string;
+  appId: string;
+  accessToken: string;
+  secretKey: string;
+  notes: string;
+  tags: string[];
+}
+
+export interface CreateServerInput {
+  label: string;
+  name: string;
+  ipAddress: string;
+  port: string;
+  username: string;
+  password: string;
+  basicConfig: string;
+  operatingSystem: string;
+  location: string;
+  notes: string;
+  tags: string[];
+}
+
+export interface CreateServiceInput {
+  label: string;
+  name: string;
+  connectionAddress: string;
+  connectionPort: string;
+  accountId: string;
+  serverIds: string[];
+  accounts: ServiceAccount[];
+  notes: string;
+  tags: string[];
+}

@@ -26,3 +26,11 @@ Thumbs.db
 
 # Node (if used)
 node_modules/
+
+# HarmonyOS / DevEco local artifacts
+apps/harmony_app/.hvigor/
+apps/harmony_app/oh_modules/
+apps/harmony_app/.preview/
+apps/harmony_app/local.properties
+
+signing.env
