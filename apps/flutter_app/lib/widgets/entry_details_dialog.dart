@@ -145,7 +145,7 @@ class EntryDetailsPanel extends StatelessWidget {
   }
 }
 
-class EntryDetailsContent extends StatelessWidget {
+class EntryDetailsContent extends StatefulWidget {
   const EntryDetailsContent({
     super.key,
     required this.controller,
@@ -154,6 +154,38 @@ class EntryDetailsContent extends StatelessWidget {
 
   final VaultController controller;
   final VaultItem item;
+
+  @override
+  State<EntryDetailsContent> createState() => _EntryDetailsContentState();
+}
+
+class _EntryDetailsContentState extends State<EntryDetailsContent> {
+  late Future<Object?> _payloadFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _payloadFuture = _loadPayload();
+  }
+
+  @override
+  void didUpdateWidget(covariant EntryDetailsContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.item.id != widget.item.id ||
+        oldWidget.item.updatedAt != widget.item.updatedAt) {
+      _payloadFuture = _loadPayload();
+    }
+  }
+
+  Future<Object?> _loadPayload() {
+    if (widget.item.type == VaultEntryType.server) {
+      return widget.controller.readServerAsset(widget.item);
+    }
+    if (widget.item.type == VaultEntryType.service) {
+      return widget.controller.readService(widget.item);
+    }
+    return widget.controller.readEntry(widget.item);
+  }
 
   Widget _buildScrollableDetails(List<Widget> children) {
     return LayoutBuilder(
@@ -176,18 +208,8 @@ class EntryDetailsContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Future<Object?> loadPayload() {
-      if (item.type == VaultEntryType.server) {
-        return controller.readServerAsset(item);
-      }
-      if (item.type == VaultEntryType.service) {
-        return controller.readService(item);
-      }
-      return controller.readEntry(item);
-    }
-
     return FutureBuilder<Object?>(
-      future: loadPayload(),
+      future: _payloadFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const SizedBox(
@@ -216,11 +238,11 @@ class EntryDetailsContent extends StatelessWidget {
         }
         if (payload is ServicePayload) {
           final accountLabel = _resolveLinkedAccountLabel(
-            controller,
+            widget.controller,
             payload.accountId,
           );
           final serverLabels =
-              _resolveLinkedServerLabels(controller, payload.serverIds);
+              _resolveLinkedServerLabels(widget.controller, payload.serverIds);
           final accountDetails = _formatServiceAccounts(payload.accounts);
           return _buildScrollableDetails([
             _detailRow('服务名称', payload.name),

@@ -50,7 +50,8 @@ class _HomeScreenState extends State<HomeScreen>
   String? _selectedCategory;
   String? _selectedTag;
   bool _showConflictsOnly = false;
-  VaultItem? _selectedItem;
+  final ValueNotifier<VaultItem?> _selectedItemNotifier =
+      ValueNotifier<VaultItem?>(null);
   bool _showSearchHelp = false;
   bool _isSyncing = false;
   bool _searchHelpMetricsScheduled = false;
@@ -90,6 +91,7 @@ class _HomeScreenState extends State<HomeScreen>
     _searchController.dispose();
     _searchFocusNode.dispose();
     _syncRotationController.dispose();
+    _selectedItemNotifier.dispose();
     super.dispose();
   }
 
@@ -228,7 +230,7 @@ class _HomeScreenState extends State<HomeScreen>
     );
     if (confirmed == true) {
       await widget.controller.deleteEntry(item.id);
-      if (_selectedItem?.id == item.id) {
+      if (_selectedItemNotifier.value?.id == item.id) {
         _clearSelection();
       }
       if (mounted) {
@@ -332,14 +334,14 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _selectItem(VaultItem item) {
-    setState(() => _selectedItem = item);
+    _selectedItemNotifier.value = item;
   }
 
   void _clearSelection() {
-    if (_selectedItem == null) {
+    if (_selectedItemNotifier.value == null) {
       return;
     }
-    setState(() => _selectedItem = null);
+    _selectedItemNotifier.value = null;
   }
 
   void _handleSearchFocusChanged() {
@@ -1171,16 +1173,21 @@ class _HomeScreenState extends State<HomeScreen>
           singleLineTags: singleLineTags,
           maxVisibleTags: maxVisibleTags,
         );
-        final detailsPane = EntryDetailsPanel(
-          controller: widget.controller,
-          item: _selectedItem,
-          onClear: _selectedItem == null ? null : _clearSelection,
+        final detailsPane = ValueListenableBuilder<VaultItem?>(
+          valueListenable: _selectedItemNotifier,
+          builder: (context, selectedItem, _) {
+            return EntryDetailsPanel(
+              controller: widget.controller,
+              item: selectedItem,
+              onClear: selectedItem == null ? null : _clearSelection,
+            );
+          },
         );
 
         if (!useDetailsPane) {
           return Padding(
             padding: basePadding,
-            child: listPane,
+            child: RepaintBoundary(child: listPane),
           );
         }
 
@@ -1193,7 +1200,7 @@ class _HomeScreenState extends State<HomeScreen>
                   height: constraints.maxHeight,
                   child: Padding(
                     padding: basePadding.copyWith(right: 12),
-                    child: listPane,
+                    child: RepaintBoundary(child: listPane),
                   ),
                 ),
                 SizedBox(width: paneSplit.gapExtent),
@@ -1202,7 +1209,7 @@ class _HomeScreenState extends State<HomeScreen>
                   height: constraints.maxHeight,
                   child: Padding(
                     padding: basePadding.copyWith(left: 12),
-                    child: detailsPane,
+                    child: RepaintBoundary(child: detailsPane),
                   ),
                 ),
               ],
@@ -1215,7 +1222,7 @@ class _HomeScreenState extends State<HomeScreen>
                 width: constraints.maxWidth,
                 child: Padding(
                   padding: basePadding.copyWith(bottom: 12),
-                  child: listPane,
+                  child: RepaintBoundary(child: listPane),
                 ),
               ),
               SizedBox(height: paneSplit.gapExtent),
@@ -1224,7 +1231,7 @@ class _HomeScreenState extends State<HomeScreen>
                 width: constraints.maxWidth,
                 child: Padding(
                   padding: basePadding.copyWith(top: 12),
-                  child: detailsPane,
+                  child: RepaintBoundary(child: detailsPane),
                 ),
               ),
             ],
@@ -1235,9 +1242,9 @@ class _HomeScreenState extends State<HomeScreen>
           padding: basePadding,
           child: Row(
             children: [
-              Expanded(child: listPane),
+              Expanded(child: RepaintBoundary(child: listPane)),
               const SizedBox(width: 20),
-              Expanded(child: detailsPane),
+              Expanded(child: RepaintBoundary(child: detailsPane)),
             ],
           ),
         );
@@ -1251,7 +1258,6 @@ class _HomeScreenState extends State<HomeScreen>
     required bool singleLineTags,
     required int maxVisibleTags,
   }) {
-    final hasSearch = _searchQuery.isNotEmpty;
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -1271,132 +1277,10 @@ class _HomeScreenState extends State<HomeScreen>
               curve: _isAndroid
                   ? MotionTokens.standardDecelerate
                   : Curves.easeOutCubic,
-              child: _sectionCard(
-                child: Theme(
-                  data: Theme.of(context).copyWith(
-                    inputDecorationTheme:
-                        Theme.of(context).inputDecorationTheme.copyWith(
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 10,
-                              ),
-                            ),
-                  ),
-                  child: Column(
-                    children: [
-                      Row(
-                        children: [
-                          if (widget.controller.hasConflicts)
-                            FilterChip(
-                              label: const Text('仅冲突'),
-                              selected: _showConflictsOnly,
-                              onSelected: (value) {
-                                setState(
-                                  () => _showConflictsOnly = value,
-                                );
-                              },
-                              labelStyle: const TextStyle(fontSize: 12),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 2,
-                              ),
-                            ),
-                          const Spacer(),
-                          DropdownButtonHideUnderline(
-                            child: DropdownButton<VaultSortOrder>(
-                              value: widget.controller.metadata.sortOrder,
-                              borderRadius: BorderRadius.circular(12),
-                              style: Theme.of(context).textTheme.bodySmall,
-                              onChanged: (value) async {
-                                if (value == null) {
-                                  return;
-                                }
-                                await widget.controller.updateSortOrder(value);
-                              },
-                              items: const [
-                                DropdownMenuItem(
-                                  value: VaultSortOrder.updatedDesc,
-                                  child: Text('按更新时间'),
-                                ),
-                                DropdownMenuItem(
-                                  value: VaultSortOrder.labelAsc,
-                                  child: Text('按名称'),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      _categoryFilterRow(),
-                      const SizedBox(height: 8),
-                      CompositedTransformTarget(
-                        key: _searchFieldKey,
-                        link: _searchFieldLink,
-                        child: SizedBox(
-                          height: _searchFieldHeight,
-                          child: ValueListenableBuilder<TextEditingValue>(
-                            valueListenable: _searchController,
-                            builder: (context, value, _) {
-                              final hasText = value.text.trim().isNotEmpty;
-                              return TextField(
-                                controller: _searchController,
-                                focusNode: _searchFocusNode,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodySmall
-                                    ?.copyWith(
-                                      fontSize: 12,
-                                    ),
-                                onTapOutside: (_) {
-                                  _searchFocusNode.unfocus();
-                                },
-                                decoration: InputDecoration(
-                                  prefixIcon:
-                                      const Icon(Icons.search, size: 18),
-                                  hintText: '字段搜索按当前分类，tag/# 标签搜索全局',
-                                  suffixIcon: hasText
-                                      ? IconButton(
-                                          tooltip: '清空搜索',
-                                          onPressed: () {
-                                            _searchController.clear();
-                                            _searchFocusNode.requestFocus();
-                                          },
-                                          icon: const Icon(
-                                            Icons.clear_rounded,
-                                            size: 18,
-                                          ),
-                                        )
-                                      : null,
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      if (hasSearch)
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            '当前为搜索模式；指定字段按当前分类，纯标签搜索跨分类',
-                            style:
-                                Theme.of(context).textTheme.bodySmall?.copyWith(
-                                      fontSize: 11,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant,
-                                    ),
-                          ),
-                        ),
-                      const SizedBox(height: 8),
-                      _tagFilterRow(
-                        singleLine: singleLineTags,
-                        maxVisible: maxVisibleTags,
-                      ),
-                    ],
-                  ),
-                ),
+              child: _buildFilterPanel(
+                context,
+                singleLineTags: singleLineTags,
+                maxVisibleTags: maxVisibleTags,
               ),
             ),
             const SizedBox(height: 16),
@@ -1463,8 +1347,12 @@ class _HomeScreenState extends State<HomeScreen>
     required bool useDetailsPane,
   }) {
     return AnimatedBuilder(
-      animation: _entryListListenable,
+      animation: Listenable.merge([
+        _entryListListenable,
+        _selectedItemNotifier,
+      ]),
       builder: (context, _) {
+        final selectedItem = _selectedItemNotifier.value;
         final views = widget.controller.entryViews;
         final viewsVersion = widget.controller.entryViewsVersion;
         final query = _searchQuery;
@@ -1489,6 +1377,28 @@ class _HomeScreenState extends State<HomeScreen>
         }
         final reduceEffects =
             _reduceEffectsForScroll || sorted.length >= _reduceEffectsThreshold;
+        final titleTerms = _termsForText(
+          terms,
+          includeFields: const {
+            _SearchField.any,
+            _SearchField.title,
+            _SearchField.serviceName,
+            _SearchField.serverName,
+            _SearchField.appId,
+            _SearchField.serverIp,
+          },
+        );
+        final categoryTerms = <String>[
+          ..._termsForText(
+            terms,
+            includeFields: const {_SearchField.any, _SearchField.title},
+          ),
+          if ((_selectedCategory ?? '').isNotEmpty) _selectedCategory!,
+        ];
+        final tagTerms = _termsForText(
+          terms,
+          includeFields: const {_SearchField.any, _SearchField.tag},
+        );
         final listView = NotificationListener<ScrollNotification>(
           onNotification: _handleScrollNotification,
           child: ListView.separated(
@@ -1506,10 +1416,13 @@ class _HomeScreenState extends State<HomeScreen>
                 category: view.category,
                 tags: view.tags,
                 searchTerms: terms,
+                titleTerms: titleTerms,
+                categoryTerms: categoryTerms,
+                tagTerms: tagTerms,
                 selectedCategory: _selectedCategory,
                 selectedTag: _selectedTag,
                 isConflict: view.isConflict,
-                isSelected: useDetailsPane && _selectedItem?.id == item.id,
+                isSelected: useDetailsPane && selectedItem?.id == item.id,
                 reduceEffects: reduceEffects,
                 onView: () {
                   if (useDetailsPane) {
@@ -1541,6 +1454,140 @@ class _HomeScreenState extends State<HomeScreen>
             ),
             Expanded(child: listView),
           ],
+        );
+      },
+    );
+  }
+
+  Widget _buildFilterPanel(
+    BuildContext context, {
+    required bool singleLineTags,
+    required int maxVisibleTags,
+  }) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([widget.controller, _searchController]),
+      builder: (context, _) {
+        final hasSearch = _searchQuery.isNotEmpty;
+        return _sectionCard(
+          child: Theme(
+            data: Theme.of(context).copyWith(
+              inputDecorationTheme:
+                  Theme.of(context).inputDecorationTheme.copyWith(
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                      ),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    if (widget.controller.hasConflicts)
+                      FilterChip(
+                        label: const Text('仅冲突'),
+                        selected: _showConflictsOnly,
+                        onSelected: (value) {
+                          setState(() => _showConflictsOnly = value);
+                        },
+                        labelStyle: const TextStyle(fontSize: 12),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                      ),
+                    const Spacer(),
+                    DropdownButtonHideUnderline(
+                      child: DropdownButton<VaultSortOrder>(
+                        value: widget.controller.metadata.sortOrder,
+                        borderRadius: BorderRadius.circular(12),
+                        style: Theme.of(context).textTheme.bodySmall,
+                        onChanged: (value) async {
+                          if (value == null) {
+                            return;
+                          }
+                          await widget.controller.updateSortOrder(value);
+                        },
+                        items: const [
+                          DropdownMenuItem(
+                            value: VaultSortOrder.updatedDesc,
+                            child: Text('按更新时间'),
+                          ),
+                          DropdownMenuItem(
+                            value: VaultSortOrder.labelAsc,
+                            child: Text('按名称'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                _categoryFilterRow(),
+                const SizedBox(height: 8),
+                CompositedTransformTarget(
+                  key: _searchFieldKey,
+                  link: _searchFieldLink,
+                  child: SizedBox(
+                    height: _searchFieldHeight,
+                    child: ValueListenableBuilder<TextEditingValue>(
+                      valueListenable: _searchController,
+                      builder: (context, value, _) {
+                        final hasText = value.text.trim().isNotEmpty;
+                        return TextField(
+                          controller: _searchController,
+                          focusNode: _searchFocusNode,
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(fontSize: 12),
+                          onTapOutside: (_) {
+                            _searchFocusNode.unfocus();
+                          },
+                          decoration: InputDecoration(
+                            prefixIcon: const Icon(Icons.search, size: 18),
+                            hintText: '字段搜索按当前分类，tag/# 标签搜索全局',
+                            suffixIcon: hasText
+                                ? IconButton(
+                                    tooltip: '清空搜索',
+                                    onPressed: () {
+                                      _searchController.clear();
+                                      _searchFocusNode.requestFocus();
+                                    },
+                                    icon: const Icon(
+                                      Icons.clear_rounded,
+                                      size: 18,
+                                    ),
+                                  )
+                                : null,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                if (hasSearch)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '当前为搜索模式；指定字段按当前分类，纯标签搜索跨分类',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            fontSize: 11,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant,
+                          ),
+                    ),
+                  ),
+                const SizedBox(height: 8),
+                _tagFilterRow(
+                  singleLine: singleLineTags,
+                  maxVisible: maxVisibleTags,
+                ),
+              ],
+            ),
+          ),
         );
       },
     );
@@ -1809,6 +1856,7 @@ class _HighlightedText extends StatelessWidget {
     this.style,
     this.highlightStyle,
     this.maxLines,
+    this.enableHighlight = true,
   });
 
   final String text;
@@ -1816,10 +1864,11 @@ class _HighlightedText extends StatelessWidget {
   final TextStyle? style;
   final TextStyle? highlightStyle;
   final int? maxLines;
+  final bool enableHighlight;
 
   @override
   Widget build(BuildContext context) {
-    if (text.isEmpty || terms.isEmpty) {
+    if (!enableHighlight || text.isEmpty || terms.isEmpty) {
       return Text(
         text,
         style: style,
@@ -1882,6 +1931,9 @@ class EntryCard extends StatelessWidget {
     required this.category,
     required this.tags,
     required this.searchTerms,
+    required this.titleTerms,
+    required this.categoryTerms,
+    required this.tagTerms,
     required this.selectedCategory,
     required this.selectedTag,
     required this.isConflict,
@@ -1898,6 +1950,9 @@ class EntryCard extends StatelessWidget {
   final String category;
   final List<String> tags;
   final List<_SearchTerm> searchTerms;
+  final List<String> titleTerms;
+  final List<String> categoryTerms;
+  final List<String> tagTerms;
   final String? selectedCategory;
   final String? selectedTag;
   final bool isConflict;
@@ -1928,21 +1983,197 @@ class EntryCard extends StatelessWidget {
     final serviceInfo = _buildServiceInfo(service);
     final visibleTags = tags.take(3).toList();
     final remaining = tags.length - visibleTags.length;
-    final titleTerms = _termsForText(searchTerms,
-        includeFields: const {
-          _SearchField.any,
-          _SearchField.title,
-          _SearchField.serviceName,
-          _SearchField.serverName,
-          _SearchField.appId,
-          _SearchField.serverIp,
-        });
-    final categoryTerms = <String>[
-      ..._termsForText(searchTerms,
-          includeFields: const {_SearchField.any, _SearchField.title}),
-      if ((selectedCategory ?? '').isNotEmpty) selectedCategory!,
-    ];
-    return AnimatedContainer(
+    final useSimpleCard = isAndroid || reduceEffects;
+    final cardChild = GlassSurface(
+      borderRadius: 20,
+      padding: const EdgeInsets.all(16),
+      reduceEffects: reduceEffects,
+      showShadow: !useSimpleCard,
+      child: Material(
+        type: MaterialType.transparency,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onLongPressStart: (details) =>
+              _showCopyMenu(context, details.globalPosition),
+          onSecondaryTapDown: (details) =>
+              _showCopyMenu(context, details.globalPosition),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: onView,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(icon, color: accent),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (isConflict)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 6),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: colorScheme.errorContainer,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            '冲突副本',
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(
+                                  color: colorScheme.onErrorContainer,
+                                ),
+                          ),
+                        ),
+                      _HighlightedText(
+                        item.label,
+                        terms: titleTerms,
+                        style:
+                            Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                        highlightStyle: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(
+                              fontWeight: FontWeight.w800,
+                              color: colorScheme.primary,
+                            ),
+                        enableHighlight: !useSimpleCard,
+                      ),
+                      if (serviceInfo != null) ...[
+                        const SizedBox(height: 4),
+                        _HighlightedText(
+                          serviceInfo,
+                          terms: titleTerms,
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                          highlightStyle: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(
+                                color: colorScheme.primary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                          maxLines: 1,
+                          enableHighlight: !useSimpleCard,
+                        ),
+                      ],
+                      if (category.trim().isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        _HighlightedText(
+                          '分类: $category',
+                          terms: categoryTerms,
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                          highlightStyle: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(
+                                color: colorScheme.primary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                          enableHighlight: !useSimpleCard,
+                        ),
+                      ],
+                      const SizedBox(height: 6),
+                      Text(
+                        '更新于 ${item.updatedAt.toLocal()}',
+                        style:
+                            Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
+                      ),
+                      if (tags.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            ...visibleTags.map(
+                              (tag) => _buildTagChip(
+                                context,
+                                tag,
+                                colorScheme: colorScheme,
+                                useSimpleCard: useSimpleCard,
+                              ),
+                            ),
+                            if (remaining > 0)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  '+$remaining',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelSmall
+                                      ?.copyWith(
+                                        color: colorScheme.onSurfaceVariant,
+                                      ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.edit_outlined),
+                      tooltip: '编辑',
+                      onPressed: onEdit,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      tooltip: '删除',
+                      onPressed: onDelete,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    final card = useSimpleCard
+        ? Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(22),
+              border: isSelected
+                  ? Border.all(color: colorScheme.primary, width: 1.3)
+                  : null,
+            ),
+            padding: isSelected ? const EdgeInsets.all(1) : EdgeInsets.zero,
+            child: cardChild,
+          )
+        : AnimatedContainer(
       duration: useAnimations
           ? (isAndroid
               ? MotionTokens.short4
@@ -1956,186 +2187,16 @@ class EntryCard extends StatelessWidget {
             : null,
       ),
       padding: isSelected ? const EdgeInsets.all(1) : EdgeInsets.zero,
-      child: GlassSurface(
-        borderRadius: 20,
-        padding: const EdgeInsets.all(16),
-        reduceEffects: reduceEffects,
-        child: Material(
-          type: MaterialType.transparency,
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onLongPressStart: (details) =>
-                _showCopyMenu(context, details.globalPosition),
-            onSecondaryTapDown: (details) =>
-                _showCopyMenu(context, details.globalPosition),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(20),
-              onTap: onView,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: accent.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Icon(icon, color: accent),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (isConflict)
-                          Container(
-                            margin: const EdgeInsets.only(bottom: 6),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: colorScheme.errorContainer,
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: Text(
-                              '冲突副本',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelSmall
-                                  ?.copyWith(
-                                    color: colorScheme.onErrorContainer,
-                                  ),
-                            ),
-                          ),
-                        _HighlightedText(
-                          item.label,
-                          terms: titleTerms,
-                          style:
-                              Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                          highlightStyle: Theme.of(context)
-                              .textTheme
-                              .titleMedium
-                              ?.copyWith(
-                                fontWeight: FontWeight.w800,
-                                color: colorScheme.primary,
-                              ),
-                        ),
-                        if (serviceInfo != null) ...[
-                          const SizedBox(height: 4),
-                          _HighlightedText(
-                            serviceInfo,
-                            terms: titleTerms,
-                            style:
-                                Theme.of(context).textTheme.bodySmall?.copyWith(
-                                      color: colorScheme.onSurfaceVariant,
-                                    ),
-                            highlightStyle: Theme.of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(
-                                  color: colorScheme.primary,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                            maxLines: 1,
-                          ),
-                        ],
-                        if (category.trim().isNotEmpty) ...[
-                          const SizedBox(height: 6),
-                          _HighlightedText(
-                            '分类: $category',
-                            terms: categoryTerms,
-                            style:
-                                Theme.of(context).textTheme.bodySmall?.copyWith(
-                                      color: colorScheme.onSurfaceVariant,
-                                    ),
-                            highlightStyle: Theme.of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(
-                                  color: colorScheme.primary,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                          ),
-                        ],
-                        const SizedBox(height: 6),
-                        Text(
-                          '更新于 ${item.updatedAt.toLocal()}',
-                          style:
-                              Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: colorScheme.onSurfaceVariant,
-                                  ),
-                        ),
-                        if (tags.isNotEmpty) ...[
-                          const SizedBox(height: 10),
-                          Wrap(
-                            spacing: 6,
-                            runSpacing: 6,
-                            children: [
-                              ...visibleTags.map(
-                                (tag) => _buildTagChip(
-                                  context,
-                                  tag,
-                                  colorScheme: colorScheme,
-                                ),
-                              ),
-                              if (remaining > 0)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: colorScheme.surfaceContainerHighest,
-                                    borderRadius: BorderRadius.circular(999),
-                                  ),
-                                  child: Text(
-                                    '+$remaining',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .labelSmall
-                                        ?.copyWith(
-                                          color: colorScheme.onSurfaceVariant,
-                                        ),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.edit_outlined),
-                        tooltip: '编辑',
-                        onPressed: onEdit,
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline),
-                        tooltip: '删除',
-                        onPressed: onDelete,
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
+      child: cardChild,
     );
+    return RepaintBoundary(child: card);
   }
 
   Widget _buildTagChip(
     BuildContext context,
     String tag, {
     required ColorScheme colorScheme,
+    required bool useSimpleCard,
   }) {
     final isSelectedTag = (selectedTag ?? '').isNotEmpty && selectedTag == tag;
     final matchedBySearch = _matchesTagHighlight(tag, searchTerms);
@@ -2157,10 +2218,7 @@ class EntryCard extends StatelessWidget {
       ),
       child: _HighlightedText(
         tag,
-        terms: _termsForText(
-          searchTerms,
-          includeFields: const {_SearchField.any, _SearchField.tag},
-        ),
+        terms: tagTerms,
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
               color: foregroundColor,
             ),
@@ -2168,6 +2226,7 @@ class EntryCard extends StatelessWidget {
               color: foregroundColor,
               fontWeight: FontWeight.w800,
             ),
+        enableHighlight: !useSimpleCard,
       ),
     );
   }

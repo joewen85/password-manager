@@ -62,6 +62,7 @@ class VaultController extends ChangeNotifier {
   MasterKeyRecord? _masterKeyRecord;
   Uint8List? _metadataKey;
   final Map<String, Uint8List> _derivedKeyCache = {};
+  final Map<String, _PayloadCacheEntry> _payloadCache = {};
   List<VaultItem> _items = [];
   List<VaultEntryView> _entryViews = [];
   int _entryViewsVersion = 0;
@@ -257,6 +258,7 @@ class VaultController extends ChangeNotifier {
     _masterPassword = null;
     _metadataKey = null;
     _derivedKeyCache.clear();
+    _payloadCache.clear();
     _vaultService.setSessionMetadataKey(null);
     _isUnlocked = false;
     _items = [];
@@ -273,8 +275,11 @@ class VaultController extends ChangeNotifier {
   Future<void> reloadWithOptions({bool eagerDecrypt = true}) async {
     _ensureUnlocked();
     _items = await _vaultService.listAll(masterPassword: _masterPassword!);
+    _prunePayloadCache(_items);
     if (eagerDecrypt) {
-      _setEntryViews(await _buildEntryViews(_items));
+      final views = await _buildEntryViews(_items);
+      _setEntryViews(views);
+      await _refreshMetadataCollectionsFromViews(views);
     } else {
       _setEntryViews(_buildSkeletonEntryViews(_items));
       final hydrationToken = ++_entryHydrationToken;
@@ -341,10 +346,16 @@ class VaultController extends ChangeNotifier {
 
   Future<CredentialPayload?> readEntry(VaultItem item) async {
     _ensureUnlocked();
-    return _vaultService.readCredential(
+    final cached = _readCachedPayload<CredentialPayload>(item);
+    if (cached != null) {
+      return cached;
+    }
+    final payload = await _vaultService.readCredential(
       item,
       masterPassword: _masterPassword!,
     );
+    _storeCachedPayload(item, payload);
+    return payload;
   }
 
   Future<VaultItem> addServerAsset({
@@ -405,10 +416,16 @@ class VaultController extends ChangeNotifier {
 
   Future<ServerAssetPayload?> readServerAsset(VaultItem item) async {
     _ensureUnlocked();
-    return _vaultService.readServerAsset(
+    final cached = _readCachedPayload<ServerAssetPayload>(item);
+    if (cached != null) {
+      return cached;
+    }
+    final payload = await _vaultService.readServerAsset(
       item,
       masterPassword: _masterPassword!,
     );
+    _storeCachedPayload(item, payload);
+    return payload;
   }
 
   Future<VaultItem> addService({
@@ -469,10 +486,16 @@ class VaultController extends ChangeNotifier {
 
   Future<ServicePayload?> readService(VaultItem item) async {
     _ensureUnlocked();
-    return _vaultService.readService(
+    final cached = _readCachedPayload<ServicePayload>(item);
+    if (cached != null) {
+      return cached;
+    }
+    final payload = await _vaultService.readService(
       item,
       masterPassword: _masterPassword!,
     );
+    _storeCachedPayload(item, payload);
+    return payload;
   }
 
   Future<void> deleteEntry(String id) async {
@@ -879,6 +902,7 @@ class VaultController extends ChangeNotifier {
       return;
     }
     _setEntryViews(views);
+    await _refreshMetadataCollectionsFromViews(views);
     _notifyListeners();
   }
 
@@ -2573,6 +2597,11 @@ class VaultController extends ChangeNotifier {
     ServicePayload? service,
     bool forceNotify = false,
   }) {
+    if (item.isDeleted) {
+      _payloadCache.remove(item.id);
+    } else {
+      _storeCachedPayload(item, credential ?? server ?? service);
+    }
     final updatedItems = List<VaultItem>.from(_items);
     final itemIndex = updatedItems.indexWhere((entry) => entry.id == item.id);
     if (itemIndex >= 0) {
@@ -2611,6 +2640,67 @@ class VaultController extends ChangeNotifier {
   void _setEntryViews(List<VaultEntryView> views) {
     _entryViews = views;
     _entryViewsVersion += 1;
+  }
+
+  Future<void> _refreshMetadataCollectionsFromViews(
+    List<VaultEntryView> views,
+  ) async {
+    final tagSet = <String>{..._metadata.tags};
+    final categorySet = <String>{..._metadata.categories};
+    for (final view in views) {
+      if (view.item.isDeleted) {
+        continue;
+      }
+      tagSet.addAll(view.tags.where((tag) => tag.trim().isNotEmpty));
+      final category = view.category.trim();
+      if (category.isNotEmpty) {
+        categorySet.add(category);
+      }
+    }
+    final updatedTags = tagSet.toList()..sort();
+    final updatedCategories = categorySet.toList()..sort();
+    if (listEquals(updatedTags, _metadata.tags) &&
+        listEquals(updatedCategories, _metadata.categories)) {
+      return;
+    }
+    final now = _nowUtcMillis();
+    _metadata = _metadata.copyWith(
+      tags: updatedTags,
+      categories: updatedCategories,
+      tagsUpdatedAt: now,
+      categoriesUpdatedAt: now,
+    );
+    await _saveMetadata();
+  }
+
+  T? _readCachedPayload<T>(VaultItem item) {
+    final cached = _payloadCache[item.id];
+    if (cached == null || cached.cacheKey != _payloadCacheKey(item)) {
+      return null;
+    }
+    final payload = cached.payload;
+    return payload is T ? payload as T : null;
+  }
+
+  void _storeCachedPayload(VaultItem item, Object? payload) {
+    if (payload == null || item.isDeleted) {
+      _payloadCache.remove(item.id);
+      return;
+    }
+    _payloadCache[item.id] = _PayloadCacheEntry(
+      cacheKey: _payloadCacheKey(item),
+      payload: payload,
+    );
+  }
+
+  void _prunePayloadCache(List<VaultItem> items) {
+    final validIds = items.where((item) => !item.isDeleted).map((item) => item.id).toSet();
+    _payloadCache.removeWhere((key, _) => !validIds.contains(key));
+  }
+
+  String _payloadCacheKey(VaultItem item) {
+    return '${item.type.name}|${item.updatedAt.microsecondsSinceEpoch}|'
+        '${item.deletedAt?.microsecondsSinceEpoch ?? 0}|${item.isDeleted}';
   }
 
   Future<VaultItem?> _softDeleteItem(VaultItem item) async {
@@ -2853,6 +2943,16 @@ class _SyncMergeResult {
   final bool shouldUpload;
   final bool shouldApply;
   final Map<String, Duration> timings;
+}
+
+class _PayloadCacheEntry {
+  const _PayloadCacheEntry({
+    required this.cacheKey,
+    required this.payload,
+  });
+
+  final String cacheKey;
+  final Object payload;
 }
 
 class _ResolvedMasterKey {
