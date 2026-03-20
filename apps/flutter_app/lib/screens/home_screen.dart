@@ -47,7 +47,6 @@ class _HomeScreenState extends State<HomeScreen>
   final GlobalKey _searchHelpKey = GlobalKey();
   late final Listenable _entryListListenable;
   late final AnimationController _syncRotationController;
-  _VaultListMode _mode = _VaultListMode.credentials;
   String? _selectedCategory;
   String? _selectedTag;
   bool _showConflictsOnly = false;
@@ -829,7 +828,38 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _openCreateSheet() async {
-    if (_mode == _VaultListMode.credentials) {
+    final createType = await showModalBottomSheet<_CreateEntryType>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.key_rounded),
+                title: const Text('新建账号'),
+                onTap: () => Navigator.of(context).pop(_CreateEntryType.credential),
+              ),
+              ListTile(
+                leading: const Icon(Icons.dns_rounded),
+                title: const Text('新建服务器'),
+                onTap: () => Navigator.of(context).pop(_CreateEntryType.server),
+              ),
+              ListTile(
+                leading: const Icon(Icons.miscellaneous_services_rounded),
+                title: const Text('新建服务'),
+                onTap: () => Navigator.of(context).pop(_CreateEntryType.service),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || createType == null) {
+      return;
+    }
+    if (createType == _CreateEntryType.credential) {
       final data = await showModalBottomSheet<NewEntryData>(
         context: context,
         isScrollControlled: true,
@@ -845,7 +875,7 @@ class _HomeScreenState extends State<HomeScreen>
       }
       return;
     }
-    if (_mode == _VaultListMode.services) {
+    if (createType == _CreateEntryType.service) {
       final data = await showModalBottomSheet<NewServiceSheetResult>(
         context: context,
         isScrollControlled: true,
@@ -888,13 +918,8 @@ class _HomeScreenState extends State<HomeScreen>
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
     );
-    final label = _mode == _VaultListMode.credentials
-        ? '新建账号'
-        : _mode == _VaultListMode.services
-            ? '新建服务'
-            : '新建服务器';
     return IconButton(
-      tooltip: label,
+      tooltip: '新建条目',
       onPressed: _openCreateSheet,
       icon: ShaderMask(
         blendMode: BlendMode.srcIn,
@@ -938,13 +963,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   List<String> _activeFilterLabels({required List<_SearchTerm> terms}) {
-    final labels = <String>[
-      _mode == _VaultListMode.credentials
-          ? '类型: 账号'
-          : _mode == _VaultListMode.services
-              ? '类型: 服务'
-              : '类型: 服务器',
-    ];
+    final labels = <String>[];
     if (_selectedCategory != null && _selectedCategory!.isNotEmpty) {
       labels.add('分类: ${_selectedCategory!}');
     }
@@ -958,7 +977,7 @@ class _HomeScreenState extends State<HomeScreen>
       labels.add(
         _usesGlobalTagSearch(terms)
             ? '搜索: 全局标签'
-            : '搜索: 当前分类/类型',
+            : '搜索: 当前分类',
       );
     }
     return labels;
@@ -1257,42 +1276,6 @@ class _HomeScreenState extends State<HomeScreen>
                     children: [
                       Row(
                         children: [
-                          SegmentedButton<_VaultListMode>(
-                            style: ButtonStyle(
-                              padding: const WidgetStatePropertyAll(
-                                EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 6,
-                                ),
-                              ),
-                              textStyle: const WidgetStatePropertyAll(
-                                TextStyle(fontSize: 12),
-                              ),
-                            ),
-                            segments: const [
-                              ButtonSegment(
-                                value: _VaultListMode.credentials,
-                                label: Text('账号'),
-                              ),
-                              ButtonSegment(
-                                value: _VaultListMode.servers,
-                                label: Text('服务器'),
-                              ),
-                              ButtonSegment(
-                                value: _VaultListMode.services,
-                                label: Text('服务'),
-                              ),
-                            ],
-                            selected: {_mode},
-                            onSelectionChanged: (value) {
-                              _searchFocusNode.unfocus();
-                              setState(() {
-                                _mode = value.first;
-                                _selectedItem = null;
-                              });
-                            },
-                          ),
-                          const SizedBox(width: 8),
                           if (widget.controller.hasConflicts)
                             FilterChip(
                               label: const Text('仅冲突'),
@@ -1335,6 +1318,8 @@ class _HomeScreenState extends State<HomeScreen>
                         ],
                       ),
                       const SizedBox(height: 10),
+                      _categoryFilterRow(),
+                      const SizedBox(height: 8),
                       CompositedTransformTarget(
                         key: _searchFieldKey,
                         link: _searchFieldLink,
@@ -1399,8 +1384,6 @@ class _HomeScreenState extends State<HomeScreen>
                         singleLine: singleLineTags,
                         maxVisible: maxVisibleTags,
                       ),
-                      const SizedBox(height: 8),
-                      _categoryFilterRow(),
                     ],
                   ),
                 ),
@@ -1561,29 +1544,18 @@ class _HomeScreenState extends State<HomeScreen>
     required List<_SearchTerm> terms,
   }) {
     final sortOrder = widget.controller.metadata.sortOrder;
-    final globalTagSearch = _usesGlobalTagSearch(terms);
-    final key = [
+      final key = [
       viewsVersion,
-      _mode.name,
       _showConflictsOnly,
       _selectedCategory ?? '',
       _selectedTag ?? '',
       _searchQuery,
       sortOrder.name,
-      globalTagSearch,
     ].join('|');
     if (key == _cachedFilterKey && viewsVersion == _cachedViewsVersion) {
       return _cachedSortedViews;
     }
     final filtered = views.where((view) {
-      final matchesType = _mode == _VaultListMode.credentials
-          ? view.item.type == VaultEntryType.credential
-          : _mode == _VaultListMode.services
-              ? view.item.type == VaultEntryType.service
-              : view.item.type == VaultEntryType.server;
-      if (!globalTagSearch && !matchesType) {
-        return false;
-      }
       if (_showConflictsOnly && !view.isConflict) {
         return false;
       }
@@ -2233,6 +2205,6 @@ class EntryCard extends StatelessWidget {
   }
 }
 
-enum _VaultListMode { credentials, services, servers }
+enum _CreateEntryType { credential, server, service }
 
 enum _EntryMenuAction { copy }

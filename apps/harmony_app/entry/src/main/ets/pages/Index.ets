@@ -62,7 +62,6 @@ struct Index {
   @State private toastVersion: number = 0;
 
   @State private searchQuery: string = '';
-  @State private selectedType: string = 'all';
   @State private selectedCategory: string = '';
   @State private selectedTag: string = '';
 
@@ -404,32 +403,6 @@ struct Index {
   @Builder
   private FilterSection() {
     Column({ space: 8 }) {
-      TextInput({ placeholder: '字段搜索按当前分类，tag:/# 标签全局', text: $$this.searchQuery })
-        .width('100%')
-        .height(44)
-        .backgroundColor('#FFFFFF')
-        .borderRadius(12)
-        .padding({ left: 12, right: 12 });
-      Text('字段搜索遵循当前类型/分类筛选；仅 tag:/# 搜索可跨类型全局匹配标签')
-        .fontSize(12)
-        .fontColor('#5A6668');
-
-      Row({ space: 8 }) {
-        this.FilterChip('全部', this.selectedType === 'all', () => {
-          this.selectedType = 'all';
-        });
-        this.FilterChip('账号', this.selectedType === 'credential', () => {
-          this.selectedType = 'credential';
-        });
-        this.FilterChip('服务器', this.selectedType === 'server', () => {
-          this.selectedType = 'server';
-        });
-        this.FilterChip('服务', this.selectedType === 'service', () => {
-          this.selectedType = 'service';
-        });
-      }
-      .width('100%');
-
       if (this.categories.length > 0) {
         Flex({ wrap: FlexWrap.Wrap }) {
           this.FilterPill('全部分类', this.selectedCategory.length === 0, () => {
@@ -442,6 +415,16 @@ struct Index {
           }, (category: string) => category);
         }
       }
+
+      TextInput({ placeholder: '字段搜索按当前分类，tag:/# 标签全局', text: $$this.searchQuery })
+        .width('100%')
+        .height(44)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(12)
+        .padding({ left: 12, right: 12 });
+      Text('字段搜索遵循当前分类筛选；仅 tag:/# 搜索可跨分类全局匹配标签')
+        .fontSize(12)
+        .fontColor('#5A6668');
 
       if (this.tags.length > 0) {
         Flex({ wrap: FlexWrap.Wrap }) {
@@ -1123,21 +1106,11 @@ struct Index {
   private hasActiveFilters(): boolean {
     return this.searchQuery.trim().length > 0 ||
       this.selectedCategory.trim().length > 0 ||
-      this.selectedTag.trim().length > 0 ||
-      this.selectedType !== 'all';
+      this.selectedTag.trim().length > 0;
   }
 
   private activeFilterLabels(resultCount: number): string[] {
     const labels: string[] = [];
-    if (this.selectedType === 'all') {
-      labels.push('类型: 全部');
-    } else if (this.selectedType === 'credential') {
-      labels.push('类型: 账号');
-    } else if (this.selectedType === 'server') {
-      labels.push('类型: 服务器');
-    } else {
-      labels.push('类型: 服务');
-    }
     if (this.selectedCategory.trim().length > 0) {
       labels.push(`分类: ${this.selectedCategory.trim()}`);
     }
@@ -1147,7 +1120,7 @@ struct Index {
     if (this.searchQuery.trim().length > 0) {
       labels.push(this.usesGlobalTagSearch(this.parseSearchTerms(this.searchQuery))
         ? '搜索: 全局标签'
-        : '搜索: 当前分类/类型');
+        : '搜索: 当前分类');
     }
     labels.push(`结果: ${resultCount}`);
     return labels;
@@ -1159,11 +1132,6 @@ struct Index {
     const selectedCategory = this.selectedCategory.trim().toLowerCase();
     const selectedTag = this.selectedTag.trim().toLowerCase();
     return this.entries.filter((entry: VaultEntry) => {
-      if (!globalTagSearch &&
-          this.selectedType !== 'all' &&
-          entry.type !== this.selectedType) {
-        return false;
-      }
       if (selectedCategory.length > 0 &&
           this.entryCategory(entry).toLowerCase() !== selectedCategory) {
         return false;
@@ -1359,17 +1327,6 @@ struct Index {
         });
       }, (category: string) => category);
     }
-  }
-
-  @Builder
-  private FilterChip(label: string, selected: boolean, action: () => void) {
-    Button(label)
-      .fontSize(13)
-      .height(32)
-      .backgroundColor(selected ? '#0F4C5C' : '#CED8D9')
-      .fontColor(selected ? '#FFFFFF' : '#243436')
-      .borderRadius(999)
-      .onClick(action);
   }
 
   @Builder
