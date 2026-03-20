@@ -10,8 +10,6 @@ class AppBackground extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final reduceEffects =
-        kDebugMode && Theme.of(context).platform == TargetPlatform.android;
     final platform = Theme.of(context).platform;
     if (platform == TargetPlatform.android) {
       return ColoredBox(
@@ -19,6 +17,8 @@ class AppBackground extends StatelessWidget {
         child: child,
       );
     }
+    final disableAnimations = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final reduceEffects = disableAnimations || kDebugMode;
     return Stack(
       children: [
         RepaintBoundary(
@@ -46,7 +46,7 @@ class AppBackground extends StatelessWidget {
                       child: _GlowBlob(
                         color: isDark
                             ? colorScheme.primary
-                                .withOpacity(reduceEffects ? 0.45 : 0.8)
+                                .withValues(alpha: reduceEffects ? 0.45 : 0.8)
                             : const Color(0xFF1B7F6E),
                         size: reduceEffects ? 160 : 220,
                       ),
@@ -57,7 +57,7 @@ class AppBackground extends StatelessWidget {
                       child: _GlowBlob(
                         color: isDark
                             ? colorScheme.secondary
-                                .withOpacity(reduceEffects ? 0.35 : 0.6)
+                                .withValues(alpha: reduceEffects ? 0.35 : 0.6)
                             : const Color(0xFF0F4C5C),
                         size: reduceEffects ? 200 : 260,
                       ),
@@ -68,7 +68,7 @@ class AppBackground extends StatelessWidget {
                         left: -30,
                         child: _GlowBlob(
                           color: colorScheme.tertiary
-                              .withOpacity(isDark ? 0.2 : 0.35),
+                              .withValues(alpha: isDark ? 0.2 : 0.35),
                           size: 160,
                         ),
                       ),
@@ -98,7 +98,10 @@ class _GlowBlob extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: RadialGradient(
-          colors: [color.withOpacity(0.35), color.withOpacity(0)],
+          colors: [
+            color.withValues(alpha: 0.35),
+            color.withValues(alpha: 0),
+          ],
         ),
       ),
     );

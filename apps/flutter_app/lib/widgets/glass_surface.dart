@@ -36,13 +36,14 @@ class GlassSurface extends StatelessWidget {
     final platform = Theme.of(context).platform;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final colorScheme = Theme.of(context).colorScheme;
-    final reduceEffectsResolved =
-        reduceEffects || (mediaQuery?.disableAnimations ?? false);
+    final reduceEffectsResolved = reduceEffects ||
+        (mediaQuery?.disableAnimations ?? false) ||
+        platform == TargetPlatform.android;
     final baseColor = tint ?? colorScheme.surface;
     final backgroundColor =
-        baseColor.withOpacity(isDark ? opacityDark : opacityLight);
-    final borderColor = colorScheme.outlineVariant.withOpacity(
-      isDark ? 0.7 : 0.45,
+        baseColor.withValues(alpha: isDark ? opacityDark : opacityLight);
+    final borderColor = colorScheme.outlineVariant.withValues(
+      alpha: isDark ? 0.7 : 0.45,
     );
     final shadowBlur = reduceEffectsResolved ? 8.0 : 16.0;
     final shadowOpacity = reduceEffectsResolved
@@ -59,45 +60,51 @@ class GlassSurface extends StatelessWidget {
     );
 
     if (!_useGlass(platform) || reduceEffectsResolved) {
-      return Container(
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          borderRadius: BorderRadius.circular(borderRadius),
-          border: Border.all(color: borderColor),
-          boxShadow: showShadow
-              ? [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(shadowOpacity),
-                    blurRadius: shadowBlur,
-                    offset: const Offset(0, 8),
-                  ),
-                ]
-              : null,
-        ),
-        child: content,
-      );
-    }
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(borderRadius),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-        child: Container(
+      return RepaintBoundary(
+        child: DecoratedBox(
           decoration: BoxDecoration(
             color: backgroundColor,
             borderRadius: BorderRadius.circular(borderRadius),
             border: Border.all(color: borderColor),
-            boxShadow: showShadow
+            boxShadow: showShadow && !reduceEffectsResolved
                 ? [
                     BoxShadow(
-                      color: Colors.black.withOpacity(shadowOpacityGlass),
-                      blurRadius: shadowBlurGlass,
+                      color: Colors.black.withValues(alpha: shadowOpacity),
+                      blurRadius: shadowBlur,
                       offset: const Offset(0, 8),
                     ),
                   ]
                 : null,
           ),
           child: content,
+        ),
+      );
+    }
+
+    return RepaintBoundary(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(borderRadius),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: backgroundColor,
+              borderRadius: BorderRadius.circular(borderRadius),
+              border: Border.all(color: borderColor),
+              boxShadow: showShadow
+                  ? [
+                      BoxShadow(
+                        color: Colors.black.withValues(
+                          alpha: shadowOpacityGlass,
+                        ),
+                        blurRadius: shadowBlurGlass,
+                        offset: const Offset(0, 8),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: content,
+          ),
         ),
       ),
     );
