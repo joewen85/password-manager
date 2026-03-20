@@ -211,7 +211,7 @@ class EntryDetailsContent extends StatelessWidget {
             _detailRow('操作系统', payload.operatingSystem),
             _detailRow('位置', payload.location),
             _detailRow('备注项', payload.notes),
-            _detailRow('分类标签', payload.tags.join(', ')),
+            _detailRow('标签', payload.tags.join(', ')),
           ]);
         }
         if (payload is ServicePayload) {
@@ -231,7 +231,7 @@ class EntryDetailsContent extends StatelessWidget {
             _detailRow('关联服务器', serverLabels),
             _detailRow('服务账号列表', accountDetails),
             _detailRow('备注', payload.notes),
-            _detailRow('分类标签', payload.tags.join(', ')),
+            _detailRow('标签', payload.tags.join(', ')),
           ]);
         }
         if (payload is CredentialPayload) {
@@ -244,7 +244,7 @@ class EntryDetailsContent extends StatelessWidget {
             _detailRow('访问令牌', payload.accessToken),
             _detailRow('密钥', payload.secretKey),
             _detailRow('备注项', payload.notes),
-            _detailRow('分类标签', payload.tags.join(', ')),
+            _detailRow('标签', payload.tags.join(', ')),
           ]);
         }
         return const Text('无法识别的条目类型。');

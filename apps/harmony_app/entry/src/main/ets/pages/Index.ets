@@ -449,6 +449,7 @@ struct Index {
   private NewEntrySection() {
     Column({ space: 8 }) {
       Text('新建条目').fontSize(18).fontWeight(FontWeight.Medium);
+      Text('条目类型').fontSize(12).fontColor('#5A6668');
 
       Row({ space: 8 }) {
         Button('账号').onClick(() => this.draftType = 'credential').backgroundColor(this.draftType === 'credential' ? '#2F7F79' : '#CED8D9');

@@ -836,6 +836,16 @@ class _HomeScreenState extends State<HomeScreen>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '选择条目类型',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+              ),
+              const SizedBox(height: 8),
               ListTile(
                 leading: const Icon(Icons.key_rounded),
                 title: const Text('新建账号'),
@@ -943,7 +953,7 @@ class _HomeScreenState extends State<HomeScreen>
       selectedValue: _selectedTag,
       singleLine: singleLine,
       maxVisible: maxVisible,
-      bottomSheetTitle: '全部分类标签',
+      bottomSheetTitle: '全部标签',
       onSelected: _handleTagSelection,
     );
   }

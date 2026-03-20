@@ -139,7 +139,7 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
               ),
               _buildField(
                 controller: _tagsController,
-                label: '分类标签',
+                label: '标签',
                 hint: '多个标签用逗号分隔',
               ),
               const SizedBox(height: 16),

@@ -11,7 +11,7 @@ class TagManagementScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('分类标签管理'),
+        title: const Text('标签管理'),
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _createTag(context),
