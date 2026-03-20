@@ -2,16 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:password_manager_core/password_manager_core.dart';
 
 import '../models/new_entry_data.dart';
+import '../widgets/category_picker_section.dart';
 
 class NewEntrySheet extends StatefulWidget {
   const NewEntrySheet({
     super.key,
     this.initialData,
+    this.availableCategories = const <String>[],
     this.title = '新建条目',
     this.submitLabel = '保存',
   });
 
   final NewEntryData? initialData;
+  final List<String> availableCategories;
   final String title;
   final String submitLabel;
 
@@ -30,6 +33,7 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
   final _secretKeyController = TextEditingController();
   final _notesController = TextEditingController();
   final _tagsController = TextEditingController();
+  String _selectedCategory = '';
 
   @override
   void initState() {
@@ -45,6 +49,7 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
       _secretKeyController.text = data.payload.secretKey;
       _notesController.text = data.payload.notes;
       _tagsController.text = data.payload.tags.join(', ');
+      _selectedCategory = data.payload.category;
     }
   }
 
@@ -80,7 +85,8 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
             children: [
               Text(
                 widget.title,
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                style:
+                    const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 12),
               _buildField(
@@ -88,6 +94,13 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
                 label: '标题',
                 hint: '例如 AWS 控制台',
                 requiredField: true,
+              ),
+              CategoryPickerSection(
+                availableCategories: widget.availableCategories,
+                selectedCategory: _selectedCategory,
+                onChanged: (value) {
+                  setState(() => _selectedCategory = value);
+                },
               ),
               _buildField(
                 controller: _usernameController,
@@ -133,11 +146,11 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
               Row(
                 children: [
                   Expanded(
-                      child: FilledButton(
-                        onPressed: () {
-                          if (!_formKey.currentState!.validate()) {
-                            return;
-                          }
+                    child: FilledButton(
+                      onPressed: () {
+                        if (!_formKey.currentState!.validate()) {
+                          return;
+                        }
                         final payload = CredentialPayload(
                           username: _usernameController.text.trim(),
                           password: _passwordController.text.trim(),
@@ -147,6 +160,7 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
                           secretKey: _secretKeyController.text.trim(),
                           notes: _notesController.text.trim(),
                           tags: _parseTags(_tagsController.text),
+                          category: _selectedCategory,
                         );
                         Navigator.of(context).pop(
                           NewEntryData(
@@ -186,9 +200,7 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
           hintText: hint,
         ),
         validator: requiredField
-            ? (value) => (value == null || value.trim().isEmpty)
-                ? '必填'
-                : null
+            ? (value) => (value == null || value.trim().isEmpty) ? '必填' : null
             : null,
       ),
     );

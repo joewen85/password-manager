@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -16,6 +17,8 @@ abstract class RemoteSyncClient {
   Future<RemoteSyncResult> download();
   Future<RemoteSyncResult> upload(String payload);
 }
+
+const Duration _networkTimeout = Duration(seconds: 12);
 
 class WebDavSyncClient implements RemoteSyncClient {
   WebDavSyncClient({
@@ -64,27 +67,43 @@ class WebDavSyncClient implements RemoteSyncClient {
 
   @override
   Future<RemoteSyncResult> download() async {
-    final response = await http.get(_buildUri(), headers: _headers());
-    if (response.statusCode == 404 || response.statusCode == 204) {
-      return const RemoteSyncResult(payload: null, statusCode: 404);
+    try {
+      final response = await http
+          .get(_buildUri(), headers: _headers())
+          .timeout(_networkTimeout);
+      if (response.statusCode == 404 || response.statusCode == 204) {
+        return const RemoteSyncResult(payload: null, statusCode: 404);
+      }
+      return RemoteSyncResult(
+        payload: response.body.isEmpty ? null : response.body,
+        statusCode: response.statusCode,
+      );
+    } on TimeoutException {
+      return const RemoteSyncResult(payload: null, statusCode: 408);
+    } on Exception {
+      return const RemoteSyncResult(payload: null, statusCode: 503);
     }
-    return RemoteSyncResult(
-      payload: response.body.isEmpty ? null : response.body,
-      statusCode: response.statusCode,
-    );
   }
 
   @override
   Future<RemoteSyncResult> upload(String payload) async {
-    final response = await http.put(
-      _buildUri(),
-      headers: {
-        'Content-Type': 'application/json',
-        ..._headers(),
-      },
-      body: payload,
-    );
-    return RemoteSyncResult(payload: null, statusCode: response.statusCode);
+    try {
+      final response = await http
+          .put(
+            _buildUri(),
+            headers: {
+              'Content-Type': 'application/json',
+              ..._headers(),
+            },
+            body: payload,
+          )
+          .timeout(_networkTimeout);
+      return RemoteSyncResult(payload: null, statusCode: response.statusCode);
+    } on TimeoutException {
+      return const RemoteSyncResult(payload: null, statusCode: 408);
+    } on Exception {
+      return const RemoteSyncResult(payload: null, statusCode: 503);
+    }
   }
 }
 
@@ -102,14 +121,22 @@ class PresignedUrlSyncClient implements RemoteSyncClient {
     if (downloadUrl.trim().isEmpty) {
       return const RemoteSyncResult(payload: null, statusCode: 400);
     }
-    final response = await http.get(Uri.parse(downloadUrl));
-    if (response.statusCode == 404 || response.statusCode == 204) {
-      return const RemoteSyncResult(payload: null, statusCode: 404);
+    try {
+      final response = await http
+          .get(Uri.parse(downloadUrl))
+          .timeout(_networkTimeout);
+      if (response.statusCode == 404 || response.statusCode == 204) {
+        return const RemoteSyncResult(payload: null, statusCode: 404);
+      }
+      return RemoteSyncResult(
+        payload: response.body.isEmpty ? null : response.body,
+        statusCode: response.statusCode,
+      );
+    } on TimeoutException {
+      return const RemoteSyncResult(payload: null, statusCode: 408);
+    } on Exception {
+      return const RemoteSyncResult(payload: null, statusCode: 503);
     }
-    return RemoteSyncResult(
-      payload: response.body.isEmpty ? null : response.body,
-      statusCode: response.statusCode,
-    );
   }
 
   @override
@@ -117,11 +144,19 @@ class PresignedUrlSyncClient implements RemoteSyncClient {
     if (uploadUrl.trim().isEmpty) {
       return const RemoteSyncResult(payload: null, statusCode: 400);
     }
-    final response = await http.put(
-      Uri.parse(uploadUrl),
-      headers: {'Content-Type': 'application/json'},
-      body: payload,
-    );
-    return RemoteSyncResult(payload: null, statusCode: response.statusCode);
+    try {
+      final response = await http
+          .put(
+            Uri.parse(uploadUrl),
+            headers: {'Content-Type': 'application/json'},
+            body: payload,
+          )
+          .timeout(_networkTimeout);
+      return RemoteSyncResult(payload: null, statusCode: response.statusCode);
+    } on TimeoutException {
+      return const RemoteSyncResult(payload: null, statusCode: 408);
+    } on Exception {
+      return const RemoteSyncResult(payload: null, statusCode: 503);
+    }
   }
 }

@@ -1,4 +1,3 @@
-import 'package:idb_shim/idb.dart';
 import 'package:idb_shim/idb_browser.dart';
 
 import '../state/sync_settings.dart';

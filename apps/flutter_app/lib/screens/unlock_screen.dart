@@ -74,18 +74,18 @@ class _UnlockScreenState extends State<UnlockScreen> {
                     color: Theme.of(context)
                         .colorScheme
                         .surface
-                        .withOpacity(0.96),
+                        .withValues(alpha: 0.96),
                     borderRadius: BorderRadius.circular(24),
                     border: Border.all(
                       color: Theme.of(context)
                           .colorScheme
                           .outlineVariant
-                          .withOpacity(0.7),
+                          .withValues(alpha: 0.7),
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(
-                          Theme.of(context).brightness == Brightness.dark
+                        color: Colors.black.withValues(
+                          alpha: Theme.of(context).brightness == Brightness.dark
                               ? 0.35
                               : 0.08,
                         ),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,6 +10,7 @@ class LocalFileVaultRepository implements VaultRepository {
   LocalFileVaultRepository({required this.filePath});
 
   final String filePath;
+  Future<void> _pendingWrite = Future<void>.value();
 
   @override
   Future<void> save(VaultItemRecord item) async {
@@ -46,6 +48,7 @@ class LocalFileVaultRepository implements VaultRepository {
 
   @override
   Future<List<VaultItemRecord>> listAll() async {
+    await _pendingWrite.catchError((_) {});
     final file = await _ensureFile();
     final contents = await file.readAsString();
     if (contents.trim().isEmpty) {
@@ -78,8 +81,35 @@ class LocalFileVaultRepository implements VaultRepository {
   }
 
   Future<void> _writeAll(List<VaultItemRecord> items) async {
-    final file = await _ensureFile();
     final encoded = jsonEncode(items.map(vaultRecordToJson).toList());
-    await file.writeAsString(encoded);
+    await _enqueueWrite((file) async {
+      await _writeAtomically(file, encoded);
+    });
+  }
+
+  Future<void> _enqueueWrite(Future<void> Function(File file) action) async {
+    final completer = Completer<void>();
+    final previous = _pendingWrite;
+    _pendingWrite = completer.future;
+    await previous.catchError((_) {});
+    try {
+      final file = await _ensureFile();
+      await action(file);
+      completer.complete();
+    } catch (error, stackTrace) {
+      completer.completeError(error, stackTrace);
+      rethrow;
+    }
+  }
+
+  Future<void> _writeAtomically(File file, String contents) async {
+    final tempPath = '$filePath.tmp';
+    final tempFile = File(tempPath);
+    await tempFile.create(recursive: true);
+    await tempFile.writeAsString(contents, flush: true);
+    if (await file.exists()) {
+      await file.delete();
+    }
+    await tempFile.rename(file.path);
   }
 }

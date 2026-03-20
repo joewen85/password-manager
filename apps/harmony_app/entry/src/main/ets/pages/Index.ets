@@ -1,4 +1,3 @@
-import { promptAction } from '@kit.ArkUI';
 import { Context } from '@kit.AbilityKit';
 import {
   CreateCredentialInput,
@@ -18,6 +17,18 @@ import { ConflictStrategy, SyncProviderType, SyncSettings } from '../src/sync/Sy
 
 type DraftType = 'credential' | 'server' | 'service';
 const MAX_UNLOCK_ATTEMPTS: number = 5;
+
+interface SearchTerm {
+  field: string;
+  value: string;
+}
+
+interface SearchPayload {
+  category?: string;
+  name?: string;
+  appId?: string;
+  ipAddress?: string;
+}
 
 @Entry
 @Component
@@ -47,18 +58,25 @@ struct Index {
   @State private syncLogs: string[] = [];
   @State private securityRequireTotp: boolean = false;
   @State private securityTotpSecret: string = '';
+  @State private toastMessage: string = '';
+  @State private toastVersion: number = 0;
 
   @State private searchQuery: string = '';
   @State private selectedType: string = 'all';
+  @State private selectedCategory: string = '';
   @State private selectedTag: string = '';
 
   @State private entries: VaultEntry[] = [];
   @State private tags: string[] = [];
+  @State private categories: string[] = [];
 
   @State private tagDraft: string = '';
+  @State private categoryDraft: string = '';
+  @State private categoryRenameSource: string = '';
 
   @State private draftType: DraftType = 'credential';
   @State private draftLabel: string = '';
+  @State private draftCategory: string = '';
   @State private draftTags: string = '';
 
   @State private draftCredentialUsername: string = '';
@@ -96,6 +114,9 @@ struct Index {
 
   build() {
     Column() {
+      if (this.toastMessage.length > 0) {
+        this.ToastBanner();
+      }
       if (!this.ready) {
         Text('正在加载...').fontSize(18).fontWeight(FontWeight.Medium);
       } else if (!this.unlocked) {
@@ -108,6 +129,18 @@ struct Index {
     .height('100%')
     .padding(16)
     .backgroundColor('#F4F6F0');
+  }
+
+  @Builder
+  private ToastBanner() {
+    Text(this.toastMessage)
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+      .margin({ bottom: 12 })
+      .backgroundColor('#1F4E46')
+      .fontColor('#FFFFFF')
+      .fontSize(13)
+      .borderRadius(12);
   }
 
   @Builder
@@ -181,6 +214,7 @@ struct Index {
       this.SyncSection();
       this.FilterSection();
       this.NewEntrySection();
+      this.CategorySection();
       this.TagSection();
       this.EntryListSection();
     }
@@ -370,20 +404,57 @@ struct Index {
   @Builder
   private FilterSection() {
     Column({ space: 8 }) {
-      TextInput({ placeholder: '搜索标题/标签', text: $$this.searchQuery })
+      TextInput({ placeholder: '字段搜索按当前分类，tag:/# 标签全局', text: $$this.searchQuery })
         .width('100%')
         .height(44)
         .backgroundColor('#FFFFFF')
         .borderRadius(12)
         .padding({ left: 12, right: 12 });
+      Text('字段搜索遵循当前类型/分类筛选；仅 tag:/# 搜索可跨类型全局匹配标签')
+        .fontSize(12)
+        .fontColor('#5A6668');
 
       Row({ space: 8 }) {
-        Button('全部').onClick(() => this.selectedType = 'all').backgroundColor(this.selectedType === 'all' ? '#0F4C5C' : '#CED8D9');
-        Button('账号').onClick(() => this.selectedType = 'credential').backgroundColor(this.selectedType === 'credential' ? '#0F4C5C' : '#CED8D9');
-        Button('服务器').onClick(() => this.selectedType = 'server').backgroundColor(this.selectedType === 'server' ? '#0F4C5C' : '#CED8D9');
-        Button('服务').onClick(() => this.selectedType = 'service').backgroundColor(this.selectedType === 'service' ? '#0F4C5C' : '#CED8D9');
+        this.FilterChip('全部', this.selectedType === 'all', () => {
+          this.selectedType = 'all';
+        });
+        this.FilterChip('账号', this.selectedType === 'credential', () => {
+          this.selectedType = 'credential';
+        });
+        this.FilterChip('服务器', this.selectedType === 'server', () => {
+          this.selectedType = 'server';
+        });
+        this.FilterChip('服务', this.selectedType === 'service', () => {
+          this.selectedType = 'service';
+        });
       }
       .width('100%');
+
+      if (this.categories.length > 0) {
+        Flex({ wrap: FlexWrap.Wrap }) {
+          this.FilterPill('全部分类', this.selectedCategory.length === 0, () => {
+            this.selectedCategory = '';
+          });
+          ForEach(this.categories, (category: string) => {
+            this.FilterPill(category, this.selectedCategory === category, () => {
+              this.selectedCategory = this.selectedCategory === category ? '' : category;
+            });
+          }, (category: string) => category);
+        }
+      }
+
+      if (this.tags.length > 0) {
+        Flex({ wrap: FlexWrap.Wrap }) {
+          this.FilterPill('全部标签', this.selectedTag.length === 0, () => {
+            this.selectedTag = '';
+          });
+          ForEach(this.tags, (tag: string) => {
+            this.FilterPill(tag, this.selectedTag === tag, () => {
+              this.selectedTag = this.selectedTag === tag ? '' : tag;
+            });
+          }, (tag: string) => tag);
+        }
+      }
     }
     .width('100%')
     .padding(12)
@@ -408,6 +479,22 @@ struct Index {
         .backgroundColor('#FFFFFF')
         .borderRadius(10)
         .padding({ left: 10, right: 10 });
+
+      TextInput({ placeholder: '分类（可选）', text: $$this.draftCategory })
+        .width('100%')
+        .height(42)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(10)
+        .padding({ left: 10, right: 10 });
+
+      if (this.categories.length > 0) {
+        Text('可直接输入新分类，或点选已有分类')
+          .fontSize(12)
+          .fontColor('#5A6668');
+        this.CategoryDraftPills(this.draftCategory.trim(), (category: string) => {
+          this.draftCategory = category;
+        });
+      }
 
       TextInput({ placeholder: '标签，逗号分隔', text: $$this.draftTags })
         .width('100%')
@@ -517,12 +604,73 @@ struct Index {
             }
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
             .margin({ right: 6, bottom: 6 })
-            .backgroundColor(this.selectedTag === tag ? '#BEE6D6' : '#FFFFFF')
+            .backgroundColor('#FFFFFF')
+            .borderRadius(999)
+            .onClick(() => {});
+          }, (tag: string) => tag);
+        }
+      }
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor('#EAF0EE')
+    .borderRadius(16);
+  }
+
+  @Builder
+  private CategorySection() {
+    Column({ space: 8 }) {
+      Text('分类管理').fontSize(18).fontWeight(FontWeight.Medium);
+
+      Row({ space: 8 }) {
+        TextInput({ placeholder: '新增分类', text: $$this.categoryDraft })
+          .layoutWeight(1)
+          .height(42)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(10)
+          .padding({ left: 10, right: 10 });
+        Button('添加').onClick(() => this.onAddCategory());
+        Button(this.categoryRenameSource.length > 0 ? '保存重命名' : '重命名')
+          .onClick(() => this.onRenameCategory());
+      }
+
+      if (this.categoryRenameSource.length > 0) {
+        Row({ space: 8 }) {
+          Text(`当前重命名: ${this.categoryRenameSource}`)
+            .fontSize(12)
+            .fontColor('#5A6668');
+          Text('取消')
+            .fontSize(12)
+            .fontColor('#2F7F79')
+            .onClick(() => {
+              this.categoryRenameSource = '';
+              this.categoryDraft = '';
+            });
+        }
+      }
+
+      if (this.categories.length > 0) {
+        Flex({ wrap: FlexWrap.Wrap }) {
+          ForEach(this.categories, (category: string) => {
+            Row({ space: 4 }) {
+              Text(category).fontSize(13);
+              Button('x')
+                .fontSize(11)
+                .width(22)
+                .height(22)
+                .onClick(() => {
+                  this.onDeleteCategory(category);
+                });
+            }
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .margin({ right: 6, bottom: 6 })
+            .backgroundColor(this.categoryRenameSource === category ? '#BEE6D6' : '#FFFFFF')
             .borderRadius(999)
             .onClick(() => {
-              this.selectedTag = this.selectedTag === tag ? '' : tag;
+              this.categoryRenameSource = category;
+              this.categoryDraft = category;
             });
-          }, (tag: string) => tag);
+          }, (category: string) => category);
         }
       }
     }
@@ -541,18 +689,45 @@ struct Index {
         Text(`共 ${this.filteredEntries().length} 条`).fontSize(12).fontColor('#687275');
       }
 
+      if (this.hasActiveFilters()) {
+        this.ActiveFilterSummary(this.filteredEntries().length);
+      }
+
       List({ space: 8 }) {
         ForEach(this.filteredEntries(), (entry: VaultEntry) => {
           ListItem() {
             Column({ space: 6 }) {
               Row() {
-                Text(entry.label).fontSize(16).fontWeight(FontWeight.Medium).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis });
+                Text(entry.label)
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Medium)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .fontColor(this.entryTitleMatched(entry) ? '#0F4C5C' : '#1F2B2D');
                 Blank();
                 Text(this.typeLabel(entry.type)).fontSize(12).fontColor('#2F7F79');
               }
 
-              Text(this.entrySummary(entry)).fontSize(12).fontColor('#5C6769').maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis });
-              Text(`标签: ${entry.tags.join(', ') || '-'}`).fontSize(11).fontColor('#6D787A').maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis });
+              Text(this.entrySummary(entry))
+                .fontSize(12)
+                .fontColor(this.entrySummaryMatched(entry) ? '#0F4C5C' : '#5C6769')
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis });
+              Text(`分类: ${this.entryCategory(entry) || '-'}`)
+                .fontSize(11)
+                .fontColor(this.entryCategoryMatched(entry) ? '#0F4C5C' : '#6D787A')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis });
+
+              if (entry.tags.length > 0) {
+                this.EntryTagPills(entry);
+              } else {
+                Text('标签: -').fontSize(11).fontColor('#6D787A');
+              }
+
+              if (this.entryMatchLabels(entry).length > 0) {
+                this.EntryMatchPills(entry);
+              }
 
               Row() {
                 Text(new Date(entry.updatedAt).toLocaleString()).fontSize(11).fontColor('#7A8587');
@@ -581,6 +756,51 @@ struct Index {
     .padding(12)
     .backgroundColor('#EAF0EE')
     .borderRadius(16);
+  }
+
+  @Builder
+  private EntryTagPills(entry: VaultEntry) {
+    Flex({ wrap: FlexWrap.Wrap }) {
+      ForEach(entry.tags, (tag: string) => {
+        Text(tag)
+          .fontSize(11)
+          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+          .margin({ right: 6, bottom: 4 })
+          .backgroundColor(this.tagMatched(tag) ? '#BEE6D6' : '#EEF3F1')
+          .fontColor(this.tagMatched(tag) ? '#0F4C5C' : '#5E6A6C')
+          .borderRadius(999);
+      }, (tag: string, index: number) => `${tag}-${index}`);
+    }
+  }
+
+  @Builder
+  private EntryMatchPills(entry: VaultEntry) {
+    Flex({ wrap: FlexWrap.Wrap }) {
+      ForEach(this.entryMatchLabels(entry), (label: string) => {
+        Text(label)
+          .fontSize(11)
+          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+          .margin({ right: 6, bottom: 4 })
+          .backgroundColor('#0F4C5C')
+          .fontColor('#FFFFFF')
+          .borderRadius(999);
+      }, (label: string, index: number) => `${label}-${index}`);
+    }
+  }
+
+  @Builder
+  private ActiveFilterSummary(resultCount: number) {
+    Flex({ wrap: FlexWrap.Wrap }) {
+      ForEach(this.activeFilterLabels(resultCount), (label: string) => {
+        Text(label)
+          .fontSize(11)
+          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+          .margin({ right: 6, bottom: 4 })
+          .backgroundColor(label.startsWith('结果:') ? '#BEE6D6' : '#FFFFFF')
+          .fontColor(label.startsWith('结果:') ? '#0F4C5C' : '#5E6A6C')
+          .borderRadius(999);
+      }, (label: string, index: number) => `${label}-${index}`);
+    }
   }
 
   private controller(): VaultController {
@@ -639,6 +859,7 @@ struct Index {
     }
 
     const tags = this.parseTags(this.draftTags);
+    const category = this.draftCategory.trim();
 
     if (this.draftType === 'credential') {
       const input: CreateCredentialInput = {
@@ -650,7 +871,8 @@ struct Index {
         accessToken: '',
         secretKey: '',
         notes: '',
-        tags: tags
+        tags: tags,
+        category: category
       };
       await this.controller().addCredential(input);
     }
@@ -667,7 +889,8 @@ struct Index {
         operatingSystem: '',
         location: '',
         notes: '',
-        tags: tags
+        tags: tags,
+        category: category
       };
       await this.controller().addServer(input);
     }
@@ -682,7 +905,8 @@ struct Index {
         serverIds: [],
         accounts: [],
         notes: '',
-        tags: tags
+        tags: tags,
+        category: category
       };
       await this.controller().addService(input);
     }
@@ -706,10 +930,58 @@ struct Index {
     this.refreshData();
   }
 
+  private async onAddCategory(): Promise<void> {
+    const category = this.categoryDraft.trim();
+    if (category.length === 0) {
+      return;
+    }
+    await this.controller().addCategory(category);
+    this.categoryDraft = '';
+    this.categoryRenameSource = '';
+    this.refreshData();
+  }
+
+  private async onRenameCategory(): Promise<void> {
+    const source = this.categoryRenameSource.trim();
+    const target = this.categoryDraft.trim();
+    if (source.length === 0) {
+      this.toast('请先点选一个分类再重命名');
+      return;
+    }
+    if (target.length === 0) {
+      this.toast('请输入新的分类名称');
+      return;
+    }
+    await this.controller().renameCategory(source, target);
+    if (this.selectedCategory === source) {
+      this.selectedCategory = target;
+    }
+    if (this.draftCategory.trim() === source) {
+      this.draftCategory = target;
+    }
+    this.categoryRenameSource = '';
+    this.categoryDraft = '';
+    this.refreshData();
+  }
+
   private async onDeleteTag(tag: string): Promise<void> {
     await this.controller().deleteTag(tag);
     if (this.selectedTag === tag) {
       this.selectedTag = '';
+    }
+    this.refreshData();
+  }
+
+  private async onDeleteCategory(category: string): Promise<void> {
+    await this.controller().deleteCategory(category);
+    if (this.selectedCategory === category) {
+      this.selectedCategory = '';
+    }
+    if (this.draftCategory.trim() === category) {
+      this.draftCategory = '';
+    }
+    if (this.categoryRenameSource === category) {
+      this.categoryRenameSource = '';
     }
     this.refreshData();
   }
@@ -780,6 +1052,7 @@ struct Index {
   private refreshData(): void {
     this.entries = this.controller().getEntries();
     this.tags = this.controller().getTags();
+    this.categories = this.controller().getCategories();
   }
 
   private refreshSyncState(): void {
@@ -830,6 +1103,7 @@ struct Index {
 
   private clearEntryDraft(): void {
     this.draftLabel = '';
+    this.draftCategory = '';
     this.draftTags = '';
     this.draftCredentialUsername = '';
     this.draftCredentialPassword = '';
@@ -846,11 +1120,52 @@ struct Index {
     return left > 0 ? left : 0;
   }
 
+  private hasActiveFilters(): boolean {
+    return this.searchQuery.trim().length > 0 ||
+      this.selectedCategory.trim().length > 0 ||
+      this.selectedTag.trim().length > 0 ||
+      this.selectedType !== 'all';
+  }
+
+  private activeFilterLabels(resultCount: number): string[] {
+    const labels: string[] = [];
+    if (this.selectedType === 'all') {
+      labels.push('类型: 全部');
+    } else if (this.selectedType === 'credential') {
+      labels.push('类型: 账号');
+    } else if (this.selectedType === 'server') {
+      labels.push('类型: 服务器');
+    } else {
+      labels.push('类型: 服务');
+    }
+    if (this.selectedCategory.trim().length > 0) {
+      labels.push(`分类: ${this.selectedCategory.trim()}`);
+    }
+    if (this.selectedTag.trim().length > 0) {
+      labels.push(`标签: ${this.selectedTag.trim()}`);
+    }
+    if (this.searchQuery.trim().length > 0) {
+      labels.push(this.usesGlobalTagSearch(this.parseSearchTerms(this.searchQuery))
+        ? '搜索: 全局标签'
+        : '搜索: 当前分类/类型');
+    }
+    labels.push(`结果: ${resultCount}`);
+    return labels;
+  }
+
   private filteredEntries(): VaultEntry[] {
-    const query = this.searchQuery.trim().toLowerCase();
+    const terms = this.parseSearchTerms(this.searchQuery);
+    const globalTagSearch = this.usesGlobalTagSearch(terms);
+    const selectedCategory = this.selectedCategory.trim().toLowerCase();
     const selectedTag = this.selectedTag.trim().toLowerCase();
     return this.entries.filter((entry: VaultEntry) => {
-      if (this.selectedType !== 'all' && entry.type !== this.selectedType) {
+      if (!globalTagSearch &&
+          this.selectedType !== 'all' &&
+          entry.type !== this.selectedType) {
+        return false;
+      }
+      if (selectedCategory.length > 0 &&
+          this.entryCategory(entry).toLowerCase() !== selectedCategory) {
         return false;
       }
       if (selectedTag.length > 0) {
@@ -859,14 +1174,213 @@ struct Index {
           return false;
         }
       }
-      if (query.length === 0) {
+      if (terms.length === 0) {
         return true;
       }
-      if (entry.label.toLowerCase().includes(query)) {
-        return true;
-      }
-      return entry.tags.some((entryTag: string) => entryTag.toLowerCase().includes(query));
+      return this.entryMatchesSearch(entry, terms);
     });
+  }
+
+  private parseSearchTerms(raw: string): SearchTerm[] {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) {
+      return [];
+    }
+    const parts = trimmed.split(/[\s,]+/);
+    const terms: SearchTerm[] = [];
+    parts.forEach((part: string) => {
+      if (part.length === 0) {
+        return;
+      }
+      if (part.startsWith('#') && part.length > 1) {
+        terms.push({ field: 'tag', value: part.substring(1).toLowerCase() });
+        return;
+      }
+      const splitIndex = part.indexOf(':');
+      if (splitIndex > 0 && splitIndex < part.length - 1) {
+        const prefix = part.substring(0, splitIndex).toLowerCase();
+        const value = part.substring(splitIndex + 1).trim().toLowerCase();
+        if (value.length === 0) {
+          return;
+        }
+        if (prefix === 'title' || prefix === 'name' || prefix === 'label') {
+          terms.push({ field: 'title', value: value });
+          return;
+        }
+        if (prefix === 'service' || prefix === 'svc') {
+          terms.push({ field: 'service', value: value });
+          return;
+        }
+        if (prefix === 'app' || prefix === 'appid') {
+          terms.push({ field: 'app', value: value });
+          return;
+        }
+        if (prefix === 'server' || prefix === 'srv') {
+          terms.push({ field: 'server', value: value });
+          return;
+        }
+        if (prefix === 'ip') {
+          terms.push({ field: 'ip', value: value });
+          return;
+        }
+        if (prefix === 'tag' || prefix === 'tags') {
+          terms.push({ field: 'tag', value: value });
+          return;
+        }
+      }
+      terms.push({ field: 'any', value: part.toLowerCase() });
+    });
+    return terms;
+  }
+
+  private usesGlobalTagSearch(terms: SearchTerm[]): boolean {
+    return terms.length > 0 &&
+      terms.every((term: SearchTerm) => term.field === 'tag');
+  }
+
+  private termValues(fields: string[]): string[] {
+    const allow = new Set<string>(fields);
+    const values = new Set<string>();
+    this.parseSearchTerms(this.searchQuery).forEach((term: SearchTerm) => {
+      if (allow.has(term.field) && term.value.trim().length > 0) {
+        values.add(term.value.trim());
+      }
+    });
+    return Array.from(values.values());
+  }
+
+  private textContainsTerms(text: string, fields: string[]): boolean {
+    const lowerText = text.toLowerCase();
+    return this.termValues(fields).some((value: string) => lowerText.includes(value));
+  }
+
+  private entryTitleMatched(entry: VaultEntry): boolean {
+    return this.textContainsTerms(entry.label, ['any', 'title', 'service', 'server', 'app', 'ip']);
+  }
+
+  private entrySummaryMatched(entry: VaultEntry): boolean {
+    return this.textContainsTerms(this.entrySummary(entry), ['any', 'service', 'server', 'app', 'ip']);
+  }
+
+  private entryCategoryMatched(entry: VaultEntry): boolean {
+    const category = this.entryCategory(entry);
+    if (category.length === 0) {
+      return false;
+    }
+    if (this.selectedCategory.trim().length > 0 &&
+        category.toLowerCase() === this.selectedCategory.trim().toLowerCase()) {
+      return true;
+    }
+    return this.textContainsTerms(category, ['any', 'title']);
+  }
+
+  private tagMatched(tag: string): boolean {
+    if (this.selectedTag.trim().length > 0 &&
+        tag.toLowerCase() === this.selectedTag.trim().toLowerCase()) {
+      return true;
+    }
+    return this.textContainsTerms(tag, ['any', 'tag']);
+  }
+
+  private entryMatchLabels(entry: VaultEntry): string[] {
+    const labels: string[] = [];
+    if (this.entryTitleMatched(entry) && this.searchQuery.trim().length > 0) {
+      labels.push('命中标题');
+    }
+    if (this.entrySummaryMatched(entry) && this.searchQuery.trim().length > 0) {
+      labels.push('命中字段');
+    }
+    if (this.entryCategoryMatched(entry)) {
+      labels.push('命中分类');
+    }
+    const matchedTags = entry.tags.filter((tag: string) => this.tagMatched(tag));
+    if (matchedTags.length > 0) {
+      labels.push(`命中标签 ${matchedTags.length}`);
+    }
+    return labels;
+  }
+
+  private entryMatchesSearch(
+    entry: VaultEntry,
+    terms: SearchTerm[],
+  ): boolean {
+    const labelLower = entry.label.toLowerCase();
+    const categoryLower = this.entryCategory(entry).toLowerCase();
+    const payload = entry.payload as SearchPayload;
+    const payloadName = (payload.name ?? '').toLowerCase();
+    const appId = (payload.appId ?? '').toLowerCase();
+    const ipAddress = (payload.ipAddress ?? '').toLowerCase();
+    const anyParts: string[] = [labelLower, categoryLower, appId, payloadName, ipAddress];
+    entry.tags.forEach((tag: string) => anyParts.push(tag.toLowerCase()));
+    const anyLower = anyParts.join('\n');
+    return terms.every((term: SearchTerm) => {
+      if (term.field === 'title') {
+        return labelLower.includes(term.value);
+      }
+      if (term.field === 'service') {
+        return entry.type === VaultEntryType.SERVICE &&
+          (labelLower.includes(term.value) || payloadName.includes(term.value));
+      }
+      if (term.field === 'app') {
+        return appId.includes(term.value);
+      }
+      if (term.field === 'server') {
+        return (entry.type === VaultEntryType.SERVER && labelLower.includes(term.value)) ||
+          payloadName.includes(term.value);
+      }
+      if (term.field === 'ip') {
+        return ipAddress.includes(term.value);
+      }
+      if (term.field === 'tag') {
+        return entry.tags.some((entryTag: string) => entryTag.toLowerCase().includes(term.value));
+      }
+      return anyLower.includes(term.value);
+    });
+  }
+
+  private entryCategory(entry: VaultEntry): string {
+    const payload = entry.payload as SearchPayload;
+    const category = payload.category ?? '';
+    return typeof category === 'string' ? category.trim() : '';
+  }
+
+  @Builder
+  private CategoryDraftPills(
+    selectedCategory: string,
+    onSelected: (category: string) => void
+  ) {
+    Flex({ wrap: FlexWrap.Wrap }) {
+      this.FilterPill('未分类', selectedCategory.length === 0, () => {
+        onSelected('');
+      });
+      ForEach(this.categories, (category: string) => {
+        this.FilterPill(category, selectedCategory === category, () => {
+          onSelected(category);
+        });
+      }, (category: string) => category);
+    }
+  }
+
+  @Builder
+  private FilterChip(label: string, selected: boolean, action: () => void) {
+    Button(label)
+      .fontSize(13)
+      .height(32)
+      .backgroundColor(selected ? '#0F4C5C' : '#CED8D9')
+      .fontColor(selected ? '#FFFFFF' : '#243436')
+      .borderRadius(999)
+      .onClick(action);
+  }
+
+  @Builder
+  private FilterPill(label: string, selected: boolean, action: () => void) {
+    Text(label)
+      .fontSize(13)
+      .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+      .margin({ right: 6, bottom: 6 })
+      .backgroundColor(selected ? '#BEE6D6' : '#FFFFFF')
+      .borderRadius(999)
+      .onClick(action);
   }
 
   private typeLabel(type: VaultEntryType): string {
@@ -893,6 +1407,17 @@ struct Index {
   }
 
   private toast(message: string): void {
-    promptAction.showToast({ message: message, duration: 2000 });
+    const clean = message.trim();
+    if (clean.length === 0) {
+      return;
+    }
+    const version = this.toastVersion + 1;
+    this.toastVersion = version;
+    this.toastMessage = clean;
+    setTimeout(() => {
+      if (this.toastVersion === version) {
+        this.toastMessage = '';
+      }
+    }, 2000);
   }
 }

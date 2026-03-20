@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -8,9 +9,11 @@ class FileVaultMetadataStore implements VaultMetadataStore {
   FileVaultMetadataStore({required this.filePath});
 
   final String filePath;
+  Future<void> _pendingWrite = Future<void>.value();
 
   @override
   Future<VaultMetadataRecord?> read() async {
+    await _pendingWrite.catchError((_) {});
     final file = File(filePath);
     if (!await file.exists()) {
       return null;
@@ -28,9 +31,30 @@ class FileVaultMetadataStore implements VaultMetadataStore {
 
   @override
   Future<void> save(VaultMetadataRecord record) async {
-    final file = File(filePath);
-    await file.create(recursive: true);
-    await file.writeAsString(jsonEncode(record.toJson()));
+    final encoded = jsonEncode(record.toJson());
+    await _enqueueWrite(encoded);
+  }
+
+  Future<void> _enqueueWrite(String contents) async {
+    final completer = Completer<void>();
+    final previous = _pendingWrite;
+    _pendingWrite = completer.future;
+    await previous.catchError((_) {});
+    try {
+      final file = File(filePath);
+      await file.create(recursive: true);
+      final tempFile = File('$filePath.tmp');
+      await tempFile.create(recursive: true);
+      await tempFile.writeAsString(contents, flush: true);
+      if (await file.exists()) {
+        await file.delete();
+      }
+      await tempFile.rename(file.path);
+      completer.complete();
+    } catch (error, stackTrace) {
+      completer.completeError(error, stackTrace);
+      rethrow;
+    }
   }
 }
 

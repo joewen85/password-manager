@@ -1,5 +1,4 @@
 import 'package:idb_shim/idb_browser.dart';
-import 'package:idb_shim/idb.dart';
 import 'package:password_manager_core/password_manager_core.dart';
 import 'package:password_manager_storage/password_manager_storage.dart';
 

@@ -13,6 +13,7 @@ export interface CredentialPayload {
   secretKey: string;
   notes: string;
   tags: string[];
+  category: string;
 }
 
 export interface ServerPayload {
@@ -26,6 +27,7 @@ export interface ServerPayload {
   location: string;
   notes: string;
   tags: string[];
+  category: string;
 }
 
 export interface ServiceAccount {
@@ -43,6 +45,7 @@ export interface ServicePayload {
   accounts: ServiceAccount[];
   notes: string;
   tags: string[];
+  category: string;
 }
 
 export type VaultPayload = CredentialPayload | ServerPayload | ServicePayload;
@@ -69,6 +72,7 @@ export interface MasterKeyRecord {
 export interface VaultSnapshot {
   masterKeyRecord: MasterKeyRecord | null;
   tags: string[];
+  categories: string[];
   entries: VaultEntry[];
   updatedAt: number;
 }
@@ -82,6 +86,7 @@ export interface EncryptedPayloadRecord {
 
 export interface VaultPayloadRecord {
   tags: string[];
+  categories: string[];
   entries: VaultEntry[];
   security?: SecuritySettings;
   updatedAt: number;
@@ -115,6 +120,7 @@ export interface CreateCredentialInput {
   secretKey: string;
   notes: string;
   tags: string[];
+  category: string;
 }
 
 export interface CreateServerInput {
@@ -129,6 +135,7 @@ export interface CreateServerInput {
   location: string;
   notes: string;
   tags: string[];
+  category: string;
 }
 
 export interface CreateServiceInput {
@@ -141,4 +148,5 @@ export interface CreateServiceInput {
   accounts: ServiceAccount[];
   notes: string;
   tags: string[];
+  category: string;
 }

@@ -36,28 +36,40 @@ export class PreferencesVaultStore implements VaultStore {
     const options: preferences.Options = {
       name: PreferencesVaultStore.STORE_NAME
     };
-    const pref = await preferences.getPreferences(context, options);
-    return new PreferencesVaultStore(pref);
+    try {
+      const pref = await preferences.getPreferences(context, options);
+      return new PreferencesVaultStore(pref);
+    } catch (error) {
+      throw new Error(`Open preferences failed: ${error}`);
+    }
   }
 
   async readEnvelope(): Promise<VaultPersistenceEnvelope | null> {
-    const raw = await this.pref.get(
-      PreferencesVaultStore.ENVELOPE_KEY,
-      ''
-    ) as string;
-    if (raw.trim().length === 0) {
-      return null;
+    try {
+      const raw = await this.pref.get(
+        PreferencesVaultStore.ENVELOPE_KEY,
+        ''
+      ) as string;
+      if (raw.trim().length === 0) {
+        return null;
+      }
+      const parsed = JSON.parse(raw) as VaultPersistenceEnvelope;
+      return deepCopyEnvelope(parsed);
+    } catch (error) {
+      throw new Error(`Read preferences envelope failed: ${error}`);
     }
-    const parsed = JSON.parse(raw) as VaultPersistenceEnvelope;
-    return deepCopyEnvelope(parsed);
   }
 
   async writeEnvelope(envelope: VaultPersistenceEnvelope): Promise<void> {
-    await this.pref.put(
-      PreferencesVaultStore.ENVELOPE_KEY,
-      JSON.stringify(envelope)
-    );
-    await this.pref.flush();
+    try {
+      await this.pref.put(
+        PreferencesVaultStore.ENVELOPE_KEY,
+        JSON.stringify(envelope)
+      );
+      await this.pref.flush();
+    } catch (error) {
+      throw new Error(`Write preferences envelope failed: ${error}`);
+    }
   }
 }
 

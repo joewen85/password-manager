@@ -45,6 +45,7 @@ interface ExportSnapshotRecord {
   version: number;
   exportedAt: string;
   tags: string[];
+  categories: string[];
   entries: VaultEntry[];
   masterKeyRecord: MasterKeyRecord | null;
   security: SecuritySettings;
@@ -58,6 +59,10 @@ interface ParsedSyncEnvelopeRecord {
   revision?: number;
   masterKeyRecord?: MasterKeyRecord | null;
   encryptedVault?: EncryptedPayloadRecord | null;
+}
+
+interface CategoryCarrier {
+  category?: string;
 }
 
 const MAX_UNLOCK_ATTEMPTS: number = 5;
@@ -122,6 +127,10 @@ export class VaultController {
 
   getTags(): string[] {
     return [...this.snapshot.tags];
+  }
+
+  getCategories(): string[] {
+    return [...this.snapshot.categories];
   }
 
   getEntries(): VaultEntry[] {
@@ -439,12 +448,14 @@ export class VaultController {
         secretKey: input.secretKey,
         notes: input.notes,
         tags,
+        category: input.category.trim(),
       },
       tags,
       createdAt: now,
       updatedAt: now,
       isDeleted: false,
     });
+    this.mergeCategories([input.category.trim()]);
     this.mergeTags(tags);
     await this.persist();
   }
@@ -468,12 +479,14 @@ export class VaultController {
         location: input.location,
         notes: input.notes,
         tags,
+        category: input.category.trim(),
       },
       tags,
       createdAt: now,
       updatedAt: now,
       isDeleted: false,
     });
+    this.mergeCategories([input.category.trim()]);
     this.mergeTags(tags);
     await this.persist();
   }
@@ -495,12 +508,14 @@ export class VaultController {
         accounts: [...input.accounts],
         notes: input.notes,
         tags,
+        category: input.category.trim(),
       },
       tags,
       createdAt: now,
       updatedAt: now,
       isDeleted: false,
     });
+    this.mergeCategories([input.category.trim()]);
     this.mergeTags(tags);
     await this.persist();
   }
@@ -526,6 +541,17 @@ export class VaultController {
     }
     this.snapshot.tags.push(clean);
     this.snapshot.tags.sort((a: string, b: string) => a.localeCompare(b));
+    await this.persist();
+  }
+
+  async addCategory(category: string): Promise<void> {
+    this.ensureUnlocked();
+    const clean = category.trim();
+    if (clean.length === 0 || this.snapshot.categories.includes(clean)) {
+      return;
+    }
+    this.snapshot.categories.push(clean);
+    this.snapshot.categories.sort((a: string, b: string) => a.localeCompare(b));
     await this.persist();
   }
 
@@ -568,12 +594,57 @@ export class VaultController {
     await this.persist();
   }
 
+  async renameCategory(oldCategory: string, newCategory: string): Promise<void> {
+    this.ensureUnlocked();
+    const from = oldCategory.trim();
+    const to = newCategory.trim();
+    if (from.length === 0 || to.length === 0 || from === to) {
+      return;
+    }
+    this.snapshot.categories = this.snapshot.categories.map((entryCategory: string) =>
+      entryCategory === from ? to : entryCategory,
+    );
+    this.snapshot.categories = normalizeTags(this.snapshot.categories);
+    this.snapshot.entries.forEach((entry: VaultEntry) => {
+      if (entry.isDeleted) {
+        return;
+      }
+      const category = this.entryCategory(entry);
+      if (category !== from) {
+        return;
+      }
+      this.setEntryCategory(entry, to);
+      entry.updatedAt = Date.now();
+    });
+    await this.persist();
+  }
+
+  async deleteCategory(category: string): Promise<void> {
+    this.ensureUnlocked();
+    const clean = category.trim();
+    this.snapshot.categories = this.snapshot.categories.filter(
+      (entryCategory: string) => entryCategory !== clean,
+    );
+    this.snapshot.entries.forEach((entry: VaultEntry) => {
+      if (entry.isDeleted) {
+        return;
+      }
+      if (this.entryCategory(entry) !== clean) {
+        return;
+      }
+      this.setEntryCategory(entry, '');
+      entry.updatedAt = Date.now();
+    });
+    await this.persist();
+  }
+
   exportSnapshot(): string {
     this.ensureUnlocked();
     const payload: ExportSnapshotRecord = {
       version: VaultController.SCHEMA_VERSION,
       exportedAt: new Date().toISOString(),
       tags: this.snapshot.tags,
+      categories: this.snapshot.categories,
       entries: this.snapshot.entries,
       masterKeyRecord: this.masterKeyRecord,
       security: this.snapshot.security,
@@ -594,6 +665,29 @@ export class VaultController {
     const mergedTags = setToArray(union);
     mergedTags.sort((a: string, b: string) => a.localeCompare(b));
     this.snapshot.tags = mergedTags;
+  }
+
+  private mergeCategories(categories: string[]): void {
+    const union = new Set<string>(this.snapshot.categories);
+    categories
+      .map((category: string) => category.trim())
+      .filter((category: string) => category.length > 0)
+      .forEach((category: string) => union.add(category));
+    const mergedCategories = setToArray(union);
+    mergedCategories.sort((a: string, b: string) => a.localeCompare(b));
+    this.snapshot.categories = mergedCategories;
+  }
+
+  private entryCategory(entry: VaultEntry): string {
+    const payload = entry.payload as CategoryCarrier;
+    const category = payload.category ?? '';
+    return typeof category === 'string' ? category.trim() : '';
+  }
+
+  private setEntryCategory(entry: VaultEntry, category: string): void {
+    const clean = category.trim();
+    const payload = entry.payload as CategoryCarrier;
+    payload.category = clean;
   }
 
   private async persist(): Promise<void> {
@@ -799,14 +893,22 @@ export class VaultController {
     });
 
     const tags = new Set<string>();
+    const categories = new Set<string>();
     local.tags.forEach((tag: string) => tags.add(tag));
     remote.tags.forEach((tag: string) => tags.add(tag));
+    local.categories.forEach((category: string) => categories.add(category));
+    remote.categories.forEach((category: string) => categories.add(category));
     mergedEntries.forEach((entry: VaultEntry) => {
       entry.tags.forEach((tag: string) => tags.add(tag));
+      const category = this.entryCategory(entry);
+      if (category.length > 0) {
+        categories.add(category);
+      }
     });
 
     return {
       tags: normalizeTags(setToArray(tags)),
+      categories: normalizeTags(setToArray(categories)),
       entries: mergedEntries,
       security: pickMergedSecurity(local, remote, strategy),
       updatedAt: Math.max(local.updatedAt, remote.updatedAt, Date.now()),
@@ -842,6 +944,7 @@ export class VaultController {
 function createEmptyPayload(): VaultRuntimePayload {
   return {
     tags: [],
+    categories: [],
     entries: [],
     security: defaultSecuritySettings(),
     updatedAt: Date.now(),
@@ -857,6 +960,7 @@ function sanitizeRuntimePayload(
   const maybeSecurity = input.security;
   return {
     tags: normalizeTags(input.tags ?? []),
+    categories: normalizeTags(input.categories ?? []),
     entries: (input.entries ?? []).map((entry: VaultEntry) => deepCopyEntry(entry)),
     security: normalizeSecuritySettings(maybeSecurity),
     updatedAt: typeof input.updatedAt === 'number' ? input.updatedAt : Date.now(),

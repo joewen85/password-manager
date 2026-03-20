@@ -102,7 +102,7 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
                   children: [
                     _sectionTitle('同步方式'),
                     DropdownButtonFormField<SyncProviderType>(
-                      value: _providerType,
+                      initialValue: _providerType,
                       items: const [
                         DropdownMenuItem(
                           value: SyncProviderType.none,
@@ -172,7 +172,7 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
                     const SizedBox(height: 16),
                     _sectionTitle('冲突策略'),
                     DropdownButtonFormField<ConflictStrategy>(
-                      value: _conflictStrategy,
+                      initialValue: _conflictStrategy,
                       items: const [
                         DropdownMenuItem(
                           value: ConflictStrategy.remoteWins,

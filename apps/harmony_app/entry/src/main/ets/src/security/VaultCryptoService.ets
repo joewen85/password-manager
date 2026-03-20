@@ -80,78 +80,90 @@ async function deriveKeyBytesWithKit(
   salt: Uint8Array,
   iterations: number,
 ): Promise<Uint8Array> {
-  const kdf = cryptoFramework.createKdf('PBKDF2|SHA256');
-  const pbkdf2Spec: cryptoFramework.PBKDF2Spec = {
-    algName: 'PBKDF2',
-    password,
-    salt,
-    iterations,
-    keySize: DERIVED_KEY_BYTES,
-  };
-  const keyBlob = await kdf.generateSecret(pbkdf2Spec);
-  const keyBytes = dataBlobToBytes(keyBlob);
-  if (keyBytes.length !== DERIVED_KEY_BYTES) {
-    throw new Error(`Unexpected PBKDF2 key length: ${keyBytes.length}`);
+  try {
+    const kdf = cryptoFramework.createKdf('PBKDF2|SHA256');
+    const pbkdf2Spec: cryptoFramework.PBKDF2Spec = {
+      algName: 'PBKDF2',
+      password,
+      salt,
+      iterations,
+      keySize: DERIVED_KEY_BYTES,
+    };
+    const keyBlob = await kdf.generateSecret(pbkdf2Spec);
+    const keyBytes = dataBlobToBytes(keyBlob);
+    if (keyBytes.length !== DERIVED_KEY_BYTES) {
+      throw new Error(`Unexpected PBKDF2 key length: ${keyBytes.length}`);
+    }
+    return keyBytes;
+  } catch (error) {
+    throw new Error(`PBKDF2 derive failed: ${error}`);
   }
-  return keyBytes;
 }
 
 async function encryptWithKit(
   plaintext: string,
   keyBytes: Uint8Array,
 ): Promise<EncryptedPayloadRecord> {
-  const nonce = randomBytes(AES_GCM_NONCE_BYTES);
-  const key = await createAesSymKey(keyBytes);
-  const cipher = cryptoFramework.createCipher(`${resolveAesAlgName(keyBytes)}|GCM|PKCS7`);
-  const params = buildGcmParams(nonce, new Uint8Array(AES_GCM_TAG_BYTES));
+  try {
+    const nonce = randomBytes(AES_GCM_NONCE_BYTES);
+    const key = await createAesSymKey(keyBytes);
+    const cipher = cryptoFramework.createCipher(`${resolveAesAlgName(keyBytes)}|GCM|PKCS7`);
+    const params = buildGcmParams(nonce, new Uint8Array(AES_GCM_TAG_BYTES));
 
-  await cipher.init(cryptoFramework.CryptoMode.ENCRYPT_MODE, key, params);
+    await cipher.init(cryptoFramework.CryptoMode.ENCRYPT_MODE, key, params);
 
-  const plainBytes = encodeUtf8(plaintext);
-  let ciphertext = new Uint8Array(0);
-  if (plainBytes.length > 0) {
-    const updateOut = await cipher.update({ data: plainBytes });
-    ciphertext = dataBlobToBytes(updateOut);
+    const plainBytes = encodeUtf8(plaintext);
+    let ciphertext = new Uint8Array(0);
+    if (plainBytes.length > 0) {
+      const updateOut = await cipher.update({ data: plainBytes });
+      ciphertext = dataBlobToBytes(updateOut);
+    }
+
+    const finalOut = await cipher.doFinal(null);
+    const tag = requireFixedLength(dataBlobToBytes(finalOut), AES_GCM_TAG_BYTES);
+
+    return {
+      ciphertext: bytesToBase64(ciphertext),
+      nonce: bytesToBase64(nonce),
+      mac: bytesToBase64(tag),
+      version: 1,
+    };
+  } catch (error) {
+    throw new Error(`Encrypt with kit failed: ${error}`);
   }
-
-  const finalOut = await cipher.doFinal(null);
-  const tag = requireFixedLength(dataBlobToBytes(finalOut), AES_GCM_TAG_BYTES);
-
-  return {
-    ciphertext: bytesToBase64(ciphertext),
-    nonce: bytesToBase64(nonce),
-    mac: bytesToBase64(tag),
-    version: 1,
-  };
 }
 
 async function decryptWithKit(
   payload: EncryptedPayloadRecord,
   keyBytes: Uint8Array,
 ): Promise<string> {
-  const ciphertext = base64ToBytes(payload.ciphertext);
-  const nonce = base64ToBytes(payload.nonce);
-  const mac = requireFixedLength(base64ToBytes(payload.mac), AES_GCM_TAG_BYTES);
+  try {
+    const ciphertext = base64ToBytes(payload.ciphertext);
+    const nonce = base64ToBytes(payload.nonce);
+    const mac = requireFixedLength(base64ToBytes(payload.mac), AES_GCM_TAG_BYTES);
 
-  const key = await createAesSymKey(keyBytes);
-  const cipher = cryptoFramework.createCipher(`${resolveAesAlgName(keyBytes)}|GCM|PKCS7`);
-  const params = buildGcmParams(nonce, mac);
+    const key = await createAesSymKey(keyBytes);
+    const cipher = cryptoFramework.createCipher(`${resolveAesAlgName(keyBytes)}|GCM|PKCS7`);
+    const params = buildGcmParams(nonce, mac);
 
-  await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, key, params);
+    await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, key, params);
 
-  let plaintext = new Uint8Array(0);
-  if (ciphertext.length > 0) {
-    const updateOut = await cipher.update({ data: ciphertext });
-    plaintext = dataBlobToBytes(updateOut);
+    let plaintext = new Uint8Array(0);
+    if (ciphertext.length > 0) {
+      const updateOut = await cipher.update({ data: ciphertext });
+      plaintext = dataBlobToBytes(updateOut);
+    }
+
+    const finalOut = await cipher.doFinal(null);
+    const finalBytes = dataBlobToBytes(finalOut);
+    if (finalBytes.length > 0) {
+      plaintext = concatBytes(plaintext, finalBytes);
+    }
+
+    return decodeUtf8(plaintext);
+  } catch (error) {
+    throw new Error(`Decrypt with kit failed: ${error}`);
   }
-
-  const finalOut = await cipher.doFinal(null);
-  const finalBytes = dataBlobToBytes(finalOut);
-  if (finalBytes.length > 0) {
-    plaintext = concatBytes(plaintext, finalBytes);
-  }
-
-  return decodeUtf8(plaintext);
 }
 
 function encryptWithFallback(
@@ -185,8 +197,12 @@ function decryptWithFallback(
 async function createAesSymKey(
   keyBytes: Uint8Array,
 ): Promise<cryptoFramework.SymKey> {
-  const symKeyGenerator = cryptoFramework.createSymKeyGenerator(resolveAesAlgName(keyBytes));
-  return await symKeyGenerator.convertKey({ data: keyBytes });
+  try {
+    const symKeyGenerator = cryptoFramework.createSymKeyGenerator(resolveAesAlgName(keyBytes));
+    return await symKeyGenerator.convertKey({ data: keyBytes });
+  } catch (error) {
+    throw new Error(`Create AES key failed: ${error}`);
+  }
 }
 
 function resolveAesAlgName(keyBytes: Uint8Array): string {

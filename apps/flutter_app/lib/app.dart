@@ -95,8 +95,7 @@ class PasswordManagerApp extends StatelessWidget {
               secondary: const Color(0xFF2F7F79),
               tertiary: const Color(0xFFF2B880),
               surface: const Color(0xFFFDFBF6),
-              surfaceVariant: const Color(0xFFF0F2F0),
-              background: const Color(0xFFF4F6F0),
+              surfaceContainerHighest: const Color(0xFFF0F2F0),
               outline: const Color(0xFFC6D1D5),
               outlineVariant: const Color(0xFFE1E6E8),
             )
@@ -105,8 +104,7 @@ class PasswordManagerApp extends StatelessWidget {
               secondary: const Color(0xFF4DB2A1),
               tertiary: const Color(0xFFF2B880),
               surface: const Color(0xFF141A1D),
-              surfaceVariant: const Color(0xFF1F2528),
-              background: const Color(0xFF0E1416),
+              surfaceContainerHighest: const Color(0xFF1F2528),
               outline: const Color(0xFF394246),
               outlineVariant: const Color(0xFF2B3438),
             );
@@ -130,7 +128,7 @@ class PasswordManagerApp extends StatelessWidget {
         useMaterial3: true,
         typography: baseTypography,
         splashFactory: _isTest ? NoSplash.splashFactory : null,
-        scaffoldBackgroundColor: colorScheme.background,
+        scaffoldBackgroundColor: colorScheme.surface,
         textTheme: textTheme,
       );
       if (isAndroid) {
@@ -156,7 +154,7 @@ class PasswordManagerApp extends StatelessWidget {
           ),
           inputDecorationTheme: InputDecorationTheme(
             filled: true,
-            fillColor: colorScheme.surfaceVariant,
+            fillColor: colorScheme.surfaceContainerHighest,
             contentPadding: const EdgeInsets.symmetric(
               horizontal: 16,
               vertical: 12,
@@ -199,7 +197,7 @@ class PasswordManagerApp extends StatelessWidget {
             ),
           ),
           chipTheme: ChipThemeData(
-            backgroundColor: colorScheme.surfaceVariant,
+            backgroundColor: colorScheme.surfaceContainerHighest,
             selectedColor: colorScheme.secondaryContainer,
             labelStyle: textTheme.labelLarge,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -250,7 +248,7 @@ class PasswordManagerApp extends StatelessWidget {
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: colorScheme.surfaceVariant,
+          fillColor: colorScheme.surfaceContainerHighest,
           contentPadding: const EdgeInsets.symmetric(
             horizontal: 16,
             vertical: 14,
@@ -287,7 +285,7 @@ class PasswordManagerApp extends StatelessWidget {
           ),
         ),
         chipTheme: ChipThemeData(
-          backgroundColor: colorScheme.surfaceVariant,
+          backgroundColor: colorScheme.surfaceContainerHighest,
           selectedColor: colorScheme.primaryContainer,
           labelStyle: textTheme.labelLarge,
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -331,6 +329,7 @@ class PasswordManagerApp extends StatelessWidget {
         ),
       );
     }
+
     return MaterialApp(
       title: '密码管理器',
       theme: buildTheme(Brightness.light),
@@ -341,19 +340,41 @@ class PasswordManagerApp extends StatelessWidget {
   }
 }
 
-class VaultShell extends StatelessWidget {
+class VaultShell extends StatefulWidget {
   const VaultShell({super.key, required this.controller});
 
   final VaultController controller;
 
   @override
+  State<VaultShell> createState() => _VaultShellState();
+}
+
+class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    widget.controller.handleAppLifecycleStateChanged(state);
+  }
+
+  @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: controller,
+      animation: widget.controller,
       builder: (context, _) {
-        return controller.isUnlocked
-            ? HomeScreen(controller: controller)
-            : UnlockScreen(controller: controller);
+        return widget.controller.isUnlocked
+            ? HomeScreen(controller: widget.controller)
+            : UnlockScreen(controller: widget.controller);
       },
     );
   }

@@ -13,7 +13,9 @@ import '../theme/motion_tokens.dart';
 import '../widgets/app_background.dart';
 import '../widgets/entry_details_dialog.dart';
 import '../widgets/fade_slide.dart';
+import '../widgets/filter_chip_section.dart';
 import '../widgets/glass_surface.dart';
+import 'category_management_screen.dart';
 import 'new_entry_sheet.dart';
 import 'new_service_sheet.dart';
 import 'sync_settings_screen.dart';
@@ -46,6 +48,7 @@ class _HomeScreenState extends State<HomeScreen>
   late final Listenable _entryListListenable;
   late final AnimationController _syncRotationController;
   _VaultListMode _mode = _VaultListMode.credentials;
+  String? _selectedCategory;
   String? _selectedTag;
   bool _showConflictsOnly = false;
   VaultItem? _selectedItem;
@@ -118,6 +121,7 @@ class _HomeScreenState extends State<HomeScreen>
         context: context,
         isScrollControlled: true,
         builder: (context) => NewServerSheet(
+          availableCategories: widget.controller.metadata.categories,
           initialData: NewServerSheetResult(
             label: item.label,
             payload: payload,
@@ -155,6 +159,7 @@ class _HomeScreenState extends State<HomeScreen>
         builder: (context) => NewServiceSheet(
           availableAccounts: _availableAccountItems(),
           availableServers: _availableServerItems(),
+          availableCategories: widget.controller.metadata.categories,
           initialData: NewServiceSheetResult(
             label: item.label,
             payload: payload,
@@ -189,6 +194,7 @@ class _HomeScreenState extends State<HomeScreen>
       context: context,
       isScrollControlled: true,
       builder: (context) => NewEntrySheet(
+        availableCategories: widget.controller.metadata.categories,
         initialData: NewEntryData(label: item.label, payload: payload),
         title: '编辑条目',
         submitLabel: '保存修改',
@@ -294,9 +300,7 @@ class _HomeScreenState extends State<HomeScreen>
       );
     }
     if (mounted) {
-      if (created != null) {
-        await _editEntry(created);
-      }
+      await _editEntry(created);
     }
   }
 
@@ -311,8 +315,7 @@ class _HomeScreenState extends State<HomeScreen>
   List<VaultItem> _availableAccountItems() {
     final items = widget.controller.items
         .where(
-          (item) =>
-              !item.isDeleted && item.type == VaultEntryType.credential,
+          (item) => !item.isDeleted && item.type == VaultEntryType.credential,
         )
         .toList();
     items.sort((a, b) => a.label.compareTo(b.label));
@@ -341,8 +344,8 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _handleSearchFocusChanged() {
-    final shouldShow = _searchFocusNode.hasFocus &&
-        _searchController.text.trim().isEmpty;
+    final shouldShow =
+        _searchFocusNode.hasFocus && _searchController.text.trim().isEmpty;
     if (shouldShow == _showSearchHelp) {
       return;
     }
@@ -558,8 +561,7 @@ class _HomeScreenState extends State<HomeScreen>
     final screenHeight = mediaQuery.size.height;
     final safeBottom = mediaQuery.padding.bottom;
     final desiredTop = fieldOffset.dy + searchFieldHeight + searchHelpSpacing;
-    final maxTop =
-        screenHeight - safeBottom - searchHelpBottomGap - helpHeight;
+    final maxTop = screenHeight - safeBottom - searchHelpBottomGap - helpHeight;
     final adjustment = desiredTop > maxTop ? maxTop - desiredTop : 0.0;
     if ((helpHeight - _searchHelpHeight).abs() > 0.5 ||
         (adjustment - _searchHelpDyAdjustment).abs() > 0.5 ||
@@ -629,6 +631,11 @@ class _HomeScreenState extends State<HomeScreen>
     return terms;
   }
 
+  bool _usesGlobalTagSearch(List<_SearchTerm> terms) {
+    return terms.isNotEmpty &&
+        terms.every((term) => term.field == _SearchField.tag);
+  }
+
   bool _matchesSearch(VaultEntryView view, List<_SearchTerm> terms) {
     if (terms.isEmpty) {
       return true;
@@ -646,6 +653,7 @@ class _HomeScreenState extends State<HomeScreen>
       }
       return false;
     }
+
     for (final term in terms) {
       switch (term.field) {
         case _SearchField.title:
@@ -666,8 +674,7 @@ class _HomeScreenState extends State<HomeScreen>
           break;
         case _SearchField.serverName:
           final nameMatch = contains(index.serverNameLower, term.value);
-          final labelMatch =
-              view.item.type == VaultEntryType.server &&
+          final labelMatch = view.item.type == VaultEntryType.server &&
               contains(index.labelLower, term.value);
           if (!nameMatch && !labelMatch) {
             return false;
@@ -719,21 +726,26 @@ class _HomeScreenState extends State<HomeScreen>
             width: width,
             child: KeyedSubtree(
               key: _searchHelpKey,
-                child: GlassSurface(
-                  borderRadius: 14,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  blur: 16,
-                  opacityLight: isAndroid ? 0.9 : 0.97,
-                  opacityDark: isAndroid ? 0.9 : 0.9,
-                  child: Column(
+              child: GlassSurface(
+                borderRadius: 14,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                blur: 16,
+                opacityLight: isAndroid ? 0.9 : 0.97,
+                opacityDark: isAndroid ? 0.9 : 0.9,
+                child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('Search 用法', style: titleStyle),
                     const SizedBox(height: 6),
                     Text(
-                      '普通关键词会在标题/服务名称/应用ID/服务器名称/IP/标签里匹配，多个词按 AND 过滤。',
+                      '普通关键词仍在当前分类中匹配；纯标签搜索(tag:/#)会跨分类全局匹配，多个词按 AND 过滤。',
+                      style: textStyle,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '分类筛选与标签筛选可叠加；分类筛选只影响当前结果集，不改变搜索语法。',
                       style: textStyle,
                     ),
                     const SizedBox(height: 6),
@@ -798,6 +810,14 @@ class _HomeScreenState extends State<HomeScreen>
                       '多条件示例：title:aws tag:prod ip:10.0',
                       style: textStyle,
                     ),
+                    Text(
+                      '筛选示例：先点分类“云平台”，再搜 title:aws',
+                      style: textStyle,
+                    ),
+                    Text(
+                      '全局示例：先点任意分类，输入 #prod 仍会跨分类搜索标签',
+                      style: textStyle,
+                    ),
                   ],
                 ),
               ),
@@ -813,7 +833,9 @@ class _HomeScreenState extends State<HomeScreen>
       final data = await showModalBottomSheet<NewEntryData>(
         context: context,
         isScrollControlled: true,
-        builder: (context) => const NewEntrySheet(),
+        builder: (context) => NewEntrySheet(
+          availableCategories: widget.controller.metadata.categories,
+        ),
       );
       if (data != null) {
         await widget.controller.addEntry(
@@ -830,6 +852,7 @@ class _HomeScreenState extends State<HomeScreen>
         builder: (context) => NewServiceSheet(
           availableAccounts: _availableAccountItems(),
           availableServers: _availableServerItems(),
+          availableCategories: widget.controller.metadata.categories,
         ),
       );
       if (data != null) {
@@ -843,7 +866,9 @@ class _HomeScreenState extends State<HomeScreen>
     final data = await showModalBottomSheet<NewServerSheetResult>(
       context: context,
       isScrollControlled: true,
-      builder: (context) => const NewServerSheet(),
+      builder: (context) => NewServerSheet(
+        availableCategories: widget.controller.metadata.categories,
+      ),
     );
     if (data != null) {
       await widget.controller.addServerAsset(
@@ -887,252 +912,100 @@ class _HomeScreenState extends State<HomeScreen>
     required bool singleLine,
     int maxVisible = 999,
   }) {
-    final tags = widget.controller.metadata.tags;
-    if (tags.isEmpty) {
-      return const SizedBox.shrink();
-    }
+    return FilterChipSection(
+      items: widget.controller.metadata.tags,
+      allLabel: '全部',
+      selectedValue: _selectedTag,
+      singleLine: singleLine,
+      maxVisible: maxVisible,
+      bottomSheetTitle: '全部分类标签',
+      onSelected: _handleTagSelection,
+    );
+  }
+
+  Widget _categoryFilterRow() {
     final platform = Theme.of(context).platform;
     final isIOS = platform == TargetPlatform.iOS;
-    final isApple = isIOS || platform == TargetPlatform.macOS;
-    if (singleLine) {
-      return LayoutBuilder(
-        builder: (context, constraints) {
-          final labelStyle =
-              Theme.of(context).textTheme.labelLarge?.copyWith(fontSize: 12) ??
-                  const TextStyle(fontSize: 12);
-          final chips = _buildSingleLineTagWidgets(
-            tags,
-            maxWidth: constraints.maxWidth,
-            labelStyle: labelStyle,
-            spacing: 15,
-            maxVisible: maxVisible,
-          );
-          return SizedBox(
-            height: 34,
-            child: Row(children: _withSpacing(chips, 15)),
-          );
-        },
-      );
-    }
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        ChoiceChip(
-          label: const Text('全部'),
-          selected: _selectedTag == null,
-          onSelected: (_) => _handleTagSelection(null),
-          labelStyle: const TextStyle(fontSize: 12),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        ),
-        ...isApple
-            ? _buildSingleLineTags(tags)
-            : tags.map(
-                (tag) => ChoiceChip(
-                  label: Text(tag),
-                  selected: _selectedTag == tag,
-                  onSelected: (_) => _handleTagSelection(tag),
-                  labelStyle: const TextStyle(fontSize: 12),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                ),
-              ),
-      ],
+    return FilterChipSection(
+      items: widget.controller.metadata.categories,
+      allLabel: '全部分类',
+      selectedValue: _selectedCategory,
+      singleLine: _isAndroid || isIOS,
+      maxVisible: _isAndroid ? 3 : 999,
+      bottomSheetTitle: '全部分类',
+      onSelected: (value) => setState(() => _selectedCategory = value),
     );
   }
 
-  List<Widget> _buildSingleLineTags(List<String> tags) {
-    const maxVisible = 3;
-    final visible = tags.take(maxVisible).toList();
-    final remaining = tags.length - visible.length;
-    return [
-      ...visible.map(
-        (tag) => ChoiceChip(
-          label: Text(tag),
-          selected: _selectedTag == tag,
-          onSelected: (_) => _handleTagSelection(tag),
-          labelStyle: const TextStyle(fontSize: 12),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        ),
-      ),
-      if (remaining > 0)
-        ActionChip(
-          label: Text('...+$remaining'),
-          onPressed: () => _showAllTags(tags),
-          labelStyle: const TextStyle(fontSize: 12),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        ),
+  List<String> _activeFilterLabels({required List<_SearchTerm> terms}) {
+    final labels = <String>[
+      _mode == _VaultListMode.credentials
+          ? '类型: 账号'
+          : _mode == _VaultListMode.services
+              ? '类型: 服务'
+              : '类型: 服务器',
     ];
+    if (_selectedCategory != null && _selectedCategory!.isNotEmpty) {
+      labels.add('分类: ${_selectedCategory!}');
+    }
+    if (_selectedTag != null && _selectedTag!.isNotEmpty) {
+      labels.add('标签: ${_selectedTag!}');
+    }
+    if (_showConflictsOnly) {
+      labels.add('仅冲突');
+    }
+    if (_searchQuery.isNotEmpty) {
+      labels.add(
+        _usesGlobalTagSearch(terms)
+            ? '搜索: 全局标签'
+            : '搜索: 当前分类/类型',
+      );
+    }
+    return labels;
   }
 
-  List<Widget> _buildSingleLineTagWidgets(
-    List<String> tags, {
-    required double maxWidth,
-    required TextStyle labelStyle,
-    required double spacing,
-    int maxVisible = 999,
+  Widget _buildActiveFilterSummary(
+    BuildContext context, {
+    required List<_SearchTerm> terms,
+    required int resultCount,
   }) {
-    final chips = <Widget>[];
-    var usedWidth = 0.0;
-    const chipPadding = EdgeInsets.symmetric(horizontal: 8, vertical: 2);
-    final defaultFontSize = labelStyle.fontSize ?? 14.0;
-    final effectiveTextScale =
-        MediaQuery.textScalerOf(context).scale(defaultFontSize) / 14.0;
-    final defaultLabelPadding = EdgeInsets.lerp(
-      const EdgeInsets.symmetric(horizontal: 8.0),
-      const EdgeInsets.symmetric(horizontal: 4.0),
-      clampDouble(effectiveTextScale - 1.0, 0.0, 1.0),
-    )!;
-    final chipLabelPadding = (ChipTheme.of(context).labelPadding ??
-            defaultLabelPadding)
-        .resolve(Directionality.of(context));
-    const checkmarkSize = 18.0;
-    const checkmarkGap = 4.0;
-    double chipWidth(String text, {required bool selected}) {
-      final painter = TextPainter(
-        text: TextSpan(text: text, style: labelStyle),
-        maxLines: 1,
-        textDirection: TextDirection.ltr,
-      )..layout();
-      final checkmarkWidth =
-          selected ? (checkmarkSize + checkmarkGap) : 0.0;
-      return painter.width +
-          chipPadding.horizontal +
-          chipLabelPadding.horizontal +
-          checkmarkWidth +
-          2;
-    }
-
-    Widget buildChip(String text, bool selected, VoidCallback onTap) {
-      return ChoiceChip(
-        label: Text(text, overflow: TextOverflow.ellipsis),
-        selected: selected,
-        onSelected: (_) => onTap(),
-        labelStyle: labelStyle,
-        padding: chipPadding,
-        labelPadding: chipLabelPadding,
-      );
-    }
-
-    final allWidth = chipWidth('全部', selected: _selectedTag == null);
-    usedWidth += allWidth;
-    chips.add(
-      buildChip('全部', _selectedTag == null, () {
-        _handleTagSelection(null);
-      }),
-    );
-
-    final displayTags = tags.take(maxVisible).toList();
-    var visible = 0;
-    for (final tag in displayTags) {
-      final width = chipWidth(tag, selected: _selectedTag == tag);
-      if (usedWidth + spacing + width > maxWidth) {
-        break;
-      }
-      usedWidth += spacing + width;
-      visible += 1;
-      chips.add(
-        buildChip(tag, _selectedTag == tag, () {
-          _handleTagSelection(tag);
-        }),
-      );
-    }
-
-    final remaining = tags.length - visible;
-    if (remaining > 0) {
-      final overflowText = '...+$remaining';
-      final overflowWidth = chipWidth(overflowText, selected: false);
-      while (chips.length > 1 &&
-          usedWidth + spacing + overflowWidth > maxWidth) {
-        final removedTag = displayTags[visible - 1];
-        usedWidth -= spacing + chipWidth(
-          removedTag,
-          selected: _selectedTag == removedTag,
-        );
-        chips.removeLast();
-        visible -= 1;
-      }
-      if (usedWidth + spacing + overflowWidth <= maxWidth) {
-        chips.add(
-          ActionChip(
-            label: Text(overflowText, overflow: TextOverflow.ellipsis),
-            onPressed: () => _showAllTags(tags),
-            labelStyle: labelStyle,
-            padding: chipPadding,
-            labelPadding: chipLabelPadding,
-          ),
-        );
-      }
-    }
-    return chips;
-  }
-
-  List<Widget> _withSpacing(List<Widget> items, double spacing) {
-    if (items.isEmpty) {
-      return items;
-    }
-    final spaced = <Widget>[];
-    for (var i = 0; i < items.length; i++) {
-      spaced.add(items[i]);
-      if (i != items.length - 1) {
-        spaced.add(SizedBox(width: spacing));
-      }
-    }
-    return spaced;
-  }
-
-  Future<void> _showAllTags(List<String> tags) async {
-    if (!mounted) {
-      return;
-    }
-    await showModalBottomSheet<void>(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
+    final colorScheme = Theme.of(context).colorScheme;
+    final labels = _activeFilterLabels(terms: terms);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final label in labels)
             Container(
-              width: 40,
-              height: 4,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.outlineVariant,
+                color: colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(999),
               ),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              '全部分类标签',
-              style: TextStyle(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 12),
-            Flexible(
-              child: ListView.separated(
-                shrinkWrap: true,
-                itemCount: tags.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  final tag = tags[index];
-                  final selected = _selectedTag == tag;
-                  return ListTile(
-                    title: Text(tag),
-                    trailing: selected
-                        ? Icon(
-                            Icons.check_rounded,
-                            color: Theme.of(context).colorScheme.primary,
-                          )
-                        : null,
-                    onTap: () {
-                      _handleTagSelection(tag);
-                      Navigator.of(context).pop();
-                    },
-                  );
-                },
+              child: Text(
+                label,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
               ),
             ),
-            const SizedBox(height: 8),
-          ],
-        ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: colorScheme.primaryContainer,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              '结果: $resultCount',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: colorScheme.onPrimaryContainer,
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1142,10 +1015,10 @@ class _HomeScreenState extends State<HomeScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: (isDark ? Colors.black : Colors.white).withOpacity(0.18),
+        color: (isDark ? Colors.black : Colors.white).withValues(alpha: 0.18),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(
-          color: (isDark ? Colors.white : Colors.white).withOpacity(0.3),
+          color: (isDark ? Colors.white : Colors.white).withValues(alpha: 0.3),
         ),
       ),
       child: Row(
@@ -1186,7 +1059,7 @@ class _HomeScreenState extends State<HomeScreen>
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(isDark ? 0.4 : 0.12),
+            color: Colors.black.withValues(alpha: isDark ? 0.4 : 0.12),
             blurRadius: 20,
             offset: const Offset(0, 10),
           ),
@@ -1263,8 +1136,7 @@ class _HomeScreenState extends State<HomeScreen>
         final maxVisibleTags = isAndroid ? 3 : 999;
         final useDetailsPane =
             paneSplit != null || sizeClass == WindowSizeClass.expanded;
-        final listPane =
-            _buildVaultListPane(
+        final listPane = _buildVaultListPane(
           context,
           useDetailsPane: useDetailsPane,
           singleLineTags: singleLineTags,
@@ -1485,9 +1357,9 @@ class _HomeScreenState extends State<HomeScreen>
                                   _searchFocusNode.unfocus();
                                 },
                                 decoration: InputDecoration(
-                                  prefixIcon: const Icon(Icons.search, size: 18),
-                                  hintText:
-                                      '支持标题/服务名称、应用ID、服务器名称/IP、标签搜索',
+                                  prefixIcon:
+                                      const Icon(Icons.search, size: 18),
+                                  hintText: '字段搜索按当前分类，tag/# 标签搜索全局',
                                   suffixIcon: hasText
                                       ? IconButton(
                                           tooltip: '清空搜索',
@@ -1512,7 +1384,7 @@ class _HomeScreenState extends State<HomeScreen>
                         Align(
                           alignment: Alignment.centerLeft,
                           child: Text(
-                            '当前为搜索模式，可配合分类/标签筛选',
+                            '当前为搜索模式；指定字段按当前分类，纯标签搜索跨分类',
                             style:
                                 Theme.of(context).textTheme.bodySmall?.copyWith(
                                       fontSize: 11,
@@ -1527,6 +1399,8 @@ class _HomeScreenState extends State<HomeScreen>
                         singleLine: singleLineTags,
                         maxVisible: maxVisibleTags,
                       ),
+                      const SizedBox(height: 8),
+                      _categoryFilterRow(),
                     ],
                   ),
                 ),
@@ -1604,10 +1478,13 @@ class _HomeScreenState extends State<HomeScreen>
         final terms = _searchTerms;
         final hasSearch = query.isNotEmpty;
         final hasTagFilter = _selectedTag != null && _selectedTag!.isNotEmpty;
+        final hasCategoryFilter =
+            _selectedCategory != null && _selectedCategory!.isNotEmpty;
         final sorted = _buildSortedViews(
           views: views,
           viewsVersion: viewsVersion,
           hasTagFilter: hasTagFilter,
+          hasCategoryFilter: hasCategoryFilter,
           terms: terms,
         );
         if (sorted.isEmpty) {
@@ -1617,8 +1494,8 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           );
         }
-        final reduceEffects = _reduceEffectsForScroll ||
-            sorted.length >= _reduceEffectsThreshold;
+        final reduceEffects =
+            _reduceEffectsForScroll || sorted.length >= _reduceEffectsThreshold;
         final listView = NotificationListener<ScrollNotification>(
           onNotification: _handleScrollNotification,
           child: ListView.separated(
@@ -1633,7 +1510,11 @@ class _HomeScreenState extends State<HomeScreen>
               return EntryCard(
                 item: item,
                 service: view.service,
+                category: view.category,
                 tags: view.tags,
+                searchTerms: terms,
+                selectedCategory: _selectedCategory,
+                selectedTag: _selectedTag,
                 isConflict: view.isConflict,
                 isSelected: useDetailsPane && _selectedItem?.id == item.id,
                 reduceEffects: reduceEffects,
@@ -1651,20 +1532,19 @@ class _HomeScreenState extends State<HomeScreen>
             },
           ),
         );
-        if (!hasSearch && !hasTagFilter && !_showConflictsOnly) {
+        if (!hasSearch &&
+            !hasTagFilter &&
+            !hasCategoryFilter &&
+            !_showConflictsOnly) {
           return listView;
         }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                '找到 ${sorted.length} 条',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-              ),
+            _buildActiveFilterSummary(
+              context,
+              terms: terms,
+              resultCount: sorted.length,
             ),
             Expanded(child: listView),
           ],
@@ -1677,16 +1557,20 @@ class _HomeScreenState extends State<HomeScreen>
     required List<VaultEntryView> views,
     required int viewsVersion,
     required bool hasTagFilter,
+    required bool hasCategoryFilter,
     required List<_SearchTerm> terms,
   }) {
     final sortOrder = widget.controller.metadata.sortOrder;
+    final globalTagSearch = _usesGlobalTagSearch(terms);
     final key = [
       viewsVersion,
       _mode.name,
       _showConflictsOnly,
+      _selectedCategory ?? '',
       _selectedTag ?? '',
       _searchQuery,
       sortOrder.name,
+      globalTagSearch,
     ].join('|');
     if (key == _cachedFilterKey && viewsVersion == _cachedViewsVersion) {
       return _cachedSortedViews;
@@ -1697,10 +1581,13 @@ class _HomeScreenState extends State<HomeScreen>
           : _mode == _VaultListMode.services
               ? view.item.type == VaultEntryType.service
               : view.item.type == VaultEntryType.server;
-      if (!matchesType) {
+      if (!globalTagSearch && !matchesType) {
         return false;
       }
       if (_showConflictsOnly && !view.isConflict) {
+        return false;
+      }
+      if (hasCategoryFilter && view.category != _selectedCategory) {
         return false;
       }
       if (hasTagFilter && !view.tags.contains(_selectedTag)) {
@@ -1725,13 +1612,14 @@ class _HomeScreenState extends State<HomeScreen>
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final appBarIconColor =
-        isIOS && !isDark ? colorScheme.onSurface.withOpacity(0.85) : null;
+        isIOS && !isDark ? colorScheme.onSurface.withValues(alpha: 0.85) : null;
     return Scaffold(
       appBar: AppBar(
         centerTitle: !isIOS,
         titleSpacing: isIOS ? 20.0 : null,
-        iconTheme:
-            appBarIconColor == null ? null : IconThemeData(color: appBarIconColor),
+        iconTheme: appBarIconColor == null
+            ? null
+            : IconThemeData(color: appBarIconColor),
         actionsIconTheme: appBarIconColor == null
             ? null
             : IconThemeData(color: appBarIconColor),
@@ -1766,6 +1654,15 @@ class _HomeScreenState extends State<HomeScreen>
                   await Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => TagManagementScreen(
+                        controller: widget.controller,
+                      ),
+                    ),
+                  );
+                  break;
+                case _VaultMenuAction.categories:
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => CategoryManagementScreen(
                         controller: widget.controller,
                       ),
                     ),
@@ -1851,6 +1748,10 @@ class _HomeScreenState extends State<HomeScreen>
               ),
               PopupMenuItem(
                 value: _VaultMenuAction.tags,
+                child: Text('标签管理'),
+              ),
+              PopupMenuItem(
+                value: _VaultMenuAction.categories,
                 child: Text('分类管理'),
               ),
               PopupMenuItem(
@@ -1888,14 +1789,119 @@ class _SearchTerm {
   final String value;
 }
 
-enum _VaultMenuAction { syncSettings, tags, export, clear }
+List<String> _termsForText(
+  List<_SearchTerm> terms, {
+  required Set<_SearchField> includeFields,
+}) {
+  final unique = <String>{};
+  for (final term in terms) {
+    if (!includeFields.contains(term.field)) {
+      continue;
+    }
+    final value = term.value.trim();
+    if (value.isNotEmpty) {
+      unique.add(value);
+    }
+  }
+  final result = unique.toList();
+  result.sort((a, b) => b.length.compareTo(a.length));
+  return result;
+}
+
+bool _matchesTagHighlight(String tag, List<_SearchTerm> terms) {
+  final lowerTag = tag.toLowerCase();
+  for (final term in terms) {
+    if (term.field == _SearchField.tag || term.field == _SearchField.any) {
+      if (lowerTag.contains(term.value)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+class _HighlightedText extends StatelessWidget {
+  const _HighlightedText(
+    this.text, {
+    required this.terms,
+    this.style,
+    this.highlightStyle,
+    this.maxLines,
+  });
+
+  final String text;
+  final List<String> terms;
+  final TextStyle? style;
+  final TextStyle? highlightStyle;
+  final int? maxLines;
+
+  @override
+  Widget build(BuildContext context) {
+    if (text.isEmpty || terms.isEmpty) {
+      return Text(
+        text,
+        style: style,
+        maxLines: maxLines,
+        overflow: maxLines == null ? null : TextOverflow.ellipsis,
+      );
+    }
+    final spans = <TextSpan>[];
+    final lower = text.toLowerCase();
+    var index = 0;
+    while (index < text.length) {
+      int? matchStart;
+      String? matchedTerm;
+      for (final term in terms) {
+        final start = lower.indexOf(term.toLowerCase(), index);
+        if (start == -1) {
+          continue;
+        }
+        if (matchStart == null || start < matchStart) {
+          matchStart = start;
+          matchedTerm = term;
+        }
+      }
+      if (matchStart == null || matchedTerm == null) {
+        spans.add(TextSpan(text: text.substring(index), style: style));
+        break;
+      }
+      if (matchStart > index) {
+        spans.add(
+          TextSpan(text: text.substring(index, matchStart), style: style),
+        );
+      }
+      final end = matchStart + matchedTerm.length;
+      spans.add(
+        TextSpan(
+          text: text.substring(matchStart, end),
+          style: highlightStyle ?? style,
+        ),
+      );
+      index = end;
+    }
+    return RichText(
+      maxLines: maxLines,
+      overflow: maxLines == null ? TextOverflow.clip : TextOverflow.ellipsis,
+      text: TextSpan(
+        style: DefaultTextStyle.of(context).style.merge(style),
+        children: spans,
+      ),
+    );
+  }
+}
+
+enum _VaultMenuAction { syncSettings, tags, categories, export, clear }
 
 class EntryCard extends StatelessWidget {
   const EntryCard({
     super.key,
     required this.item,
     this.service,
+    required this.category,
     required this.tags,
+    required this.searchTerms,
+    required this.selectedCategory,
+    required this.selectedTag,
     required this.isConflict,
     this.isSelected = false,
     this.reduceEffects = false,
@@ -1907,7 +1913,11 @@ class EntryCard extends StatelessWidget {
 
   final VaultItem item;
   final ServicePayload? service;
+  final String category;
   final List<String> tags;
+  final List<_SearchTerm> searchTerms;
+  final String? selectedCategory;
+  final String? selectedTag;
   final bool isConflict;
   final bool isSelected;
   final bool reduceEffects;
@@ -1936,6 +1946,20 @@ class EntryCard extends StatelessWidget {
     final serviceInfo = _buildServiceInfo(service);
     final visibleTags = tags.take(3).toList();
     final remaining = tags.length - visibleTags.length;
+    final titleTerms = _termsForText(searchTerms,
+        includeFields: const {
+          _SearchField.any,
+          _SearchField.title,
+          _SearchField.serviceName,
+          _SearchField.serverName,
+          _SearchField.appId,
+          _SearchField.serverIp,
+        });
+    final categoryTerms = <String>[
+      ..._termsForText(searchTerms,
+          includeFields: const {_SearchField.any, _SearchField.title}),
+      if ((selectedCategory ?? '').isNotEmpty) selectedCategory!,
+    ];
     return AnimatedContainer(
       duration: useAnimations
           ? (isAndroid
@@ -1972,7 +1996,7 @@ class EntryCard extends StatelessWidget {
                     width: 44,
                     height: 44,
                     decoration: BoxDecoration(
-                      color: accent.withOpacity(0.15),
+                      color: accent.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Icon(icon, color: accent),
@@ -2003,33 +2027,65 @@ class EntryCard extends StatelessWidget {
                                   ),
                             ),
                           ),
-                        Text(
+                        _HighlightedText(
                           item.label,
+                          terms: titleTerms,
                           style:
                               Theme.of(context).textTheme.titleMedium?.copyWith(
                                     fontWeight: FontWeight.w700,
                                   ),
+                          highlightStyle: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                color: colorScheme.primary,
+                              ),
                         ),
                         if (serviceInfo != null) ...[
                           const SizedBox(height: 4),
-                          Text(
+                          _HighlightedText(
                             serviceInfo,
-                            style: Theme.of(context)
+                            terms: titleTerms,
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: colorScheme.onSurfaceVariant,
+                                    ),
+                            highlightStyle: Theme.of(context)
                                 .textTheme
                                 .bodySmall
                                 ?.copyWith(
-                                  color: colorScheme.onSurfaceVariant,
+                                  color: colorScheme.primary,
+                                  fontWeight: FontWeight.w700,
                                 ),
                             maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                        if (category.trim().isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          _HighlightedText(
+                            '分类: $category',
+                            terms: categoryTerms,
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: colorScheme.onSurfaceVariant,
+                                    ),
+                            highlightStyle: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(
+                                  color: colorScheme.primary,
+                                  fontWeight: FontWeight.w700,
+                                ),
                           ),
                         ],
                         const SizedBox(height: 6),
                         Text(
                           '更新于 ${item.updatedAt.toLocal()}',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: colorScheme.onSurfaceVariant,
-                              ),
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
                         ),
                         if (tags.isNotEmpty) ...[
                           const SizedBox(height: 10),
@@ -2038,26 +2094,10 @@ class EntryCard extends StatelessWidget {
                             runSpacing: 6,
                             children: [
                               ...visibleTags.map(
-                                (tag) => Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: colorScheme.primaryContainer
-                                        .withOpacity(0.55),
-                                    borderRadius: BorderRadius.circular(999),
-                                  ),
-                                  child: Text(
-                                    tag,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .labelSmall
-                                        ?.copyWith(
-                                          color:
-                                              colorScheme.onPrimaryContainer,
-                                        ),
-                                  ),
+                                (tag) => _buildTagChip(
+                                  context,
+                                  tag,
+                                  colorScheme: colorScheme,
                                 ),
                               ),
                               if (remaining > 0)
@@ -2067,7 +2107,7 @@ class EntryCard extends StatelessWidget {
                                     vertical: 4,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: colorScheme.surfaceVariant,
+                                    color: colorScheme.surfaceContainerHighest,
                                     borderRadius: BorderRadius.circular(999),
                                   ),
                                   child: Text(
@@ -2076,8 +2116,7 @@ class EntryCard extends StatelessWidget {
                                         .textTheme
                                         .labelSmall
                                         ?.copyWith(
-                                          color:
-                                              colorScheme.onSurfaceVariant,
+                                          color: colorScheme.onSurfaceVariant,
                                         ),
                                   ),
                                 ),
@@ -2107,6 +2146,46 @@ class EntryCard extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildTagChip(
+    BuildContext context,
+    String tag, {
+    required ColorScheme colorScheme,
+  }) {
+    final isSelectedTag = (selectedTag ?? '').isNotEmpty && selectedTag == tag;
+    final matchedBySearch = _matchesTagHighlight(tag, searchTerms);
+    final emphasized = isSelectedTag || matchedBySearch;
+    final backgroundColor = emphasized
+        ? colorScheme.primaryContainer
+        : colorScheme.primaryContainer.withValues(alpha: 0.55);
+    final foregroundColor = emphasized
+        ? colorScheme.onPrimaryContainer
+        : colorScheme.onPrimaryContainer;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(999),
+        border: emphasized
+            ? Border.all(color: colorScheme.primary.withValues(alpha: 0.35))
+            : null,
+      ),
+      child: _HighlightedText(
+        tag,
+        terms: _termsForText(
+          searchTerms,
+          includeFields: const {_SearchField.any, _SearchField.tag},
+        ),
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: foregroundColor,
+            ),
+        highlightStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: foregroundColor,
+              fontWeight: FontWeight.w800,
+            ),
       ),
     );
   }

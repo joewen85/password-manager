@@ -5,55 +5,75 @@ import 'package:password_manager_crypto/password_manager_crypto.dart';
 class VaultMetadata {
   const VaultMetadata({
     required this.tags,
+    required this.categories,
     required this.sortOrder,
     required this.tagsUpdatedAt,
+    required this.categoriesUpdatedAt,
   });
 
   final List<String> tags;
+  final List<String> categories;
   final VaultSortOrder sortOrder;
   final int tagsUpdatedAt;
+  final int categoriesUpdatedAt;
 
   factory VaultMetadata.defaults() {
     return const VaultMetadata(
       tags: <String>[],
+      categories: <String>[],
       sortOrder: VaultSortOrder.updatedDesc,
       tagsUpdatedAt: 0,
+      categoriesUpdatedAt: 0,
     );
   }
 
   VaultMetadata copyWith({
     List<String>? tags,
+    List<String>? categories,
     VaultSortOrder? sortOrder,
     int? tagsUpdatedAt,
+    int? categoriesUpdatedAt,
   }) {
     return VaultMetadata(
       tags: tags ?? this.tags,
+      categories: categories ?? this.categories,
       sortOrder: sortOrder ?? this.sortOrder,
       tagsUpdatedAt: tagsUpdatedAt ?? this.tagsUpdatedAt,
+      categoriesUpdatedAt: categoriesUpdatedAt ?? this.categoriesUpdatedAt,
     );
   }
 
   Map<String, Object?> toJson() => {
         'tags': tags,
+        'categories': categories,
         'sortOrder': sortOrder.name,
         'tagsUpdatedAt': tagsUpdatedAt,
+        'categoriesUpdatedAt': categoriesUpdatedAt,
       };
 
   static VaultMetadata fromJson(Map<String, Object?> json) {
     final rawTags = (json['tags'] as List?)?.whereType<String>().toList() ?? [];
+    final rawCategories =
+        (json['categories'] as List?)?.whereType<String>().toList() ?? [];
     final sortName = json['sortOrder'] as String? ?? 'updatedDesc';
     final rawUpdatedAt = json['tagsUpdatedAt'];
     final tagsUpdatedAt = rawUpdatedAt is num
         ? rawUpdatedAt.toInt()
         : int.tryParse(rawUpdatedAt?.toString() ?? '') ?? 0;
+    final rawCategoriesUpdatedAt = json['categoriesUpdatedAt'];
+    final categoriesUpdatedAt = rawCategoriesUpdatedAt is num
+        ? rawCategoriesUpdatedAt.toInt()
+        : int.tryParse(rawCategoriesUpdatedAt?.toString() ?? '') ?? 0;
     final sortOrder = VaultSortOrder.values.firstWhere(
       (entry) => entry.name == sortName,
       orElse: () => VaultSortOrder.updatedDesc,
     );
     return VaultMetadata(
       tags: rawTags,
+      categories: rawCategories,
       sortOrder: sortOrder,
       tagsUpdatedAt: tagsUpdatedAt,
+      categoriesUpdatedAt: categoriesUpdatedAt,
     );
   }
 }

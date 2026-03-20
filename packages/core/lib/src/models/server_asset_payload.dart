@@ -10,6 +10,7 @@ class ServerAssetPayload {
     required this.location,
     required this.notes,
     required this.tags,
+    this.category = '',
   });
 
   final String name;
@@ -22,6 +23,7 @@ class ServerAssetPayload {
   final String location;
   final String notes;
   final List<String> tags;
+  final String category;
 
   Map<String, Object> toJson() => {
         'name': name,
@@ -34,6 +36,7 @@ class ServerAssetPayload {
         'location': location,
         'notes': notes,
         'tags': tags,
+        'category': category,
       };
 
   static ServerAssetPayload fromJson(Map<String, Object?> json) {
@@ -49,6 +52,7 @@ class ServerAssetPayload {
       location: json['location'] as String? ?? '',
       notes: json['notes'] as String? ?? '',
       tags: rawTags,
+      category: json['category'] as String? ?? '',
     );
   }
 }

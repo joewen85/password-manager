@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:password_manager_core/password_manager_core.dart';
 
+import '../widgets/category_picker_section.dart';
+
 class NewServiceSheetResult {
   const NewServiceSheetResult({required this.label, required this.payload});
 
@@ -13,6 +15,7 @@ class NewServiceSheet extends StatefulWidget {
     super.key,
     required this.availableAccounts,
     required this.availableServers,
+    this.availableCategories = const <String>[],
     this.initialData,
     this.title = '新建服务',
     this.submitLabel = '保存',
@@ -20,6 +23,7 @@ class NewServiceSheet extends StatefulWidget {
 
   final List<VaultItem> availableAccounts;
   final List<VaultItem> availableServers;
+  final List<String> availableCategories;
   final NewServiceSheetResult? initialData;
   final String title;
   final String submitLabel;
@@ -39,6 +43,7 @@ class _NewServiceSheetState extends State<NewServiceSheet> {
   final List<_AccountForm> _accounts = [];
   final Set<String> _selectedServerIds = {};
   String _linkedAccountId = '';
+  String _selectedCategory = '';
 
   @override
   void initState() {
@@ -52,6 +57,7 @@ class _NewServiceSheetState extends State<NewServiceSheet> {
       _selectedServerIds.addAll(data.payload.serverIds);
       _notesController.text = data.payload.notes;
       _tagsController.text = data.payload.tags.join(', ');
+      _selectedCategory = data.payload.category;
       for (final account in data.payload.accounts) {
         _accounts.add(_AccountForm.fromPayload(account));
       }
@@ -94,13 +100,21 @@ class _NewServiceSheetState extends State<NewServiceSheet> {
             children: [
               Text(
                 widget.title,
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                style:
+                    const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 12),
               _buildField(
                 controller: _nameController,
                 label: '服务名称',
                 requiredField: true,
+              ),
+              CategoryPickerSection(
+                availableCategories: widget.availableCategories,
+                selectedCategory: _selectedCategory,
+                onChanged: (value) {
+                  setState(() => _selectedCategory = value);
+                },
               ),
               _buildField(
                 controller: _connectionAddressController,
@@ -326,8 +340,7 @@ class _NewServiceSheetState extends State<NewServiceSheet> {
                 final filtered = trimmed.isEmpty
                     ? widget.availableServers
                     : widget.availableServers.where((item) {
-                        final label =
-                            item.label.isEmpty ? item.id : item.label;
+                        final label = item.label.isEmpty ? item.id : item.label;
                         final lowerLabel = label.toLowerCase();
                         return lowerLabel.contains(trimmed) ||
                             item.id.toLowerCase().contains(trimmed);
@@ -436,8 +449,7 @@ class _NewServiceSheetState extends State<NewServiceSheet> {
                 final filtered = trimmed.isEmpty
                     ? widget.availableAccounts
                     : widget.availableAccounts.where((item) {
-                        final label =
-                            item.label.isEmpty ? item.id : item.label;
+                        final label = item.label.isEmpty ? item.id : item.label;
                         final lowerLabel = label.toLowerCase();
                         return lowerLabel.contains(trimmed) ||
                             item.id.toLowerCase().contains(trimmed);
@@ -475,8 +487,7 @@ class _NewServiceSheetState extends State<NewServiceSheet> {
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
-                                onTap: () =>
-                                    Navigator.of(context).pop(item.id),
+                                onTap: () => Navigator.of(context).pop(item.id),
                               ),
                         ],
                       ),
@@ -534,6 +545,7 @@ class _NewServiceSheetState extends State<NewServiceSheet> {
       accounts: accounts,
       notes: _notesController.text.trim(),
       tags: _parseTags(_tagsController.text),
+      category: _selectedCategory,
     );
     Navigator.of(context).pop(
       NewServiceSheetResult(
@@ -563,9 +575,7 @@ class _NewServiceSheetState extends State<NewServiceSheet> {
           hintText: hint,
         ),
         validator: requiredField
-            ? (value) => (value == null || value.trim().isEmpty)
-                ? '必填'
-                : null
+            ? (value) => (value == null || value.trim().isEmpty) ? '必填' : null
             : null,
       ),
     );

@@ -34,6 +34,7 @@ class ServicePayload {
     required this.accounts,
     required this.notes,
     required this.tags,
+    this.category = '',
   });
 
   final String name;
@@ -44,6 +45,7 @@ class ServicePayload {
   final List<ServiceAccount> accounts;
   final String notes;
   final List<String> tags;
+  final String category;
 
   Map<String, Object?> toJson() => {
         'name': name,
@@ -54,6 +56,7 @@ class ServicePayload {
         'accounts': accounts.map((entry) => entry.toJson()).toList(),
         'notes': notes,
         'tags': tags,
+        'category': category,
       };
 
   static ServicePayload fromJson(Map<String, Object?> json) {
@@ -76,6 +79,7 @@ class ServicePayload {
       accounts: accounts,
       notes: json['notes'] as String? ?? '',
       tags: rawTags,
+      category: json['category'] as String? ?? '',
     );
   }
 }

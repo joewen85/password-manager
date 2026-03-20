@@ -168,8 +168,14 @@ async function requestText(
       statusCode: Number(response.responseCode),
       body: responseResultToText(response.result),
     };
+  } catch (error) {
+    throw new Error(`HTTP request failed: ${error}`);
   } finally {
-    httpRequest.destroy();
+    try {
+      httpRequest.destroy();
+    } catch (error) {
+      console.error(`Destroy http request failed: ${error}`);
+    }
   }
 }
 

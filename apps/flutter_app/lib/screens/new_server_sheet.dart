@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:password_manager_core/password_manager_core.dart';
 
+import '../widgets/category_picker_section.dart';
+
 class NewServerSheetResult {
   const NewServerSheetResult({required this.label, required this.payload});
 
@@ -12,11 +14,13 @@ class NewServerSheet extends StatefulWidget {
   const NewServerSheet({
     super.key,
     this.initialData,
+    this.availableCategories = const <String>[],
     this.title = '新建服务器',
     this.submitLabel = '保存',
   });
 
   final NewServerSheetResult? initialData;
+  final List<String> availableCategories;
   final String title;
   final String submitLabel;
 
@@ -36,6 +40,7 @@ class _NewServerSheetState extends State<NewServerSheet> {
   final _locationController = TextEditingController();
   final _notesController = TextEditingController();
   final _tagsController = TextEditingController();
+  String _selectedCategory = '';
 
   @override
   void initState() {
@@ -52,6 +57,7 @@ class _NewServerSheetState extends State<NewServerSheet> {
       _locationController.text = data.payload.location;
       _notesController.text = data.payload.notes;
       _tagsController.text = data.payload.tags.join(', ');
+      _selectedCategory = data.payload.category;
     }
   }
 
@@ -88,13 +94,21 @@ class _NewServerSheetState extends State<NewServerSheet> {
             children: [
               Text(
                 widget.title,
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                style:
+                    const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 12),
               _buildField(
                 controller: _nameController,
                 label: '服务器名称',
                 requiredField: true,
+              ),
+              CategoryPickerSection(
+                availableCategories: widget.availableCategories,
+                selectedCategory: _selectedCategory,
+                onChanged: (value) {
+                  setState(() => _selectedCategory = value);
+                },
               ),
               _buildField(
                 controller: _ipController,
@@ -157,6 +171,7 @@ class _NewServerSheetState extends State<NewServerSheet> {
                           location: _locationController.text.trim(),
                           notes: _notesController.text.trim(),
                           tags: _parseTags(_tagsController.text),
+                          category: _selectedCategory,
                         );
                         Navigator.of(context).pop(
                           NewServerSheetResult(
@@ -196,9 +211,7 @@ class _NewServerSheetState extends State<NewServerSheet> {
           hintText: hint,
         ),
         validator: requiredField
-            ? (value) => (value == null || value.trim().isEmpty)
-                ? '必填'
-                : null
+            ? (value) => (value == null || value.trim().isEmpty) ? '必填' : null
             : null,
       ),
     );

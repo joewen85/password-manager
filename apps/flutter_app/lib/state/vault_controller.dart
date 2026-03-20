@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:password_manager_auth/password_manager_auth.dart';
 import 'package:password_manager_backup/password_manager_backup.dart';
 import 'package:password_manager_core/password_manager_core.dart';
@@ -69,8 +69,13 @@ class VaultController extends ChangeNotifier {
   bool _syncInProgress = false;
   Timer? _syncTimer;
   Timer? _syncDebounceTimer;
+  Timer? _resumeSyncTimer;
   int _notificationDepth = 0;
   bool _pendingNotify = false;
+  bool _appIsActive = true;
+  DateTime? _syncStartedAt;
+  int _entryHydrationToken = 0;
+  int _postUnlockToken = 0;
 
   bool get isUnlocked => _isUnlocked;
   bool get requireTotp => _requireTotp;
@@ -124,6 +129,7 @@ class VaultController extends ChangeNotifier {
       }
     }
   }
+
   VaultMetadata get metadata => _metadata;
   List<VaultEntryView> get entryViews => List.unmodifiable(_entryViews);
   int get entryViewsVersion => _entryViewsVersion;
@@ -134,8 +140,8 @@ class VaultController extends ChangeNotifier {
 
   @override
   void dispose() {
-    _syncTimer?.cancel();
-    _syncDebounceTimer?.cancel();
+    _pauseAutoSync();
+    _resumeSyncTimer?.cancel();
     _vaultService.setSessionMetadataKey(null);
     super.dispose();
   }
@@ -143,6 +149,27 @@ class VaultController extends ChangeNotifier {
   Future<void> initialize() async {
     _masterKeyRecord = await _masterKeyStore.read();
     _notifyListeners();
+  }
+
+  void handleAppLifecycleStateChanged(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.resumed:
+        final wasInactive = !_appIsActive;
+        _appIsActive = true;
+        _recoverStalledOperations();
+        _configureAutoSync();
+        if (wasInactive) {
+          _scheduleResumeSync();
+        }
+        return;
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+        _appIsActive = false;
+        _pauseAutoSync();
+        return;
+    }
   }
 
   Future<bool> setupMasterPassword(String password, String confirm) async {
@@ -221,7 +248,8 @@ class VaultController extends ChangeNotifier {
     );
     _isUnlocked = true;
     _notifyListeners();
-    unawaited(_postUnlockLoad(masterPassword));
+    final unlockToken = ++_postUnlockToken;
+    unawaited(_postUnlockLoad(masterPassword, unlockToken));
     return true;
   }
 
@@ -232,10 +260,9 @@ class VaultController extends ChangeNotifier {
     _vaultService.setSessionMetadataKey(null);
     _isUnlocked = false;
     _items = [];
-    _syncTimer?.cancel();
-    _syncTimer = null;
-    _syncDebounceTimer?.cancel();
-    _syncDebounceTimer = null;
+    _entryHydrationToken++;
+    _postUnlockToken++;
+    _pauseAutoSync();
     _notifyListeners();
   }
 
@@ -250,7 +277,8 @@ class VaultController extends ChangeNotifier {
       _setEntryViews(await _buildEntryViews(_items));
     } else {
       _setEntryViews(_buildSkeletonEntryViews(_items));
-      unawaited(_hydrateEntryViews(_items));
+      final hydrationToken = ++_entryHydrationToken;
+      unawaited(_hydrateEntryViews(_items, hydrationToken));
     }
     _notifyListeners();
   }
@@ -260,6 +288,7 @@ class VaultController extends ChangeNotifier {
     required CredentialPayload payload,
   }) async {
     _ensureUnlocked();
+    await _ensureCategory(payload.category);
     await _ensureTags(payload.tags);
     final version = _bumpVersion(const <String, int>{});
     final item = await _vaultService.addCredential(
@@ -286,6 +315,7 @@ class VaultController extends ChangeNotifier {
     required CredentialPayload payload,
   }) async {
     _ensureUnlocked();
+    await _ensureCategory(payload.category);
     await _ensureTags(payload.tags);
     final version = _bumpVersion(item.version);
     final updated = await _vaultService.updateCredential(
@@ -322,6 +352,7 @@ class VaultController extends ChangeNotifier {
     required ServerAssetPayload payload,
   }) async {
     _ensureUnlocked();
+    await _ensureCategory(payload.category);
     await _ensureTags(payload.tags);
     final version = _bumpVersion(const <String, int>{});
     final item = await _vaultService.addServerAsset(
@@ -348,6 +379,7 @@ class VaultController extends ChangeNotifier {
     required ServerAssetPayload payload,
   }) async {
     _ensureUnlocked();
+    await _ensureCategory(payload.category);
     await _ensureTags(payload.tags);
     final version = _bumpVersion(item.version);
     final updated = await _vaultService.updateServerAsset(
@@ -384,6 +416,7 @@ class VaultController extends ChangeNotifier {
     required ServicePayload payload,
   }) async {
     _ensureUnlocked();
+    await _ensureCategory(payload.category);
     await _ensureTags(payload.tags);
     final version = _bumpVersion(const <String, int>{});
     final item = await _vaultService.addService(
@@ -410,6 +443,7 @@ class VaultController extends ChangeNotifier {
     required ServicePayload payload,
   }) async {
     _ensureUnlocked();
+    await _ensureCategory(payload.category);
     await _ensureTags(payload.tags);
     final version = _bumpVersion(item.version);
     final updated = await _vaultService.updateService(
@@ -474,23 +508,36 @@ class VaultController extends ChangeNotifier {
       await _recordSyncStatus('skipped', '未配置同步');
       return;
     }
+    if (!_appIsActive && !notifyProgress) {
+      return;
+    }
     if (notifyProgress) {
       _syncInProgress = true;
+      _syncStartedAt = DateTime.now();
       _notifyListeners();
-      await _runWithNotificationsSuppressed(
-        () async => _performSync(),
-        autoFlush: false,
-      );
-      _syncInProgress = false;
-      _notifyOnce();
+      try {
+        await _runWithNotificationsSuppressed(
+          () async => _performSync(),
+          autoFlush: false,
+        );
+      } finally {
+        _syncInProgress = false;
+        _syncStartedAt = null;
+        _notifyOnce();
+      }
       return;
     }
     await _runWithNotificationsSuppressed(() async {
       _syncInProgress = true;
+      _syncStartedAt = DateTime.now();
       _notifyListeners();
-      await _performSync();
-      _syncInProgress = false;
-      _notifyListeners();
+      try {
+        await _performSync();
+      } finally {
+        _syncInProgress = false;
+        _syncStartedAt = null;
+        _notifyListeners();
+      }
     });
   }
 
@@ -511,6 +558,19 @@ class VaultController extends ChangeNotifier {
         final downloadWatch = Stopwatch()..start();
         final remoteResult = await client.download();
         timings['download'] = downloadWatch.elapsed;
+        if (!_isSuccessfulDownloadStatus(remoteResult.statusCode)) {
+          await _appendSyncLog(_formatSyncTimings(
+            timings,
+            total: overall.elapsed,
+            attempt: attempt,
+            mergeDetails: mergeResult?.timings,
+          ));
+          await _recordSyncStatus(
+            'error',
+            _buildSyncFailureMessage('下载失败', remoteResult.statusCode),
+          );
+          return;
+        }
         final mergeWatch = Stopwatch()..start();
         mergeResult = await _mergeWithRemote(
           localPayload: localPayload,
@@ -527,7 +587,7 @@ class VaultController extends ChangeNotifier {
             timings,
             total: overall.elapsed,
             attempt: attempt,
-            mergeDetails: mergeResult?.timings,
+            mergeDetails: mergeResult.timings,
           ));
           final resolvedRevision =
               mergeResult.revision > _syncSettings.lastSyncRevision
@@ -543,13 +603,12 @@ class VaultController extends ChangeNotifier {
         final uploadWatch = Stopwatch()..start();
         final uploadResult = await client.upload(mergeResult.payload);
         timings['upload'] = uploadWatch.elapsed;
-        if (uploadResult.statusCode < 200 ||
-            uploadResult.statusCode >= 300) {
+        if (uploadResult.statusCode < 200 || uploadResult.statusCode >= 300) {
           await _appendSyncLog(_formatSyncTimings(
             timings,
             total: overall.elapsed,
             attempt: attempt,
-            mergeDetails: mergeResult?.timings,
+            mergeDetails: mergeResult.timings,
           ));
           await _recordSyncStatus(
             'error',
@@ -560,13 +619,29 @@ class VaultController extends ChangeNotifier {
         final verifyWatch = Stopwatch()..start();
         final verify = await client.download();
         timings['verify'] = verifyWatch.elapsed;
-        final verifyRevision = _decodePayload(verify.payload ?? '').revision;
+        if (!_isSuccessfulDownloadStatus(verify.statusCode) ||
+            verify.payload == null ||
+            verify.payload!.trim().isEmpty) {
+          await _appendSyncLog(_formatSyncTimings(
+            timings,
+            total: overall.elapsed,
+            attempt: attempt,
+            mergeDetails: mergeResult.timings,
+          ));
+          await _recordSyncStatus(
+            'error',
+            _buildSyncFailureMessage('校验失败', verify.statusCode),
+          );
+          return;
+        }
+        final verifyPayload = verify.payload!;
+        final verifyRevision = _decodePayload(verifyPayload).revision;
         if (verifyRevision == mergeResult.revision) {
           await _appendSyncLog(_formatSyncTimings(
             timings,
             total: overall.elapsed,
             attempt: attempt,
-            mergeDetails: mergeResult?.timings,
+            mergeDetails: mergeResult.timings,
           ));
           await _updateSyncRevision(mergeResult.revision);
           await _recordSyncStatus(
@@ -580,7 +655,7 @@ class VaultController extends ChangeNotifier {
             timings,
             total: overall.elapsed,
             attempt: attempt,
-            mergeDetails: mergeResult?.timings,
+            mergeDetails: mergeResult.timings,
           ));
           await _recordSyncStatus(
             'error',
@@ -676,17 +751,21 @@ class VaultController extends ChangeNotifier {
     required List<String> tags,
     required bool isConflict,
   }) {
+    final category =
+        credential?.category ?? server?.category ?? service?.category ?? '';
     return VaultEntryView(
       item: item,
       credential: credential,
       server: server,
       service: service,
+      category: category,
       tags: tags,
       isConflict: isConflict,
       searchIndex: _buildSearchIndex(
         item: item,
         credential: credential,
         server: server,
+        service: service,
         tags: tags,
       ),
     );
@@ -696,6 +775,7 @@ class VaultController extends ChangeNotifier {
     required VaultItem item,
     required CredentialPayload? credential,
     required ServerAssetPayload? server,
+    required ServicePayload? service,
     required List<String> tags,
   }) {
     String? lowerOrNull(String? value) {
@@ -713,6 +793,9 @@ class VaultController extends ChangeNotifier {
     final appIdLower = lowerOrNull(credential?.appId);
     final serverNameLower = lowerOrNull(server?.name);
     final serverIpLower = lowerOrNull(server?.ipAddress);
+    final categoryLower = lowerOrNull(
+      credential?.category ?? server?.category ?? service?.category,
+    );
     final tagsLower = tags.isEmpty
         ? const <String>[]
         : tags.map((tag) => tag.toLowerCase()).toList(growable: false);
@@ -721,6 +804,7 @@ class VaultController extends ChangeNotifier {
       appIdLower: appIdLower,
       serverNameLower: serverNameLower,
       serverIpLower: serverIpLower,
+      categoryLower: categoryLower,
       tagsLower: tagsLower,
     );
     return VaultEntrySearchIndex(
@@ -728,6 +812,7 @@ class VaultController extends ChangeNotifier {
       appIdLower: appIdLower,
       serverNameLower: serverNameLower,
       serverIpLower: serverIpLower,
+      categoryLower: categoryLower,
       tagsLower: tagsLower,
       anyLower: anyLower,
     );
@@ -738,6 +823,7 @@ class VaultController extends ChangeNotifier {
     required String? appIdLower,
     required String? serverNameLower,
     required String? serverIpLower,
+    required String? categoryLower,
     required List<String> tagsLower,
   }) {
     final buffer = StringBuffer(labelLower);
@@ -753,6 +839,10 @@ class VaultController extends ChangeNotifier {
       buffer.write('\n');
       buffer.write(serverIpLower);
     }
+    if (categoryLower != null && categoryLower.isNotEmpty) {
+      buffer.write('\n');
+      buffer.write(categoryLower);
+    }
     for (final tag in tagsLower) {
       if (tag.isEmpty) {
         continue;
@@ -764,52 +854,69 @@ class VaultController extends ChangeNotifier {
   }
 
   List<VaultEntryView> _buildSkeletonEntryViews(List<VaultItem> items) {
-      return items
-          .where((item) => !item.isDeleted)
-          .map(
-            (item) => _buildEntryView(
-              item: item,
-              credential: null,
-              server: null,
-              service: null,
-              tags: const [],
-              isConflict: _isConflictItem(item),
-            ),
-          )
-          .toList();
+    return items
+        .where((item) => !item.isDeleted)
+        .map(
+          (item) => _buildEntryView(
+            item: item,
+            credential: null,
+            server: null,
+            service: null,
+            tags: const [],
+            isConflict: _isConflictItem(item),
+          ),
+        )
+        .toList();
   }
 
-  Future<void> _hydrateEntryViews(List<VaultItem> items) async {
-    if (!_isUnlocked) {
+  Future<void> _hydrateEntryViews(
+      List<VaultItem> items, int hydrationToken) async {
+    if (!_isUnlocked || hydrationToken != _entryHydrationToken) {
       return;
     }
     final views = await _buildEntryViews(items);
-    if (!_isUnlocked) {
+    if (!_isUnlocked || hydrationToken != _entryHydrationToken) {
       return;
     }
     _setEntryViews(views);
     _notifyListeners();
   }
 
-  Future<void> _postUnlockLoad(String masterPassword) async {
-    await _vaultService.migrateLegacyRecords(masterPassword);
-    if (!_syncSettings.syncMasterKey) {
-      await _vaultService.migrateMetadataToRecordKey(masterPassword);
-    }
-    await reloadWithOptions(eagerDecrypt: false);
-    if (!_isUnlocked || _masterPassword != masterPassword) {
-      return;
-    }
-    await Future.wait([
-      _loadSyncSettings(),
-      _loadMetadata(),
-    ]);
-    if (!_isUnlocked || _masterPassword != masterPassword) {
-      return;
-    }
-    _notifyListeners();
-    if (_syncSettings.autoSyncOnUnlock) {
-      await syncNow();
+  Future<void> _postUnlockLoad(String masterPassword, int unlockToken) async {
+    try {
+      await _vaultService
+          .migrateLegacyRecords(masterPassword)
+          .timeout(const Duration(seconds: 8));
+      if (!_syncSettings.syncMasterKey) {
+        await _vaultService
+            .migrateMetadataToRecordKey(masterPassword)
+            .timeout(const Duration(seconds: 8));
+      }
+      await reloadWithOptions(eagerDecrypt: false).timeout(
+        const Duration(seconds: 8),
+      );
+      if (!_isUnlocked ||
+          _masterPassword != masterPassword ||
+          unlockToken != _postUnlockToken) {
+        return;
+      }
+      await Future.wait([
+        _loadSyncSettings(),
+        _loadMetadata(),
+      ]).timeout(const Duration(seconds: 8));
+      if (!_isUnlocked ||
+          _masterPassword != masterPassword ||
+          unlockToken != _postUnlockToken) {
+        return;
+      }
+      _notifyListeners();
+      if (_syncSettings.autoSyncOnUnlock && _appIsActive) {
+        _scheduleResumeSync();
+      }
+    } on TimeoutException {
+      await _recordSyncStatus('warning', '解锁后的后台恢复超时，已跳过本次恢复');
+    } catch (error) {
+      await _recordSyncStatus('warning', '解锁后的后台恢复失败: $error');
     }
   }
 
@@ -823,6 +930,19 @@ class VaultController extends ChangeNotifier {
       return;
     }
     _metadata = _withUpdatedTags(newTags);
+    await _saveMetadata();
+  }
+
+  Future<void> _ensureCategory(String category) async {
+    final trimmed = category.trim();
+    if (trimmed.isEmpty) {
+      return;
+    }
+    final newCategories = {..._metadata.categories, trimmed}.toList()..sort();
+    if (listEquals(newCategories, _metadata.categories)) {
+      return;
+    }
+    _metadata = _withUpdatedCategories(newCategories);
     await _saveMetadata();
   }
 
@@ -850,6 +970,7 @@ class VaultController extends ChangeNotifier {
           location: payload.location,
           notes: payload.notes,
           tags: updatedTags,
+          category: payload.category,
         );
         await updateServerAsset(
           item: item,
@@ -872,6 +993,7 @@ class VaultController extends ChangeNotifier {
           accounts: payload.accounts,
           notes: payload.notes,
           tags: updatedTags,
+          category: payload.category,
         );
         await updateService(
           item: item,
@@ -894,6 +1016,7 @@ class VaultController extends ChangeNotifier {
           secretKey: payload.secretKey,
           notes: payload.notes,
           tags: updatedTags,
+          category: payload.category,
         );
         await updateEntry(
           item: item,
@@ -929,6 +1052,7 @@ class VaultController extends ChangeNotifier {
           location: payload.location,
           notes: payload.notes,
           tags: updatedTags,
+          category: payload.category,
         );
         await updateServerAsset(
           item: item,
@@ -952,6 +1076,7 @@ class VaultController extends ChangeNotifier {
           accounts: payload.accounts,
           notes: payload.notes,
           tags: updatedTags,
+          category: payload.category,
         );
         await updateService(
           item: item,
@@ -975,6 +1100,160 @@ class VaultController extends ChangeNotifier {
           secretKey: payload.secretKey,
           notes: payload.notes,
           tags: updatedTags,
+          category: payload.category,
+        );
+        await updateEntry(
+          item: item,
+          label: item.label,
+          payload: updatedPayload,
+        );
+      }
+    }
+  }
+
+  Future<void> _removeCategoryFromEntries(String category) async {
+    final items = await _vaultService.listAll(masterPassword: _masterPassword!);
+    for (final item in items) {
+      if (item.isDeleted) {
+        continue;
+      }
+      if (item.type == VaultEntryType.server) {
+        final payload = await readServerAsset(item);
+        if (payload == null || payload.category != category) {
+          continue;
+        }
+        final updatedPayload = ServerAssetPayload(
+          name: payload.name,
+          ipAddress: payload.ipAddress,
+          port: payload.port,
+          username: payload.username,
+          password: payload.password,
+          basicConfig: payload.basicConfig,
+          operatingSystem: payload.operatingSystem,
+          location: payload.location,
+          notes: payload.notes,
+          tags: payload.tags,
+          category: '',
+        );
+        await updateServerAsset(
+          item: item,
+          label: item.label,
+          payload: updatedPayload,
+        );
+      } else if (item.type == VaultEntryType.service) {
+        final payload = await readService(item);
+        if (payload == null || payload.category != category) {
+          continue;
+        }
+        final updatedPayload = ServicePayload(
+          name: payload.name,
+          connectionAddress: payload.connectionAddress,
+          connectionPort: payload.connectionPort,
+          accountId: payload.accountId,
+          serverIds: payload.serverIds,
+          accounts: payload.accounts,
+          notes: payload.notes,
+          tags: payload.tags,
+          category: '',
+        );
+        await updateService(
+          item: item,
+          label: item.label,
+          payload: updatedPayload,
+        );
+      } else {
+        final payload = await readEntry(item);
+        if (payload == null || payload.category != category) {
+          continue;
+        }
+        final updatedPayload = CredentialPayload(
+          username: payload.username,
+          password: payload.password,
+          token: payload.token,
+          appId: payload.appId,
+          accessToken: payload.accessToken,
+          secretKey: payload.secretKey,
+          notes: payload.notes,
+          tags: payload.tags,
+          category: '',
+        );
+        await updateEntry(
+          item: item,
+          label: item.label,
+          payload: updatedPayload,
+        );
+      }
+    }
+  }
+
+  Future<void> _replaceCategoryInEntries(
+    String oldCategory,
+    String newCategory,
+  ) async {
+    final items = await _vaultService.listAll(masterPassword: _masterPassword!);
+    for (final item in items) {
+      if (item.isDeleted) {
+        continue;
+      }
+      if (item.type == VaultEntryType.server) {
+        final payload = await readServerAsset(item);
+        if (payload == null || payload.category != oldCategory) {
+          continue;
+        }
+        final updatedPayload = ServerAssetPayload(
+          name: payload.name,
+          ipAddress: payload.ipAddress,
+          port: payload.port,
+          username: payload.username,
+          password: payload.password,
+          basicConfig: payload.basicConfig,
+          operatingSystem: payload.operatingSystem,
+          location: payload.location,
+          notes: payload.notes,
+          tags: payload.tags,
+          category: newCategory,
+        );
+        await updateServerAsset(
+          item: item,
+          label: item.label,
+          payload: updatedPayload,
+        );
+      } else if (item.type == VaultEntryType.service) {
+        final payload = await readService(item);
+        if (payload == null || payload.category != oldCategory) {
+          continue;
+        }
+        final updatedPayload = ServicePayload(
+          name: payload.name,
+          connectionAddress: payload.connectionAddress,
+          connectionPort: payload.connectionPort,
+          accountId: payload.accountId,
+          serverIds: payload.serverIds,
+          accounts: payload.accounts,
+          notes: payload.notes,
+          tags: payload.tags,
+          category: newCategory,
+        );
+        await updateService(
+          item: item,
+          label: item.label,
+          payload: updatedPayload,
+        );
+      } else {
+        final payload = await readEntry(item);
+        if (payload == null || payload.category != oldCategory) {
+          continue;
+        }
+        final updatedPayload = CredentialPayload(
+          username: payload.username,
+          password: payload.password,
+          token: payload.token,
+          appId: payload.appId,
+          accessToken: payload.accessToken,
+          secretKey: payload.secretKey,
+          notes: payload.notes,
+          tags: payload.tags,
+          category: newCategory,
         );
         await updateEntry(
           item: item,
@@ -1020,6 +1299,22 @@ class VaultController extends ChangeNotifier {
     _notifyListeners();
   }
 
+  Future<void> addCategory(String category) async {
+    _ensureUnlocked();
+    final trimmed = category.trim();
+    if (trimmed.isEmpty) {
+      return;
+    }
+    if (_metadata.categories.contains(trimmed)) {
+      return;
+    }
+    final updated = [..._metadata.categories, trimmed]..sort();
+    _metadata = _withUpdatedCategories(updated);
+    await _saveMetadata();
+    _scheduleSyncSoon();
+    _notifyListeners();
+  }
+
   Future<void> renameTag(String oldTag, String newTag) async {
     _ensureUnlocked();
     final trimmed = newTag.trim();
@@ -1040,6 +1335,26 @@ class VaultController extends ChangeNotifier {
     _scheduleSyncSoon();
   }
 
+  Future<void> renameCategory(String oldCategory, String newCategory) async {
+    _ensureUnlocked();
+    final trimmed = newCategory.trim();
+    if (trimmed.isEmpty) {
+      return;
+    }
+    final updatedCategories = _metadata.categories
+        .map((entry) => entry == oldCategory ? trimmed : entry)
+        .toSet()
+        .toList()
+      ..sort();
+    if (!listEquals(updatedCategories, _metadata.categories)) {
+      _metadata = _withUpdatedCategories(updatedCategories);
+      await _saveMetadata();
+    }
+    await _replaceCategoryInEntries(oldCategory, trimmed);
+    await reload();
+    _scheduleSyncSoon();
+  }
+
   Future<void> deleteTag(String tag) async {
     _ensureUnlocked();
     final updatedTags = _metadata.tags.where((entry) => entry != tag).toList()
@@ -1049,6 +1364,21 @@ class VaultController extends ChangeNotifier {
       await _saveMetadata();
     }
     await _removeTagFromEntries(tag);
+    await reload();
+    _scheduleSyncSoon();
+  }
+
+  Future<void> deleteCategory(String category) async {
+    _ensureUnlocked();
+    final updatedCategories = _metadata.categories
+        .where((entry) => entry != category)
+        .toList()
+      ..sort();
+    if (!listEquals(updatedCategories, _metadata.categories)) {
+      _metadata = _withUpdatedCategories(updatedCategories);
+      await _saveMetadata();
+    }
+    await _removeCategoryFromEntries(category);
     await reload();
     _scheduleSyncSoon();
   }
@@ -1081,6 +1411,13 @@ class VaultController extends ChangeNotifier {
     return _metadata.copyWith(tags: tags, tagsUpdatedAt: _nowUtcMillis());
   }
 
+  VaultMetadata _withUpdatedCategories(List<String> categories) {
+    return _metadata.copyWith(
+      categories: categories,
+      categoriesUpdatedAt: _nowUtcMillis(),
+    );
+  }
+
   Uint8List _generateNonce() {
     final random = Random.secure();
     final bytes = List<int>.generate(12, (_) => random.nextInt(256));
@@ -1105,8 +1442,7 @@ class VaultController extends ChangeNotifier {
         return null;
       }
       final existingMetadata = await _vaultMetadataStore.read();
-      if (existingMetadata != null &&
-          existingMetadata.kdfSalt.isNotEmpty) {
+      if (existingMetadata != null && existingMetadata.kdfSalt.isNotEmpty) {
         metadataSalt = existingMetadata.kdfSalt;
         metadataIterations = existingMetadata.kdfIterations;
       } else {
@@ -1419,8 +1755,7 @@ class VaultController extends ChangeNotifier {
     final jsonPayload = jsonEncode(metadata.toJson());
     final kdfSalt =
         _masterKeyRecord?.metadataSalt ?? _masterKeyRecord?.salt ?? [];
-    final kdfIterations =
-        _masterKeyRecord?.metadataIterations ??
+    final kdfIterations = _masterKeyRecord?.metadataIterations ??
         _masterKeyRecord?.iterations ??
         120000;
     final keyBytes = _metadataKey ??
@@ -1461,24 +1796,72 @@ class VaultController extends ChangeNotifier {
   void _configureAutoSync() {
     _syncTimer?.cancel();
     _syncTimer = null;
-    if (!_syncSettings.autoSyncEnabled || !_isUnlocked) {
+    if (!_appIsActive || !_syncSettings.autoSyncEnabled || !_isUnlocked) {
       return;
     }
     final minutes = _syncSettings.autoSyncIntervalMinutes;
     final interval = Duration(minutes: minutes <= 0 ? 30 : minutes);
-    _syncTimer = Timer.periodic(interval, (_) async {
-      await syncNow();
+    _syncTimer = Timer.periodic(interval, (_) {
+      unawaited(syncNow());
+    });
+  }
+
+  void _pauseAutoSync() {
+    _syncTimer?.cancel();
+    _syncTimer = null;
+    _syncDebounceTimer?.cancel();
+    _syncDebounceTimer = null;
+    _resumeSyncTimer?.cancel();
+    _resumeSyncTimer = null;
+  }
+
+  void _scheduleResumeSync() {
+    _resumeSyncTimer?.cancel();
+    if (!_appIsActive || !_isUnlocked || !_syncSettings.autoSyncEnabled) {
+      return;
+    }
+    _resumeSyncTimer = Timer(const Duration(seconds: 2), () {
+      unawaited(syncNow());
     });
   }
 
   void _scheduleSyncSoon() {
-    if (!_isUnlocked || !_syncSettings.autoSyncEnabled) {
+    if (!_appIsActive || !_isUnlocked || !_syncSettings.autoSyncEnabled) {
       return;
     }
     _syncDebounceTimer?.cancel();
-    _syncDebounceTimer = Timer(const Duration(seconds: 5), () async {
-      await syncNow();
+    _syncDebounceTimer = Timer(const Duration(seconds: 5), () {
+      unawaited(syncNow());
     });
+  }
+
+  void _recoverStalledOperations() {
+    final startedAt = _syncStartedAt;
+    if (_syncInProgress &&
+        startedAt != null &&
+        DateTime.now().difference(startedAt) > const Duration(seconds: 45)) {
+      _syncInProgress = false;
+      _syncStartedAt = null;
+      unawaited(_recordSyncStatus('warning', '检测到同步挂起，已自动重置同步状态'));
+      _notifyListeners();
+    }
+  }
+
+  bool _isSuccessfulDownloadStatus(int statusCode) {
+    return statusCode == 404 || (statusCode >= 200 && statusCode < 300);
+  }
+
+  String _buildSyncFailureMessage(String action, int statusCode) {
+    switch (statusCode) {
+      case 408:
+        return '$action超时，请在网络恢复后重试';
+      case 503:
+        return '$action失败，网络或服务暂不可用';
+      case 404:
+        return '$action失败，远端文件不存在';
+      default:
+        return '$action($statusCode)';
+    }
   }
 
   RemoteSyncClient? _buildSyncClient(SyncSettings settings) {
@@ -1533,12 +1916,10 @@ class VaultController extends ChangeNotifier {
     final localSessionKey = _metadataKey;
     final mergeTimings = <String, Duration>{};
     final localWatch = Stopwatch()..start();
-    final localItems =
-        await _resolveLocalItems(local.records, localSessionKey);
+    final localItems = await _resolveLocalItems(local.records, localSessionKey);
     mergeTimings['local'] = localWatch.elapsed;
     if (remotePayload == null || remotePayload.trim().isEmpty) {
-      final deleteCount =
-          localItems.where((item) => item.isDeleted).length;
+      final deleteCount = localItems.where((item) => item.isDeleted).length;
       return _SyncMergeResult(
         payload: localPayload,
         stats: MergeStats(
@@ -1573,8 +1954,7 @@ class VaultController extends ChangeNotifier {
       conflictLabelBuilder: (item, isRemote) {
         final source = isRemote ? '远端' : '本地';
         final who = item.updatedBy.isEmpty ? 'unknown' : item.updatedBy;
-        final shortId =
-            who.length > 6 ? who.substring(who.length - 6) : who;
+        final shortId = who.length > 6 ? who.substring(who.length - 6) : who;
         final time = item.updatedAt.toLocal().toIso8601String();
         return '(冲突-$source-$shortId-$time)';
       },
@@ -1602,7 +1982,9 @@ class VaultController extends ChangeNotifier {
     }
     final mergedMetadata = _metadata.copyWith(
       tags: mergedTags.tags.toList()..sort(),
+      categories: mergedTags.categories.toList()..sort(),
       tagsUpdatedAt: mergedTagsUpdatedAt,
+      categoriesUpdatedAt: mergedTags.categoriesUpdatedAt,
     );
     if (remoteResolution != null && _syncSettings.syncMasterKey) {
       if (_masterKeyRecord == null ||
@@ -1630,7 +2012,7 @@ class VaultController extends ChangeNotifier {
     if (matchesRemote) {
       mergeTimings['metadata'] = metadataWatch.elapsed;
       return _SyncMergeResult(
-        payload: remotePayload!,
+        payload: remotePayload,
         stats: mergeResult.stats,
         revision: remote.revision,
         timings: mergeTimings,
@@ -1741,8 +2123,7 @@ class VaultController extends ChangeNotifier {
     await _vaultService.saveRecords(upgradedRecords);
     if (decoded.metadataRecord != null) {
       await _vaultMetadataStore.save(decoded.metadataRecord!);
-      final decodedMeta =
-          await _decryptMetadataRecord(decoded.metadataRecord!);
+      final decodedMeta = await _decryptMetadataRecord(decoded.metadataRecord!);
       if (decodedMeta != null) {
         _metadata = decodedMeta;
       }
@@ -1751,7 +2132,10 @@ class VaultController extends ChangeNotifier {
         upgradedRecords,
         masterPassword: _masterPassword!,
       );
-      await _refreshMetadataTags(items: items, extraTags: decoded.legacyTags);
+      await _refreshMetadataCollections(
+        items: items,
+        extraTags: decoded.legacyTags,
+      );
     }
     await reloadWithOptions(eagerDecrypt: false);
   }
@@ -1763,9 +2147,8 @@ class VaultController extends ChangeNotifier {
       level: status == 'error' ? 'error' : 'info',
     );
     final updatedLogs = [entry, ..._syncSettings.logs];
-    final trimmedLogs = updatedLogs.length > 50
-        ? updatedLogs.sublist(0, 50)
-        : updatedLogs;
+    final trimmedLogs =
+        updatedLogs.length > 50 ? updatedLogs.sublist(0, 50) : updatedLogs;
     _syncSettings = _syncSettings.copyWith(
       lastSyncAt: entry.timestamp,
       lastSyncStatus: status,
@@ -1783,9 +2166,8 @@ class VaultController extends ChangeNotifier {
       level: level,
     );
     final updatedLogs = [entry, ..._syncSettings.logs];
-    final trimmedLogs = updatedLogs.length > 50
-        ? updatedLogs.sublist(0, 50)
-        : updatedLogs;
+    final trimmedLogs =
+        updatedLogs.length > 50 ? updatedLogs.sublist(0, 50) : updatedLogs;
     _syncSettings = _syncSettings.copyWith(logs: trimmedLogs);
     await _saveSyncSettings();
     _notifyListeners();
@@ -1878,9 +2260,8 @@ class VaultController extends ChangeNotifier {
         .toList();
     return _DecodedPayload(
       records: records,
-      masterKey: masterKey != null
-          ? Map<String, Object?>.from(masterKey)
-          : null,
+      masterKey:
+          masterKey != null ? Map<String, Object?>.from(masterKey) : null,
       metadataRecord: metadataRecord,
       legacyTags: legacyTags,
       revision: revision,
@@ -1910,19 +2291,27 @@ class VaultController extends ChangeNotifier {
       remoteMetadata,
       items.length,
     );
-    final shouldScanItems = !skipLargeEmptyTags && _shouldScanItemTags(
-      localMetadata,
-      remoteMetadata,
-    );
+    final shouldScanItems = !skipLargeEmptyTags &&
+        _shouldScanItemMetadata(
+          localMetadata,
+          remoteMetadata,
+        );
     final itemTags = shouldScanItems
         ? _normalizeTags(await _collectTagsFromItems(items))
+        : <String>{};
+    final itemCategories = shouldScanItems
+        ? _normalizeCategories(await _collectCategoriesFromItems(items))
         : <String>{};
 
     var baseTags = <String>{};
     var baseUpdatedAt = 0;
+    var baseCategories = <String>{};
+    var baseCategoriesUpdatedAt = 0;
     if (localMetadata != null && remoteMetadata != null) {
       final localTags = _normalizeTags(localMetadata.tags);
       final remoteTags = _normalizeTags(remoteMetadata.tags);
+      final localCategories = _normalizeCategories(localMetadata.categories);
+      final remoteCategories = _normalizeCategories(remoteMetadata.categories);
       if (localMetadata.tagsUpdatedAt != remoteMetadata.tagsUpdatedAt) {
         if (localMetadata.tagsUpdatedAt > remoteMetadata.tagsUpdatedAt) {
           baseTags = localTags;
@@ -1935,33 +2324,65 @@ class VaultController extends ChangeNotifier {
         baseTags = {...localTags, ...remoteTags};
         baseUpdatedAt = localMetadata.tagsUpdatedAt;
       }
+      if (localMetadata.categoriesUpdatedAt !=
+          remoteMetadata.categoriesUpdatedAt) {
+        if (localMetadata.categoriesUpdatedAt >
+            remoteMetadata.categoriesUpdatedAt) {
+          baseCategories = localCategories;
+          baseCategoriesUpdatedAt = localMetadata.categoriesUpdatedAt;
+        } else {
+          baseCategories = remoteCategories;
+          baseCategoriesUpdatedAt = remoteMetadata.categoriesUpdatedAt;
+        }
+      } else {
+        baseCategories = {...localCategories, ...remoteCategories};
+        baseCategoriesUpdatedAt = localMetadata.categoriesUpdatedAt;
+      }
     } else if (localMetadata != null) {
       baseTags = _normalizeTags(localMetadata.tags);
       baseUpdatedAt = localMetadata.tagsUpdatedAt;
+      baseCategories = _normalizeCategories(localMetadata.categories);
+      baseCategoriesUpdatedAt = localMetadata.categoriesUpdatedAt;
     } else if (remoteMetadata != null) {
       baseTags = _normalizeTags(remoteMetadata.tags);
       baseUpdatedAt = remoteMetadata.tagsUpdatedAt;
+      baseCategories = _normalizeCategories(remoteMetadata.categories);
+      baseCategoriesUpdatedAt = remoteMetadata.categoriesUpdatedAt;
     }
 
     final mergedTags = {...baseTags, ...itemTags};
+    final mergedCategories = {...baseCategories, ...itemCategories};
     var mergedUpdatedAt = baseUpdatedAt;
+    var mergedCategoriesUpdatedAt = baseCategoriesUpdatedAt;
     if (mergedUpdatedAt == 0 && mergedTags.isNotEmpty) {
       mergedUpdatedAt = _nowUtcMillis();
     }
     if (!_setEquals(mergedTags, baseTags)) {
       mergedUpdatedAt = _nowUtcMillis();
     }
+    if (mergedCategoriesUpdatedAt == 0 && mergedCategories.isNotEmpty) {
+      mergedCategoriesUpdatedAt = _nowUtcMillis();
+    }
+    if (!_setEquals(mergedCategories, baseCategories)) {
+      mergedCategoriesUpdatedAt = _nowUtcMillis();
+    }
     if (shouldScanItems && mergedUpdatedAt == 0) {
-      // Scanned items but still empty: mark as up-to-date to avoid re-scan.
       mergedUpdatedAt = _nowUtcMillis();
     }
+    if (shouldScanItems && mergedCategoriesUpdatedAt == 0) {
+      mergedCategoriesUpdatedAt = _nowUtcMillis();
+    }
     if (skipLargeEmptyTags && mergedUpdatedAt == 0) {
-      // Aggressive mode: skip expensive scan for large empty tag sets.
       mergedUpdatedAt = _nowUtcMillis();
+    }
+    if (skipLargeEmptyTags && mergedCategoriesUpdatedAt == 0) {
+      mergedCategoriesUpdatedAt = _nowUtcMillis();
     }
     return _MergedTags(
       tags: mergedTags,
+      categories: mergedCategories,
       updatedAt: mergedUpdatedAt,
+      categoriesUpdatedAt: mergedCategoriesUpdatedAt,
       localMetadata: localMetadata,
       remoteMetadata: remoteMetadata,
     );
@@ -1985,7 +2406,7 @@ class VaultController extends ChangeNotifier {
     return !hasTags;
   }
 
-  bool _shouldScanItemTags(
+  bool _shouldScanItemMetadata(
     VaultMetadata? localMetadata,
     VaultMetadata? remoteMetadata,
   ) {
@@ -1999,7 +2420,9 @@ class VaultController extends ChangeNotifier {
     }
     final hasTags =
         localMetadata.tags.isNotEmpty || remoteMetadata.tags.isNotEmpty;
-    return !hasTags;
+    final hasCategories = localMetadata.categories.isNotEmpty ||
+        remoteMetadata.categories.isNotEmpty;
+    return !hasTags || !hasCategories;
   }
 
   Future<Set<String>> _collectTagsFromItems(List<VaultItem> items) async {
@@ -2030,15 +2453,54 @@ class VaultController extends ChangeNotifier {
     return tagSet;
   }
 
+  Future<Set<String>> _collectCategoriesFromItems(List<VaultItem> items) async {
+    final categorySet = <String>{};
+    for (var index = 0; index < items.length; index++) {
+      await _yieldIfNeeded(index);
+      final item = items[index];
+      if (item.isDeleted) {
+        continue;
+      }
+      if (item.type == VaultEntryType.server) {
+        final payload = await readServerAsset(item);
+        final category = payload?.category.trim() ?? '';
+        if (category.isNotEmpty) {
+          categorySet.add(category);
+        }
+      } else if (item.type == VaultEntryType.service) {
+        final payload = await readService(item);
+        final category = payload?.category.trim() ?? '';
+        if (category.isNotEmpty) {
+          categorySet.add(category);
+        }
+      } else {
+        final payload = await readEntry(item);
+        final category = payload?.category.trim() ?? '';
+        if (category.isNotEmpty) {
+          categorySet.add(category);
+        }
+      }
+    }
+    return categorySet;
+  }
+
   Set<String> _normalizeTags(Iterable<String> tags) {
     return tags.map((tag) => tag.trim()).where((tag) => tag.isNotEmpty).toSet();
   }
 
-  Future<void> _refreshMetadataTags({
+  Set<String> _normalizeCategories(Iterable<String> categories) {
+    return categories
+        .map((category) => category.trim())
+        .where((category) => category.isNotEmpty)
+        .toSet();
+  }
+
+  Future<void> _refreshMetadataCollections({
     required List<VaultItem> items,
     required List<String> extraTags,
   }) async {
     final tagSet = <String>{..._metadata.tags, ...extraTags};
+    final categorySet = <String>{..._metadata.categories};
     for (var index = 0; index < items.length; index++) {
       await _yieldIfNeeded(index);
       final item = items[index];
@@ -2049,29 +2511,53 @@ class VaultController extends ChangeNotifier {
         final payload = await readServerAsset(item);
         if (payload != null) {
           tagSet.addAll(payload.tags);
+          final category = payload.category.trim();
+          if (category.isNotEmpty) {
+            categorySet.add(category);
+          }
         }
       } else if (item.type == VaultEntryType.service) {
         final payload = await readService(item);
         if (payload != null) {
           tagSet.addAll(payload.tags);
+          final category = payload.category.trim();
+          if (category.isNotEmpty) {
+            categorySet.add(category);
+          }
         }
       } else {
         final payload = await readEntry(item);
         if (payload != null) {
           tagSet.addAll(payload.tags);
+          final category = payload.category.trim();
+          if (category.isNotEmpty) {
+            categorySet.add(category);
+          }
         }
       }
     }
-    final updated = tagSet
+    final updatedTags = tagSet
         .map((tag) => tag.trim())
         .where((tag) => tag.isNotEmpty)
         .toSet()
         .toList()
       ..sort();
-    if (listEquals(updated, _metadata.tags)) {
+    final updatedCategories = categorySet
+        .map((category) => category.trim())
+        .where((category) => category.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    if (listEquals(updatedTags, _metadata.tags) &&
+        listEquals(updatedCategories, _metadata.categories)) {
       return;
     }
-    _metadata = _withUpdatedTags(updated);
+    _metadata = _metadata.copyWith(
+      tags: updatedTags,
+      categories: updatedCategories,
+      tagsUpdatedAt: _nowUtcMillis(),
+      categoriesUpdatedAt: _nowUtcMillis(),
+    );
     await _saveMetadata();
   }
 
@@ -2192,7 +2678,9 @@ class VaultController extends ChangeNotifier {
     }
     return a.sortOrder == b.sortOrder &&
         a.tagsUpdatedAt == b.tagsUpdatedAt &&
-        listEquals(a.tags, b.tags);
+        a.categoriesUpdatedAt == b.categoriesUpdatedAt &&
+        listEquals(a.tags, b.tags) &&
+        listEquals(a.categories, b.categories);
   }
 
   bool _sameVersionMap(Map<String, int> a, Map<String, int> b) {
@@ -2295,6 +2783,7 @@ class VaultEntryView {
     required this.credential,
     required this.server,
     required this.service,
+    required this.category,
     required this.tags,
     required this.isConflict,
     required this.searchIndex,
@@ -2304,6 +2793,7 @@ class VaultEntryView {
   final CredentialPayload? credential;
   final ServerAssetPayload? server;
   final ServicePayload? service;
+  final String category;
   final List<String> tags;
   final bool isConflict;
   final VaultEntrySearchIndex searchIndex;
@@ -2315,6 +2805,7 @@ class VaultEntrySearchIndex {
     required this.appIdLower,
     required this.serverNameLower,
     required this.serverIpLower,
+    required this.categoryLower,
     required this.tagsLower,
     required this.anyLower,
   });
@@ -2323,6 +2814,7 @@ class VaultEntrySearchIndex {
   final String? appIdLower;
   final String? serverNameLower;
   final String? serverIpLower;
+  final String? categoryLower;
   final List<String> tagsLower;
   final String anyLower;
 }
@@ -2330,13 +2822,17 @@ class VaultEntrySearchIndex {
 class _MergedTags {
   const _MergedTags({
     required this.tags,
+    required this.categories,
     required this.updatedAt,
+    required this.categoriesUpdatedAt,
     this.localMetadata,
     this.remoteMetadata,
   });
 
   final Set<String> tags;
+  final Set<String> categories;
   final int updatedAt;
+  final int categoriesUpdatedAt;
   final VaultMetadata? localMetadata;
   final VaultMetadata? remoteMetadata;
 }
