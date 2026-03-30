@@ -1,4 +1,6 @@
 import { Context } from '@kit.AbilityKit';
+import picker from '@ohos.file.picker';
+import fs from '@ohos.file.fs';
 import {
   CreateCredentialInput,
   CreateServerInput,
@@ -10,7 +12,11 @@ import {
   VaultEntry,
   VaultEntryType
 } from '../src/model/VaultTypes';
-import { VaultController } from '../src/service/VaultController';
+import {
+  ImportConflictStrategy,
+  ImportPreviewRecord,
+  VaultController,
+} from '../src/service/VaultController';
 import { VaultCryptoService } from '../src/security/VaultCryptoService';
 import { InMemoryVaultStore, PreferencesVaultStore } from '../src/storage/VaultStore';
 import { ConflictStrategy, SyncProviderType, SyncSettings } from '../src/sync/SyncTypes';
@@ -34,6 +40,7 @@ interface SearchPayload {
 @Component
 struct Index {
   private vaultController: VaultController | null = null;
+  private hostContext: Context | null = null;
 
   @State private ready: boolean = false;
   @State private hasMasterKey: boolean = false;
@@ -93,6 +100,7 @@ struct Index {
     const crypto = new VaultCryptoService();
     try {
       const hostContext = this.getUIContext().getHostContext() as Context;
+      this.hostContext = hostContext;
       const persistentStore = await PreferencesVaultStore.create(hostContext);
       this.vaultController = new VaultController(persistentStore, crypto);
     } catch (error) {
@@ -226,6 +234,18 @@ struct Index {
     Row() {
       Text('密码管理器（鸿蒙版MVP）').fontSize(22).fontWeight(FontWeight.Bold);
       Blank();
+      Button('导入条目')
+        .type(ButtonType.Normal)
+        .margin({ right: 8 })
+        .onClick(() => {
+          this.onImportEntry();
+        });
+      Button('导出数据')
+        .type(ButtonType.Normal)
+        .margin({ right: 8 })
+        .onClick(() => {
+          this.onExportVault();
+        });
       Button('锁定')
         .type(ButtonType.Normal)
         .onClick(() => {
@@ -604,7 +624,15 @@ struct Index {
   @Builder
   private CategorySection() {
     Column({ space: 8 }) {
-      Text('分类管理').fontSize(18).fontWeight(FontWeight.Medium);
+      Row() {
+        Text('分类管理').fontSize(18).fontWeight(FontWeight.Medium);
+        Blank();
+        Button('导入分类')
+          .type(ButtonType.Normal)
+          .onClick(() => {
+            this.onImportCategory();
+          });
+      }
 
       Row({ space: 8 }) {
         TextInput({ placeholder: '新增分类', text: $$this.categoryDraft })
@@ -638,6 +666,12 @@ struct Index {
           ForEach(this.categories, (category: string) => {
             Row({ space: 4 }) {
               Text(category).fontSize(13);
+              Button('导出')
+                .fontSize(11)
+                .height(22)
+                .onClick(() => {
+                  this.onExportCategory(category);
+                });
               Button('x')
                 .fontSize(11)
                 .width(22)
@@ -716,6 +750,14 @@ struct Index {
               Row() {
                 Text(new Date(entry.updatedAt).toLocaleString()).fontSize(11).fontColor('#7A8587');
                 Blank();
+                Button('导出')
+                  .type(ButtonType.Normal)
+                  .margin({ right: 8 })
+                  .backgroundColor('#D7EAF3')
+                  .fontColor('#1F4E6B')
+                  .onClick(() => {
+                    this.onExportEntry(entry);
+                  });
                 Button('删除')
                   .type(ButtonType.Normal)
                   .backgroundColor('#F3D7D7')
@@ -905,6 +947,74 @@ struct Index {
     this.refreshData();
   }
 
+  private async onImportEntry(): Promise<void> {
+    try {
+      const contents = await this.pickJsonFileContents();
+      if (contents.length === 0) {
+        return;
+      }
+      const preview = await this.controller().previewImportEntryData(contents);
+      const strategy = await this.confirmImportPreview(preview);
+      if (strategy === null) {
+        return;
+      }
+      const result = await this.controller().importEntryDataWithStrategy(contents, strategy);
+      this.refreshData();
+      this.toast(`已导入 ${result.createdCount} 条，更新 ${result.updatedCount} 条，跳过 ${result.skippedCount} 条`);
+    } catch (error) {
+      this.toast(`导入失败: ${error}`);
+    }
+  }
+
+  private async onImportCategory(): Promise<void> {
+    try {
+      const contents = await this.pickJsonFileContents();
+      if (contents.length === 0) {
+        return;
+      }
+      const preview = await this.controller().previewImportCategoryData(contents);
+      const strategy = await this.confirmImportPreview(preview);
+      if (strategy === null) {
+        return;
+      }
+      const result = await this.controller().importCategoryDataWithStrategy(contents, strategy);
+      this.refreshData();
+      this.toast(`已导入 ${result.createdCount} 条，更新 ${result.updatedCount} 条，跳过 ${result.skippedCount} 条`);
+    } catch (error) {
+      this.toast(`导入失败: ${error}`);
+    }
+  }
+
+  private async onExportVault(): Promise<void> {
+    try {
+      const data = this.controller().exportSnapshot();
+      const filePath = await this.saveJsonExportFile('vault-export', 'vault', data);
+      this.toast(`已导出到 ${filePath}`);
+    } catch (error) {
+      this.toast(`导出失败: ${error}`);
+    }
+  }
+
+  private async onExportEntry(entry: VaultEntry): Promise<void> {
+    try {
+      const data = this.controller().exportEntryData(entry.id);
+      const filePath = await this.saveJsonExportFile('entry-export', entry.label, data);
+      this.toast(`条目已导出到 ${filePath}`);
+    } catch (error) {
+      this.toast(`导出失败: ${error}`);
+    }
+  }
+
+  private async onExportCategory(category: string): Promise<void> {
+    try {
+      const data = this.controller().exportCategoryData(category);
+      const filePath = await this.saveJsonExportFile('category-export', category, data);
+      this.toast(`分类已导出到 ${filePath}`);
+    } catch (error) {
+      this.toast(`导出失败: ${error}`);
+    }
+  }
+
   private async onAddTag(): Promise<void> {
     if (this.tagDraft.trim().length === 0) {
       return;
@@ -1037,6 +1147,141 @@ struct Index {
     this.entries = this.controller().getEntries();
     this.tags = this.controller().getTags();
     this.categories = this.controller().getCategories();
+  }
+
+  private async saveJsonExportFile(prefix: string, name: string, contents: string): Promise<string> {
+    if (this.hostContext === null) {
+      throw new Error('Host context unavailable');
+    }
+    const documentPicker = new picker.DocumentViewPicker(this.hostContext);
+    const options = new picker.DocumentSaveOptions();
+    options.newFileNames = [`${prefix}-${this.sanitizeFilename(name)}-${this.exportTimestamp()}.json`];
+    options.fileSuffixChoices = ['JSON|json'];
+    const uris = await documentPicker.save(options);
+    if (uris.length === 0) {
+      throw new Error('未选择保存位置');
+    }
+    const targetUri = uris[0];
+    let file: fs.File | null = null;
+    try {
+      file = fs.openSync(
+        targetUri,
+        fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE,
+      );
+      fs.writeSync(file.fd, contents, {
+        encoding: 'utf-8',
+      });
+      return targetUri;
+    } catch (error) {
+      throw new Error(`写入导出文件失败: ${error}`);
+    } finally {
+      if (file !== null) {
+        try {
+          fs.closeSync(file);
+        } catch (closeError) {
+          console.error(`close export file failed: ${closeError}`);
+        }
+      }
+    }
+  }
+
+  private async pickJsonFileContents(): Promise<string> {
+    if (this.hostContext === null) {
+      throw new Error('Host context unavailable');
+    }
+    const documentPicker = new picker.DocumentViewPicker(this.hostContext);
+    const options = new picker.DocumentSelectOptions();
+    options.maxSelectNumber = 1;
+    options.fileSuffixFilters = ['json'];
+    const uris = await documentPicker.select(options);
+    if (uris.length === 0) {
+      return '';
+    }
+    try {
+      return fs.readTextSync(uris[0]);
+    } catch (error) {
+      throw new Error(`读取导入文件失败: ${error}`);
+    }
+  }
+
+  private async confirmImportPreview(
+    preview: ImportPreviewRecord,
+  ): Promise<ImportConflictStrategy | null> {
+    const lines = preview.items
+      .slice(0, 5)
+      .map(
+        (item) =>
+          `${this.typeLabel(item.type)} ${item.label} · ${
+            item.category.length > 0 ? item.category : '未分类'
+          } · ${this.importDispositionLabel(item.disposition)}`,
+      )
+      .join('\n');
+    const message = `共 ${preview.totalCount} 条：新增 ${preview.createCount}，重复 ${preview.exactDuplicateCount}，冲突 ${preview.conflictCount}` +
+      (lines.length > 0 ? `\n\n${lines}` : '');
+    try {
+      const prompt = this.uiPromptAction();
+      const confirmation = await prompt.showDialog({
+        title: '导入预览',
+        message,
+        buttons: [
+          { text: '取消', color: '#666666' },
+          { text: '继续', color: '#0F4C5C', primary: true },
+        ],
+      });
+      if (confirmation.index !== 1) {
+        return null;
+      }
+      if (preview.exactDuplicateCount === 0 && preview.conflictCount === 0) {
+        return ImportConflictStrategy.KEEP_COPY;
+      }
+      const action = await prompt.showActionMenu({
+        title: '冲突处理策略',
+        buttons: [
+          { text: '保留副本', color: '#0F4C5C' },
+          { text: '覆盖现有', color: '#0F4C5C' },
+          { text: '跳过冲突', color: '#666666' },
+        ],
+      });
+      if (action.index === 0) {
+        return ImportConflictStrategy.KEEP_COPY;
+      }
+      if (action.index === 1) {
+        return ImportConflictStrategy.OVERWRITE;
+      }
+      if (action.index === 2) {
+        return ImportConflictStrategy.SKIP;
+      }
+    } catch (error) {
+      throw new Error(`打开导入确认失败: ${error}`);
+    }
+    return null;
+  }
+
+  private importDispositionLabel(disposition: string): string {
+    if (disposition === 'create') {
+      return '新增';
+    }
+    if (disposition === 'exactDuplicate') {
+      return '重复';
+    }
+    return '冲突';
+  }
+
+  private sanitizeFilename(input: string): string {
+    const trimmed = input.trim();
+    if (trimmed.length === 0) {
+      return 'vault';
+    }
+    const safe = trimmed.replace(/[^0-9a-zA-Z\u4e00-\u9fa5._-]+/g, '_');
+    return safe.length > 0 ? safe : 'vault';
+  }
+
+  private exportTimestamp(): string {
+    return new Date().toISOString().replace(/[:]/g, '-');
+  }
+
+  private uiPromptAction() {
+    return this.getUIContext().getPromptAction();
   }
 
   private refreshSyncState(): void {

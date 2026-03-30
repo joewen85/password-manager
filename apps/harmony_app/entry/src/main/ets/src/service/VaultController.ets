@@ -52,6 +52,80 @@ interface ExportSnapshotRecord {
   syncSettings: SyncSettings;
 }
 
+interface ExportItemRecord {
+  id: string;
+  label: string;
+  type: VaultEntryType;
+  category: string;
+  createdAt: string;
+  updatedAt: string;
+  payload: object;
+}
+
+interface ExportSingleItemRecord {
+  version: number;
+  scope: string;
+  exportedAt: string;
+  item: ExportItemRecord;
+}
+
+interface ExportCategoryRecord {
+  version: number;
+  scope: string;
+  exportedAt: string;
+  category: string;
+  count: number;
+  items: ExportItemRecord[];
+}
+
+interface ImportSingleItemRecord {
+  scope?: string;
+  item?: ExportItemRecord;
+}
+
+interface ImportCategoryRecord {
+  scope?: string;
+  items?: ExportItemRecord[];
+}
+
+export enum ImportConflictStrategy {
+  SKIP = 'skip',
+  OVERWRITE = 'overwrite',
+  KEEP_COPY = 'keep_copy',
+}
+
+type ImportDisposition = 'create' | 'exactDuplicate' | 'conflict';
+
+export interface ImportPreviewItemRecord {
+  label: string;
+  type: VaultEntryType;
+  category: string;
+  disposition: ImportDisposition;
+  existingLabel?: string;
+}
+
+export interface ImportPreviewRecord {
+  scope: string;
+  totalCount: number;
+  createCount: number;
+  exactDuplicateCount: number;
+  conflictCount: number;
+  items: ImportPreviewItemRecord[];
+}
+
+export interface ImportExecutionResult {
+  totalCount: number;
+  createdCount: number;
+  updatedCount: number;
+  skippedCount: number;
+}
+
+interface ImportPlanItem {
+  item: ExportItemRecord;
+  disposition: ImportDisposition;
+  existing?: VaultEntry;
+}
+
 interface ParsedSyncEnvelopeRecord {
   version?: number;
   exportedAt?: string;
@@ -520,6 +594,77 @@ export class VaultController {
     await this.persist();
   }
 
+  async updateCredentialEntry(entryId: string, input: CreateCredentialInput): Promise<void> {
+    this.ensureUnlocked();
+    const target = this.requireVisibleEntry(entryId, VaultEntryType.CREDENTIAL);
+    const tags = normalizeTags(input.tags);
+    target.label = input.label.trim();
+    target.payload = {
+      username: input.username,
+      password: input.password,
+      token: input.token,
+      appId: input.appId,
+      accessToken: input.accessToken,
+      secretKey: input.secretKey,
+      notes: input.notes,
+      tags,
+      category: input.category.trim(),
+    };
+    target.tags = tags;
+    target.updatedAt = Date.now();
+    this.mergeCategories([input.category.trim()]);
+    this.mergeTags(tags);
+    await this.persist();
+  }
+
+  async updateServerEntry(entryId: string, input: CreateServerInput): Promise<void> {
+    this.ensureUnlocked();
+    const target = this.requireVisibleEntry(entryId, VaultEntryType.SERVER);
+    const tags = normalizeTags(input.tags);
+    target.label = input.label.trim();
+    target.payload = {
+      name: input.name,
+      ipAddress: input.ipAddress,
+      port: input.port,
+      username: input.username,
+      password: input.password,
+      basicConfig: input.basicConfig,
+      operatingSystem: input.operatingSystem,
+      location: input.location,
+      notes: input.notes,
+      tags,
+      category: input.category.trim(),
+    };
+    target.tags = tags;
+    target.updatedAt = Date.now();
+    this.mergeCategories([input.category.trim()]);
+    this.mergeTags(tags);
+    await this.persist();
+  }
+
+  async updateServiceEntry(entryId: string, input: CreateServiceInput): Promise<void> {
+    this.ensureUnlocked();
+    const target = this.requireVisibleEntry(entryId, VaultEntryType.SERVICE);
+    const tags = normalizeTags(input.tags);
+    target.label = input.label.trim();
+    target.payload = {
+      name: input.name,
+      connectionAddress: input.connectionAddress,
+      connectionPort: input.connectionPort,
+      accountId: input.accountId,
+      serverIds: [...input.serverIds],
+      accounts: [...input.accounts],
+      notes: input.notes,
+      tags,
+      category: input.category.trim(),
+    };
+    target.tags = tags;
+    target.updatedAt = Date.now();
+    this.mergeCategories([input.category.trim()]);
+    this.mergeTags(tags);
+    await this.persist();
+  }
+
   async deleteEntry(entryId: string): Promise<void> {
     this.ensureUnlocked();
     const target = this.snapshot.entries.find(
@@ -650,7 +795,82 @@ export class VaultController {
       security: this.snapshot.security,
       syncSettings: this.snapshot.syncSettings,
     };
-    return JSON.stringify(payload);
+    return JSON.stringify(payload, null, 2);
+  }
+
+  exportEntryData(entryId: string): string {
+    this.ensureUnlocked();
+    const entry = this.snapshot.entries.find(
+      (value: VaultEntry) => value.id === entryId && !value.isDeleted,
+    );
+    if (entry === undefined) {
+      throw new Error('条目不存在或已删除');
+    }
+    const payload: ExportSingleItemRecord = {
+      version: VaultController.SCHEMA_VERSION,
+      scope: 'item',
+      exportedAt: new Date().toISOString(),
+      item: this.buildExportItem(entry),
+    };
+    return JSON.stringify(payload, null, 2);
+  }
+
+  exportCategoryData(category: string): string {
+    this.ensureUnlocked();
+    const clean = category.trim();
+    const items = this.snapshot.entries
+      .filter((entry: VaultEntry) => !entry.isDeleted && this.entryCategory(entry) === clean)
+      .map((entry: VaultEntry) => this.buildExportItem(entry))
+      .sort(
+        (left: ExportItemRecord, right: ExportItemRecord) => left.label.localeCompare(right.label),
+      );
+    const payload: ExportCategoryRecord = {
+      version: VaultController.SCHEMA_VERSION,
+      scope: 'category',
+      exportedAt: new Date().toISOString(),
+      category: clean,
+      count: items.length,
+      items: items,
+    };
+    return JSON.stringify(payload, null, 2);
+  }
+
+  async importEntryData(contents: string): Promise<number> {
+    const result = await this.applyImportPlan(
+      await this.buildImportPlan(contents, 'item'),
+      ImportConflictStrategy.KEEP_COPY,
+    );
+    return result.createdCount + result.updatedCount;
+  }
+
+  async importCategoryData(contents: string): Promise<number> {
+    const result = await this.applyImportPlan(
+      await this.buildImportPlan(contents, 'category'),
+      ImportConflictStrategy.KEEP_COPY,
+    );
+    return result.createdCount + result.updatedCount;
+  }
+
+  async previewImportEntryData(contents: string): Promise<ImportPreviewRecord> {
+    return this.toImportPreview(await this.buildImportPlan(contents, 'item'));
+  }
+
+  async previewImportCategoryData(contents: string): Promise<ImportPreviewRecord> {
+    return this.toImportPreview(await this.buildImportPlan(contents, 'category'));
+  }
+
+  async importEntryDataWithStrategy(
+    contents: string,
+    strategy: ImportConflictStrategy,
+  ): Promise<ImportExecutionResult> {
+    return this.applyImportPlan(await this.buildImportPlan(contents, 'item'), strategy);
+  }
+
+  async importCategoryDataWithStrategy(
+    contents: string,
+    strategy: ImportConflictStrategy,
+  ): Promise<ImportExecutionResult> {
+    return this.applyImportPlan(await this.buildImportPlan(contents, 'category'), strategy);
   }
 
   private ensureUnlocked(): void {
@@ -682,6 +902,314 @@ export class VaultController {
     const payload = entry.payload as CategoryCarrier;
     const category = payload.category ?? '';
     return typeof category === 'string' ? category.trim() : '';
+  }
+
+  private buildExportItem(entry: VaultEntry): ExportItemRecord {
+    return {
+      id: entry.id,
+      label: entry.label,
+      type: entry.type,
+      category: this.entryCategory(entry),
+      createdAt: new Date(entry.createdAt).toISOString(),
+      updatedAt: new Date(entry.updatedAt).toISOString(),
+      payload: JSON.parse(JSON.stringify(entry.payload)) as object,
+    };
+  }
+
+  private async buildImportPlan(contents: string, scope: string): Promise<ImportPlanItem[]> {
+    this.ensureUnlocked();
+    const parsedItems = this.parseImportItems(contents, scope);
+    const previewIdMap = new Map<string, string>();
+    const planItems: ImportPlanItem[] = [];
+
+    const appendPlanItem = (item: ExportItemRecord): void => {
+      const existing = this.findImportTarget(item);
+      const disposition: ImportDisposition =
+        existing === undefined
+          ? 'create'
+          : this.importPayloadEquals(existing, item, previewIdMap)
+            ? 'exactDuplicate'
+            : 'conflict';
+      if (existing !== undefined && item.id.length > 0) {
+        previewIdMap.set(item.id, existing.id);
+      }
+      planItems.push({ item, disposition, existing });
+    };
+
+    parsedItems
+      .filter((item: ExportItemRecord) => item.type !== VaultEntryType.SERVICE)
+      .forEach((item: ExportItemRecord) => appendPlanItem(item));
+    parsedItems
+      .filter((item: ExportItemRecord) => item.type === VaultEntryType.SERVICE)
+      .forEach((item: ExportItemRecord) => appendPlanItem(item));
+
+    return planItems;
+  }
+
+  private toImportPreview(items: ImportPlanItem[]): ImportPreviewRecord {
+    const previewItems = items.map((entry: ImportPlanItem) => {
+      const previewItem: ImportPreviewItemRecord = {
+        label: entry.item.label,
+        type: entry.item.type,
+        category: entry.item.category,
+        disposition: entry.disposition,
+        existingLabel: entry.existing?.label,
+      };
+      return previewItem;
+    });
+    const createCount = previewItems.filter((item: ImportPreviewItemRecord) => item.disposition === 'create').length;
+    const exactDuplicateCount = previewItems
+      .filter((item: ImportPreviewItemRecord) => item.disposition === 'exactDuplicate')
+      .length;
+    const conflictCount = previewItems
+      .filter((item: ImportPreviewItemRecord) => item.disposition === 'conflict')
+      .length;
+    return {
+      scope: items.length > 1 ? 'category' : 'item',
+      totalCount: items.length,
+      createCount,
+      exactDuplicateCount,
+      conflictCount,
+      items: previewItems,
+    };
+  }
+
+  private async applyImportPlan(
+    items: ImportPlanItem[],
+    strategy: ImportConflictStrategy,
+  ): Promise<ImportExecutionResult> {
+    let createdCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+    const idMap = new Map<string, string>();
+    for (let index = 0; index < items.length; index++) {
+      const current = items[index];
+      if (current.disposition === 'create') {
+        const createdId = await this.createImportedItem(current.item, idMap);
+        createdCount += 1;
+        if (current.item.id.length > 0) {
+          idMap.set(current.item.id, createdId);
+        }
+        continue;
+      }
+      if (current.disposition === 'exactDuplicate') {
+        skippedCount += 1;
+        if (current.existing !== undefined && current.item.id.length > 0) {
+          idMap.set(current.item.id, current.existing.id);
+        }
+        continue;
+      }
+      if (strategy === ImportConflictStrategy.SKIP) {
+        skippedCount += 1;
+        if (current.existing !== undefined && current.item.id.length > 0) {
+          idMap.set(current.item.id, current.existing.id);
+        }
+        continue;
+      }
+      if (strategy === ImportConflictStrategy.OVERWRITE && current.existing !== undefined) {
+        await this.updateImportedItem(current.existing, current.item, idMap);
+        updatedCount += 1;
+        if (current.item.id.length > 0) {
+          idMap.set(current.item.id, current.existing.id);
+        }
+        continue;
+      }
+      const createdId = await this.createImportedItem(current.item, idMap);
+      createdCount += 1;
+      if (current.item.id.length > 0) {
+        idMap.set(current.item.id, createdId);
+      }
+    }
+    return {
+      totalCount: items.length,
+      createdCount,
+      updatedCount,
+      skippedCount,
+    };
+  }
+
+  private parseImportItems(contents: string, scope: string): ExportItemRecord[] {
+    const parsed = JSON.parse(contents) as ImportSingleItemRecord | ImportCategoryRecord;
+    if (scope === 'item') {
+      const single = parsed as ImportSingleItemRecord;
+      if (single.scope !== 'item' || single.item === undefined) {
+        throw new Error('不是单条条目导出 JSON');
+      }
+      return [single.item];
+    }
+    const category = parsed as ImportCategoryRecord;
+    if (category.scope !== 'category' || category.items === undefined) {
+      throw new Error('不是分类导出 JSON');
+    }
+    return category.items;
+  }
+
+  private findImportTarget(item: ExportItemRecord): VaultEntry | undefined {
+    const label = item.label.trim().toLowerCase();
+    const category = item.category.trim().toLowerCase();
+    let fallback: VaultEntry | undefined = undefined;
+    for (let index = 0; index < this.snapshot.entries.length; index++) {
+      const entry = this.snapshot.entries[index];
+      if (entry.isDeleted || entry.type !== item.type || entry.label.trim().toLowerCase() !== label) {
+        continue;
+      }
+      if (fallback === undefined) {
+        fallback = entry;
+      }
+      if (this.entryCategory(entry).toLowerCase() === category) {
+        return entry;
+      }
+    }
+    return fallback;
+  }
+
+  private importPayloadEquals(
+    existing: VaultEntry,
+    item: ExportItemRecord,
+    idMap: Map<string, string>,
+  ): boolean {
+    const normalizedIncoming = JSON.stringify(this.resolveImportedPayload(item, idMap));
+    const normalizedExisting = JSON.stringify(existing.payload);
+    return normalizedIncoming === normalizedExisting;
+  }
+
+  private async createImportedItem(
+    item: ExportItemRecord,
+    idMap: Map<string, string> = new Map<string, string>(),
+  ): Promise<string> {
+    if (item.type === VaultEntryType.CREDENTIAL) {
+      const payload = item.payload as CreateCredentialInput;
+      await this.addCredential({
+        label: item.label,
+        username: payload.username ?? '',
+        password: payload.password ?? '',
+        token: payload.token ?? '',
+        appId: payload.appId ?? '',
+        accessToken: payload.accessToken ?? '',
+        secretKey: payload.secretKey ?? '',
+        notes: payload.notes ?? '',
+        tags: payload.tags ?? [],
+        category: payload.category ?? item.category ?? '',
+      });
+      return this.snapshot.entries[this.snapshot.entries.length - 1].id;
+    }
+    if (item.type === VaultEntryType.SERVER) {
+      const payload = item.payload as CreateServerInput;
+      await this.addServer({
+        label: item.label,
+        name: payload.name ?? '',
+        ipAddress: payload.ipAddress ?? '',
+        port: payload.port ?? '',
+        username: payload.username ?? '',
+        password: payload.password ?? '',
+        basicConfig: payload.basicConfig ?? '',
+        operatingSystem: payload.operatingSystem ?? '',
+        location: payload.location ?? '',
+        notes: payload.notes ?? '',
+        tags: payload.tags ?? [],
+        category: payload.category ?? item.category ?? '',
+      });
+      return this.snapshot.entries[this.snapshot.entries.length - 1].id;
+    }
+    if (item.type === VaultEntryType.SERVICE) {
+      const payload = item.payload as CreateServiceInput;
+      await this.addService({
+        label: item.label,
+        name: payload.name ?? '',
+        connectionAddress: payload.connectionAddress ?? '',
+        connectionPort: payload.connectionPort ?? '',
+        accountId: idMap.get(payload.accountId ?? '') ?? (payload.accountId ?? ''),
+        serverIds: (payload.serverIds ?? []).map(
+          (entryId: string) => idMap.get(entryId) ?? entryId,
+        ),
+        accounts: payload.accounts ?? [],
+        notes: payload.notes ?? '',
+        tags: payload.tags ?? [],
+        category: payload.category ?? item.category ?? '',
+      });
+      return this.snapshot.entries[this.snapshot.entries.length - 1].id;
+    }
+    throw new Error(`不支持的条目类型: ${item.type}`);
+  }
+
+  private async updateImportedItem(
+    existing: VaultEntry,
+    item: ExportItemRecord,
+    idMap: Map<string, string>,
+  ): Promise<void> {
+    const resolved = this.resolveImportedPayload(item, idMap);
+    if (existing.type === VaultEntryType.CREDENTIAL) {
+      const payload = resolved as CreateCredentialInput;
+      await this.updateCredentialEntry(existing.id, {
+        label: item.label,
+        username: payload.username ?? '',
+        password: payload.password ?? '',
+        token: payload.token ?? '',
+        appId: payload.appId ?? '',
+        accessToken: payload.accessToken ?? '',
+        secretKey: payload.secretKey ?? '',
+        notes: payload.notes ?? '',
+        tags: payload.tags ?? [],
+        category: payload.category ?? item.category ?? '',
+      });
+      return;
+    }
+    if (existing.type === VaultEntryType.SERVER) {
+      const payload = resolved as CreateServerInput;
+      await this.updateServerEntry(existing.id, {
+        label: item.label,
+        name: payload.name ?? '',
+        ipAddress: payload.ipAddress ?? '',
+        port: payload.port ?? '',
+        username: payload.username ?? '',
+        password: payload.password ?? '',
+        basicConfig: payload.basicConfig ?? '',
+        operatingSystem: payload.operatingSystem ?? '',
+        location: payload.location ?? '',
+        notes: payload.notes ?? '',
+        tags: payload.tags ?? [],
+        category: payload.category ?? item.category ?? '',
+      });
+      return;
+    }
+    const payload = resolved as CreateServiceInput;
+    await this.updateServiceEntry(existing.id, {
+      label: item.label,
+      name: payload.name ?? '',
+      connectionAddress: payload.connectionAddress ?? '',
+      connectionPort: payload.connectionPort ?? '',
+      accountId: payload.accountId ?? '',
+      serverIds: payload.serverIds ?? [],
+      accounts: payload.accounts ?? [],
+      notes: payload.notes ?? '',
+      tags: payload.tags ?? [],
+      category: payload.category ?? item.category ?? '',
+    });
+  }
+
+  private resolveImportedPayload(
+    item: ExportItemRecord,
+    idMap: Map<string, string>,
+  ): object {
+    if (item.type !== VaultEntryType.SERVICE) {
+      return JSON.parse(JSON.stringify(item.payload)) as object;
+    }
+    const payload = JSON.parse(JSON.stringify(item.payload)) as CreateServiceInput;
+    payload.accountId = idMap.get(payload.accountId ?? '') ?? (payload.accountId ?? '');
+    payload.serverIds = (payload.serverIds ?? []).map(
+      (entryId: string) => idMap.get(entryId) ?? entryId,
+    );
+    return payload as object;
+  }
+
+  private requireVisibleEntry(entryId: string, type: VaultEntryType): VaultEntry {
+    const target = this.snapshot.entries.find(
+      (entry: VaultEntry) => entry.id === entryId && !entry.isDeleted && entry.type === type,
+    );
+    if (target === undefined) {
+      throw new Error('条目不存在或类型不匹配');
+    }
+    return target;
   }
 
   private setEntryCategory(entry: VaultEntry, category: string): void {

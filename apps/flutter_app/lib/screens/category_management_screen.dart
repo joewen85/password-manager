@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../utils/json_export.dart';
 import '../state/vault_controller.dart';
 
 class CategoryManagementScreen extends StatelessWidget {
@@ -15,6 +16,13 @@ class CategoryManagementScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('分类管理'),
+        actions: [
+          IconButton(
+            tooltip: '导入分类',
+            onPressed: () => _importCategory(context),
+            icon: const Icon(Icons.file_download_outlined),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _createCategory(context),
@@ -43,6 +51,12 @@ class CategoryManagementScreen extends StatelessWidget {
                         title: Text(category),
                         trailing: Wrap(
                           children: [
+                            IconButton(
+                              tooltip: '导出分类',
+                              icon: const Icon(Icons.upload_file_outlined),
+                              onPressed: () =>
+                                  _exportCategory(context, category),
+                            ),
                             IconButton(
                               tooltip: '编辑',
                               icon: const Icon(Icons.edit_outlined),
@@ -144,6 +158,77 @@ class CategoryManagementScreen extends StatelessWidget {
     );
     if (confirmed == true) {
       await controller.deleteCategory(category);
+    }
+  }
+
+  Future<void> _exportCategory(BuildContext context, String category) async {
+    try {
+      final data = await controller.exportCategoryData(category);
+      if (!context.mounted) {
+        return;
+      }
+      await presentJsonExport(
+        context,
+        title: '导出分类',
+        filename: buildJsonExportFilename(
+          scope: 'category-export',
+          name: category,
+        ),
+        contents: data,
+      );
+    } catch (error) {
+      if (!context.mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('导出失败：$error')),
+      );
+    }
+  }
+
+  Future<void> _importCategory(BuildContext context) async {
+    final raw = await promptJsonImport(
+      context,
+      title: '导入分类',
+      helperText: '请粘贴“分类导出”的 JSON 内容。',
+      hintText: '{\n  "scope": "category",\n  ...\n}',
+    );
+    if (!context.mounted || raw == null || raw.trim().isEmpty) {
+      return;
+    }
+    try {
+      final preview = await controller.previewCategoryImport(raw);
+      if (!context.mounted) {
+        return;
+      }
+      final strategy = await showImportPreviewDialog(
+        context,
+        preview: preview,
+      );
+      if (!context.mounted || strategy == null) {
+        return;
+      }
+      final result = await controller.importCategoryData(
+        raw,
+        strategy: strategy,
+      );
+      if (!context.mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '已导入 ${result.createdCount} 条，更新 ${result.updatedCount} 条，跳过 ${result.skippedCount} 条',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!context.mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('导入失败：$error')),
+      );
     }
   }
 }

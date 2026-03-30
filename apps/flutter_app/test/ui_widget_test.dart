@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:password_manager_auth/password_manager_auth.dart';
@@ -150,6 +152,8 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.add_rounded));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('新建账号'));
+    await tester.pumpAndSettle();
 
     await tester.enterText(_fieldAt(0), 'AWS Console');
     await tester.enterText(_fieldAt(1), 'user@example.com');
@@ -195,5 +199,344 @@ void main() {
     expect(find.text('GitHub'), findsWidgets);
     expect(find.text('octo'), findsOneWidget);
     expect(find.text('pass123'), findsOneWidget);
+  });
+
+  test('Exports single item as json', () async {
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+
+    final item = await controller.addEntry(
+      label: 'GitHub',
+      payload: const CredentialPayload(
+        username: 'octo',
+        password: 'pass123',
+        token: 'token',
+        appId: 'appid',
+        accessToken: 'access',
+        secretKey: 'secret',
+        notes: 'note',
+        tags: ['dev'],
+        category: '开发',
+      ),
+    );
+
+    final exported = await controller.exportItemData(item);
+    final decoded = jsonDecode(exported) as Map<String, Object?>;
+    final exportedItem = decoded['item'] as Map<String, Object?>;
+    final payload = exportedItem['payload'] as Map<String, Object?>;
+
+    expect(decoded['scope'], 'item');
+    expect(exportedItem['label'], 'GitHub');
+    expect(exportedItem['type'], 'credential');
+    expect(exportedItem['category'], '开发');
+    expect(payload['username'], 'octo');
+    expect(payload['category'], '开发');
+  });
+
+  test('Exports category as json', () async {
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+
+    await controller.addEntry(
+      label: 'AWS',
+      payload: const CredentialPayload(
+        username: 'aws-user',
+        password: 'aws-pass',
+        token: '',
+        appId: 'aws-app',
+        accessToken: '',
+        secretKey: '',
+        notes: '',
+        tags: ['cloud'],
+        category: '云平台',
+      ),
+    );
+    await controller.addServerAsset(
+      label: 'Prod Server',
+      payload: const ServerAssetPayload(
+        name: 'prod-01',
+        ipAddress: '10.0.0.1',
+        port: '22',
+        username: 'root',
+        password: 'server-pass',
+        basicConfig: '',
+        operatingSystem: 'Linux',
+        location: 'cn',
+        notes: '',
+        tags: ['prod'],
+        category: '基础设施',
+      ),
+    );
+    await controller.addService(
+      label: 'Cloud Console',
+      payload: const ServicePayload(
+        name: 'Cloud Console',
+        connectionAddress: 'console.example.com',
+        connectionPort: '443',
+        accountId: null,
+        serverIds: [],
+        accounts: [],
+        notes: '',
+        tags: ['cloud'],
+        category: '云平台',
+      ),
+    );
+
+    final exported = await controller.exportCategoryData('云平台');
+    final decoded = jsonDecode(exported) as Map<String, Object?>;
+    final items = (decoded['items'] as List).cast<Map<String, Object?>>();
+
+    expect(decoded['scope'], 'category');
+    expect(decoded['category'], '云平台');
+    expect(decoded['count'], 2);
+    expect(items.map((entry) => entry['label']), ['AWS', 'Cloud Console']);
+  });
+
+  test('Imports single item json', () async {
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+
+    const json = '''
+{
+  "version": 1,
+  "scope": "item",
+  "exportedAt": "2026-03-30T12:00:00.000Z",
+  "item": {
+    "id": "source-credential-1",
+    "label": "GitLab",
+    "type": "credential",
+    "category": "研发",
+    "payload": {
+      "username": "alice",
+      "password": "pwd-123",
+      "token": "totp",
+      "appId": "gitlab-app",
+      "accessToken": "acc",
+      "secretKey": "sec",
+      "notes": "hello",
+      "tags": ["dev"],
+      "category": "研发"
+    }
+  }
+}
+''';
+
+    final result = await controller.importItemData(json);
+    final items = controller.items.where((entry) => !entry.isDeleted).toList();
+    final payload = await controller.readEntry(items.single);
+
+    expect(result.createdCount, 1);
+    expect(items.single.label, 'GitLab');
+    expect(payload?.username, 'alice');
+    expect(payload?.category, '研发');
+  });
+
+  test('Imports category json and remaps service references', () async {
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+
+    const json = '''
+{
+  "version": 1,
+  "scope": "category",
+  "exportedAt": "2026-03-30T12:00:00.000Z",
+  "category": "云平台",
+  "count": 3,
+  "items": [
+    {
+      "id": "cred-1",
+      "label": "AWS Account",
+      "type": "credential",
+      "category": "云平台",
+      "payload": {
+        "username": "root",
+        "password": "pwd",
+        "token": "",
+        "appId": "aws",
+        "accessToken": "",
+        "secretKey": "",
+        "notes": "",
+        "tags": ["cloud"],
+        "category": "云平台"
+      }
+    },
+    {
+      "id": "srv-1",
+      "label": "Bastion",
+      "type": "server",
+      "category": "云平台",
+      "payload": {
+        "name": "bastion",
+        "ipAddress": "10.0.0.8",
+        "port": "22",
+        "username": "root",
+        "password": "pwd",
+        "basicConfig": "",
+        "operatingSystem": "Linux",
+        "location": "cn",
+        "notes": "",
+        "tags": ["cloud"],
+        "category": "云平台"
+      }
+    },
+    {
+      "id": "svc-1",
+      "label": "AWS Console",
+      "type": "service",
+      "category": "云平台",
+      "payload": {
+        "name": "AWS Console",
+        "connectionAddress": "console.aws.amazon.com",
+        "connectionPort": "443",
+        "accountId": "cred-1",
+        "serverIds": ["srv-1"],
+        "accounts": [],
+        "notes": "",
+        "tags": ["cloud"],
+        "category": "云平台"
+      }
+    }
+  ]
+}
+''';
+
+    final result = await controller.importCategoryData(json);
+    final items = controller.items.where((entry) => !entry.isDeleted).toList();
+    final account = items.firstWhere((entry) => entry.label == 'AWS Account');
+    final server = items.firstWhere((entry) => entry.label == 'Bastion');
+    final service = items.firstWhere((entry) => entry.label == 'AWS Console');
+    final servicePayload = await controller.readService(service);
+
+    expect(result.createdCount, 3);
+    expect(servicePayload?.accountId, account.id);
+    expect(servicePayload?.serverIds, [server.id]);
+    expect(servicePayload?.category, '云平台');
+  });
+
+  test('Preview import marks exact duplicates and conflicts', () async {
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+
+    await controller.addEntry(
+      label: 'GitHub',
+      payload: const CredentialPayload(
+        username: 'same-user',
+        password: 'same-pass',
+        token: '',
+        appId: '',
+        accessToken: '',
+        secretKey: '',
+        notes: '',
+        tags: ['dev'],
+        category: '研发',
+      ),
+    );
+
+    final exactPreview = await controller.previewItemImport('''
+{
+  "scope": "item",
+  "item": {
+    "id": "a1",
+    "label": "GitHub",
+    "type": "credential",
+    "payload": {
+      "username": "same-user",
+      "password": "same-pass",
+      "token": "",
+      "appId": "",
+      "accessToken": "",
+      "secretKey": "",
+      "notes": "",
+      "tags": ["dev"],
+      "category": "研发"
+    }
+  }
+}
+''');
+    final conflictPreview = await controller.previewItemImport('''
+{
+  "scope": "item",
+  "item": {
+    "id": "a2",
+    "label": "GitHub",
+    "type": "credential",
+    "payload": {
+      "username": "other-user",
+      "password": "other-pass",
+      "token": "",
+      "appId": "",
+      "accessToken": "",
+      "secretKey": "",
+      "notes": "",
+      "tags": ["dev"],
+      "category": "研发"
+    }
+  }
+}
+''');
+
+    expect(exactPreview.exactDuplicateCount, 1);
+    expect(conflictPreview.conflictCount, 1);
+  });
+
+  test('Import conflict can skip or overwrite', () async {
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+
+    final item = await controller.addEntry(
+      label: 'GitHub',
+      payload: const CredentialPayload(
+        username: 'old-user',
+        password: 'old-pass',
+        token: '',
+        appId: '',
+        accessToken: '',
+        secretKey: '',
+        notes: '',
+        tags: ['dev'],
+        category: '研发',
+      ),
+    );
+
+    const json = '''
+{
+  "scope": "item",
+  "item": {
+    "id": "a3",
+    "label": "GitHub",
+    "type": "credential",
+    "payload": {
+      "username": "new-user",
+      "password": "new-pass",
+      "token": "",
+      "appId": "",
+      "accessToken": "",
+      "secretKey": "",
+      "notes": "",
+      "tags": ["ops"],
+      "category": "研发"
+    }
+  }
+}
+''';
+
+    final skipped = await controller.importItemData(
+      json,
+      strategy: ImportConflictStrategy.skip,
+    );
+    final skippedPayload = await controller.readEntry(item);
+    expect(skipped.skippedCount, 1);
+    expect(skippedPayload?.username, 'old-user');
+
+    final overwritten = await controller.importItemData(
+      json,
+      strategy: ImportConflictStrategy.overwrite,
+    );
+    final updatedItem =
+        controller.items.firstWhere((entry) => entry.id == item.id);
+    final overwrittenPayload = await controller.readEntry(updatedItem);
+    expect(overwritten.updatedCount, 1);
+    expect(overwrittenPayload?.username, 'new-user');
+    expect(overwrittenPayload?.tags, ['ops']);
   });
 }

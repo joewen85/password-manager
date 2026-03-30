@@ -1,14 +1,13 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:password_manager_core/password_manager_core.dart';
 
 import '../models/new_entry_data.dart';
 import '../state/vault_metadata.dart';
 import '../state/vault_controller.dart';
 import '../utils/adaptive_layout.dart';
-import '../utils/export_file.dart';
+import '../utils/json_export.dart';
 import '../theme/motion_tokens.dart';
 import '../widgets/app_background.dart';
 import '../widgets/entry_details_dialog.dart';
@@ -302,6 +301,123 @@ class _HomeScreenState extends State<HomeScreen>
     }
     if (mounted) {
       await _editEntry(created);
+    }
+  }
+
+  Future<void> _exportEntry(VaultItem item) async {
+    try {
+      final data = await widget.controller.exportItemData(item);
+      if (!mounted) {
+        return;
+      }
+      await presentJsonExport(
+        context,
+        title: '导出条目',
+        filename: buildJsonExportFilename(
+          scope: 'entry-export',
+          name: item.label,
+        ),
+        contents: data,
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('导出失败：$error')),
+      );
+    }
+  }
+
+  Future<void> _importEntry() async {
+    final raw = await promptJsonImport(
+      context,
+      title: '导入条目',
+      helperText: '请粘贴“单条条目导出”的 JSON 内容。',
+      hintText: '{\n  "scope": "item",\n  ...\n}',
+    );
+    if (!mounted || raw == null || raw.trim().isEmpty) {
+      return;
+    }
+    try {
+      final preview = await widget.controller.previewItemImport(raw);
+      if (!mounted) {
+        return;
+      }
+      final strategy = await showImportPreviewDialog(
+        context,
+        preview: preview,
+      );
+      if (!mounted || strategy == null) {
+        return;
+      }
+      final result = await widget.controller.importItemData(
+        raw,
+        strategy: strategy,
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '已导入 ${result.createdCount} 条，更新 ${result.updatedCount} 条，跳过 ${result.skippedCount} 条',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('导入失败：$error')),
+      );
+    }
+  }
+
+  Future<void> _importCategory() async {
+    final raw = await promptJsonImport(
+      context,
+      title: '导入分类',
+      helperText: '请粘贴“分类导出”的 JSON 内容。',
+      hintText: '{\n  "scope": "category",\n  ...\n}',
+    );
+    if (!mounted || raw == null || raw.trim().isEmpty) {
+      return;
+    }
+    try {
+      final preview = await widget.controller.previewCategoryImport(raw);
+      if (!mounted) {
+        return;
+      }
+      final strategy = await showImportPreviewDialog(
+        context,
+        preview: preview,
+      );
+      if (!mounted || strategy == null) {
+        return;
+      }
+      final result = await widget.controller.importCategoryData(
+        raw,
+        strategy: strategy,
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '已导入 ${result.createdCount} 条，更新 ${result.updatedCount} 条，跳过 ${result.skippedCount} 条',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('导入失败：$error')),
+      );
     }
   }
 
@@ -851,7 +967,8 @@ class _HomeScreenState extends State<HomeScreen>
               ListTile(
                 leading: const Icon(Icons.key_rounded),
                 title: const Text('新建账号'),
-                onTap: () => Navigator.of(context).pop(_CreateEntryType.credential),
+                onTap: () =>
+                    Navigator.of(context).pop(_CreateEntryType.credential),
               ),
               ListTile(
                 leading: const Icon(Icons.dns_rounded),
@@ -861,7 +978,8 @@ class _HomeScreenState extends State<HomeScreen>
               ListTile(
                 leading: const Icon(Icons.miscellaneous_services_rounded),
                 title: const Text('新建服务'),
-                onTap: () => Navigator.of(context).pop(_CreateEntryType.service),
+                onTap: () =>
+                    Navigator.of(context).pop(_CreateEntryType.service),
               ),
             ],
           ),
@@ -987,9 +1105,7 @@ class _HomeScreenState extends State<HomeScreen>
     }
     if (_searchQuery.isNotEmpty) {
       labels.add(
-        _usesGlobalTagSearch(terms)
-            ? '搜索: 全局标签'
-            : '搜索: 当前分类',
+        _usesGlobalTagSearch(terms) ? '搜索: 全局标签' : '搜索: 当前分类',
       );
     }
     return labels;
@@ -1434,6 +1550,7 @@ class _HomeScreenState extends State<HomeScreen>
                 onEdit: () => _editEntry(item),
                 onDelete: () => _deleteEntry(item),
                 onCopy: () => _copyEntry(view),
+                onExport: () => _exportEntry(item),
               );
             },
           ),
@@ -1574,9 +1691,8 @@ class _HomeScreenState extends State<HomeScreen>
                       '当前为搜索模式；指定字段按当前分类，纯标签搜索跨分类',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             fontSize: 11,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurfaceVariant,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
                           ),
                     ),
                   ),
@@ -1601,7 +1717,7 @@ class _HomeScreenState extends State<HomeScreen>
     required List<_SearchTerm> terms,
   }) {
     final sortOrder = widget.controller.metadata.sortOrder;
-      final key = [
+    final key = [
       viewsVersion,
       _showConflictsOnly,
       _selectedCategory ?? '',
@@ -1697,50 +1813,23 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                   );
                   break;
+                case _VaultMenuAction.importItem:
+                  await _importEntry();
+                  break;
+                case _VaultMenuAction.importCategory:
+                  await _importCategory();
+                  break;
                 case _VaultMenuAction.export:
                   final data = await widget.controller.exportEncryptedData();
-                  final filename =
-                      'vault-export-${DateTime.now().toIso8601String()}.json';
-                  if (kIsWeb) {
-                    await downloadTextFile(
-                      filename: filename,
-                      contents: data,
-                    );
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('导出完成')),
-                    );
-                  } else {
-                    await showDialog<void>(
-                      context: context,
-                      builder: (context) => AlertDialog(
-                        title: const Text('导出数据'),
-                        content: SizedBox(
-                          width: 480,
-                          child: SingleChildScrollView(
-                            child: SelectableText(data),
-                          ),
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () async {
-                              await Clipboard.setData(
-                                ClipboardData(text: data),
-                              );
-                              Navigator.of(context).pop();
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('已复制')),
-                              );
-                            },
-                            child: const Text('复制'),
-                          ),
-                          TextButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            child: const Text('关闭'),
-                          ),
-                        ],
-                      ),
-                    );
+                  if (!context.mounted) {
+                    break;
                   }
+                  await presentJsonExport(
+                    context,
+                    title: '导出数据',
+                    filename: buildJsonExportFilename(scope: 'vault-export'),
+                    contents: data,
+                  );
                   break;
                 case _VaultMenuAction.clear:
                   final confirmed = await showDialog<bool>(
@@ -1782,6 +1871,14 @@ class _HomeScreenState extends State<HomeScreen>
               PopupMenuItem(
                 value: _VaultMenuAction.categories,
                 child: Text('分类管理'),
+              ),
+              PopupMenuItem(
+                value: _VaultMenuAction.importItem,
+                child: Text('导入条目'),
+              ),
+              PopupMenuItem(
+                value: _VaultMenuAction.importCategory,
+                child: Text('导入分类'),
               ),
               PopupMenuItem(
                 value: _VaultMenuAction.export,
@@ -1921,7 +2018,15 @@ class _HighlightedText extends StatelessWidget {
   }
 }
 
-enum _VaultMenuAction { syncSettings, tags, categories, export, clear }
+enum _VaultMenuAction {
+  syncSettings,
+  tags,
+  categories,
+  importItem,
+  importCategory,
+  export,
+  clear,
+}
 
 class EntryCard extends StatelessWidget {
   const EntryCard({
@@ -1943,6 +2048,7 @@ class EntryCard extends StatelessWidget {
     required this.onEdit,
     required this.onDelete,
     required this.onCopy,
+    required this.onExport,
   });
 
   final VaultItem item;
@@ -1962,6 +2068,7 @@ class EntryCard extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   final Future<void> Function() onCopy;
+  final Future<void> Function() onExport;
 
   @override
   Widget build(BuildContext context) {
@@ -2045,13 +2152,11 @@ class EntryCard extends StatelessWidget {
                             Theme.of(context).textTheme.titleMedium?.copyWith(
                                   fontWeight: FontWeight.w700,
                                 ),
-                        highlightStyle: Theme.of(context)
-                            .textTheme
-                            .titleMedium
-                            ?.copyWith(
-                              fontWeight: FontWeight.w800,
-                              color: colorScheme.primary,
-                            ),
+                        highlightStyle:
+                            Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  color: colorScheme.primary,
+                                ),
                         enableHighlight: !useSimpleCard,
                       ),
                       if (serviceInfo != null) ...[
@@ -2063,13 +2168,11 @@ class EntryCard extends StatelessWidget {
                               Theme.of(context).textTheme.bodySmall?.copyWith(
                                     color: colorScheme.onSurfaceVariant,
                                   ),
-                          highlightStyle: Theme.of(context)
-                              .textTheme
-                              .bodySmall
-                              ?.copyWith(
-                                color: colorScheme.primary,
-                                fontWeight: FontWeight.w700,
-                              ),
+                          highlightStyle:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: colorScheme.primary,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                           maxLines: 1,
                           enableHighlight: !useSimpleCard,
                         ),
@@ -2083,23 +2186,20 @@ class EntryCard extends StatelessWidget {
                               Theme.of(context).textTheme.bodySmall?.copyWith(
                                     color: colorScheme.onSurfaceVariant,
                                   ),
-                          highlightStyle: Theme.of(context)
-                              .textTheme
-                              .bodySmall
-                              ?.copyWith(
-                                color: colorScheme.primary,
-                                fontWeight: FontWeight.w700,
-                              ),
+                          highlightStyle:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: colorScheme.primary,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                           enableHighlight: !useSimpleCard,
                         ),
                       ],
                       const SizedBox(height: 6),
                       Text(
                         '更新于 ${item.updatedAt.toLocal()}',
-                        style:
-                            Theme.of(context).textTheme.bodySmall?.copyWith(
-                                  color: colorScheme.onSurfaceVariant,
-                                ),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
                       ),
                       if (tags.isNotEmpty) ...[
                         const SizedBox(height: 10),
@@ -2150,6 +2250,11 @@ class EntryCard extends StatelessWidget {
                       onPressed: onEdit,
                     ),
                     IconButton(
+                      icon: const Icon(Icons.upload_file_outlined),
+                      tooltip: '导出条目',
+                      onPressed: () => onExport(),
+                    ),
+                    IconButton(
                       icon: const Icon(Icons.delete_outline),
                       tooltip: '删除',
                       onPressed: onDelete,
@@ -2174,21 +2279,21 @@ class EntryCard extends StatelessWidget {
             child: cardChild,
           )
         : AnimatedContainer(
-      duration: useAnimations
-          ? (isAndroid
-              ? MotionTokens.short4
-              : const Duration(milliseconds: 180))
-          : Duration.zero,
-      curve: isAndroid ? MotionTokens.standard : Curves.linear,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(22),
-        border: isSelected
-            ? Border.all(color: colorScheme.primary, width: 1.3)
-            : null,
-      ),
-      padding: isSelected ? const EdgeInsets.all(1) : EdgeInsets.zero,
-      child: cardChild,
-    );
+            duration: useAnimations
+                ? (isAndroid
+                    ? MotionTokens.short4
+                    : const Duration(milliseconds: 180))
+                : Duration.zero,
+            curve: isAndroid ? MotionTokens.standard : Curves.linear,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(22),
+              border: isSelected
+                  ? Border.all(color: colorScheme.primary, width: 1.3)
+                  : null,
+            ),
+            padding: isSelected ? const EdgeInsets.all(1) : EdgeInsets.zero,
+            child: cardChild,
+          );
     return RepaintBoundary(child: card);
   }
 
@@ -2244,10 +2349,18 @@ class EntryCard extends StatelessWidget {
           value: _EntryMenuAction.copy,
           child: Text('复制条目'),
         ),
+        PopupMenuItem(
+          value: _EntryMenuAction.export,
+          child: Text('导出条目'),
+        ),
       ],
     );
     if (selected == _EntryMenuAction.copy) {
       await onCopy();
+      return;
+    }
+    if (selected == _EntryMenuAction.export) {
+      await onExport();
     }
   }
 
@@ -2276,4 +2389,4 @@ class EntryCard extends StatelessWidget {
 
 enum _CreateEntryType { credential, server, service }
 
-enum _EntryMenuAction { copy }
+enum _EntryMenuAction { copy, export }

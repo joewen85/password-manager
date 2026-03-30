@@ -711,6 +711,118 @@ class VaultController extends ChangeNotifier {
     return jsonEncode(payload);
   }
 
+  Future<String> exportItemData(VaultItem item) async {
+    _ensureUnlocked();
+    final currentItem = await _vaultService.getById(
+      item.id,
+      masterPassword: _masterPassword!,
+    );
+    if (currentItem == null || currentItem.isDeleted) {
+      throw StateError('条目不存在或已删除');
+    }
+    final exportedItem = await _buildExportItemData(currentItem);
+    if (exportedItem == null) {
+      throw StateError('无法解密条目');
+    }
+    return const JsonEncoder.withIndent('  ').convert({
+      'version': 1,
+      'scope': 'item',
+      'exportedAt': DateTime.now().toUtc().toIso8601String(),
+      'item': exportedItem,
+    });
+  }
+
+  Future<String> exportCategoryData(String category) async {
+    _ensureUnlocked();
+    final normalizedCategory = category.trim();
+    final items = await _vaultService.listAll(masterPassword: _masterPassword!);
+    final exportedItems = <Map<String, Object?>>[];
+    for (final item in items) {
+      if (item.isDeleted) {
+        continue;
+      }
+      final exportedItem = await _buildExportItemData(item);
+      if (exportedItem == null) {
+        continue;
+      }
+      final itemCategory = exportedItem['category'] as String? ?? '';
+      if (itemCategory == normalizedCategory) {
+        exportedItems.add(exportedItem);
+      }
+    }
+    exportedItems.sort((a, b) {
+      final left = a['label'] as String? ?? '';
+      final right = b['label'] as String? ?? '';
+      return left.compareTo(right);
+    });
+    return const JsonEncoder.withIndent('  ').convert({
+      'version': 1,
+      'scope': 'category',
+      'exportedAt': DateTime.now().toUtc().toIso8601String(),
+      'category': normalizedCategory,
+      'count': exportedItems.length,
+      'items': exportedItems,
+    });
+  }
+
+  Future<ImportPreview> previewItemImport(String contents) async {
+    _ensureUnlocked();
+    final importedItems = _parseImportContents(
+      contents,
+      expectedScope: ImportScope.item,
+    );
+    final plan = await _buildImportPlan(
+      importedItems,
+      scope: ImportScope.item,
+    );
+    return _buildImportPreview(plan);
+  }
+
+  Future<ImportPreview> previewCategoryImport(String contents) async {
+    _ensureUnlocked();
+    final importedItems = _parseImportContents(
+      contents,
+      expectedScope: ImportScope.category,
+    );
+    final plan = await _buildImportPlan(
+      importedItems,
+      scope: ImportScope.category,
+    );
+    return _buildImportPreview(plan);
+  }
+
+  Future<ImportExecutionResult> importItemData(
+    String contents, {
+    ImportConflictStrategy strategy = ImportConflictStrategy.keepCopy,
+  }) async {
+    _ensureUnlocked();
+    final importedItems = _parseImportContents(
+      contents,
+      expectedScope: ImportScope.item,
+    );
+    final plan = await _buildImportPlan(
+      importedItems,
+      scope: ImportScope.item,
+    );
+    return _executeImportPlan(plan, strategy: strategy);
+  }
+
+  Future<ImportExecutionResult> importCategoryData(
+    String contents, {
+    ImportConflictStrategy strategy = ImportConflictStrategy.keepCopy,
+  }) async {
+    _ensureUnlocked();
+    final importedItems = _parseImportContents(
+      contents,
+      expectedScope: ImportScope.category,
+    );
+    final plan = await _buildImportPlan(
+      importedItems,
+      scope: ImportScope.category,
+    );
+    return _executeImportPlan(plan, strategy: strategy);
+  }
+
   Future<void> clearAllEntries() async {
     _ensureUnlocked();
     final items = await _vaultService.listAll(masterPassword: _masterPassword!);
@@ -719,6 +831,422 @@ class VaultController extends ChangeNotifier {
     }
     await reloadWithOptions(eagerDecrypt: false);
     _scheduleSyncSoon();
+  }
+
+  Future<Map<String, Object?>?> _buildExportItemData(VaultItem item) async {
+    Object? payload;
+    String category = '';
+    switch (item.type) {
+      case VaultEntryType.credential:
+        final credential = await readEntry(item);
+        if (credential == null) {
+          return null;
+        }
+        payload = credential.toJson();
+        category = credential.category.trim();
+        break;
+      case VaultEntryType.server:
+        final server = await readServerAsset(item);
+        if (server == null) {
+          return null;
+        }
+        payload = server.toJson();
+        category = server.category.trim();
+        break;
+      case VaultEntryType.service:
+        final service = await readService(item);
+        if (service == null) {
+          return null;
+        }
+        payload = service.toJson();
+        category = service.category.trim();
+        break;
+    }
+    return {
+      'id': item.id,
+      'label': item.label,
+      'type': item.type.name,
+      'category': category,
+      'createdAt': item.createdAt.toUtc().toIso8601String(),
+      'updatedAt': item.updatedAt.toUtc().toIso8601String(),
+      'version': item.version,
+      'updatedBy': item.updatedBy,
+      'payload': payload,
+    };
+  }
+
+  Map<String, Object?> _decodeJsonObject(String contents) {
+    final decoded = jsonDecode(contents);
+    if (decoded is! Map) {
+      throw const FormatException('JSON 顶层结构必须是对象');
+    }
+    return Map<String, Object?>.from(decoded);
+  }
+
+  List<_ImportedVaultItem> _parseImportContents(
+    String contents, {
+    required ImportScope expectedScope,
+  }) {
+    final decoded = _decodeJsonObject(contents);
+    switch (expectedScope) {
+      case ImportScope.item:
+        if (decoded['scope'] != 'item') {
+          throw const FormatException('不是单条条目导出 JSON');
+        }
+        final rawItem = decoded['item'];
+        if (rawItem is! Map) {
+          throw const FormatException('缺少条目数据');
+        }
+        return [_parseImportedItem(Map<String, Object?>.from(rawItem))];
+      case ImportScope.category:
+        if (decoded['scope'] != 'category') {
+          throw const FormatException('不是分类导出 JSON');
+        }
+        final rawItems = decoded['items'];
+        if (rawItems is! List) {
+          throw const FormatException('缺少分类条目列表');
+        }
+        return rawItems
+            .whereType<Map>()
+            .map(
+                (entry) => _parseImportedItem(Map<String, Object?>.from(entry)))
+            .toList();
+    }
+  }
+
+  _ImportedVaultItem _parseImportedItem(Map<String, Object?> json) {
+    final label = json['label'] as String? ?? '';
+    final sourceId = json['id'] as String? ?? '';
+    final typeName = json['type'] as String? ?? '';
+    final rawPayload = json['payload'];
+    if (rawPayload is! Map) {
+      throw const FormatException('条目 payload 格式无效');
+    }
+    final payloadJson = Map<String, Object?>.from(rawPayload);
+
+    switch (typeName) {
+      case 'credential':
+        return _ImportedVaultItem(
+          sourceId: sourceId,
+          label: label,
+          type: VaultEntryType.credential,
+          payload: CredentialPayload.fromJson(payloadJson),
+        );
+      case 'server':
+        return _ImportedVaultItem(
+          sourceId: sourceId,
+          label: label,
+          type: VaultEntryType.server,
+          payload: ServerAssetPayload.fromJson(payloadJson),
+        );
+      case 'service':
+        return _ImportedVaultItem(
+          sourceId: sourceId,
+          label: label,
+          type: VaultEntryType.service,
+          payload: ServicePayload.fromJson(payloadJson),
+        );
+    }
+    throw FormatException('不支持的条目类型: $typeName');
+  }
+
+  Future<VaultItem> _createImportedItem(
+    _ImportedVaultItem imported, {
+    Map<String, String> idMap = const {},
+  }) async {
+    switch (imported.type) {
+      case VaultEntryType.credential:
+        return addEntry(
+          label: imported.label,
+          payload: imported.payload as CredentialPayload,
+        );
+      case VaultEntryType.server:
+        return addServerAsset(
+          label: imported.label,
+          payload: imported.payload as ServerAssetPayload,
+        );
+      case VaultEntryType.service:
+        final payload = imported.payload as ServicePayload;
+        final remappedPayload = ServicePayload(
+          name: payload.name,
+          connectionAddress: payload.connectionAddress,
+          connectionPort: payload.connectionPort,
+          accountId: payload.accountId == null
+              ? null
+              : (idMap[payload.accountId!] ?? payload.accountId),
+          serverIds: payload.serverIds
+              .map((entry) => idMap[entry] ?? entry)
+              .toList(growable: false),
+          accounts: payload.accounts,
+          notes: payload.notes,
+          tags: payload.tags,
+          category: payload.category,
+        );
+        return addService(
+          label: imported.label,
+          payload: remappedPayload,
+        );
+    }
+  }
+
+  Future<_ImportPlan> _buildImportPlan(
+    List<_ImportedVaultItem> importedItems, {
+    required ImportScope scope,
+  }) async {
+    final previewIdMap = <String, String>{};
+    final planItems = <_ImportPlanItem>[];
+
+    Future<void> appendPlanItem(_ImportedVaultItem imported) async {
+      final existing = await _findImportTarget(
+        imported,
+        idMap: previewIdMap,
+      );
+      final disposition = existing == null
+          ? ImportItemDisposition.create
+          : await _importPayloadEquals(
+              existing,
+              imported,
+              idMap: previewIdMap,
+            )
+              ? ImportItemDisposition.exactDuplicate
+              : ImportItemDisposition.conflict;
+      if (existing != null && imported.sourceId.isNotEmpty) {
+        previewIdMap[imported.sourceId] = existing.id;
+      }
+      planItems.add(
+        _ImportPlanItem(
+          imported: imported,
+          disposition: disposition,
+          existingItem: existing,
+        ),
+      );
+    }
+
+    for (final imported in importedItems.where(
+      (entry) => entry.type != VaultEntryType.service,
+    )) {
+      await appendPlanItem(imported);
+    }
+    for (final imported in importedItems.where(
+      (entry) => entry.type == VaultEntryType.service,
+    )) {
+      await appendPlanItem(imported);
+    }
+    return _ImportPlan(scope: scope, items: planItems);
+  }
+
+  ImportPreview _buildImportPreview(_ImportPlan plan) {
+    return ImportPreview(
+      scope: plan.scope,
+      items: plan.items
+          .map(
+            (item) => ImportPreviewItem(
+              label: item.imported.label,
+              type: item.imported.type,
+              category: _importedCategory(item.imported),
+              disposition: item.disposition,
+              existingLabel: item.existingItem?.label,
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  Future<ImportExecutionResult> _executeImportPlan(
+    _ImportPlan plan, {
+    required ImportConflictStrategy strategy,
+  }) async {
+    var createdCount = 0;
+    var updatedCount = 0;
+    var skippedCount = 0;
+    final idMap = <String, String>{};
+
+    await _runWithNotificationsSuppressed(() async {
+      for (final item in plan.items) {
+        final imported = item.imported;
+        switch (item.disposition) {
+          case ImportItemDisposition.create:
+            final created = await _createImportedItem(imported, idMap: idMap);
+            createdCount += 1;
+            if (imported.sourceId.isNotEmpty) {
+              idMap[imported.sourceId] = created.id;
+            }
+            break;
+          case ImportItemDisposition.exactDuplicate:
+            skippedCount += 1;
+            if (item.existingItem != null && imported.sourceId.isNotEmpty) {
+              idMap[imported.sourceId] = item.existingItem!.id;
+            }
+            break;
+          case ImportItemDisposition.conflict:
+            if (strategy == ImportConflictStrategy.skip) {
+              skippedCount += 1;
+              if (item.existingItem != null && imported.sourceId.isNotEmpty) {
+                idMap[imported.sourceId] = item.existingItem!.id;
+              }
+              break;
+            }
+            if (strategy == ImportConflictStrategy.overwrite &&
+                item.existingItem != null) {
+              final updated = await _updateImportedItem(
+                item.existingItem!,
+                imported,
+                idMap: idMap,
+              );
+              updatedCount += 1;
+              if (imported.sourceId.isNotEmpty) {
+                idMap[imported.sourceId] = updated.id;
+              }
+              break;
+            }
+            final created = await _createImportedItem(imported, idMap: idMap);
+            createdCount += 1;
+            if (imported.sourceId.isNotEmpty) {
+              idMap[imported.sourceId] = created.id;
+            }
+            break;
+        }
+      }
+    });
+
+    return ImportExecutionResult(
+      scope: plan.scope,
+      totalCount: plan.items.length,
+      createdCount: createdCount,
+      updatedCount: updatedCount,
+      skippedCount: skippedCount,
+    );
+  }
+
+  Future<VaultItem?> _findImportTarget(
+    _ImportedVaultItem imported, {
+    Map<String, String> idMap = const {},
+  }) async {
+    final importedLabel = imported.label.trim().toLowerCase();
+    final importedCategory = _importedCategory(imported).trim().toLowerCase();
+    VaultItem? fallback;
+    for (final item in _items) {
+      if (item.isDeleted ||
+          item.type != imported.type ||
+          item.label.trim().toLowerCase() != importedLabel) {
+        continue;
+      }
+      fallback ??= item;
+      final category = await _readItemCategory(item);
+      if (category.trim().toLowerCase() == importedCategory) {
+        return item;
+      }
+    }
+    return fallback;
+  }
+
+  Future<String> _readItemCategory(VaultItem item) async {
+    switch (item.type) {
+      case VaultEntryType.credential:
+        return (await readEntry(item))?.category ?? '';
+      case VaultEntryType.server:
+        return (await readServerAsset(item))?.category ?? '';
+      case VaultEntryType.service:
+        return (await readService(item))?.category ?? '';
+    }
+  }
+
+  Future<bool> _importPayloadEquals(
+    VaultItem existing,
+    _ImportedVaultItem imported, {
+    Map<String, String> idMap = const {},
+  }) async {
+    final importedPayload = _resolveImportedPayload(imported, idMap: idMap);
+    switch (existing.type) {
+      case VaultEntryType.credential:
+        final current = await readEntry(existing);
+        return current != null &&
+            jsonEncode(current.toJson()) ==
+                jsonEncode((importedPayload as CredentialPayload).toJson());
+      case VaultEntryType.server:
+        final current = await readServerAsset(existing);
+        return current != null &&
+            jsonEncode(current.toJson()) ==
+                jsonEncode((importedPayload as ServerAssetPayload).toJson());
+      case VaultEntryType.service:
+        final current = await readService(existing);
+        return current != null &&
+            jsonEncode(current.toJson()) ==
+                jsonEncode((importedPayload as ServicePayload).toJson());
+    }
+  }
+
+  Object _resolveImportedPayload(
+    _ImportedVaultItem imported, {
+    Map<String, String> idMap = const {},
+  }) {
+    switch (imported.type) {
+      case VaultEntryType.credential:
+      case VaultEntryType.server:
+        return imported.payload;
+      case VaultEntryType.service:
+        final payload = imported.payload as ServicePayload;
+        return ServicePayload(
+          name: payload.name,
+          connectionAddress: payload.connectionAddress,
+          connectionPort: payload.connectionPort,
+          accountId: payload.accountId == null
+              ? null
+              : (idMap[payload.accountId!] ?? payload.accountId),
+          serverIds: payload.serverIds
+              .map((entry) => idMap[entry] ?? entry)
+              .toList(growable: false),
+          accounts: payload.accounts,
+          notes: payload.notes,
+          tags: payload.tags,
+          category: payload.category,
+        );
+    }
+  }
+
+  String _importedCategory(_ImportedVaultItem imported) {
+    switch (imported.type) {
+      case VaultEntryType.credential:
+        return (imported.payload as CredentialPayload).category;
+      case VaultEntryType.server:
+        return (imported.payload as ServerAssetPayload).category;
+      case VaultEntryType.service:
+        return (imported.payload as ServicePayload).category;
+    }
+  }
+
+  Future<VaultItem> _updateImportedItem(
+    VaultItem existing,
+    _ImportedVaultItem imported, {
+    Map<String, String> idMap = const {},
+  }) async {
+    switch (existing.type) {
+      case VaultEntryType.credential:
+        return updateEntry(
+          item: existing,
+          label: imported.label,
+          payload: _resolveImportedPayload(
+            imported,
+            idMap: idMap,
+          ) as CredentialPayload,
+        );
+      case VaultEntryType.server:
+        return updateServerAsset(
+          item: existing,
+          label: imported.label,
+          payload: _resolveImportedPayload(
+            imported,
+            idMap: idMap,
+          ) as ServerAssetPayload,
+        );
+      case VaultEntryType.service:
+        return updateService(
+          item: existing,
+          label: imported.label,
+          payload:
+              _resolveImportedPayload(imported, idMap: idMap) as ServicePayload,
+        );
+    }
   }
 
   Future<List<VaultEntryView>> _buildEntryViews(
@@ -2694,7 +3222,8 @@ class VaultController extends ChangeNotifier {
   }
 
   void _prunePayloadCache(List<VaultItem> items) {
-    final validIds = items.where((item) => !item.isDeleted).map((item) => item.id).toSet();
+    final validIds =
+        items.where((item) => !item.isDeleted).map((item) => item.id).toSet();
     _payloadCache.removeWhere((key, _) => !validIds.contains(key));
   }
 
@@ -2907,6 +3436,102 @@ class VaultEntrySearchIndex {
   final String? categoryLower;
   final List<String> tagsLower;
   final String anyLower;
+}
+
+enum ImportScope { item, category }
+
+enum ImportConflictStrategy { skip, overwrite, keepCopy }
+
+enum ImportItemDisposition { create, exactDuplicate, conflict }
+
+class ImportPreview {
+  const ImportPreview({
+    required this.scope,
+    required this.items,
+  });
+
+  final ImportScope scope;
+  final List<ImportPreviewItem> items;
+
+  int get totalCount => items.length;
+  int get createCount => items
+      .where((item) => item.disposition == ImportItemDisposition.create)
+      .length;
+  int get exactDuplicateCount => items
+      .where((item) => item.disposition == ImportItemDisposition.exactDuplicate)
+      .length;
+  int get conflictCount => items
+      .where((item) => item.disposition == ImportItemDisposition.conflict)
+      .length;
+  bool get hasConflicts => exactDuplicateCount > 0 || conflictCount > 0;
+}
+
+class ImportPreviewItem {
+  const ImportPreviewItem({
+    required this.label,
+    required this.type,
+    required this.category,
+    required this.disposition,
+    this.existingLabel,
+  });
+
+  final String label;
+  final VaultEntryType type;
+  final String category;
+  final ImportItemDisposition disposition;
+  final String? existingLabel;
+}
+
+class ImportExecutionResult {
+  const ImportExecutionResult({
+    required this.scope,
+    required this.totalCount,
+    required this.createdCount,
+    required this.updatedCount,
+    required this.skippedCount,
+  });
+
+  final ImportScope scope;
+  final int totalCount;
+  final int createdCount;
+  final int updatedCount;
+  final int skippedCount;
+}
+
+class _ImportPlan {
+  const _ImportPlan({
+    required this.scope,
+    required this.items,
+  });
+
+  final ImportScope scope;
+  final List<_ImportPlanItem> items;
+}
+
+class _ImportPlanItem {
+  const _ImportPlanItem({
+    required this.imported,
+    required this.disposition,
+    this.existingItem,
+  });
+
+  final _ImportedVaultItem imported;
+  final ImportItemDisposition disposition;
+  final VaultItem? existingItem;
+}
+
+class _ImportedVaultItem {
+  const _ImportedVaultItem({
+    required this.sourceId,
+    required this.label,
+    required this.type,
+    required this.payload,
+  });
+
+  final String sourceId;
+  final String label;
+  final VaultEntryType type;
+  final Object payload;
 }
 
 class _MergedTags {

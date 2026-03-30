@@ -88,7 +88,8 @@ fi
 if command -v hdc >/dev/null 2>&1; then
   if hdc list targets >/tmp/harmony_targets.txt 2>/tmp/harmony_targets_err.txt; then
     targets="$(cat /tmp/harmony_targets.txt)"
-    if [[ -z "${targets//[[:space:]]/}" ]]; then
+    normalized_targets="$(printf '%s' "$targets" | tr -d '\r' | sed '/^[[:space:]]*$/d' | sed '/^\[Empty\]$/d')"
+    if [[ -z "${normalized_targets//[[:space:]]/}" ]]; then
       warn "No connected Harmony devices detected by hdc"
     else
       ok "Connected Harmony devices:"

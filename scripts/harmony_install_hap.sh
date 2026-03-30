@@ -24,7 +24,13 @@ if [[ ! -f "$HAP_PATH" ]]; then
 fi
 
 echo "== HarmonyOS Install HAP =="
-hdc list targets
+targets="$(hdc list targets | tr -d '\r' | sed '/^[[:space:]]*$/d' | sed '/^\[Empty\]$/d')"
+if [[ -z "${targets//[[:space:]]/}" ]]; then
+  echo "[FAIL] No connected Harmony devices detected by hdc"
+  exit 1
+fi
+
+echo "$targets"
 
 echo "[INFO] Installing $HAP_PATH"
 hdc install -r "$HAP_PATH"

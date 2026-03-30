@@ -14,6 +14,7 @@ dependencies:
   idb_shim: ^2.3.1
   http: ^1.2.2
   google_fonts: ^6.1.0
+  file_selector: ^1.0.3
   password_manager_core:
     path: ../../packages/core
   password_manager_crypto:
