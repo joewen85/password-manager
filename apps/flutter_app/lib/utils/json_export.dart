@@ -10,8 +10,29 @@ Future<void> presentJsonExport(
   required String title,
   required String filename,
   required String contents,
+  bool allowCopyContents = false,
 }) async {
   if (!supportsLocalTextFileIO) {
+    if (allowCopyContents) {
+      final action = await _promptSimpleExportAction(
+        context,
+        title: title,
+        suggestedFilename: filename,
+      );
+      if (action == null) {
+        return;
+      }
+      if (action == _JsonExportAction.copyContents) {
+        await Clipboard.setData(ClipboardData(text: contents));
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('已复制 JSON 内容')),
+          );
+        }
+        return;
+      }
+    }
+
     await downloadTextFile(
       filename: filename,
       contents: contents,
@@ -28,8 +49,18 @@ Future<void> presentJsonExport(
     context,
     title: title,
     suggestedFilename: filename,
+    allowCopyContents: allowCopyContents,
   );
   if (exportDestination == null) {
+    return;
+  }
+  if (exportDestination.action == _JsonExportAction.copyContents) {
+    await Clipboard.setData(ClipboardData(text: contents));
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已复制 JSON 内容')),
+      );
+    }
     return;
   }
 
@@ -103,6 +134,7 @@ Future<_JsonExportDestination?> _promptJsonExportDestination(
   BuildContext context, {
   required String title,
   required String suggestedFilename,
+  required bool allowCopyContents,
 }) async {
   final pathController = TextEditingController();
   return showDialog<_JsonExportDestination>(
@@ -156,14 +188,67 @@ Future<_JsonExportDestination?> _promptJsonExportDestination(
             onPressed: () => Navigator.of(dialogContext).pop(),
             child: const Text('取消'),
           ),
+          if (allowCopyContents)
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(
+                const _JsonExportDestination(
+                  action: _JsonExportAction.copyContents,
+                ),
+              ),
+              child: const Text('复制内容'),
+            ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(
-              _JsonExportDestination(path: pathController.text.trim()),
+              _JsonExportDestination(
+                path: pathController.text.trim(),
+                action: _JsonExportAction.saveFile,
+              ),
             ),
             child: const Text('导出'),
           ),
         ],
       ),
+    ),
+  );
+}
+
+Future<_JsonExportAction?> _promptSimpleExportAction(
+  BuildContext context, {
+  required String title,
+  required String suggestedFilename,
+}) async {
+  return showDialog<_JsonExportAction>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(title),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('可直接下载文件，或仅复制 JSON 内容。'),
+            const SizedBox(height: 12),
+            SelectableText('建议文件名: $suggestedFilename'),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: () =>
+              Navigator.of(dialogContext).pop(_JsonExportAction.copyContents),
+          child: const Text('复制内容'),
+        ),
+        FilledButton(
+          onPressed: () =>
+              Navigator.of(dialogContext).pop(_JsonExportAction.saveFile),
+          child: const Text('导出'),
+        ),
+      ],
     ),
   );
 }
@@ -301,11 +386,15 @@ class _JsonImportSource {
 
 class _JsonExportDestination {
   const _JsonExportDestination({
-    required this.path,
+    this.path = '',
+    required this.action,
   });
 
   final String path;
+  final _JsonExportAction action;
 }
+
+enum _JsonExportAction { saveFile, copyContents }
 
 Future<ImportConflictStrategy?> showImportPreviewDialog(
   BuildContext context, {

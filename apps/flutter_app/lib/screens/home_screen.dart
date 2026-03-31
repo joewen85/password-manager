@@ -319,6 +319,7 @@ class _HomeScreenState extends State<HomeScreen>
           name: item.label,
         ),
         contents: data,
+        allowCopyContents: true,
       );
     } catch (error) {
       if (!mounted) {
