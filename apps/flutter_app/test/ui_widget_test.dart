@@ -170,6 +170,56 @@ void main() {
     expect(find.text('AWS Console'), findsOneWidget);
   });
 
+  testWidgets('Add server flow defaults category and supports linked account',
+      (tester) async {
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+    final account = await controller.addEntry(
+      label: 'Root Account',
+      payload: const CredentialPayload(
+        username: 'root',
+        password: 'secret',
+        token: '',
+        appId: '',
+        accessToken: '',
+        secretKey: '',
+        notes: '',
+        tags: [],
+      ),
+    );
+
+    await tester.pumpWidget(
+      _wrapApp(HomeScreen(controller: controller)),
+    );
+
+    await tester.tap(find.byIcon(Icons.add_rounded));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('新建服务器'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('不关联账号'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Root Account').last);
+    await tester.pumpAndSettle();
+
+    await tester.enterText(_fieldAt(0), 'Prod Server');
+    await tester.enterText(_fieldAt(1), '10.0.0.1');
+
+    await tester.ensureVisible(find.text('保存'));
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    final serverItem = controller.items.singleWhere(
+      (item) =>
+          item.type == VaultEntryType.server && item.label == 'Prod Server',
+    );
+    final payload = await controller.readServerAsset(serverItem);
+
+    expect(payload, isNotNull);
+    expect(payload!.category, '服务器');
+    expect(payload.accountId, account.id);
+  });
+
   testWidgets('Entry details dialog shows decrypted payload', (tester) async {
     final controller = buildController(requireTotp: false);
     await controller.setupMasterPassword('master', 'master');

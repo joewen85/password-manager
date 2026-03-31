@@ -1182,8 +1182,25 @@ class VaultController extends ChangeNotifier {
   }) {
     switch (imported.type) {
       case VaultEntryType.credential:
-      case VaultEntryType.server:
         return imported.payload;
+      case VaultEntryType.server:
+        final payload = imported.payload as ServerAssetPayload;
+        return ServerAssetPayload(
+          name: payload.name,
+          ipAddress: payload.ipAddress,
+          port: payload.port,
+          username: payload.username,
+          password: payload.password,
+          basicConfig: payload.basicConfig,
+          operatingSystem: payload.operatingSystem,
+          location: payload.location,
+          notes: payload.notes,
+          tags: payload.tags,
+          accountId: payload.accountId == null
+              ? null
+              : (idMap[payload.accountId!] ?? payload.accountId),
+          category: payload.category,
+        );
       case VaultEntryType.service:
         final payload = imported.payload as ServicePayload;
         return ServicePayload(
@@ -1522,6 +1539,7 @@ class VaultController extends ChangeNotifier {
           location: payload.location,
           notes: payload.notes,
           tags: updatedTags,
+          accountId: payload.accountId,
           category: payload.category,
         );
         await updateServerAsset(
@@ -1604,6 +1622,7 @@ class VaultController extends ChangeNotifier {
           location: payload.location,
           notes: payload.notes,
           tags: updatedTags,
+          accountId: payload.accountId,
           category: payload.category,
         );
         await updateServerAsset(
@@ -1685,6 +1704,7 @@ class VaultController extends ChangeNotifier {
           location: payload.location,
           notes: payload.notes,
           tags: payload.tags,
+          accountId: payload.accountId,
           category: '',
         );
         await updateServerAsset(
@@ -1763,6 +1783,7 @@ class VaultController extends ChangeNotifier {
           location: payload.location,
           notes: payload.notes,
           tags: payload.tags,
+          accountId: payload.accountId,
           category: newCategory,
         );
         await updateServerAsset(

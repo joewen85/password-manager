@@ -9,12 +9,14 @@ class NewEntrySheet extends StatefulWidget {
     super.key,
     this.initialData,
     this.availableCategories = const <String>[],
+    this.initialCategory = '',
     this.title = '新建条目',
     this.submitLabel = '保存',
   });
 
   final NewEntryData? initialData;
   final List<String> availableCategories;
+  final String initialCategory;
   final String title;
   final String submitLabel;
 
@@ -50,6 +52,8 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
       _notesController.text = data.payload.notes;
       _tagsController.text = data.payload.tags.join(', ');
       _selectedCategory = data.payload.category;
+    } else {
+      _selectedCategory = widget.initialCategory.trim();
     }
   }
 

@@ -121,6 +121,7 @@ class _HomeScreenState extends State<HomeScreen>
         context: context,
         isScrollControlled: true,
         builder: (context) => NewServerSheet(
+          availableAccounts: _availableAccountItems(),
           availableCategories: widget.controller.metadata.categories,
           initialData: NewServerSheetResult(
             label: item.label,
@@ -427,6 +428,17 @@ class _HomeScreenState extends State<HomeScreen>
       return '未命名副本';
     }
     return '$trimmed 副本';
+  }
+
+  String _defaultCategoryFor(_CreateEntryType type) {
+    switch (type) {
+      case _CreateEntryType.credential:
+        return '账号';
+      case _CreateEntryType.server:
+        return '服务器';
+      case _CreateEntryType.service:
+        return '服务';
+    }
   }
 
   List<VaultItem> _availableAccountItems() {
@@ -995,6 +1007,7 @@ class _HomeScreenState extends State<HomeScreen>
         isScrollControlled: true,
         builder: (context) => NewEntrySheet(
           availableCategories: widget.controller.metadata.categories,
+          initialCategory: _defaultCategoryFor(_CreateEntryType.credential),
         ),
       );
       if (data != null) {
@@ -1013,6 +1026,7 @@ class _HomeScreenState extends State<HomeScreen>
           availableAccounts: _availableAccountItems(),
           availableServers: _availableServerItems(),
           availableCategories: widget.controller.metadata.categories,
+          initialCategory: _defaultCategoryFor(_CreateEntryType.service),
         ),
       );
       if (data != null) {
@@ -1027,7 +1041,9 @@ class _HomeScreenState extends State<HomeScreen>
       context: context,
       isScrollControlled: true,
       builder: (context) => NewServerSheet(
+        availableAccounts: _availableAccountItems(),
         availableCategories: widget.controller.metadata.categories,
+        initialCategory: _defaultCategoryFor(_CreateEntryType.server),
       ),
     );
     if (data != null) {

@@ -13,14 +13,18 @@ class NewServerSheetResult {
 class NewServerSheet extends StatefulWidget {
   const NewServerSheet({
     super.key,
+    required this.availableAccounts,
     this.initialData,
     this.availableCategories = const <String>[],
+    this.initialCategory = '',
     this.title = '新建服务器',
     this.submitLabel = '保存',
   });
 
+  final List<VaultItem> availableAccounts;
   final NewServerSheetResult? initialData;
   final List<String> availableCategories;
+  final String initialCategory;
   final String title;
   final String submitLabel;
 
@@ -40,7 +44,9 @@ class _NewServerSheetState extends State<NewServerSheet> {
   final _locationController = TextEditingController();
   final _notesController = TextEditingController();
   final _tagsController = TextEditingController();
+  final _linkedAccountController = TextEditingController();
   String _selectedCategory = '';
+  String _linkedAccountId = '';
 
   @override
   void initState() {
@@ -57,8 +63,12 @@ class _NewServerSheetState extends State<NewServerSheet> {
       _locationController.text = data.payload.location;
       _notesController.text = data.payload.notes;
       _tagsController.text = data.payload.tags.join(', ');
+      _linkedAccountId = data.payload.accountId ?? '';
       _selectedCategory = data.payload.category;
+    } else {
+      _selectedCategory = widget.initialCategory.trim();
     }
+    _linkedAccountController.text = _linkedAccountLabel();
   }
 
   @override
@@ -73,6 +83,7 @@ class _NewServerSheetState extends State<NewServerSheet> {
     _locationController.dispose();
     _notesController.dispose();
     _tagsController.dispose();
+    _linkedAccountController.dispose();
     super.dispose();
   }
 
@@ -120,6 +131,7 @@ class _NewServerSheetState extends State<NewServerSheet> {
                 label: '端口',
                 hint: '22',
               ),
+              _buildLinkedAccountField(),
               _buildField(
                 controller: _usernameController,
                 label: '登录用户名',
@@ -171,6 +183,9 @@ class _NewServerSheetState extends State<NewServerSheet> {
                           location: _locationController.text.trim(),
                           notes: _notesController.text.trim(),
                           tags: _parseTags(_tagsController.text),
+                          accountId: _linkedAccountId.isEmpty
+                              ? null
+                              : _linkedAccountId,
                           category: _selectedCategory,
                         );
                         Navigator.of(context).pop(
@@ -215,6 +230,124 @@ class _NewServerSheetState extends State<NewServerSheet> {
             : null,
       ),
     );
+  }
+
+  Widget _buildLinkedAccountField() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextFormField(
+        controller: _linkedAccountController,
+        readOnly: true,
+        onTap: _pickAccount,
+        showCursor: false,
+        enableInteractiveSelection: false,
+        decoration: const InputDecoration(
+          labelText: '关联账号（单选）',
+          suffixIcon: Icon(Icons.search),
+        ),
+      ),
+    );
+  }
+
+  String _linkedAccountLabel() {
+    if (_linkedAccountId.trim().isEmpty) {
+      return '不关联账号';
+    }
+    for (final item in widget.availableAccounts) {
+      if (item.id == _linkedAccountId) {
+        return item.label.isEmpty ? item.id : item.label;
+      }
+    }
+    return '已删除账号';
+  }
+
+  Future<void> _pickAccount() async {
+    if (!mounted) {
+      return;
+    }
+    final searchController = TextEditingController();
+    var query = '';
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('选择关联账号'),
+          content: SizedBox(
+            width: 360,
+            height: 360,
+            child: StatefulBuilder(
+              builder: (context, setLocalState) {
+                final trimmed = query.trim().toLowerCase();
+                final filtered = trimmed.isEmpty
+                    ? widget.availableAccounts
+                    : widget.availableAccounts.where((item) {
+                        final label = item.label.isEmpty ? item.id : item.label;
+                        final lowerLabel = label.toLowerCase();
+                        return lowerLabel.contains(trimmed) ||
+                            item.id.toLowerCase().contains(trimmed);
+                      }).toList();
+                return Column(
+                  children: [
+                    TextField(
+                      controller: searchController,
+                      decoration: const InputDecoration(
+                        prefixIcon: Icon(Icons.search),
+                        hintText: '搜索账号',
+                      ),
+                      onChanged: (value) {
+                        setLocalState(() => query = value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: ListView(
+                        children: [
+                          ListTile(
+                            title: const Text('不关联账号'),
+                            onTap: () => Navigator.of(context).pop(''),
+                          ),
+                          if (filtered.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 16),
+                              child: Center(child: Text('未找到匹配账号')),
+                            )
+                          else
+                            for (final item in filtered)
+                              ListTile(
+                                title: Text(
+                                  item.label.isEmpty ? item.id : item.label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                onTap: () => Navigator.of(context).pop(item.id),
+                              ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+          ],
+        );
+      },
+    );
+    searchController.dispose();
+    if (!mounted) {
+      return;
+    }
+    if (result != null) {
+      setState(() {
+        _linkedAccountId = result;
+        _linkedAccountController.text = _linkedAccountLabel();
+      });
+    }
   }
 
   List<String> _parseTags(String raw) {

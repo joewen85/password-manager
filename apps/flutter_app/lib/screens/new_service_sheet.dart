@@ -16,6 +16,7 @@ class NewServiceSheet extends StatefulWidget {
     required this.availableAccounts,
     required this.availableServers,
     this.availableCategories = const <String>[],
+    this.initialCategory = '',
     this.initialData,
     this.title = '新建服务',
     this.submitLabel = '保存',
@@ -24,6 +25,7 @@ class NewServiceSheet extends StatefulWidget {
   final List<VaultItem> availableAccounts;
   final List<VaultItem> availableServers;
   final List<String> availableCategories;
+  final String initialCategory;
   final NewServiceSheetResult? initialData;
   final String title;
   final String submitLabel;
@@ -61,6 +63,8 @@ class _NewServiceSheetState extends State<NewServiceSheet> {
       for (final account in data.payload.accounts) {
         _accounts.add(_AccountForm.fromPayload(account));
       }
+    } else {
+      _selectedCategory = widget.initialCategory.trim();
     }
     if (_accounts.isEmpty) {
       _accounts.add(_AccountForm());

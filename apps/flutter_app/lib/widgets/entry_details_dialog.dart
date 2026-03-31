@@ -222,11 +222,16 @@ class _EntryDetailsContentState extends State<EntryDetailsContent> {
           return const Text('无法解密条目。');
         }
         if (payload is ServerAssetPayload) {
+          final accountLabel = _resolveLinkedAccountLabel(
+            widget.controller,
+            payload.accountId,
+          );
           return _buildScrollableDetails([
             _detailRow('服务器名称', payload.name),
             _detailRow('分类', payload.category),
             _detailRow('IP地址', payload.ipAddress),
             _detailRow('端口', payload.port),
+            _detailRow('关联账号', accountLabel),
             _detailRow('登录用户名', payload.username),
             _detailRow('登录密码', payload.password),
             _detailRow('基础配置', payload.basicConfig),
