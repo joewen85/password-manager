@@ -237,7 +237,7 @@ class _EntryDetailsContentState extends State<EntryDetailsContent> {
             _detailRow('基础配置', payload.basicConfig),
             _detailRow('操作系统', payload.operatingSystem),
             _detailRow('位置', payload.location),
-            _detailRow('备注项', payload.notes),
+            _detailRow('备注项', payload.notes, multiline: true),
             _detailRow('标签', payload.tags.join(', ')),
           ]);
         }
@@ -257,7 +257,7 @@ class _EntryDetailsContentState extends State<EntryDetailsContent> {
             _detailRow('关联账号', accountLabel),
             _detailRow('关联服务器', serverLabels),
             _detailRow('服务账号列表', accountDetails),
-            _detailRow('备注', payload.notes),
+            _detailRow('备注', payload.notes, multiline: true),
             _detailRow('标签', payload.tags.join(', ')),
           ]);
         }
@@ -270,7 +270,7 @@ class _EntryDetailsContentState extends State<EntryDetailsContent> {
             _detailRow('应用ID', payload.appId),
             _detailRow('访问令牌', payload.accessToken),
             _detailRow('密钥', payload.secretKey),
-            _detailRow('备注项', payload.notes),
+            _detailRow('备注项', payload.notes, multiline: true),
             _detailRow('标签', payload.tags.join(', ')),
           ]);
         }
@@ -280,7 +280,24 @@ class _EntryDetailsContentState extends State<EntryDetailsContent> {
   }
 }
 
-Widget _detailRow(String label, String value) {
+Widget _detailRow(String label, String value, {bool multiline = false}) {
+  final displayValue = value.isEmpty ? '-' : value;
+  if (!multiline) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: SelectableText.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: '$label: ',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            TextSpan(text: displayValue),
+          ],
+        ),
+      ),
+    );
+  }
   return Padding(
     padding: const EdgeInsets.symmetric(vertical: 4),
     child: Column(
@@ -288,7 +305,7 @@ Widget _detailRow(String label, String value) {
       children: [
         Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
         const SizedBox(height: 4),
-        SelectableText(value.isEmpty ? '-' : value),
+        SelectableText(displayValue),
       ],
     ),
   );
@@ -329,24 +346,22 @@ String _formatServiceAccounts(List<ServiceAccount> accounts) {
   if (accounts.isEmpty) {
     return '';
   }
-  final buffer = StringBuffer();
-  for (var i = 0; i < accounts.length; i++) {
-    final entry = accounts[i];
-    if (i > 0) {
-      buffer.writeln();
-    }
-    final username = entry.username.trim();
-    final password = entry.password.trim();
-    final note = entry.note.trim();
-    buffer.writeln('账号${i + 1}: ${username.isEmpty ? '-' : username}');
+  return accounts.asMap().entries.map((entry) {
+    final index = entry.key;
+    final account = entry.value;
+    final parts = <String>[
+      '账号${index + 1}: ${account.username.trim().isEmpty ? '-' : account.username.trim()}'
+    ];
+    final password = account.password.trim();
+    final note = account.note.trim();
     if (password.isNotEmpty) {
-      buffer.writeln('密码: $password');
+      parts.add('密码: $password');
     }
     if (note.isNotEmpty) {
-      buffer.writeln('备注: $note');
+      parts.add('备注: $note');
     }
-  }
-  return buffer.toString();
+    return parts.join(', ');
+  }).join('；');
 }
 
 VaultItem? _resolveCurrentItem(VaultController controller, VaultItem item) {

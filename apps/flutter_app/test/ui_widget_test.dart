@@ -247,8 +247,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('GitHub'), findsWidgets);
-    expect(find.text('octo'), findsOneWidget);
-    expect(find.text('pass123'), findsOneWidget);
+    expect(find.text('用户名: octo'), findsOneWidget);
+    expect(find.text('密码: pass123'), findsOneWidget);
   });
 
   test('Exports single item as json', () async {
