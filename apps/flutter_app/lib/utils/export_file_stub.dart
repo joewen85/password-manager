@@ -33,8 +33,16 @@ Future<void> downloadTextFile({
 Future<SavedTextFile> saveTextFile({
   required String filename,
   required String contents,
+  String? filePath,
 }) async {
   throw UnsupportedError('Local file save is not supported on this platform');
+}
+
+Future<String?> pickSaveFilePath({
+  required String suggestedName,
+}) async {
+  throw UnsupportedError(
+      'System file picker is not supported on this platform');
 }
 
 Future<String> readTextFile({
@@ -44,5 +52,6 @@ Future<String> readTextFile({
 }
 
 Future<PickedTextFile?> pickTextFile() async {
-  throw UnsupportedError('System file picker is not supported on this platform');
+  throw UnsupportedError(
+      'System file picker is not supported on this platform');
 }

@@ -42,7 +42,22 @@ Future<void> downloadTextFile({
 Future<SavedTextFile> saveTextFile({
   required String filename,
   required String contents,
+  String? filePath,
 }) async {
+  final customPath = filePath?.trim() ?? '';
+  if (customPath.isNotEmpty) {
+    final resolvedPath = _resolveSavePath(
+      filePath: customPath,
+      fallbackFilename: filename,
+    );
+    final file = File(resolvedPath);
+    await file.parent.create(recursive: true);
+    await file.writeAsString(contents);
+    return SavedTextFile(
+      filename: path.basename(file.path),
+      path: file.path,
+    );
+  }
   try {
     final location = await getSaveLocation(
       suggestedName: filename,
@@ -77,6 +92,27 @@ Future<SavedTextFile> saveTextFile({
   );
 }
 
+Future<String?> pickSaveFilePath({
+  required String suggestedName,
+}) async {
+  try {
+    final location = await getSaveLocation(
+      suggestedName: suggestedName,
+      acceptedTypeGroups: const <XTypeGroup>[
+        XTypeGroup(
+          label: 'JSON',
+          extensions: <String>['json'],
+        ),
+      ],
+    );
+    return location?.path;
+  } on UnsupportedError {
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
 Future<String> readTextFile({
   required String path,
 }) async {
@@ -103,4 +139,22 @@ Future<PickedTextFile?> pickTextFile() async {
     path: file.path,
     contents: await file.readAsString(),
   );
+}
+
+String _resolveSavePath({
+  required String filePath,
+  required String fallbackFilename,
+}) {
+  final trimmed = filePath.trim();
+  final expanded = trimmed.startsWith('~/')
+      ? path.join(Platform.environment['HOME'] ?? '', trimmed.substring(2))
+      : trimmed;
+  if (expanded.endsWith('/') || expanded.endsWith('\\')) {
+    return path.normalize(path.join(expanded, fallbackFilename));
+  }
+  final normalized = path.normalize(expanded);
+  if (path.extension(normalized).isEmpty) {
+    return '$normalized.json';
+  }
+  return normalized;
 }

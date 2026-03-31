@@ -24,9 +24,19 @@ Future<void> presentJsonExport(
     return;
   }
 
+  final exportDestination = await _promptJsonExportDestination(
+    context,
+    title: title,
+    suggestedFilename: filename,
+  );
+  if (exportDestination == null) {
+    return;
+  }
+
   final savedFile = await saveTextFile(
     filename: filename,
     contents: contents,
+    filePath: exportDestination.path,
   );
   if (!context.mounted) {
     return;
@@ -41,7 +51,11 @@ Future<void> presentJsonExport(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('文件已保存到本地路径：'),
+            Text(
+              exportDestination.path.trim().isEmpty
+                  ? '文件已保存到所选位置：'
+                  : '文件已保存到自定义位置：',
+            ),
             const SizedBox(height: 12),
             SelectableText(savedFile.path),
           ],
@@ -81,6 +95,75 @@ Future<void> presentJsonExport(
           child: const Text('关闭'),
         ),
       ],
+    ),
+  );
+}
+
+Future<_JsonExportDestination?> _promptJsonExportDestination(
+  BuildContext context, {
+  required String title,
+  required String suggestedFilename,
+}) async {
+  final pathController = TextEditingController();
+  return showDialog<_JsonExportDestination>(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext, setState) => AlertDialog(
+        title: Text(title),
+        content: SizedBox(
+          width: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('可自定义导出文件保存位置。'),
+              const SizedBox(height: 12),
+              SelectableText('建议文件名: $suggestedFilename'),
+              const SizedBox(height: 12),
+              TextField(
+                controller: pathController,
+                decoration: const InputDecoration(
+                  labelText: '保存路径（可选）',
+                  hintText: '/path/to/export.json 或 /path/to/folder/',
+                  border: OutlineInputBorder(),
+                  helperText: '留空则打开系统“另存为”窗口；填写时会直接保存到该位置。',
+                ),
+              ),
+              if (supportsSystemFilePicker) ...[
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      final selectedPath = await pickSaveFilePath(
+                        suggestedName: suggestedFilename,
+                      );
+                      if (selectedPath == null) {
+                        return;
+                      }
+                      setState(() => pathController.text = selectedPath);
+                    },
+                    icon: const Icon(Icons.folder_open_outlined),
+                    label: const Text('系统选择位置'),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(
+              _JsonExportDestination(path: pathController.text.trim()),
+            ),
+            child: const Text('导出'),
+          ),
+        ],
+      ),
     ),
   );
 }
@@ -214,6 +297,14 @@ class _JsonImportSource {
 
   final String path;
   final String contents;
+}
+
+class _JsonExportDestination {
+  const _JsonExportDestination({
+    required this.path,
+  });
+
+  final String path;
 }
 
 Future<ImportConflictStrategy?> showImportPreviewDialog(

@@ -48,6 +48,7 @@ Future<void> downloadTextFile({
 Future<SavedTextFile> saveTextFile({
   required String filename,
   required String contents,
+  String? filePath,
 }) async {
   await downloadTextFile(
     filename: filename,
@@ -57,6 +58,12 @@ Future<SavedTextFile> saveTextFile({
     filename: filename,
     path: filename,
   );
+}
+
+Future<String?> pickSaveFilePath({
+  required String suggestedName,
+}) async {
+  return null;
 }
 
 Future<String> readTextFile({
