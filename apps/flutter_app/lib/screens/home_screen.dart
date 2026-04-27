@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -308,6 +310,7 @@ class _HomeScreenState extends State<HomeScreen>
   Future<void> _exportEntry(VaultItem item) async {
     try {
       final data = await widget.controller.exportItemData(item);
+      final copyContents = _buildEntryCopyContents(data);
       if (!mounted) {
         return;
       }
@@ -319,6 +322,7 @@ class _HomeScreenState extends State<HomeScreen>
           name: item.label,
         ),
         contents: data,
+        copyContents: copyContents,
         allowCopyContents: true,
       );
     } catch (error) {
@@ -329,6 +333,79 @@ class _HomeScreenState extends State<HomeScreen>
         SnackBar(content: Text('导出失败：$error')),
       );
     }
+  }
+
+  String _buildEntryCopyContents(String exportedJson) {
+    final payload = _extractEntryPayload(exportedJson);
+    if (payload == null) {
+      return exportedJson;
+    }
+    const preferredKeys = <String>[
+      'name',
+      'ipAddress',
+      'ipaddress',
+      'port',
+      'username',
+      'password',
+      'secretKey',
+      'accessKey',
+      'accessToken',
+      'appId',
+      'token',
+      'connectionAddress',
+      'connectionPort',
+    ];
+
+    final keyContents = <String, Object?>{};
+    for (final key in preferredKeys) {
+      final value = payload[key];
+      if (_isMeaningfulExportValue(value)) {
+        keyContents[key] = value;
+      }
+    }
+    if (keyContents.isNotEmpty) {
+      return const JsonEncoder.withIndent('  ').convert(keyContents);
+    }
+
+    final fallback = <String, Object?>{};
+    for (final entry in payload.entries) {
+      if (_isMeaningfulExportValue(entry.value)) {
+        fallback[entry.key] = entry.value;
+      }
+    }
+    return const JsonEncoder.withIndent('  ').convert(fallback);
+  }
+
+  Map<String, Object?>? _extractEntryPayload(String exportedJson) {
+    final decoded = jsonDecode(exportedJson);
+    if (decoded is! Map) {
+      return null;
+    }
+    final item = decoded['item'];
+    if (item is! Map) {
+      return null;
+    }
+    final payload = item['payload'];
+    if (payload is! Map) {
+      return null;
+    }
+    return Map<String, Object?>.from(payload);
+  }
+
+  bool _isMeaningfulExportValue(Object? value) {
+    if (value == null) {
+      return false;
+    }
+    if (value is String) {
+      return value.trim().isNotEmpty;
+    }
+    if (value is List) {
+      return value.isNotEmpty;
+    }
+    if (value is Map) {
+      return value.isNotEmpty;
+    }
+    return true;
   }
 
   Future<void> _importEntry() async {

@@ -45,7 +45,7 @@ void main() {
       password: 'pass',
       token: 'token',
       appId: 'app',
-      accessToken: 'access',
+      accessKey: 'access',
       secretKey: 'secret',
       notes: 'notes',
       tags: const [],
@@ -88,7 +88,7 @@ void main() {
       password: 'pass',
       token: 'token',
       appId: 'app',
-      accessToken: 'access',
+      accessKey: 'access',
       secretKey: 'secret',
       notes: 'notes',
       tags: const [],
@@ -105,5 +105,35 @@ void main() {
       () => service.readCredential(item, masterPassword: 'wrong'),
       throwsA(isA<Exception>()),
     );
+  });
+
+  test('stores category and tags in item metadata', () async {
+    final repository = InMemoryVaultRepository();
+    final service = VaultService(
+      cryptoService: AesGcmCryptoService(),
+      keyDerivationService: KeyDerivationService(iterations: 1000),
+      repository: repository,
+    );
+
+    await service.addCredential(
+      const CredentialPayload(
+        username: 'user',
+        password: 'pass',
+        token: '',
+        appId: '',
+        accessKey: '',
+        secretKey: '',
+        notes: '',
+        tags: ['dev'],
+        category: '研发',
+      ),
+      label: 'GitHub',
+      masterPassword: 'master',
+      nonce: Uint8List.fromList(List<int>.generate(12, (i) => i + 2)),
+    );
+
+    final items = await service.listAll(masterPassword: 'master');
+    expect(items.single.metadataCategory, '研发');
+    expect(items.single.metadataTags, ['dev']);
   });
 }

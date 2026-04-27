@@ -10,8 +10,10 @@ Future<void> presentJsonExport(
   required String title,
   required String filename,
   required String contents,
+  String? copyContents,
   bool allowCopyContents = false,
 }) async {
+  final clipboardContents = copyContents ?? contents;
   if (!supportsLocalTextFileIO) {
     if (allowCopyContents) {
       final action = await _promptSimpleExportAction(
@@ -23,10 +25,10 @@ Future<void> presentJsonExport(
         return;
       }
       if (action == _JsonExportAction.copyContents) {
-        await Clipboard.setData(ClipboardData(text: contents));
+        await Clipboard.setData(ClipboardData(text: clipboardContents));
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('已复制 JSON 内容')),
+            const SnackBar(content: Text('已复制内容')),
           );
         }
         return;
@@ -55,10 +57,10 @@ Future<void> presentJsonExport(
     return;
   }
   if (exportDestination.action == _JsonExportAction.copyContents) {
-    await Clipboard.setData(ClipboardData(text: contents));
+    await Clipboard.setData(ClipboardData(text: clipboardContents));
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已复制 JSON 内容')),
+        const SnackBar(content: Text('已复制内容')),
       );
     }
     return;
@@ -109,13 +111,13 @@ Future<void> presentJsonExport(
         ),
         TextButton(
           onPressed: () async {
-            await Clipboard.setData(ClipboardData(text: contents));
+            await Clipboard.setData(ClipboardData(text: clipboardContents));
             if (dialogContext.mounted) {
               Navigator.of(dialogContext).pop();
             }
             if (context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('已复制 JSON 内容')),
+                const SnackBar(content: Text('已复制内容')),
               );
             }
           },

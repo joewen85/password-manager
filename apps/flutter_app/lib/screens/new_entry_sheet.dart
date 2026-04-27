@@ -31,7 +31,7 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
   final _passwordController = TextEditingController();
   final _tokenController = TextEditingController();
   final _appIdController = TextEditingController();
-  final _accessTokenController = TextEditingController();
+  final _accessKeyController = TextEditingController();
   final _secretKeyController = TextEditingController();
   final _notesController = TextEditingController();
   final _tagsController = TextEditingController();
@@ -47,7 +47,7 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
       _passwordController.text = data.payload.password;
       _tokenController.text = data.payload.token;
       _appIdController.text = data.payload.appId;
-      _accessTokenController.text = data.payload.accessToken;
+      _accessKeyController.text = data.payload.accessKey;
       _secretKeyController.text = data.payload.secretKey;
       _notesController.text = data.payload.notes;
       _tagsController.text = data.payload.tags.join(', ');
@@ -64,7 +64,7 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
     _passwordController.dispose();
     _tokenController.dispose();
     _appIdController.dispose();
-    _accessTokenController.dispose();
+    _accessKeyController.dispose();
     _secretKeyController.dispose();
     _notesController.dispose();
     _tagsController.dispose();
@@ -127,8 +127,8 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
                 label: '应用ID',
               ),
               _buildField(
-                controller: _accessTokenController,
-                label: '访问令牌',
+                controller: _accessKeyController,
+                label: '访问密钥',
                 obscure: true,
               ),
               _buildField(
@@ -160,7 +160,7 @@ class _NewEntrySheetState extends State<NewEntrySheet> {
                           password: _passwordController.text.trim(),
                           token: _tokenController.text.trim(),
                           appId: _appIdController.text.trim(),
-                          accessToken: _accessTokenController.text.trim(),
+                          accessKey: _accessKeyController.text.trim(),
                           secretKey: _secretKeyController.text.trim(),
                           notes: _notesController.text.trim(),
                           tags: _parseTags(_tagsController.text),

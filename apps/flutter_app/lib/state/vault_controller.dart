@@ -250,8 +250,32 @@ class VaultController extends ChangeNotifier {
     _isUnlocked = true;
     _notifyListeners();
     final unlockToken = ++_postUnlockToken;
-    unawaited(_postUnlockLoad(masterPassword, unlockToken));
+    unawaited(_bootstrapUnlock(masterPassword, unlockToken));
     return true;
+  }
+
+  Future<void> _bootstrapUnlock(String masterPassword, int unlockToken) async {
+    try {
+      await _loadMetadata();
+    } catch (error) {
+      await _recordSyncStatus('warning', '解锁后读取元数据失败: $error');
+    }
+    try {
+      if (!_isUnlocked ||
+          _masterPassword != masterPassword ||
+          unlockToken != _postUnlockToken) {
+        return;
+      }
+      await reloadWithOptions(eagerDecrypt: false);
+      if (!_isUnlocked ||
+          _masterPassword != masterPassword ||
+          unlockToken != _postUnlockToken) {
+        return;
+      }
+      await _postUnlockLoad(masterPassword, unlockToken);
+    } catch (error) {
+      await _recordSyncStatus('warning', '解锁后的本地加载失败: $error');
+    }
   }
 
   Future<void> lock() async {
@@ -1269,46 +1293,78 @@ class VaultController extends ChangeNotifier {
   Future<List<VaultEntryView>> _buildEntryViews(
     List<VaultItem> items,
   ) async {
-    final views = <VaultEntryView>[];
-    for (final item in items) {
-      if (item.isDeleted) {
-        continue;
+    final visibleItems = items.where((item) => !item.isDeleted).toList();
+    if (visibleItems.isEmpty) {
+      return const <VaultEntryView>[];
+    }
+    final views = List<VaultEntryView?>.filled(visibleItems.length, null);
+    final workerCount = min(4, visibleItems.length);
+    var nextIndex = 0;
+
+    Future<void> worker() async {
+      while (true) {
+        final index = nextIndex++;
+        if (index >= visibleItems.length) {
+          return;
+        }
+        views[index] = await _buildEntryViewForItem(visibleItems[index]);
+        await _yieldIfNeeded(index);
       }
-      if (item.type == VaultEntryType.server) {
-        final payload = await readServerAsset(item);
-        views.add(_buildEntryView(
-          item: item,
-          credential: null,
-          server: payload,
-          service: null,
-          tags: payload?.tags ?? const [],
-          isConflict: _isConflictItem(item),
-        ));
-        continue;
+    }
+
+    await Future.wait(
+      List<Future<void>>.generate(workerCount, (_) => worker()),
+    );
+    return views.whereType<VaultEntryView>().toList(growable: false);
+  }
+
+  Future<VaultEntryView> _buildEntryViewForItem(VaultItem item) async {
+    if (item.type == VaultEntryType.server) {
+      ServerAssetPayload? payload;
+      try {
+        payload = await readServerAsset(item);
+      } catch (_) {
+        payload = null;
       }
-      if (item.type == VaultEntryType.service) {
-        final payload = await readService(item);
-        views.add(_buildEntryView(
-          item: item,
-          credential: null,
-          server: null,
-          service: payload,
-          tags: payload?.tags ?? const [],
-          isConflict: _isConflictItem(item),
-        ));
-        continue;
-      }
-      final payload = await readEntry(item);
-      views.add(_buildEntryView(
+      return _buildEntryView(
         item: item,
-        credential: payload,
-        server: null,
+        credential: null,
+        server: payload,
         service: null,
         tags: payload?.tags ?? const [],
         isConflict: _isConflictItem(item),
-      ));
+      );
     }
-    return views;
+    if (item.type == VaultEntryType.service) {
+      ServicePayload? payload;
+      try {
+        payload = await readService(item);
+      } catch (_) {
+        payload = null;
+      }
+      return _buildEntryView(
+        item: item,
+        credential: null,
+        server: null,
+        service: payload,
+        tags: payload?.tags ?? const [],
+        isConflict: _isConflictItem(item),
+      );
+    }
+    CredentialPayload? payload;
+    try {
+      payload = await readEntry(item);
+    } catch (_) {
+      payload = null;
+    }
+    return _buildEntryView(
+      item: item,
+      credential: payload,
+      server: null,
+      service: null,
+      tags: payload?.tags ?? const [],
+      isConflict: _isConflictItem(item),
+    );
   }
 
   VaultEntryView _buildEntryView({
@@ -1319,22 +1375,25 @@ class VaultController extends ChangeNotifier {
     required List<String> tags,
     required bool isConflict,
   }) {
-    final category =
-        credential?.category ?? server?.category ?? service?.category ?? '';
+    final resolvedTags = tags.isEmpty ? item.metadataTags : tags;
+    final category = credential?.category ??
+        server?.category ??
+        service?.category ??
+        item.metadataCategory;
     return VaultEntryView(
       item: item,
       credential: credential,
       server: server,
       service: service,
       category: category,
-      tags: tags,
+      tags: resolvedTags,
       isConflict: isConflict,
       searchIndex: _buildSearchIndex(
         item: item,
         credential: credential,
         server: server,
         service: service,
-        tags: tags,
+        tags: resolvedTags,
       ),
     );
   }
@@ -1362,7 +1421,10 @@ class VaultController extends ChangeNotifier {
     final serverNameLower = lowerOrNull(server?.name);
     final serverIpLower = lowerOrNull(server?.ipAddress);
     final categoryLower = lowerOrNull(
-      credential?.category ?? server?.category ?? service?.category,
+      credential?.category ??
+          server?.category ??
+          service?.category ??
+          item.metadataCategory,
     );
     final tagsLower = tags.isEmpty
         ? const <String>[]
@@ -1447,8 +1509,61 @@ class VaultController extends ChangeNotifier {
       return;
     }
     _setEntryViews(views);
+    await _backfillItemMetadataFromViews(views);
     await _refreshMetadataCollectionsFromViews(views);
     _notifyListeners();
+  }
+
+  Future<void> _backfillItemMetadataFromViews(
+      List<VaultEntryView> views) async {
+    if (_masterPassword == null) {
+      return;
+    }
+    final byId = {for (final item in _items) item.id: item};
+    var changed = false;
+    for (final view in views) {
+      final item = byId[view.item.id];
+      if (item == null || item.isDeleted) {
+        continue;
+      }
+      final category = view.category.trim();
+      final tags = view.tags
+          .map((entry) => entry.trim())
+          .where((entry) => entry.isNotEmpty)
+          .toList(growable: false);
+      final sameCategory = item.metadataCategory.trim() == category;
+      final sameTags = listEquals(item.metadataTags, tags);
+      if (sameCategory && sameTags) {
+        continue;
+      }
+      final updatedItem = VaultItem(
+        id: item.id,
+        label: item.label,
+        type: item.type,
+        encryptedPayload: item.encryptedPayload,
+        kdfSalt: item.kdfSalt,
+        kdfIterations: item.kdfIterations,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+        version: item.version,
+        updatedBy: item.updatedBy,
+        isDeleted: item.isDeleted,
+        deletedAt: item.deletedAt,
+        metadataCategory: category,
+        metadataTags: tags,
+      );
+      await _vaultService.saveItem(
+        updatedItem,
+        masterPassword: _masterPassword!,
+      );
+      byId[item.id] = updatedItem;
+      changed = true;
+    }
+    if (!changed) {
+      return;
+    }
+    _items =
+        _items.map((item) => byId[item.id] ?? item).toList(growable: false);
   }
 
   Future<void> _postUnlockLoad(String masterPassword, int unlockToken) async {
@@ -1461,9 +1576,6 @@ class VaultController extends ChangeNotifier {
             .migrateMetadataToRecordKey(masterPassword)
             .timeout(const Duration(seconds: 8));
       }
-      await reloadWithOptions(eagerDecrypt: false).timeout(
-        const Duration(seconds: 8),
-      );
       if (!_isUnlocked ||
           _masterPassword != masterPassword ||
           unlockToken != _postUnlockToken) {
@@ -1582,7 +1694,7 @@ class VaultController extends ChangeNotifier {
           password: payload.password,
           token: payload.token,
           appId: payload.appId,
-          accessToken: payload.accessToken,
+          accessKey: payload.accessKey,
           secretKey: payload.secretKey,
           notes: payload.notes,
           tags: updatedTags,
@@ -1667,7 +1779,7 @@ class VaultController extends ChangeNotifier {
           password: payload.password,
           token: payload.token,
           appId: payload.appId,
-          accessToken: payload.accessToken,
+          accessKey: payload.accessKey,
           secretKey: payload.secretKey,
           notes: payload.notes,
           tags: updatedTags,
@@ -1743,7 +1855,7 @@ class VaultController extends ChangeNotifier {
           password: payload.password,
           token: payload.token,
           appId: payload.appId,
-          accessToken: payload.accessToken,
+          accessKey: payload.accessKey,
           secretKey: payload.secretKey,
           notes: payload.notes,
           tags: payload.tags,
@@ -1822,7 +1934,7 @@ class VaultController extends ChangeNotifier {
           password: payload.password,
           token: payload.token,
           appId: payload.appId,
-          accessToken: payload.accessToken,
+          accessKey: payload.accessKey,
           secretKey: payload.secretKey,
           notes: payload.notes,
           tags: payload.tags,
@@ -3271,6 +3383,8 @@ class VaultController extends ChangeNotifier {
       updatedBy: _deviceId,
       isDeleted: true,
       deletedAt: now,
+      metadataCategory: item.metadataCategory,
+      metadataTags: item.metadataTags,
     );
     await _vaultService.saveItem(
       tombstone,
@@ -3347,6 +3461,8 @@ class VaultController extends ChangeNotifier {
         _sameEncryptedPayload(a.encryptedPayload, b.encryptedPayload) &&
         _sameVersionMap(a.version, b.version) &&
         a.updatedBy == b.updatedBy &&
+        a.metadataCategory == b.metadataCategory &&
+        listEquals(a.metadataTags, b.metadataTags) &&
         ((a.deletedAt == null && b.deletedAt == null) ||
             (a.deletedAt != null &&
                 b.deletedAt != null &&

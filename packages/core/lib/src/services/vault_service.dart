@@ -105,6 +105,8 @@ class VaultService {
         updatedBy: updatedBy ?? 'legacy',
         isDeleted: isDeleted,
         deletedAt: deletedAt,
+        category: payload.category,
+        tags: payload.tags,
       ),
       _metadataKeyBytes(derivedKey.bytes),
     );
@@ -121,6 +123,8 @@ class VaultService {
       updatedBy: updatedBy ?? 'legacy',
       isDeleted: isDeleted,
       deletedAt: deletedAt,
+      metadataCategory: payload.category,
+      metadataTags: payload.tags,
     );
     final record = VaultItemRecord(
       id: item.id,
@@ -227,6 +231,8 @@ class VaultService {
         updatedBy: updatedBy ?? 'legacy',
         isDeleted: isDeleted,
         deletedAt: deletedAt,
+        category: payload.category,
+        tags: payload.tags,
       ),
       _metadataKeyBytes(derivedKey.bytes),
     );
@@ -243,6 +249,8 @@ class VaultService {
       updatedBy: updatedBy ?? 'legacy',
       isDeleted: isDeleted,
       deletedAt: deletedAt,
+      metadataCategory: payload.category,
+      metadataTags: payload.tags,
     );
     final record = VaultItemRecord(
       id: item.id,
@@ -283,6 +291,8 @@ class VaultService {
         updatedBy: updatedBy ?? 'legacy',
         isDeleted: isDeleted,
         deletedAt: deletedAt,
+        category: payload.category,
+        tags: payload.tags,
       ),
       _metadataKeyBytes(derivedKey.bytes),
     );
@@ -299,6 +309,8 @@ class VaultService {
       updatedBy: updatedBy ?? 'legacy',
       isDeleted: isDeleted,
       deletedAt: deletedAt,
+      metadataCategory: payload.category,
+      metadataTags: payload.tags,
     );
     final record = VaultItemRecord(
       id: item.id,
@@ -425,6 +437,8 @@ class VaultService {
         updatedBy: item.updatedBy,
         isDeleted: item.isDeleted,
         deletedAt: item.deletedAt,
+        category: item.metadataCategory,
+        tags: item.metadataTags,
       ),
       _metadataKeyBytes(metadataKey),
     );
@@ -511,6 +525,8 @@ class VaultService {
       updatedBy: updatedBy ?? item.updatedBy,
       isDeleted: isDeleted ?? item.isDeleted,
       deletedAt: deletedAt ?? item.deletedAt,
+      metadataCategory: _extractCategoryFromPayload(payload),
+      metadataTags: _extractTagsFromPayload(payload),
     );
     final encryptedMetadata = await _encryptMetadata(
       _metadataToJson(
@@ -522,6 +538,8 @@ class VaultService {
         updatedBy: updated.updatedBy,
         isDeleted: updated.isDeleted,
         deletedAt: updated.deletedAt,
+        category: updated.metadataCategory,
+        tags: updated.metadataTags,
       ),
       _metadataKeyBytes(derivedKey.bytes),
     );
@@ -591,6 +609,14 @@ class VaultService {
             ),
           )
         : <String, int>{};
+    final rawTags = metadata['tags'];
+    final tags = rawTags is List
+        ? rawTags
+            .whereType<String>()
+            .map((tag) => tag.trim())
+            .where((tag) => tag.isNotEmpty)
+            .toList()
+        : const <String>[];
     return VaultItem(
       id: record.id,
       label: metadata['label'] as String? ?? '',
@@ -609,6 +635,8 @@ class VaultService {
       isDeleted: metadata['isDeleted'] as bool? ?? false,
       deletedAt:
           DateTime.tryParse(metadata['deletedAt'] as String? ?? '')?.toUtc(),
+      metadataCategory: metadata['category'] as String? ?? '',
+      metadataTags: tags,
     );
   }
 
@@ -621,6 +649,8 @@ class VaultService {
     required String updatedBy,
     required bool isDeleted,
     required DateTime? deletedAt,
+    required String category,
+    required List<String> tags,
   }) {
     return {
       'schemaVersion': 1,
@@ -632,7 +662,26 @@ class VaultService {
       'updatedBy': updatedBy,
       'isDeleted': isDeleted,
       'deletedAt': deletedAt?.toIso8601String(),
+      'category': category,
+      'tags': tags,
     };
+  }
+
+  String _extractCategoryFromPayload(Map<String, Object?> payload) {
+    final category = payload['category'];
+    return category is String ? category : '';
+  }
+
+  List<String> _extractTagsFromPayload(Map<String, Object?> payload) {
+    final rawTags = payload['tags'];
+    if (rawTags is! List) {
+      return const <String>[];
+    }
+    return rawTags
+        .whereType<String>()
+        .map((tag) => tag.trim())
+        .where((tag) => tag.isNotEmpty)
+        .toList(growable: false);
   }
 
   Future<EncryptedPayload> _encryptMetadata(

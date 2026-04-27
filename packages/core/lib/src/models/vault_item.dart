@@ -16,6 +16,8 @@ class VaultItem {
     this.updatedBy = 'legacy',
     this.isDeleted = false,
     this.deletedAt,
+    this.metadataCategory = '',
+    this.metadataTags = const <String>[],
   });
 
   final String id;
@@ -30,6 +32,8 @@ class VaultItem {
   final String updatedBy;
   final bool isDeleted;
   final DateTime? deletedAt;
+  final String metadataCategory;
+  final List<String> metadataTags;
 }
 
 class VaultItemRecord {

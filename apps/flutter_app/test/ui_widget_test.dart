@@ -142,6 +142,42 @@ void main() {
     expect(find.textContaining('暂无条目'), findsOneWidget);
   });
 
+  test('Unlock loads category and tags without requiring sync', () async {
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+    await controller.addEntry(
+      label: 'GitHub',
+      payload: const CredentialPayload(
+        username: 'octo',
+        password: 'pass123',
+        token: '',
+        appId: '',
+        accessKey: '',
+        secretKey: '',
+        notes: '',
+        tags: ['dev'],
+        category: '研发',
+      ),
+    );
+    await controller.lock();
+
+    final unlocked = await controller.unlock('master');
+
+    expect(unlocked, isTrue);
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (DateTime.now().isBefore(deadline) &&
+        (controller.entryViews.isEmpty ||
+            controller.entryViews.single.category != '研发' ||
+            !controller.entryViews.single.tags.contains('dev'))) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(controller.entryViews, isNotEmpty);
+    expect(controller.entryViews.single.category, '研发');
+    expect(controller.entryViews.single.tags, contains('dev'));
+    expect(controller.metadata.categories, contains('研发'));
+    expect(controller.metadata.tags, contains('dev'));
+  });
+
   testWidgets('Add entry flow adds item to list', (tester) async {
     final controller = buildController(requireTotp: false);
     await controller.setupMasterPassword('master', 'master');
@@ -181,7 +217,7 @@ void main() {
         password: 'secret',
         token: '',
         appId: '',
-        accessToken: '',
+        accessKey: '',
         secretKey: '',
         notes: '',
         tags: [],
@@ -231,7 +267,7 @@ void main() {
         password: 'pass123',
         token: 'token',
         appId: 'appid',
-        accessToken: 'access',
+        accessKey: 'access',
         secretKey: 'secret',
         notes: 'note',
         tags: ['dev'],
@@ -262,7 +298,7 @@ void main() {
         password: 'pass123',
         token: 'token',
         appId: 'appid',
-        accessToken: 'access',
+        accessKey: 'access',
         secretKey: 'secret',
         notes: 'note',
         tags: ['dev'],
@@ -294,7 +330,7 @@ void main() {
         password: 'aws-pass',
         token: '',
         appId: 'aws-app',
-        accessToken: '',
+        accessKey: '',
         secretKey: '',
         notes: '',
         tags: ['cloud'],
@@ -361,7 +397,7 @@ void main() {
       "password": "pwd-123",
       "token": "totp",
       "appId": "gitlab-app",
-      "accessToken": "acc",
+      "accessKey": "acc",
       "secretKey": "sec",
       "notes": "hello",
       "tags": ["dev"],
@@ -403,7 +439,7 @@ void main() {
         "password": "pwd",
         "token": "",
         "appId": "aws",
-        "accessToken": "",
+        "accessKey": "",
         "secretKey": "",
         "notes": "",
         "tags": ["cloud"],
@@ -474,7 +510,7 @@ void main() {
         password: 'same-pass',
         token: '',
         appId: '',
-        accessToken: '',
+        accessKey: '',
         secretKey: '',
         notes: '',
         tags: ['dev'],
@@ -494,7 +530,7 @@ void main() {
       "password": "same-pass",
       "token": "",
       "appId": "",
-      "accessToken": "",
+      "accessKey": "",
       "secretKey": "",
       "notes": "",
       "tags": ["dev"],
@@ -515,7 +551,7 @@ void main() {
       "password": "other-pass",
       "token": "",
       "appId": "",
-      "accessToken": "",
+      "accessKey": "",
       "secretKey": "",
       "notes": "",
       "tags": ["dev"],
@@ -540,7 +576,7 @@ void main() {
         password: 'old-pass',
         token: '',
         appId: '',
-        accessToken: '',
+        accessKey: '',
         secretKey: '',
         notes: '',
         tags: ['dev'],
@@ -560,7 +596,7 @@ void main() {
       "password": "new-pass",
       "token": "",
       "appId": "",
-      "accessToken": "",
+      "accessKey": "",
       "secretKey": "",
       "notes": "",
       "tags": ["ops"],

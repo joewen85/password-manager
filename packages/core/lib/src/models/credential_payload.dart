@@ -4,7 +4,7 @@ class CredentialPayload {
     required this.password,
     required this.token,
     required this.appId,
-    required this.accessToken,
+    required this.accessKey,
     required this.secretKey,
     required this.notes,
     required this.tags,
@@ -15,7 +15,7 @@ class CredentialPayload {
   final String password;
   final String token;
   final String appId;
-  final String accessToken;
+  final String accessKey;
   final String secretKey;
   final String notes;
   final List<String> tags;
@@ -26,7 +26,7 @@ class CredentialPayload {
         'password': password,
         'token': token,
         'appId': appId,
-        'accessToken': accessToken,
+        'accessKey': accessKey,
         'secretKey': secretKey,
         'notes': notes,
         'tags': tags,
@@ -35,12 +35,13 @@ class CredentialPayload {
 
   static CredentialPayload fromJson(Map<String, Object?> json) {
     final rawTags = (json['tags'] as List?)?.whereType<String>().toList() ?? [];
+    final rawAccessKey = json['accessKey'] ?? json['accessToken'];
     return CredentialPayload(
       username: json['username'] as String? ?? '',
       password: json['password'] as String? ?? '',
       token: json['token'] as String? ?? '',
       appId: json['appId'] as String? ?? '',
-      accessToken: json['accessToken'] as String? ?? '',
+      accessKey: rawAccessKey is String ? rawAccessKey : '',
       secretKey: json['secretKey'] as String? ?? '',
       notes: json['notes'] as String? ?? '',
       tags: rawTags,

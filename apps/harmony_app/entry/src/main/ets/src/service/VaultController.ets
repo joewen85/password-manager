@@ -137,6 +137,27 @@ interface ParsedSyncEnvelopeRecord {
 
 interface CategoryCarrier {
   category?: string;
+  metadataCategory?: string;
+}
+
+interface TagsCarrier {
+  tags?: string[];
+  metadataTags?: string[];
+}
+
+interface EntryPayloadCarrier extends CategoryCarrier, TagsCarrier {}
+
+interface EntryCarrier extends CategoryCarrier, TagsCarrier {
+  payload?: EntryPayloadCarrier;
+  isDeleted?: boolean;
+  createdAt?: number;
+  updatedAt?: number;
+  label?: string;
+}
+
+interface AccessKeyCarrier {
+  accessKey?: string;
+  accessToken?: string;
 }
 
 const MAX_UNLOCK_ATTEMPTS: number = 5;
@@ -364,7 +385,7 @@ export class VaultController {
       this.snapshot.syncSettings.autoSyncEnabled &&
       this.snapshot.syncSettings.autoSyncOnUnlock
     ) {
-      await this.syncNow();
+      this.scheduleAutoSyncAfterUnlock();
     }
 
     return true;
@@ -518,7 +539,7 @@ export class VaultController {
         password: input.password,
         token: input.token,
         appId: input.appId,
-        accessToken: input.accessToken,
+        accessKey: input.accessKey,
         secretKey: input.secretKey,
         notes: input.notes,
         tags,
@@ -604,7 +625,7 @@ export class VaultController {
       password: input.password,
       token: input.token,
       appId: input.appId,
-      accessToken: input.accessToken,
+      accessKey: input.accessKey,
       secretKey: input.secretKey,
       notes: input.notes,
       tags,
@@ -899,9 +920,13 @@ export class VaultController {
   }
 
   private entryCategory(entry: VaultEntry): string {
-    const payload = entry.payload as CategoryCarrier;
-    const category = payload.category ?? '';
-    return typeof category === 'string' ? category.trim() : '';
+    return resolveEntryCategory(entry);
+  }
+
+  private scheduleAutoSyncAfterUnlock(): void {
+    this.syncNow().catch(() => {
+      console.error('Auto sync after unlock failed');
+    });
   }
 
   private buildExportItem(entry: VaultEntry): ExportItemRecord {
@@ -1085,7 +1110,7 @@ export class VaultController {
         password: payload.password ?? '',
         token: payload.token ?? '',
         appId: payload.appId ?? '',
-        accessToken: payload.accessToken ?? '',
+        accessKey: resolveAccessKey(payload as AccessKeyCarrier),
         secretKey: payload.secretKey ?? '',
         notes: payload.notes ?? '',
         tags: payload.tags ?? [],
@@ -1146,7 +1171,7 @@ export class VaultController {
         password: payload.password ?? '',
         token: payload.token ?? '',
         appId: payload.appId ?? '',
-        accessToken: payload.accessToken ?? '',
+        accessKey: resolveAccessKey(payload as AccessKeyCarrier),
         secretKey: payload.secretKey ?? '',
         notes: payload.notes ?? '',
         tags: payload.tags ?? [],
@@ -1486,16 +1511,122 @@ function sanitizeRuntimePayload(
   const runtimePayload = input as VaultRuntimePayload;
   const maybeSettings = hasSyncSettings(input) ? runtimePayload.syncSettings : undefined;
   const maybeSecurity = input.security;
+  const normalizedEntries = (input.entries ?? []).map((entry: VaultEntry) =>
+    normalizeRuntimeEntry(entry),
+  );
+  const tagUnion = new Set<string>();
+  const categoryUnion = new Set<string>();
+  normalizeTags(input.tags ?? []).forEach((tag: string) => tagUnion.add(tag));
+  normalizeTags(input.categories ?? []).forEach((category: string) =>
+    categoryUnion.add(category),
+  );
+  normalizedEntries.forEach((entry: VaultEntry) => {
+    entry.tags.forEach((tag: string) => tagUnion.add(tag));
+    const category = resolveEntryCategory(entry);
+    if (category.length > 0) {
+      categoryUnion.add(category);
+    }
+  });
   return {
-    tags: normalizeTags(input.tags ?? []),
-    categories: normalizeTags(input.categories ?? []),
-    entries: (input.entries ?? []).map((entry: VaultEntry) => deepCopyEntry(entry)),
+    tags: normalizeTags(setToArray(tagUnion)),
+    categories: normalizeTags(setToArray(categoryUnion)),
+    entries: normalizedEntries,
     security: normalizeSecuritySettings(maybeSecurity),
     updatedAt: typeof input.updatedAt === 'number' ? input.updatedAt : Date.now(),
     syncSettings: normalizeSyncSettings(
       maybeSettings === undefined ? defaultSyncSettings() : maybeSettings,
     ),
   };
+}
+
+function normalizeRuntimeEntry(entry: VaultEntry): VaultEntry {
+  const normalized = deepCopyEntry(entry);
+  const carrier = normalized as EntryCarrier;
+  const payload: EntryPayloadCarrier =
+    carrier.payload ?? createEmptyEntryPayloadCarrier();
+  const mergedTags = normalizeTags([
+    ...readStringArray(carrier.tags),
+    ...readStringArray(carrier.metadataTags),
+    ...readStringArray(payload.tags),
+    ...readStringArray(payload.metadataTags),
+  ]);
+  const resolvedCategory = pickFirstNonEmpty([
+    readString(payload.category),
+    readString(payload.metadataCategory),
+    readString(carrier.category),
+    readString(carrier.metadataCategory),
+  ]);
+  carrier.tags = mergedTags;
+  payload.tags = mergedTags;
+  payload.category = resolvedCategory;
+  carrier.payload = payload;
+  carrier.label = readString(carrier.label);
+  if (typeof carrier.isDeleted !== 'boolean') {
+    carrier.isDeleted = false;
+  }
+  if (!isValidTimestamp(carrier.createdAt)) {
+    carrier.createdAt = Date.now();
+  }
+  if (!isValidTimestamp(carrier.updatedAt)) {
+    carrier.updatedAt = carrier.createdAt;
+  }
+  if ((carrier.updatedAt ?? 0) < (carrier.createdAt ?? 0)) {
+    carrier.updatedAt = carrier.createdAt;
+  }
+  return normalizeLegacyCredentialEntry(normalized);
+}
+
+function resolveEntryCategory(entry: VaultEntry): string {
+  const carrier = entry as EntryCarrier;
+  const payload: EntryPayloadCarrier =
+    carrier.payload ?? createEmptyEntryPayloadCarrier();
+  return pickFirstNonEmpty([
+    readString(payload.category),
+    readString(payload.metadataCategory),
+    readString(carrier.category),
+    readString(carrier.metadataCategory),
+  ]);
+}
+
+function createEmptyEntryPayloadCarrier(): EntryPayloadCarrier {
+  return {
+    category: '',
+    metadataCategory: '',
+    tags: [],
+    metadataTags: [],
+  };
+}
+
+function readString(value: string | undefined): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function pickFirstNonEmpty(values: string[]): string {
+  for (let index = 0; index < values.length; index++) {
+    const current = values[index];
+    if (current.length > 0) {
+      return current;
+    }
+  }
+  return '';
+}
+
+function readStringArray(value: string[] | undefined): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  const normalized: string[] = [];
+  value.forEach((entry: string) => {
+    const clean = entry.trim();
+    if (clean.length > 0) {
+      normalized.push(clean);
+    }
+  });
+  return normalized;
+}
+
+function isValidTimestamp(value: number | undefined): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
 function normalizeSyncSettings(settings: SyncSettings): SyncSettings {
@@ -1650,6 +1781,24 @@ function parseSyncEnvelope(payload: string): SyncEnvelope {
     masterKeyRecord,
     encryptedVault,
   };
+}
+
+function normalizeLegacyCredentialEntry(entry: VaultEntry): VaultEntry {
+  if (entry.type !== VaultEntryType.CREDENTIAL) {
+    return entry;
+  }
+  const payload = entry.payload as AccessKeyCarrier;
+  payload.accessKey = resolveAccessKey(payload);
+  return entry;
+}
+
+function resolveAccessKey(payload: AccessKeyCarrier): string {
+  const current = payload.accessKey;
+  if (typeof current === 'string') {
+    return current;
+  }
+  const legacy = payload.accessToken;
+  return typeof legacy === 'string' ? legacy : '';
 }
 
 function normalizeTags(tags: string[]): string[] {

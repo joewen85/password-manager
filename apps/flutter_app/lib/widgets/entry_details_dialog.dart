@@ -268,7 +268,7 @@ class _EntryDetailsContentState extends State<EntryDetailsContent> {
             _detailRow('密码', payload.password),
             _detailRow('令牌', payload.token),
             _detailRow('应用ID', payload.appId),
-            _detailRow('访问令牌', payload.accessToken),
+            _detailRow('访问密钥', payload.accessKey),
             _detailRow('密钥', payload.secretKey),
             _detailRow('备注项', payload.notes, multiline: true),
             _detailRow('标签', payload.tags.join(', ')),

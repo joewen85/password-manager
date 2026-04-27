@@ -31,9 +31,15 @@ interface SearchTerm {
 
 interface SearchPayload {
   category?: string;
+  metadataCategory?: string;
   name?: string;
   appId?: string;
   ipAddress?: string;
+}
+
+interface EntryCategoryCarrier {
+  category?: string;
+  metadataCategory?: string;
 }
 
 @Entry
@@ -875,6 +881,7 @@ struct Index {
     this.refreshSecurityState();
     this.refreshSyncState();
     this.refreshUnlockGuardState();
+    this.schedulePostUnlockRefresh();
   }
 
   private async onCreateEntry(): Promise<void> {
@@ -894,7 +901,7 @@ struct Index {
         password: this.draftCredentialPassword,
         token: '',
         appId: '',
-        accessToken: '',
+        accessKey: '',
         secretKey: '',
         notes: '',
         tags: tags,
@@ -1553,9 +1560,28 @@ struct Index {
   }
 
   private entryCategory(entry: VaultEntry): string {
+    const carrier = entry as EntryCategoryCarrier;
     const payload = entry.payload as SearchPayload;
-    const category = payload.category ?? '';
-    return typeof category === 'string' ? category.trim() : '';
+    return this.firstNonEmptyString([
+      this.cleanString(payload.category),
+      this.cleanString(payload.metadataCategory),
+      this.cleanString(carrier.category),
+      this.cleanString(carrier.metadataCategory),
+    ]);
+  }
+
+  private cleanString(value: string | undefined): string {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private firstNonEmptyString(values: string[]): string {
+    for (let index = 0; index < values.length; index++) {
+      const value = values[index];
+      if (value.length > 0) {
+        return value;
+      }
+    }
+    return '';
   }
 
   @Builder
@@ -1622,5 +1648,22 @@ struct Index {
         this.toastMessage = '';
       }
     }, 2000);
+  }
+
+  private schedulePostUnlockRefresh(): void {
+    setTimeout(() => {
+      if (!this.unlocked) {
+        return;
+      }
+      this.refreshData();
+      this.refreshSyncState();
+    }, 600);
+    setTimeout(() => {
+      if (!this.unlocked) {
+        return;
+      }
+      this.refreshData();
+      this.refreshSyncState();
+    }, 2500);
   }
 }

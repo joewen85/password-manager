@@ -34,6 +34,14 @@ VaultItemRecord vaultRecordFromJson(Map<String, Object?> json) {
 }
 
 Map<String, Object?> _legacyMetadataFromJson(Map<String, Object?> json) {
+  final rawTags = json['tags'];
+  final tags = rawTags is List
+      ? rawTags
+          .whereType<String>()
+          .map((tag) => tag.trim())
+          .where((tag) => tag.isNotEmpty)
+          .toList()
+      : const <String>[];
   return {
     'label': json['label'] as String? ?? '',
     'type': json['type'] as String? ?? 'credential',
@@ -43,6 +51,8 @@ Map<String, Object?> _legacyMetadataFromJson(Map<String, Object?> json) {
     'updatedBy': json['updatedBy'] as String? ?? 'legacy',
     'isDeleted': json['isDeleted'] as bool? ?? false,
     'deletedAt': json['deletedAt'] as String?,
+    'category': json['category'] as String? ?? '',
+    'tags': tags,
   };
 }
 

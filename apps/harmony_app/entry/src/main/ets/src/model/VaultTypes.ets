@@ -9,7 +9,7 @@ export interface CredentialPayload {
   password: string;
   token: string;
   appId: string;
-  accessToken: string;
+  accessKey: string;
   secretKey: string;
   notes: string;
   tags: string[];
@@ -116,7 +116,7 @@ export interface CreateCredentialInput {
   password: string;
   token: string;
   appId: string;
-  accessToken: string;
+  accessKey: string;
   secretKey: string;
   notes: string;
   tags: string[];

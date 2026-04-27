@@ -1,16 +1,120 @@
-# password_manager_app
+# Flutter App
 
-A new Flutter project.
+Flutter 跨平台应用入口。
 
-## Getting Started
+## 常用命令
 
-This project is a starting point for a Flutter application.
+### 依赖重置（全端通用）
 
-A few resources to get you started if this is your first Flutter project:
+```bash
+flutter clean
+flutter pub get
+```
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+### 各端全量重编译（在 `apps/flutter_app` 目录执行）
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+**macOS（Debug 运行）**
+
+```bash
+flutter clean
+flutter pub get
+cd macos && pod install && cd ..
+flutter run -d macos
+```
+
+**macOS（Release 构建）**
+
+```bash
+flutter clean
+flutter pub get
+cd macos && pod install && cd ..
+flutter build macos --release
+```
+
+**Windows（Debug 运行）**
+
+```bash
+flutter clean
+flutter pub get
+flutter run -d windows
+```
+
+**Windows（Release 构建）**
+
+```bash
+flutter clean
+flutter pub get
+flutter build windows --release
+```
+
+**Linux（Debug 运行）**
+
+```bash
+flutter clean
+flutter pub get
+flutter run -d linux
+```
+
+**Linux（Release 构建）**
+
+```bash
+flutter clean
+flutter pub get
+flutter build linux --release
+```
+
+**iOS（Debug 运行）**
+
+```bash
+flutter clean
+flutter pub get
+cd ios && pod install && cd ..
+flutter run -d ios
+```
+
+**iOS（Release IPA）**
+
+```bash
+flutter clean
+flutter pub get
+cd ios && pod install && cd ..
+flutter build ipa --release
+```
+
+**Android（Debug 运行）**
+
+```bash
+flutter clean
+flutter pub get
+flutter run -d android
+```
+
+**Android（Release APK）**
+
+```bash
+flutter clean
+flutter pub get
+flutter build apk --release
+```
+
+**Android（Release AAB）**
+
+```bash
+flutter clean
+flutter pub get
+flutter build appbundle --release
+```
+
+**Web（Release 构建）**
+
+```bash
+flutter clean
+flutter pub get
+flutter build web --release
+```
+
+## 测试
+
+```bash
+flutter test
+```

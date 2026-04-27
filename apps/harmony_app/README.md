@@ -46,6 +46,44 @@
 - 加密兼容阻断报告模板：`docs/CRYPTO_COMPATIBILITY_BLOCKER_REPORT_TEMPLATE.md`
 - 权限/隐私清单：`docs/PERMISSIONS_AND_PRIVACY_CHECKLIST.md`
 
+## 全量重编译命令（从仓库根目录执行）
+
+> 说明：用于“缓存可能脏、需要彻底重编译”的场景。  
+> 默认 product 为 `default`。
+
+### 1) 未签名 HAP 全量重编译
+
+```bash
+./scripts/harmony_preflight.sh
+rm -rf apps/harmony_app/entry/build
+./scripts/harmony_build_hap.sh default
+```
+
+产物通常位于：
+
+`apps/harmony_app/entry/build/default/outputs/default/entry-default-unsigned.hap`
+
+### 2) Signed HAP 全量重编译
+
+```bash
+./scripts/harmony_preflight.sh
+rm -rf apps/harmony_app/entry/build
+./scripts/harmony_build_signed_hap.sh
+```
+
+可选（使用自定义签名 env）：
+
+```bash
+./scripts/harmony_build_signed_hap.sh --env-file /absolute/path/to/signing.env
+```
+
+### 3) 安装到真机（已签名 HAP）
+
+```bash
+hdc list targets
+./scripts/harmony_install_hap.sh apps/harmony_app/entry/build/default/outputs/default/entry-default-signed.hap com.example.passwordmanager
+```
+
 ## 导入导出使用说明
 
 ### 导出

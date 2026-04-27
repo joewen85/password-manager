@@ -21,6 +21,7 @@ class _UnlockScreenState extends State<UnlockScreen> {
   final _totpFocusNode = FocusNode();
   final _confirmFocusNode = FocusNode();
   final _formKey = GlobalKey<FormState>();
+  bool _submitting = false;
 
   @override
   void dispose() {
@@ -34,19 +35,34 @@ class _UnlockScreenState extends State<UnlockScreen> {
   }
 
   Future<void> _handleSubmit({required bool isInitialized}) async {
+    if (_submitting) {
+      return;
+    }
     if (!_formKey.currentState!.validate()) {
       return;
     }
-    final password = _passwordController.text.trim();
-    final success = isInitialized
-        ? await widget.controller.unlock(
-            password,
-            totpCode: _totpController.text.trim(),
-          )
-        : await widget.controller.setupMasterPassword(
-            password,
-            _confirmController.text.trim(),
-          );
+    bool success = false;
+    if (mounted) {
+      setState(() => _submitting = true);
+    }
+    try {
+      final password = _passwordController.text.trim();
+      success = isInitialized
+          ? await widget.controller.unlock(
+              password,
+              totpCode: _totpController.text.trim(),
+            )
+          : await widget.controller.setupMasterPassword(
+              password,
+              _confirmController.text.trim(),
+            );
+    } catch (_) {
+      success = false;
+    } finally {
+      if (mounted) {
+        setState(() => _submitting = false);
+      }
+    }
     if (!success && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -120,9 +136,8 @@ class _UnlockScreenState extends State<UnlockScreen> {
                             Expanded(
                               child: Text(
                                 isInitialized ? '解锁密码库' : '初始化密码库',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .headlineSmall,
+                                style:
+                                    Theme.of(context).textTheme.headlineSmall,
                               ),
                             ),
                           ],
@@ -132,14 +147,12 @@ class _UnlockScreenState extends State<UnlockScreen> {
                           isInitialized
                               ? '所有数据均使用 AES-256 加密。请输入主密码继续。'
                               : '首次使用，请设置主密码。',
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodyMedium
-                              ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
+                          style:
+                              Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
                         ),
                         const SizedBox(height: 20),
                         TextFormField(
@@ -168,9 +181,7 @@ class _UnlockScreenState extends State<UnlockScreen> {
                             _handleSubmit(isInitialized: true);
                           },
                           validator: (value) =>
-                              (value == null || value.isEmpty)
-                                  ? '必填'
-                                  : null,
+                              (value == null || value.isEmpty) ? '必填' : null,
                         ),
                         if (!isInitialized) ...[
                           const SizedBox(height: 12),
@@ -208,18 +219,27 @@ class _UnlockScreenState extends State<UnlockScreen> {
                             onFieldSubmitted: (_) =>
                                 _handleSubmit(isInitialized: true),
                             validator: (value) =>
-                                (value == null || value.isEmpty)
-                                    ? '必填'
-                                    : null,
+                                (value == null || value.isEmpty) ? '必填' : null,
                           ),
                         ],
                         const SizedBox(height: 20),
                         SizedBox(
                           width: double.infinity,
                           child: FilledButton(
-                            onPressed: () =>
-                                _handleSubmit(isInitialized: isInitialized),
-                            child: Text(isInitialized ? '解锁' : '初始化'),
+                            onPressed: _submitting
+                                ? null
+                                : () => _handleSubmit(
+                                      isInitialized: isInitialized,
+                                    ),
+                            child: _submitting
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : Text(isInitialized ? '解锁' : '初始化'),
                           ),
                         ),
                       ],

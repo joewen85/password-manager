@@ -192,13 +192,32 @@ class VaultSyncMerger {
     if (local.kdfIterations != remote.kdfIterations) {
       return false;
     }
+    if (local.metadataCategory != remote.metadataCategory) {
+      return false;
+    }
+    if (!_sameStringList(local.metadataTags, remote.metadataTags)) {
+      return false;
+    }
     if (local.encryptedPayload.version != remote.encryptedPayload.version) {
       return false;
     }
     return _bytesEqual(local.encryptedPayload.ciphertext,
             remote.encryptedPayload.ciphertext) &&
-        _bytesEqual(local.encryptedPayload.nonce, remote.encryptedPayload.nonce) &&
+        _bytesEqual(
+            local.encryptedPayload.nonce, remote.encryptedPayload.nonce) &&
         _bytesEqual(local.encryptedPayload.mac, remote.encryptedPayload.mac);
+  }
+
+  bool _sameStringList(List<String> a, List<String> b) {
+    if (a.length != b.length) {
+      return false;
+    }
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) {
+        return false;
+      }
+    }
+    return true;
   }
 
   bool _bytesEqual(List<int> a, List<int> b) {
@@ -227,9 +246,8 @@ class VaultSyncMerger {
     final labelSuffix = conflictLabelBuilder(source, isRemote);
     final now = DateTime.now().toUtc();
     final updatedBy = source.updatedBy.isEmpty ? 'legacy' : source.updatedBy;
-    final baseVersion = source.version.isNotEmpty
-        ? source.version[updatedBy] ?? 1
-        : 1;
+    final baseVersion =
+        source.version.isNotEmpty ? source.version[updatedBy] ?? 1 : 1;
     return VaultItem(
       id: idGenerator(),
       label: '${source.label} $labelSuffix',
@@ -243,6 +261,8 @@ class VaultSyncMerger {
       updatedBy: updatedBy,
       isDeleted: source.isDeleted,
       deletedAt: source.deletedAt,
+      metadataCategory: source.metadataCategory,
+      metadataTags: source.metadataTags,
     );
   }
 }

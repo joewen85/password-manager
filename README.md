@@ -71,6 +71,145 @@
 - `flutter run -d ios`（需 Xcode / 真机或模拟器）
 - `flutter run -d android`（需 Android SDK）
 
+#### 3.2 各端全量重编译命令（从仓库根目录执行）
+
+> 说明：以下命令会执行清理并重新拉取依赖，适用于“本地缓存可能脏、需要彻底重编译”的场景。  
+> 若你已在 `apps/flutter_app` 目录，可去掉前缀 `cd apps/flutter_app &&`。
+
+**通用（Flutter 依赖重置）**
+
+```bash
+cd apps/flutter_app
+flutter clean
+flutter pub get
+```
+
+**macOS（Debug 运行）**
+
+```bash
+cd apps/flutter_app
+flutter clean
+flutter pub get
+cd macos && pod install && cd ..
+flutter run -d macos
+```
+
+**macOS（Release 构建）**
+
+```bash
+cd apps/flutter_app
+flutter clean
+flutter pub get
+cd macos && pod install && cd ..
+flutter build macos --release
+```
+
+**Windows（Debug 运行）**
+
+```bash
+cd apps/flutter_app
+flutter clean
+flutter pub get
+flutter run -d windows
+```
+
+**Windows（Release 构建）**
+
+```bash
+cd apps/flutter_app
+flutter clean
+flutter pub get
+flutter build windows --release
+```
+
+**Linux（Debug 运行）**
+
+```bash
+cd apps/flutter_app
+flutter clean
+flutter pub get
+flutter run -d linux
+```
+
+**Linux（Release 构建）**
+
+```bash
+cd apps/flutter_app
+flutter clean
+flutter pub get
+flutter build linux --release
+```
+
+**iOS（Debug 运行）**
+
+```bash
+cd apps/flutter_app
+flutter clean
+flutter pub get
+cd ios && pod install && cd ..
+flutter run -d ios
+```
+
+**iOS（Release IPA）**
+
+```bash
+cd apps/flutter_app
+flutter clean
+flutter pub get
+cd ios && pod install && cd ..
+flutter build ipa --release
+```
+
+**Android（Debug 运行）**
+
+```bash
+cd apps/flutter_app
+flutter clean
+flutter pub get
+flutter run -d android
+```
+
+**Android（Release APK）**
+
+```bash
+cd apps/flutter_app
+flutter clean
+flutter pub get
+flutter build apk --release
+```
+
+**Android（Release AAB）**
+
+```bash
+cd apps/flutter_app
+flutter clean
+flutter pub get
+flutter build appbundle --release
+```
+
+**Web（Release 构建）**
+
+```bash
+cd apps/flutter_app
+flutter clean
+flutter pub get
+flutter build web --release
+```
+
+**HarmonyOS（HAP 重编译）**
+
+```bash
+./scripts/harmony_preflight.sh
+./scripts/harmony_build_hap.sh
+```
+
+**HarmonyOS（Signed HAP 重编译）**
+
+```bash
+./scripts/harmony_preflight.sh
+./scripts/harmony_build_signed_hap.sh
+```
+
 ### 4. 测试
 - `cd apps/flutter_app`
 - `flutter test`
