@@ -1620,7 +1620,7 @@ class _HomeScreenState extends State<HomeScreen>
             itemBuilder: (context, index) {
               final view = sorted[index];
               final item = view.item;
-              return EntryCard(
+              return _EntryCard(
                 item: item,
                 service: view.service,
                 category: view.category,
@@ -1826,7 +1826,8 @@ class _HomeScreenState extends State<HomeScreen>
       if (_showConflictsOnly && !view.isConflict) {
         return false;
       }
-      if (hasCategoryFilter && view.category != _selectedCategory) {
+      if (hasCategoryFilter &&
+          view.category.trim() != (_selectedCategory ?? '').trim()) {
         return false;
       }
       if (hasTagFilter && !view.tags.contains(_selectedTag)) {
@@ -1945,6 +1946,9 @@ class _HomeScreenState extends State<HomeScreen>
                   );
                   if (confirmed == true) {
                     await widget.controller.clearAllEntries();
+                    if (!context.mounted) {
+                      break;
+                    }
                     _clearSelection();
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('已清空')),
@@ -2122,9 +2126,8 @@ enum _VaultMenuAction {
   clear,
 }
 
-class EntryCard extends StatelessWidget {
-  const EntryCard({
-    super.key,
+class _EntryCard extends StatelessWidget {
+  const _EntryCard({
     required this.item,
     this.service,
     required this.category,

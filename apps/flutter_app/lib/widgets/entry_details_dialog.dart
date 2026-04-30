@@ -256,7 +256,7 @@ class _EntryDetailsContentState extends State<EntryDetailsContent> {
             _detailRow('端口', payload.connectionPort),
             _detailRow('关联账号', accountLabel),
             _detailRow('关联服务器', serverLabels),
-            _detailRow('服务账号列表', accountDetails),
+            _detailRow('服务账号列表', accountDetails, multiline: true),
             _detailRow('备注', payload.notes, multiline: true),
             _detailRow('标签', payload.tags.join(', ')),
           ]);
@@ -349,19 +349,17 @@ String _formatServiceAccounts(List<ServiceAccount> accounts) {
   return accounts.asMap().entries.map((entry) {
     final index = entry.key;
     final account = entry.value;
-    final parts = <String>[
-      '账号${index + 1}: ${account.username.trim().isEmpty ? '-' : account.username.trim()}'
-    ];
-    final password = account.password.trim();
-    final note = account.note.trim();
-    if (password.isNotEmpty) {
-      parts.add('密码: $password');
-    }
-    if (note.isNotEmpty) {
-      parts.add('备注: $note');
-    }
-    return parts.join(', ');
-  }).join('；');
+    return [
+      '账号${index + 1}: ${_displayOrDash(account.username)}',
+      '密码: ${_displayOrDash(account.password)}',
+      '备注: ${_displayOrDash(account.note)}',
+    ].join('\n');
+  }).join('\n---\n');
+}
+
+String _displayOrDash(String value) {
+  final trimmed = value.trim();
+  return trimmed.isEmpty ? '-' : trimmed;
 }
 
 VaultItem? _resolveCurrentItem(VaultController controller, VaultItem item) {

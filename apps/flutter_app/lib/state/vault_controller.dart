@@ -77,6 +77,8 @@ class VaultController extends ChangeNotifier {
   DateTime? _syncStartedAt;
   int _entryHydrationToken = 0;
   int _postUnlockToken = 0;
+  bool _isHydratingEntryViews = false;
+  static const int _deferredHydrationItemLimit = 120;
 
   bool get isUnlocked => _isUnlocked;
   bool get requireTotp => _requireTotp;
@@ -214,6 +216,7 @@ class VaultController extends ChangeNotifier {
   }
 
   Future<bool> unlock(String masterPassword, {String? totpCode}) async {
+    final unlockWatch = Stopwatch()..start();
     if (_masterKeyRecord == null) {
       return false;
     }
@@ -251,30 +254,66 @@ class VaultController extends ChangeNotifier {
     _notifyListeners();
     final unlockToken = ++_postUnlockToken;
     unawaited(_bootstrapUnlock(masterPassword, unlockToken));
+    _logDebugPerf('unlock.ready', {
+      'token': unlockToken,
+      'elapsedMs': unlockWatch.elapsedMilliseconds,
+    });
     return true;
   }
 
   Future<void> _bootstrapUnlock(String masterPassword, int unlockToken) async {
+    final totalWatch = Stopwatch()..start();
+    final metadataWatch = Stopwatch()..start();
     try {
       await _loadMetadata();
     } catch (error) {
       await _recordSyncStatus('warning', '解锁后读取元数据失败: $error');
     }
+    metadataWatch.stop();
+    final reloadWatch = Stopwatch()..start();
     try {
       if (!_isUnlocked ||
           _masterPassword != masterPassword ||
           unlockToken != _postUnlockToken) {
+        _logDebugPerf('bootstrap.skip', {
+          'stage': 'beforeReload',
+          'token': unlockToken,
+          'elapsedMs': totalWatch.elapsedMilliseconds,
+        });
         return;
       }
       await reloadWithOptions(eagerDecrypt: false);
+      reloadWatch.stop();
       if (!_isUnlocked ||
           _masterPassword != masterPassword ||
           unlockToken != _postUnlockToken) {
+        _logDebugPerf('bootstrap.skip', {
+          'stage': 'afterReload',
+          'token': unlockToken,
+          'elapsedMs': totalWatch.elapsedMilliseconds,
+        });
         return;
       }
+      final postWatch = Stopwatch()..start();
       await _postUnlockLoad(masterPassword, unlockToken);
+      postWatch.stop();
+      _logDebugPerf('bootstrap.done', {
+        'token': unlockToken,
+        'metadataMs': metadataWatch.elapsedMilliseconds,
+        'reloadMs': reloadWatch.elapsedMilliseconds,
+        'postMs': postWatch.elapsedMilliseconds,
+        'totalMs': totalWatch.elapsedMilliseconds,
+      });
     } catch (error) {
+      reloadWatch.stop();
       await _recordSyncStatus('warning', '解锁后的本地加载失败: $error');
+      _logDebugPerf('bootstrap.error', {
+        'token': unlockToken,
+        'metadataMs': metadataWatch.elapsedMilliseconds,
+        'reloadMs': reloadWatch.elapsedMilliseconds,
+        'totalMs': totalWatch.elapsedMilliseconds,
+        'error': '$error',
+      });
     }
   }
 
@@ -286,6 +325,7 @@ class VaultController extends ChangeNotifier {
     _vaultService.setSessionMetadataKey(null);
     _isUnlocked = false;
     _items = [];
+    _setEntryViews(const <VaultEntryView>[]);
     _entryHydrationToken++;
     _postUnlockToken++;
     _pauseAutoSync();
@@ -297,19 +337,50 @@ class VaultController extends ChangeNotifier {
   }
 
   Future<void> reloadWithOptions({bool eagerDecrypt = true}) async {
+    final reloadWatch = Stopwatch()..start();
     _ensureUnlocked();
+    final listWatch = Stopwatch()..start();
     _items = await _vaultService.listAll(masterPassword: _masterPassword!);
+    listWatch.stop();
     _prunePayloadCache(_items);
+    Duration buildDuration = Duration.zero;
     if (eagerDecrypt) {
+      final buildWatch = Stopwatch()..start();
       final views = await _buildEntryViews(_items);
+      buildWatch.stop();
+      buildDuration = buildWatch.elapsed;
       _setEntryViews(views);
       await _refreshMetadataCollectionsFromViews(views);
+      _isHydratingEntryViews = false;
     } else {
       _setEntryViews(_buildSkeletonEntryViews(_items));
-      final hydrationToken = ++_entryHydrationToken;
-      unawaited(_hydrateEntryViews(_items, hydrationToken));
+      if (_items.length <= _deferredHydrationItemLimit) {
+        final hydrationToken = ++_entryHydrationToken;
+        _isHydratingEntryViews = true;
+        unawaited(
+          _hydrateEntryViews(
+            _items,
+            hydrationToken,
+            lowPriority: true,
+          ),
+        );
+      } else {
+        _isHydratingEntryViews = false;
+        _logDebugPerf('hydrate.skip', {
+          'reason': 'itemLimit',
+          'items': _items.length,
+          'limit': _deferredHydrationItemLimit,
+        });
+      }
     }
     _notifyListeners();
+    _logDebugPerf('reload', {
+      'mode': eagerDecrypt ? 'eager' : 'deferred',
+      'items': _items.length,
+      'listMs': listWatch.elapsedMilliseconds,
+      'buildMs': buildDuration.inMilliseconds,
+      'totalMs': reloadWatch.elapsedMilliseconds,
+    });
   }
 
   Future<VaultItem> addEntry({
@@ -588,6 +659,18 @@ class VaultController extends ChangeNotifier {
     });
   }
 
+  @visibleForTesting
+  Future<String> mergeSyncPayloadForTest({
+    required String localPayload,
+    required String? remotePayload,
+  }) async {
+    final result = await _mergeWithRemote(
+      localPayload: localPayload,
+      remotePayload: remotePayload,
+    );
+    return result.payload;
+  }
+
   Future<void> _performSync() async {
     try {
       final client = _buildSyncClient(_syncSettings);
@@ -606,12 +689,15 @@ class VaultController extends ChangeNotifier {
         final remoteResult = await client.download();
         timings['download'] = downloadWatch.elapsed;
         if (!_isSuccessfulDownloadStatus(remoteResult.statusCode)) {
-          await _appendSyncLog(_formatSyncTimings(
-            timings,
-            total: overall.elapsed,
-            attempt: attempt,
-            mergeDetails: mergeResult?.timings,
-          ));
+          await _appendSyncLog(
+            _formatSyncTimings(
+              timings,
+              total: overall.elapsed,
+              attempt: attempt,
+              mergeDetails: mergeResult?.timings,
+            ),
+            debugOnly: true,
+          );
           await _recordSyncStatus(
             'error',
             _buildSyncFailureMessage('下载失败', remoteResult.statusCode),
@@ -630,12 +716,15 @@ class VaultController extends ChangeNotifier {
           timings['apply'] = applyWatch.elapsed;
         }
         if (!mergeResult.shouldUpload) {
-          await _appendSyncLog(_formatSyncTimings(
-            timings,
-            total: overall.elapsed,
-            attempt: attempt,
-            mergeDetails: mergeResult.timings,
-          ));
+          await _appendSyncLog(
+            _formatSyncTimings(
+              timings,
+              total: overall.elapsed,
+              attempt: attempt,
+              mergeDetails: mergeResult.timings,
+            ),
+            debugOnly: true,
+          );
           final resolvedRevision =
               mergeResult.revision > _syncSettings.lastSyncRevision
                   ? mergeResult.revision
@@ -651,12 +740,15 @@ class VaultController extends ChangeNotifier {
         final uploadResult = await client.upload(mergeResult.payload);
         timings['upload'] = uploadWatch.elapsed;
         if (uploadResult.statusCode < 200 || uploadResult.statusCode >= 300) {
-          await _appendSyncLog(_formatSyncTimings(
-            timings,
-            total: overall.elapsed,
-            attempt: attempt,
-            mergeDetails: mergeResult.timings,
-          ));
+          await _appendSyncLog(
+            _formatSyncTimings(
+              timings,
+              total: overall.elapsed,
+              attempt: attempt,
+              mergeDetails: mergeResult.timings,
+            ),
+            debugOnly: true,
+          );
           await _recordSyncStatus(
             'error',
             '上传失败(${uploadResult.statusCode})',
@@ -669,12 +761,15 @@ class VaultController extends ChangeNotifier {
         if (!_isSuccessfulDownloadStatus(verify.statusCode) ||
             verify.payload == null ||
             verify.payload!.trim().isEmpty) {
-          await _appendSyncLog(_formatSyncTimings(
-            timings,
-            total: overall.elapsed,
-            attempt: attempt,
-            mergeDetails: mergeResult.timings,
-          ));
+          await _appendSyncLog(
+            _formatSyncTimings(
+              timings,
+              total: overall.elapsed,
+              attempt: attempt,
+              mergeDetails: mergeResult.timings,
+            ),
+            debugOnly: true,
+          );
           await _recordSyncStatus(
             'error',
             _buildSyncFailureMessage('校验失败', verify.statusCode),
@@ -684,12 +779,15 @@ class VaultController extends ChangeNotifier {
         final verifyPayload = verify.payload!;
         final verifyRevision = _decodePayload(verifyPayload).revision;
         if (verifyRevision == mergeResult.revision) {
-          await _appendSyncLog(_formatSyncTimings(
-            timings,
-            total: overall.elapsed,
-            attempt: attempt,
-            mergeDetails: mergeResult.timings,
-          ));
+          await _appendSyncLog(
+            _formatSyncTimings(
+              timings,
+              total: overall.elapsed,
+              attempt: attempt,
+              mergeDetails: mergeResult.timings,
+            ),
+            debugOnly: true,
+          );
           await _updateSyncRevision(mergeResult.revision);
           await _recordSyncStatus(
             'success',
@@ -698,12 +796,15 @@ class VaultController extends ChangeNotifier {
           return;
         }
         if (attempt == maxAttempts) {
-          await _appendSyncLog(_formatSyncTimings(
-            timings,
-            total: overall.elapsed,
-            attempt: attempt,
-            mergeDetails: mergeResult.timings,
-          ));
+          await _appendSyncLog(
+            _formatSyncTimings(
+              timings,
+              total: overall.elapsed,
+              attempt: attempt,
+              mergeDetails: mergeResult.timings,
+            ),
+            debugOnly: true,
+          );
           await _recordSyncStatus(
             'error',
             '同步冲突：远端在上传后发生变化，请重试',
@@ -1291,14 +1392,17 @@ class VaultController extends ChangeNotifier {
   }
 
   Future<List<VaultEntryView>> _buildEntryViews(
-    List<VaultItem> items,
-  ) async {
+    List<VaultItem> items, {
+    int? maxWorkers,
+    int yieldStride = 25,
+    Duration pauseBetweenItems = Duration.zero,
+  }) async {
     final visibleItems = items.where((item) => !item.isDeleted).toList();
     if (visibleItems.isEmpty) {
       return const <VaultEntryView>[];
     }
     final views = List<VaultEntryView?>.filled(visibleItems.length, null);
-    final workerCount = min(4, visibleItems.length);
+    final workerCount = min(maxWorkers ?? 4, visibleItems.length);
     var nextIndex = 0;
 
     Future<void> worker() async {
@@ -1308,7 +1412,10 @@ class VaultController extends ChangeNotifier {
           return;
         }
         views[index] = await _buildEntryViewForItem(visibleItems[index]);
-        await _yieldIfNeeded(index);
+        if (pauseBetweenItems > Duration.zero) {
+          await Future<void>.delayed(pauseBetweenItems);
+        }
+        await _yieldIfNeeded(index, stride: yieldStride);
       }
     }
 
@@ -1375,11 +1482,15 @@ class VaultController extends ChangeNotifier {
     required List<String> tags,
     required bool isConflict,
   }) {
-    final resolvedTags = tags.isEmpty ? item.metadataTags : tags;
-    final category = credential?.category ??
-        server?.category ??
-        service?.category ??
-        item.metadataCategory;
+    final resolvedTags = (tags.isEmpty ? item.metadataTags : tags)
+        .map((entry) => entry.trim())
+        .where((entry) => entry.isNotEmpty)
+        .toList(growable: false);
+    final category = (credential?.category ??
+            server?.category ??
+            service?.category ??
+            item.metadataCategory)
+        .trim();
     return VaultEntryView(
       item: item,
       credential: credential,
@@ -1500,104 +1611,131 @@ class VaultController extends ChangeNotifier {
   }
 
   Future<void> _hydrateEntryViews(
-      List<VaultItem> items, int hydrationToken) async {
+    List<VaultItem> items,
+    int hydrationToken, {
+    bool lowPriority = false,
+  }) async {
+    final watch = Stopwatch()..start();
     if (!_isUnlocked || hydrationToken != _entryHydrationToken) {
       return;
     }
-    final views = await _buildEntryViews(items);
+    if (lowPriority) {
+      // Give first frames after unlock higher priority.
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      if (!_isUnlocked || hydrationToken != _entryHydrationToken) {
+        return;
+      }
+    }
+    _logDebugPerf('hydrate.start', {
+      'token': hydrationToken,
+      'items': items.length,
+      'mode': lowPriority ? 'lowPriority' : 'normal',
+    });
+    final views = await _buildEntryViews(
+      items,
+      maxWorkers: lowPriority ? 1 : null,
+      yieldStride: lowPriority ? 1 : 25,
+      pauseBetweenItems:
+          lowPriority ? const Duration(milliseconds: 1) : Duration.zero,
+    );
     if (!_isUnlocked || hydrationToken != _entryHydrationToken) {
+      _logDebugPerf('hydrate.skip', {
+        'stage': 'afterBuild',
+        'token': hydrationToken,
+        'elapsedMs': watch.elapsedMilliseconds,
+      });
       return;
     }
     _setEntryViews(views);
-    await _backfillItemMetadataFromViews(views);
+    final metadataWatch = Stopwatch()..start();
     await _refreshMetadataCollectionsFromViews(views);
+    metadataWatch.stop();
     _notifyListeners();
-  }
-
-  Future<void> _backfillItemMetadataFromViews(
-      List<VaultEntryView> views) async {
-    if (_masterPassword == null) {
-      return;
-    }
-    final byId = {for (final item in _items) item.id: item};
-    var changed = false;
-    for (final view in views) {
-      final item = byId[view.item.id];
-      if (item == null || item.isDeleted) {
-        continue;
-      }
-      final category = view.category.trim();
-      final tags = view.tags
-          .map((entry) => entry.trim())
-          .where((entry) => entry.isNotEmpty)
-          .toList(growable: false);
-      final sameCategory = item.metadataCategory.trim() == category;
-      final sameTags = listEquals(item.metadataTags, tags);
-      if (sameCategory && sameTags) {
-        continue;
-      }
-      final updatedItem = VaultItem(
-        id: item.id,
-        label: item.label,
-        type: item.type,
-        encryptedPayload: item.encryptedPayload,
-        kdfSalt: item.kdfSalt,
-        kdfIterations: item.kdfIterations,
-        createdAt: item.createdAt,
-        updatedAt: item.updatedAt,
-        version: item.version,
-        updatedBy: item.updatedBy,
-        isDeleted: item.isDeleted,
-        deletedAt: item.deletedAt,
-        metadataCategory: category,
-        metadataTags: tags,
-      );
-      await _vaultService.saveItem(
-        updatedItem,
-        masterPassword: _masterPassword!,
-      );
-      byId[item.id] = updatedItem;
-      changed = true;
-    }
-    if (!changed) {
-      return;
-    }
-    _items =
-        _items.map((item) => byId[item.id] ?? item).toList(growable: false);
+    _logDebugPerf('hydrate.done', {
+      'token': hydrationToken,
+      'views': views.length,
+      'backfill': 'disabled',
+      'mode': lowPriority ? 'lowPriority' : 'normal',
+      'metadataMs': metadataWatch.elapsedMilliseconds,
+      'totalMs': watch.elapsedMilliseconds,
+    });
+    _isHydratingEntryViews = false;
   }
 
   Future<void> _postUnlockLoad(String masterPassword, int unlockToken) async {
+    final watch = Stopwatch()..start();
     try {
+      final migrateWatch = Stopwatch()..start();
       await _vaultService
           .migrateLegacyRecords(masterPassword)
           .timeout(const Duration(seconds: 8));
-      if (!_syncSettings.syncMasterKey) {
-        await _vaultService
+      var metadataMigratedCount = 0;
+      if (!_syncSettings.syncMasterKey &&
+          !_metadata.recordKeyMetadataMigrated) {
+        metadataMigratedCount = await _vaultService
             .migrateMetadataToRecordKey(masterPassword)
             .timeout(const Duration(seconds: 8));
+        _metadata = _metadata.copyWith(recordKeyMetadataMigrated: true);
+        await _saveMetadata();
+      } else if (!_syncSettings.syncMasterKey) {
+        _logDebugPerf('postUnlock.skipRecordKeyMigration', {
+          'token': unlockToken,
+          'reason': 'flag',
+        });
       }
+      migrateWatch.stop();
       if (!_isUnlocked ||
           _masterPassword != masterPassword ||
           unlockToken != _postUnlockToken) {
+        _logDebugPerf('postUnlock.skip', {
+          'stage': 'afterMigrate',
+          'token': unlockToken,
+          'migrateMs': migrateWatch.elapsedMilliseconds,
+          'elapsedMs': watch.elapsedMilliseconds,
+        });
         return;
       }
+      final loadWatch = Stopwatch()..start();
       await Future.wait([
         _loadSyncSettings(),
         _loadMetadata(),
       ]).timeout(const Duration(seconds: 8));
+      loadWatch.stop();
       if (!_isUnlocked ||
           _masterPassword != masterPassword ||
           unlockToken != _postUnlockToken) {
+        _logDebugPerf('postUnlock.skip', {
+          'stage': 'afterLoadSettings',
+          'token': unlockToken,
+          'migrateMs': migrateWatch.elapsedMilliseconds,
+          'loadMs': loadWatch.elapsedMilliseconds,
+          'elapsedMs': watch.elapsedMilliseconds,
+        });
         return;
       }
-      _notifyListeners();
       if (_syncSettings.autoSyncOnUnlock && _appIsActive) {
         _scheduleResumeSync();
       }
+      _logDebugPerf('postUnlock.done', {
+        'token': unlockToken,
+        'recordMigrated': metadataMigratedCount,
+        'migrateMs': migrateWatch.elapsedMilliseconds,
+        'loadMs': loadWatch.elapsedMilliseconds,
+        'totalMs': watch.elapsedMilliseconds,
+      });
     } on TimeoutException {
       await _recordSyncStatus('warning', '解锁后的后台恢复超时，已跳过本次恢复');
+      _logDebugPerf('postUnlock.timeout', {
+        'token': unlockToken,
+        'elapsedMs': watch.elapsedMilliseconds,
+      });
     } catch (error) {
       await _recordSyncStatus('warning', '解锁后的后台恢复失败: $error');
+      _logDebugPerf('postUnlock.error', {
+        'token': unlockToken,
+        'elapsedMs': watch.elapsedMilliseconds,
+        'error': '$error',
+      });
     }
   }
 
@@ -1962,8 +2100,19 @@ class VaultController extends ChangeNotifier {
       _metadataKey,
       allowEncryption: _syncSettings.syncMasterKey,
     );
+    if (!wasSyncingMasterKey &&
+        _syncSettings.syncMasterKey &&
+        _metadata.recordKeyMetadataMigrated) {
+      _metadata = _metadata.copyWith(recordKeyMetadataMigrated: false);
+      await _saveMetadata();
+    }
     if (wasSyncingMasterKey && !_syncSettings.syncMasterKey) {
-      await _vaultService.migrateMetadataToRecordKey(_masterPassword!);
+      final migrated =
+          await _vaultService.migrateMetadataToRecordKey(_masterPassword!);
+      if (!_metadata.recordKeyMetadataMigrated || migrated > 0) {
+        _metadata = _metadata.copyWith(recordKeyMetadataMigrated: true);
+        await _saveMetadata();
+      }
     }
     _notifyListeners();
   }
@@ -2176,6 +2325,13 @@ class VaultController extends ChangeNotifier {
         _syncSettings = SyncSettings.fromJson(
           Map<String, Object?>.from(decoded),
         );
+        final sanitizedLogs = _sanitizeSyncLogsForCurrentBuild(
+          _syncSettings.logs,
+        );
+        if (!listEquals(sanitizedLogs, _syncSettings.logs)) {
+          _syncSettings = _syncSettings.copyWith(logs: sanitizedLogs);
+          await _saveSyncSettings();
+        }
         if (_syncSettings.deviceId.isEmpty) {
           _syncSettings = _syncSettings.copyWith(
             deviceId: SyncSettings.generateDeviceId(),
@@ -2505,7 +2661,17 @@ class VaultController extends ChangeNotifier {
     if (!_appIsActive || !_isUnlocked || !_syncSettings.autoSyncEnabled) {
       return;
     }
-    _resumeSyncTimer = Timer(const Duration(seconds: 2), () {
+    final delay = _isHydratingEntryViews
+        ? const Duration(seconds: 12)
+        : const Duration(seconds: 2);
+    _resumeSyncTimer = Timer(delay, () {
+      if (!_isUnlocked || !_appIsActive) {
+        return;
+      }
+      if (_isHydratingEntryViews) {
+        _scheduleResumeSync();
+        return;
+      }
       unawaited(syncNow());
     });
   }
@@ -2665,11 +2831,20 @@ class VaultController extends ChangeNotifier {
     if (mergedTags.tags.length != legacyBaseCount) {
       mergedTagsUpdatedAt = _nowUtcMillis();
     }
+    final localMetadata = mergedTags.localMetadata ?? _metadata;
+    final remoteMetadata = mergedTags.remoteMetadata;
+    final mergedRecordKeyMetadataMigrated = _syncSettings.syncMasterKey
+        ? false
+        : _resolveRecordKeyMetadataMigrated(
+            local: localMetadata,
+            remote: remoteMetadata,
+          );
     final mergedMetadata = _metadata.copyWith(
       tags: mergedTags.tags.toList()..sort(),
       categories: mergedTags.categories.toList()..sort(),
       tagsUpdatedAt: mergedTagsUpdatedAt,
       categoriesUpdatedAt: mergedTags.categoriesUpdatedAt,
+      recordKeyMetadataMigrated: mergedRecordKeyMetadataMigrated,
     );
     if (remoteResolution != null && _syncSettings.syncMasterKey) {
       if (_masterKeyRecord == null ||
@@ -2683,8 +2858,6 @@ class VaultController extends ChangeNotifier {
         allowEncryption: _syncSettings.syncMasterKey,
       );
     }
-    final localMetadata = mergedTags.localMetadata ?? _metadata;
-    final remoteMetadata = mergedTags.remoteMetadata;
     final mergedMasterKeyPayload = _syncSettings.syncMasterKey
         ? (remoteResolution != null ? remote.masterKey : local.masterKey)
         : null;
@@ -2694,7 +2867,9 @@ class VaultController extends ChangeNotifier {
     final matchesRemote = _sameItemList(mergeResult.items, remoteItems) &&
         _sameMetadata(mergedMetadata, remoteMetadata) &&
         _sameMasterKeyPayload(mergedMasterKeyPayload, remote.masterKey);
-    if (matchesRemote) {
+    final canReuseRemotePayload =
+        remoteSessionKey == null || _sameKey(remoteSessionKey, _metadataKey);
+    if (matchesRemote && canReuseRemotePayload) {
       mergeTimings['metadata'] = metadataWatch.elapsed;
       return _SyncMergeResult(
         payload: remotePayload,
@@ -2730,7 +2905,9 @@ class VaultController extends ChangeNotifier {
       }
       if (record == null) {
         final remoteItem = remoteItemById[item.id];
-        if (remoteItem != null && identical(item, remoteItem)) {
+        if (remoteItem != null &&
+            identical(item, remoteItem) &&
+            canReuseRemotePayload) {
           record = remoteRecordById[item.id];
         }
       }
@@ -2831,7 +3008,8 @@ class VaultController extends ChangeNotifier {
       message: message,
       level: status == 'error' ? 'error' : 'info',
     );
-    final updatedLogs = [entry, ..._syncSettings.logs];
+    final currentLogs = _sanitizeSyncLogsForCurrentBuild(_syncSettings.logs);
+    final updatedLogs = [entry, ...currentLogs];
     final trimmedLogs =
         updatedLogs.length > 50 ? updatedLogs.sublist(0, 50) : updatedLogs;
     _syncSettings = _syncSettings.copyWith(
@@ -2844,18 +3022,42 @@ class VaultController extends ChangeNotifier {
     _notifyListeners();
   }
 
-  Future<void> _appendSyncLog(String message, {String level = 'info'}) async {
+  Future<void> _appendSyncLog(
+    String message, {
+    String level = 'info',
+    bool debugOnly = false,
+  }) async {
+    if (debugOnly && !kDebugMode) {
+      return;
+    }
+    if (!kDebugMode && _isSyncTimingLog(message)) {
+      return;
+    }
     final entry = SyncLogEntry(
       timestamp: DateTime.now().toUtc(),
       message: message,
       level: level,
     );
-    final updatedLogs = [entry, ..._syncSettings.logs];
+    final currentLogs = _sanitizeSyncLogsForCurrentBuild(_syncSettings.logs);
+    final updatedLogs = [entry, ...currentLogs];
     final trimmedLogs =
         updatedLogs.length > 50 ? updatedLogs.sublist(0, 50) : updatedLogs;
     _syncSettings = _syncSettings.copyWith(logs: trimmedLogs);
     await _saveSyncSettings();
     _notifyListeners();
+  }
+
+  List<SyncLogEntry> _sanitizeSyncLogsForCurrentBuild(
+    List<SyncLogEntry> logs,
+  ) {
+    if (kDebugMode) {
+      return logs;
+    }
+    return logs.where((entry) => !_isSyncTimingLog(entry.message)).toList();
+  }
+
+  bool _isSyncTimingLog(String message) {
+    return message.contains('同步耗时(');
   }
 
   String _formatSyncTimings(
@@ -3360,6 +3562,19 @@ class VaultController extends ChangeNotifier {
     _payloadCache.removeWhere((key, _) => !validIds.contains(key));
   }
 
+  void _logDebugPerf(String stage, [Map<String, Object?> details = const {}]) {
+    if (!kDebugMode) {
+      return;
+    }
+    final buffer = StringBuffer('[Perf][$stage]');
+    if (details.isNotEmpty) {
+      details.forEach((key, value) {
+        buffer.write(' $key=$value');
+      });
+    }
+    debugPrint(buffer.toString());
+  }
+
   String _payloadCacheKey(VaultItem item) {
     return '${item.type.name}|${item.updatedAt.microsecondsSinceEpoch}|'
         '${item.deletedAt?.microsecondsSinceEpoch ?? 0}|${item.isDeleted}';
@@ -3433,8 +3648,23 @@ class VaultController extends ChangeNotifier {
     return a.sortOrder == b.sortOrder &&
         a.tagsUpdatedAt == b.tagsUpdatedAt &&
         a.categoriesUpdatedAt == b.categoriesUpdatedAt &&
+        a.recordKeyMetadataMigrated == b.recordKeyMetadataMigrated &&
         listEquals(a.tags, b.tags) &&
         listEquals(a.categories, b.categories);
+  }
+
+  bool _resolveRecordKeyMetadataMigrated({
+    required VaultMetadata? local,
+    required VaultMetadata? remote,
+  }) {
+    if (local == null && remote == null) {
+      return _metadata.recordKeyMetadataMigrated;
+    }
+    if (local != null && remote != null) {
+      return local.recordKeyMetadataMigrated &&
+          remote.recordKeyMetadataMigrated;
+    }
+    return (local ?? remote)!.recordKeyMetadataMigrated;
   }
 
   bool _sameVersionMap(Map<String, int> a, Map<String, int> b) {

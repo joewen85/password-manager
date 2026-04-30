@@ -25,24 +25,29 @@ class PasswordManagerApp extends StatelessWidget {
   static const bool _isTest = bool.fromEnvironment('FLUTTER_TEST');
 
   static Future<PasswordManagerApp> bootstrap() async {
+    String? supportDirectoryPath;
+    if (!kIsWeb) {
+      try {
+        supportDirectoryPath = (await getApplicationSupportDirectory()).path;
+      } catch (error) {
+        debugPrint('File storage fallback to memory: $error');
+      }
+    }
+
     VaultRepository repository;
     MasterKeyStore masterKeyStore;
     if (kIsWeb) {
       final webStorage = await openWebStorage();
       repository = webStorage.repository;
       masterKeyStore = webStorage.masterKeyStore;
+    } else if (supportDirectoryPath != null) {
+      final vaultPath = path.join(supportDirectoryPath, 'vault.json');
+      final masterKeyPath = path.join(supportDirectoryPath, 'master_key.json');
+      repository = LocalFileVaultRepository(filePath: vaultPath);
+      masterKeyStore = LocalFileMasterKeyStore(filePath: masterKeyPath);
     } else {
-      try {
-        final directory = await getApplicationSupportDirectory();
-        final vaultPath = path.join(directory.path, 'vault.json');
-        final masterKeyPath = path.join(directory.path, 'master_key.json');
-        repository = LocalFileVaultRepository(filePath: vaultPath);
-        masterKeyStore = LocalFileMasterKeyStore(filePath: masterKeyPath);
-      } catch (error) {
-        debugPrint('Vault storage fallback to memory: $error');
-        repository = InMemoryVaultRepository();
-        masterKeyStore = InMemoryMasterKeyStore();
-      }
+      repository = InMemoryVaultRepository();
+      masterKeyStore = InMemoryMasterKeyStore();
     }
     final keyDerivationService = KeyDerivationService();
     final cryptoService = AesGcmCryptoService();
@@ -56,12 +61,14 @@ class PasswordManagerApp extends StatelessWidget {
     if (kIsWeb) {
       settingsStore = WebSyncSettingsStore();
       metadataStore = WebVaultMetadataStore();
-    } else {
-      final directory = await getApplicationSupportDirectory();
-      final settingsPath = path.join(directory.path, 'sync_settings.json');
+    } else if (supportDirectoryPath != null) {
+      final settingsPath = path.join(supportDirectoryPath, 'sync_settings.json');
       settingsStore = FileSyncSettingsStore(filePath: settingsPath);
-      final metadataPath = path.join(directory.path, 'vault_metadata.json');
+      final metadataPath = path.join(supportDirectoryPath, 'vault_metadata.json');
       metadataStore = FileVaultMetadataStore(filePath: metadataPath);
+    } else {
+      settingsStore = MemorySyncSettingsStore();
+      metadataStore = MemoryVaultMetadataStore();
     }
     final controller = VaultController(
       vaultService: vaultService,

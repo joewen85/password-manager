@@ -1487,7 +1487,10 @@ export class VaultController {
       level: status === 'error' ? 'error' : 'info',
       message: safeMessage,
     };
-    const logs = [newLog, ...settings.logs];
+    const normalizedLogs = settings.logs.filter(
+      (entry: SyncLogEntry) => !isSyncTimingLogMessage(entry.message),
+    );
+    const logs = [newLog, ...normalizedLogs];
     settings.logs = logs.length > 50 ? logs.slice(0, 50) : logs;
 
     this.snapshot.syncSettings = settings;
@@ -1643,8 +1646,13 @@ function normalizeSyncSettings(settings: SyncSettings): SyncSettings {
         message: log.message ?? '',
       };
       return normalizedLog;
-    });
+    })
+    .filter((log: SyncLogEntry) => !isSyncTimingLogMessage(log.message));
   return normalized;
+}
+
+function isSyncTimingLogMessage(message: string): boolean {
+  return message.includes('同步耗时(');
 }
 
 function cloneSyncSettings(settings: SyncSettings): SyncSettings {

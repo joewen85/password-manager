@@ -77,7 +77,10 @@ Future<SavedTextFile> saveTextFile({
       );
     }
   } on UnsupportedError {
-  } catch (_) {}
+    // Fall back to writing into the app documents directory below.
+  } catch (_) {
+    // Fall back to writing into the app documents directory below.
+  }
 
   final directory = await getApplicationDocumentsDirectory();
   final exportDirectory = Directory(path.join(directory.path, 'exports'));

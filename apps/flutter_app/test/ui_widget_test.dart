@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -15,6 +16,7 @@ import 'package:password_manager_app/state/vault_controller.dart';
 import 'package:password_manager_app/state/vault_metadata.dart';
 import 'package:password_manager_app/storage/sync_settings_store.dart';
 import 'package:password_manager_app/storage/vault_metadata_store.dart';
+import 'package:password_manager_app/widgets/entry_details_dialog.dart';
 
 class InMemoryVaultRepository implements VaultRepository {
   final Map<String, VaultItemRecord> _store = {};
@@ -105,7 +107,7 @@ Widget _wrapApp(Widget home) {
 }
 
 void main() {
-  Finder _fieldAt(int index) => find.byType(TextFormField).at(index);
+  Finder fieldAt(int index) => find.byType(TextFormField).at(index);
 
   testWidgets('Unlock screen shows master password field', (tester) async {
     final controller = buildController(requireTotp: false);
@@ -156,7 +158,7 @@ void main() {
         secretKey: '',
         notes: '',
         tags: ['dev'],
-        category: '研发',
+        category: ' 研发 ',
       ),
     );
     await controller.lock();
@@ -178,6 +180,175 @@ void main() {
     expect(controller.metadata.tags, contains('dev'));
   });
 
+  test('Lock clears decrypted entry views', () async {
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+    await controller.addEntry(
+      label: 'GitHub',
+      payload: const CredentialPayload(
+        username: 'octo',
+        password: 'pass123',
+        token: '',
+        appId: '',
+        accessKey: '',
+        secretKey: '',
+        notes: '',
+        tags: ['dev'],
+        category: '研发',
+      ),
+    );
+
+    expect(controller.entryViews, isNotEmpty);
+    expect(controller.entryViews.single.credential?.password, 'pass123');
+    final versionBeforeLock = controller.entryViewsVersion;
+
+    await controller.lock();
+
+    expect(controller.entryViews, isEmpty);
+    expect(controller.entryViewsVersion, greaterThan(versionBeforeLock));
+  });
+
+  test('Merge re-encrypts remote metadata before local apply', () async {
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+    await controller.updateSyncSettings(
+      controller.syncSettings.copyWith(syncMasterKey: false),
+    );
+
+    final cryptoService = AesGcmCryptoService();
+    final keyDerivationService = KeyDerivationService(iterations: 1000);
+
+    Future<VaultItemRecord> buildRecord({
+      required String label,
+      required String username,
+      required Map<String, int> version,
+      required String updatedBy,
+      Uint8List? metadataKey,
+    }) async {
+      final repository = InMemoryVaultRepository();
+      final service = VaultService(
+        cryptoService: cryptoService,
+        keyDerivationService: keyDerivationService,
+        repository: repository,
+      );
+      service.setSessionMetadataKey(
+        metadataKey,
+        allowEncryption: metadataKey != null,
+      );
+      final item = await service.addCredential(
+        CredentialPayload(
+          username: username,
+          password: '$username-pass',
+          token: '',
+          appId: '',
+          accessKey: '',
+          secretKey: '',
+          notes: '',
+          tags: const ['sync'],
+          category: '测试',
+        ),
+        label: label,
+        masterPassword: 'master',
+        nonce: Uint8List.fromList(List<int>.generate(12, (i) => i + 1)),
+        version: version,
+        updatedBy: updatedBy,
+      );
+      final record = await repository.getById(item.id);
+      return VaultItemRecord(
+        id: 'shared-entry',
+        encryptedPayload: record!.encryptedPayload,
+        encryptedMetadata: record.encryptedMetadata,
+        kdfSalt: record.kdfSalt,
+        kdfIterations: record.kdfIterations,
+      );
+    }
+
+    String payloadFor({
+      required int revision,
+      required String deviceId,
+      required VaultItemRecord record,
+      VaultMetadataRecord? metadataRecord,
+    }) {
+      return jsonEncode({
+        'version': 2,
+        'exportedAt': DateTime.utc(2026).toIso8601String(),
+        'deviceId': deviceId,
+        'revision': revision,
+        'masterKey': null,
+        'metadataRecord': metadataRecord?.toJson(),
+        'items': [vaultRecordToJson(record)],
+      });
+    }
+
+    final remoteMetadataKey = await keyDerivationService.deriveKey(
+      'master',
+      salt: Uint8List.fromList(List<int>.generate(16, (i) => i + 40)),
+      iterations: 1000,
+    );
+    final remoteMetadataPayload = await cryptoService.encrypt(
+      Uint8List.fromList(
+        utf8.encode(jsonEncode(VaultMetadata.defaults().toJson())),
+      ),
+      remoteMetadataKey.bytes,
+      nonce: Uint8List.fromList(List<int>.generate(12, (i) => i + 90)),
+    );
+    final remoteMetadataRecord = VaultMetadataRecord(
+      encryptedPayload: remoteMetadataPayload,
+      kdfSalt: remoteMetadataKey.salt,
+      kdfIterations: remoteMetadataKey.iterations,
+    );
+
+    final localRecord = await buildRecord(
+      label: 'Local',
+      username: 'local-user',
+      version: const {'local': 1},
+      updatedBy: 'local',
+    );
+    final remoteRecord = await buildRecord(
+      label: 'Remote',
+      username: 'remote-user',
+      version: const {'local': 1, 'remote': 1},
+      updatedBy: 'remote',
+      metadataKey: remoteMetadataKey.bytes,
+    );
+
+    final mergedPayload = await controller.mergeSyncPayloadForTest(
+      localPayload: payloadFor(
+        revision: 1,
+        deviceId: 'local',
+        record: localRecord,
+      ),
+      remotePayload: payloadFor(
+        revision: 2,
+        deviceId: 'remote',
+        record: remoteRecord,
+        metadataRecord: remoteMetadataRecord,
+      ),
+    );
+
+    final decoded = jsonDecode(mergedPayload) as Map;
+    final mergedRecord = vaultRecordFromJson(
+      Map<String, Object?>.from((decoded['items'] as List).single as Map),
+    );
+    final verifier = VaultService(
+      cryptoService: cryptoService,
+      keyDerivationService: keyDerivationService,
+      repository: InMemoryVaultRepository(),
+    );
+
+    final mergedItem = await verifier.decryptRecord(
+      mergedRecord,
+      masterPassword: 'master',
+    );
+    final mergedCredential = await verifier.readCredential(
+      mergedItem,
+      masterPassword: 'master',
+    );
+
+    expect(mergedItem.label, 'Remote');
+    expect(mergedCredential?.username, 'remote-user');
+  });
+
   testWidgets('Add entry flow adds item to list', (tester) async {
     final controller = buildController(requireTotp: false);
     await controller.setupMasterPassword('master', 'master');
@@ -191,13 +362,13 @@ void main() {
     await tester.tap(find.text('新建账号'));
     await tester.pumpAndSettle();
 
-    await tester.enterText(_fieldAt(0), 'AWS Console');
-    await tester.enterText(_fieldAt(1), 'user@example.com');
-    await tester.enterText(_fieldAt(2), 'secret-pass');
-    await tester.enterText(_fieldAt(3), 'token-123');
-    await tester.enterText(_fieldAt(4), 'app-xyz');
-    await tester.enterText(_fieldAt(5), 'access-456');
-    await tester.enterText(_fieldAt(6), 'sk-789');
+    await tester.enterText(fieldAt(0), 'AWS Console');
+    await tester.enterText(fieldAt(1), 'user@example.com');
+    await tester.enterText(fieldAt(2), 'secret-pass');
+    await tester.enterText(fieldAt(3), 'token-123');
+    await tester.enterText(fieldAt(4), 'app-xyz');
+    await tester.enterText(fieldAt(5), 'access-456');
+    await tester.enterText(fieldAt(6), 'sk-789');
 
     await tester.ensureVisible(find.text('保存'));
     await tester.tap(find.text('保存'));
@@ -238,8 +409,8 @@ void main() {
     await tester.tap(find.text('Root Account').last);
     await tester.pumpAndSettle();
 
-    await tester.enterText(_fieldAt(0), 'Prod Server');
-    await tester.enterText(_fieldAt(1), '10.0.0.1');
+    await tester.enterText(fieldAt(0), 'Prod Server');
+    await tester.enterText(fieldAt(1), '10.0.0.1');
 
     await tester.ensureVisible(find.text('保存'));
     await tester.tap(find.text('保存'));
@@ -285,6 +456,59 @@ void main() {
     expect(find.text('GitHub'), findsWidgets);
     expect(find.text('用户名: octo'), findsOneWidget);
     expect(find.text('密码: pass123'), findsOneWidget);
+  });
+
+  testWidgets('Service details show multiple accounts as separated blocks',
+      (tester) async {
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+
+    final service = await controller.addService(
+      label: 'Ops Service',
+      payload: const ServicePayload(
+        name: 'Ops Service',
+        connectionAddress: 'ops.example.com',
+        connectionPort: '443',
+        accountId: null,
+        serverIds: [],
+        accounts: [
+          ServiceAccount(
+            username: 'alice',
+            password: 'alice-pass',
+            note: 'admin',
+          ),
+          ServiceAccount(
+            username: 'bob',
+            password: 'bob-pass',
+            note: 'readonly',
+          ),
+        ],
+        notes: '',
+        tags: ['ops'],
+        category: '服务',
+      ),
+    );
+
+    await tester.pumpWidget(
+      _wrapApp(
+        Scaffold(
+          body: EntryDetailsContent(
+            controller: controller,
+            item: service,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('服务账号列表'), findsOneWidget);
+    expect(find.textContaining('账号1: alice'), findsOneWidget);
+    expect(find.textContaining('密码: alice-pass'), findsOneWidget);
+    expect(find.textContaining('备注: admin'), findsOneWidget);
+    expect(find.textContaining('---'), findsOneWidget);
+    expect(find.textContaining('账号2: bob'), findsOneWidget);
+    expect(find.textContaining('密码: bob-pass'), findsOneWidget);
+    expect(find.textContaining('备注: readonly'), findsOneWidget);
   });
 
   test('Exports single item as json', () async {

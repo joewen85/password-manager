@@ -136,4 +136,79 @@ void main() {
     expect(items.single.metadataCategory, '研发');
     expect(items.single.metadataTags, ['dev']);
   });
+
+  test(
+      'does not remigrate encrypted metadata on every unlock when syncMasterKey is disabled',
+      () async {
+    final repository = InMemoryVaultRepository();
+    final service = VaultService(
+      cryptoService: AesGcmCryptoService(),
+      keyDerivationService: KeyDerivationService(iterations: 1000),
+      repository: repository,
+    );
+
+    await service.addCredential(
+      const CredentialPayload(
+        username: 'user',
+        password: 'pass',
+        token: '',
+        appId: '',
+        accessKey: '',
+        secretKey: '',
+        notes: '',
+        tags: ['ops'],
+        category: '运维',
+      ),
+      label: 'Server Root',
+      masterPassword: 'master',
+      nonce: Uint8List.fromList(List<int>.generate(12, (i) => i + 3)),
+    );
+
+    service.setSessionMetadataKey(
+      Uint8List.fromList(List<int>.generate(32, (i) => i)),
+      allowEncryption: false,
+    );
+
+    final migrated = await service.migrateLegacyRecords('master');
+    expect(migrated, 0);
+  });
+
+  test('migrateMetadataToRecordKey is incremental', () async {
+    final repository = InMemoryVaultRepository();
+    final service = VaultService(
+      cryptoService: AesGcmCryptoService(),
+      keyDerivationService: KeyDerivationService(iterations: 1000),
+      repository: repository,
+    );
+
+    final sessionKey = Uint8List.fromList(
+      List<int>.generate(32, (i) => i + 7),
+    );
+    service.setSessionMetadataKey(sessionKey, allowEncryption: true);
+
+    await service.addCredential(
+      const CredentialPayload(
+        username: 'user',
+        password: 'pass',
+        token: '',
+        appId: '',
+        accessKey: '',
+        secretKey: '',
+        notes: '',
+        tags: ['ops'],
+        category: '运维',
+      ),
+      label: 'Remote Key Metadata',
+      masterPassword: 'master',
+      nonce: Uint8List.fromList(List<int>.generate(12, (i) => i + 4)),
+    );
+
+    service.setSessionMetadataKey(sessionKey, allowEncryption: false);
+
+    final first = await service.migrateMetadataToRecordKey('master');
+    final second = await service.migrateMetadataToRecordKey('master');
+
+    expect(first, 1);
+    expect(second, 0);
+  });
 }

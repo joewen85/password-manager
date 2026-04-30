@@ -32,13 +32,7 @@ export class VaultCryptoService {
     keyToken: string,
   ): Promise<EncryptedPayloadRecord> {
     const keyBytes = base64ToBytes(keyToken);
-
-    try {
-      return await encryptWithKit(plaintext, keyBytes);
-    } catch (error) {
-      console.error(`CryptoArchitectureKit encrypt failed, fallback to pseudo mode: ${error}`);
-      return encryptWithFallback(plaintext, keyBytes);
-    }
+    return await encryptWithKit(plaintext, keyBytes);
   }
 
   async decryptString(
@@ -46,13 +40,7 @@ export class VaultCryptoService {
     keyToken: string,
   ): Promise<string> {
     const keyBytes = base64ToBytes(keyToken);
-
-    try {
-      return await decryptWithKit(payload, keyBytes);
-    } catch (error) {
-      console.error(`CryptoArchitectureKit decrypt failed, fallback to pseudo mode: ${error}`);
-      return decryptWithFallback(payload, keyBytes);
-    }
+    return await decryptWithKit(payload, keyBytes);
   }
 
   generateSaltBase64(bytes: number = 16): string {
@@ -65,13 +53,7 @@ export class VaultCryptoService {
     iterations: number,
   ): Promise<Uint8Array> {
     const salt = base64ToBytes(saltBase64);
-
-    try {
-      return await deriveKeyBytesWithKit(password, salt, iterations);
-    } catch (error) {
-      console.error(`CryptoArchitectureKit PBKDF2 failed, fallback to pseudo mode: ${error}`);
-      return pseudoDerive(password, salt, iterations, DERIVED_KEY_BYTES);
-    }
+    return await deriveKeyBytesWithKit(password, salt, iterations);
   }
 }
 
@@ -166,34 +148,6 @@ async function decryptWithKit(
   }
 }
 
-function encryptWithFallback(
-  plaintext: string,
-  keyBytes: Uint8Array,
-): EncryptedPayloadRecord {
-  const nonce = randomBytes(AES_GCM_NONCE_BYTES);
-  const packed = xorTransform(encodeUtf8(plaintext), keyBytes);
-  const mac = pseudoMac(packed, keyBytes);
-  return {
-    ciphertext: bytesToBase64(packed),
-    nonce: bytesToBase64(nonce),
-    mac: bytesToBase64(mac),
-    version: 1,
-  };
-}
-
-function decryptWithFallback(
-  payload: EncryptedPayloadRecord,
-  keyBytes: Uint8Array,
-): string {
-  const ciphertext = base64ToBytes(payload.ciphertext);
-  const mac = base64ToBytes(payload.mac);
-  const expected = pseudoMac(ciphertext, keyBytes);
-  if (!bytesEqual(expected, mac)) {
-    throw new Error('Invalid payload mac');
-  }
-  return decodeUtf8(xorTransform(ciphertext, keyBytes));
-}
-
 async function createAesSymKey(
   keyBytes: Uint8Array,
 ): Promise<cryptoFramework.SymKey> {
@@ -251,15 +205,10 @@ function randomBytes(length: number): Uint8Array {
     if (bytes.length === length) {
       return bytes;
     }
+    throw new Error(`Unexpected random length: ${bytes.length}`);
   } catch (error) {
-    console.error(`CryptoArchitectureKit random failed, fallback to Math.random: ${error}`);
+    throw new Error(`CryptoArchitectureKit random failed: ${error}`);
   }
-
-  const output = new Uint8Array(length);
-  for (let i = 0; i < output.length; i++) {
-    output[i] = Math.floor(Math.random() * 256);
-  }
-  return output;
 }
 
 function encodeUtf8(text: string): Uint8Array {
@@ -324,61 +273,5 @@ function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
   const output = new Uint8Array(left.length + right.length);
   output.set(left, 0);
   output.set(right, left.length);
-  return output;
-}
-
-function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
-  if (left.length !== right.length) {
-    return false;
-  }
-  for (let i = 0; i < left.length; i++) {
-    if (left[i] !== right[i]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function xorTransform(input: Uint8Array, key: Uint8Array): Uint8Array {
-  const output = new Uint8Array(input.length);
-  for (let i = 0; i < input.length; i++) {
-    output[i] = input[i] ^ key[i % key.length];
-  }
-  return output;
-}
-
-function pseudoMac(payload: Uint8Array, key: Uint8Array): Uint8Array {
-  let rolling = 0x811c9dc5;
-  for (let i = 0; i < payload.length; i++) {
-    rolling ^= payload[i] ^ key[i % key.length];
-    rolling += (rolling << 1) + (rolling << 4) + (rolling << 7) + (rolling << 8) + (rolling << 24);
-  }
-  const output = new Uint8Array(16);
-  for (let i = 0; i < output.length; i++) {
-    output[i] = (rolling >>> ((i % 4) * 8)) & 0xff;
-    rolling = (rolling * 1103515245 + 12345) >>> 0;
-  }
-  return output;
-}
-
-function pseudoDerive(
-  password: string,
-  salt: Uint8Array,
-  iterations: number,
-  length: number,
-): Uint8Array {
-  const input = `${password}:${bytesToHex(salt)}:${iterations}`;
-  let rolling = 0x811c9dc5;
-  for (let round = 0; round < Math.max(1, Math.floor(iterations / 1000)); round++) {
-    for (let i = 0; i < input.length; i++) {
-      rolling ^= input.charCodeAt(i);
-      rolling += (rolling << 1) + (rolling << 4) + (rolling << 7) + (rolling << 8) + (rolling << 24);
-    }
-  }
-  const output = new Uint8Array(length);
-  for (let i = 0; i < output.length; i++) {
-    rolling = (rolling * 1664525 + 1013904223) >>> 0;
-    output[i] = (rolling >>> ((i % 4) * 8)) & 0xff;
-  }
   return output;
 }

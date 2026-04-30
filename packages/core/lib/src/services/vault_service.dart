@@ -156,6 +156,22 @@ class VaultService {
     await _repository.save(record);
   }
 
+  Future<void> saveItems(
+    List<VaultItem> items, {
+    required String masterPassword,
+  }) async {
+    if (items.isEmpty) {
+      return;
+    }
+    final records = <VaultItemRecord>[];
+    for (final item in items) {
+      records.add(
+        await encryptRecord(item, masterPassword: masterPassword),
+      );
+    }
+    await _repository.saveAll(records);
+  }
+
   Future<ServerAssetPayload?> readServerAsset(
     VaultItem item, {
     required String masterPassword,
@@ -469,7 +485,7 @@ class VaultService {
         migrated += 1;
         continue;
       }
-      if (_sessionMetadataKey == null) {
+      if (_sessionMetadataKey == null || !_allowSessionKeyForEncryption) {
         continue;
       }
       final encryptedMetadata = record.encryptedMetadata!;
@@ -739,32 +755,50 @@ class VaultService {
 
   Future<int> migrateMetadataToRecordKey(String masterPassword) async {
     final records = await _repository.listAll();
+    final updates = <VaultItemRecord>[];
     var migrated = 0;
     for (final record in records) {
+      final derivedKey = await _keyDerivationService.deriveKey(
+        masterPassword,
+        salt: Uint8List.fromList(record.kdfSalt),
+        iterations: record.kdfIterations,
+      );
+      final encryptedMetadata = record.encryptedMetadata;
+      if (encryptedMetadata != null) {
+        try {
+          // Already encrypted by record key, no need to rewrite.
+          await _cryptoService.decrypt(
+            encryptedMetadata,
+            derivedKey.bytes,
+          );
+          continue;
+        } catch (_) {
+          // Not encrypted by record key, continue migration.
+        }
+      }
+
       Map<String, Object?> metadata;
       try {
         metadata = await _decryptMetadata(record, masterPassword);
       } catch (_) {
         continue;
       }
-      final derivedKey = await _keyDerivationService.deriveKey(
-        masterPassword,
-        salt: Uint8List.fromList(record.kdfSalt),
-        iterations: record.kdfIterations,
-      );
-      final encryptedMetadata = await _encryptMetadata(
+      final migratedMetadata = await _encryptMetadata(
         metadata,
         derivedKey.bytes,
       );
       final updated = VaultItemRecord(
         id: record.id,
         encryptedPayload: record.encryptedPayload,
-        encryptedMetadata: encryptedMetadata,
+        encryptedMetadata: migratedMetadata,
         kdfSalt: record.kdfSalt,
         kdfIterations: record.kdfIterations,
       );
-      await _repository.save(updated);
+      updates.add(updated);
       migrated += 1;
+    }
+    if (updates.isNotEmpty) {
+      await _repository.saveAll(updates);
     }
     return migrated;
   }

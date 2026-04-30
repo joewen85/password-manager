@@ -9,6 +9,7 @@ class VaultMetadata {
     required this.sortOrder,
     required this.tagsUpdatedAt,
     required this.categoriesUpdatedAt,
+    required this.recordKeyMetadataMigrated,
   });
 
   final List<String> tags;
@@ -16,6 +17,7 @@ class VaultMetadata {
   final VaultSortOrder sortOrder;
   final int tagsUpdatedAt;
   final int categoriesUpdatedAt;
+  final bool recordKeyMetadataMigrated;
 
   factory VaultMetadata.defaults() {
     return const VaultMetadata(
@@ -24,6 +26,7 @@ class VaultMetadata {
       sortOrder: VaultSortOrder.updatedDesc,
       tagsUpdatedAt: 0,
       categoriesUpdatedAt: 0,
+      recordKeyMetadataMigrated: false,
     );
   }
 
@@ -33,6 +36,7 @@ class VaultMetadata {
     VaultSortOrder? sortOrder,
     int? tagsUpdatedAt,
     int? categoriesUpdatedAt,
+    bool? recordKeyMetadataMigrated,
   }) {
     return VaultMetadata(
       tags: tags ?? this.tags,
@@ -40,6 +44,8 @@ class VaultMetadata {
       sortOrder: sortOrder ?? this.sortOrder,
       tagsUpdatedAt: tagsUpdatedAt ?? this.tagsUpdatedAt,
       categoriesUpdatedAt: categoriesUpdatedAt ?? this.categoriesUpdatedAt,
+      recordKeyMetadataMigrated:
+          recordKeyMetadataMigrated ?? this.recordKeyMetadataMigrated,
     );
   }
 
@@ -49,6 +55,7 @@ class VaultMetadata {
         'sortOrder': sortOrder.name,
         'tagsUpdatedAt': tagsUpdatedAt,
         'categoriesUpdatedAt': categoriesUpdatedAt,
+        'recordKeyMetadataMigrated': recordKeyMetadataMigrated,
       };
 
   static VaultMetadata fromJson(Map<String, Object?> json) {
@@ -64,6 +71,8 @@ class VaultMetadata {
     final categoriesUpdatedAt = rawCategoriesUpdatedAt is num
         ? rawCategoriesUpdatedAt.toInt()
         : int.tryParse(rawCategoriesUpdatedAt?.toString() ?? '') ?? 0;
+    final recordKeyMetadataMigrated =
+        json['recordKeyMetadataMigrated'] as bool? ?? false;
     final sortOrder = VaultSortOrder.values.firstWhere(
       (entry) => entry.name == sortName,
       orElse: () => VaultSortOrder.updatedDesc,
@@ -74,6 +83,7 @@ class VaultMetadata {
       sortOrder: sortOrder,
       tagsUpdatedAt: tagsUpdatedAt,
       categoriesUpdatedAt: categoriesUpdatedAt,
+      recordKeyMetadataMigrated: recordKeyMetadataMigrated,
     );
   }
 }
