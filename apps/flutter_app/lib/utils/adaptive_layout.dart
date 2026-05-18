@@ -14,6 +14,30 @@ WindowSizeClass windowSizeClassFor(double width) {
   return WindowSizeClass.expanded;
 }
 
+double adaptiveTextScaleFor(double width) {
+  final sizeClass = windowSizeClassFor(width);
+  switch (sizeClass) {
+    case WindowSizeClass.compact:
+      return 1.0;
+    case WindowSizeClass.medium:
+      return 1.06;
+    case WindowSizeClass.expanded:
+      return 1.12;
+  }
+}
+
+double contentMaxWidthFor(double width) {
+  final sizeClass = windowSizeClassFor(width);
+  switch (sizeClass) {
+    case WindowSizeClass.compact:
+      return width;
+    case WindowSizeClass.medium:
+      return 980;
+    case WindowSizeClass.expanded:
+      return 1440;
+  }
+}
+
 class FoldablePaneSplit {
   const FoldablePaneSplit({
     required this.axis,
@@ -48,15 +72,13 @@ FoldablePaneSplit? foldablePaneSplitFor({
     return null;
   }
   final axis = _axisFromBounds(adjustedBounds);
-  final gap = axis == Axis.vertical
-      ? adjustedBounds.width
-      : adjustedBounds.height;
+  final gap =
+      axis == Axis.vertical ? adjustedBounds.width : adjustedBounds.height;
   final split = axis == Axis.vertical
       ? adjustedBounds.center.dx
       : adjustedBounds.center.dy;
-  final total = axis == Axis.vertical
-      ? availableSize.width
-      : availableSize.height;
+  final total =
+      axis == Axis.vertical ? availableSize.width : availableSize.height;
   final start = split - gap / 2;
   final end = total - split - gap / 2;
   if (start < minPaneExtent || end < minPaneExtent) {

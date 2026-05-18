@@ -144,6 +144,107 @@ void main() {
     expect(find.textContaining('暂无条目'), findsOneWidget);
   });
 
+  testWidgets('Compact layout keeps entries visible on short windows',
+      (tester) async {
+    tester.view.physicalSize = const Size(1600, 1088);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.reset);
+
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+    await controller.addEntry(
+      label: 'Alpha Dev',
+      payload: const CredentialPayload(
+        username: 'dev-user',
+        password: 'pass123',
+        token: '',
+        appId: '',
+        accessKey: '',
+        secretKey: '',
+        notes: '',
+        tags: ['dev'],
+        category: '研发',
+      ),
+    );
+
+    await tester.pumpWidget(
+      _wrapApp(HomeScreen(controller: controller)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('安全地保存账号信息'), findsNothing);
+    expect(find.text('AES-256 · 多端同步'), findsNothing);
+    expect(find.byTooltip('分类'), findsOneWidget);
+    expect(find.byTooltip('标签'), findsOneWidget);
+    expect(find.text('Alpha Dev'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'Alpha');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Alpha Dev'), findsOneWidget);
+    expect(find.text('结果: 1'), findsNothing);
+  });
+
+  testWidgets('Compact layout category picker still filters entries',
+      (tester) async {
+    tester.view.physicalSize = const Size(1600, 1088);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.reset);
+
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+    await controller.addEntry(
+      label: 'Alpha Dev',
+      payload: const CredentialPayload(
+        username: 'dev-user',
+        password: 'pass123',
+        token: '',
+        appId: '',
+        accessKey: '',
+        secretKey: '',
+        notes: '',
+        tags: ['dev'],
+        category: '研发',
+      ),
+    );
+    await controller.addEntry(
+      label: 'Alpha Ops',
+      payload: const CredentialPayload(
+        username: 'ops-user',
+        password: 'pass456',
+        token: '',
+        appId: '',
+        accessKey: '',
+        secretKey: '',
+        notes: '',
+        tags: ['ops'],
+        category: '运维',
+      ),
+    );
+
+    await tester.pumpWidget(
+      _wrapApp(HomeScreen(controller: controller)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'Alpha');
+    await tester.pumpAndSettle();
+    expect(find.text('Alpha Dev'), findsOneWidget);
+    expect(find.text('Alpha Ops'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('分类'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('全部分类'), findsWidgets);
+
+    await tester.tap(find.text('研发').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Alpha Dev'), findsOneWidget);
+    expect(find.text('Alpha Ops'), findsNothing);
+    expect(find.text('结果: 1'), findsNothing);
+  });
+
   test('Unlock loads category and tags without requiring sync', () async {
     final controller = buildController(requireTotp: false);
     await controller.setupMasterPassword('master', 'master');
@@ -460,6 +561,10 @@ void main() {
 
   testWidgets('Category filter remains responsive after search',
       (tester) async {
+    tester.view.physicalSize = const Size(1200, 1800);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.reset);
+
     final controller = buildController(requireTotp: false);
     await controller.setupMasterPassword('master', 'master');
     await controller.addEntry(
@@ -513,6 +618,10 @@ void main() {
   });
 
   testWidgets('Tag filter remains responsive after search', (tester) async {
+    tester.view.physicalSize = const Size(1200, 1800);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.reset);
+
     final controller = buildController(requireTotp: false);
     await controller.setupMasterPassword('master', 'master');
     await controller.addEntry(
@@ -550,14 +659,14 @@ void main() {
     await tester.enterText(find.byType(TextField), 'Alpha');
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('dev'));
+    await tester.tap(find.text('dev').first);
     await tester.pumpAndSettle();
 
     expect(find.text('标签: dev'), findsWidgets);
     expect(find.text('结果: 1'), findsOneWidget);
     expect(find.text('Alpha'), findsOneWidget);
 
-    await tester.tap(find.text('ops'));
+    await tester.tap(find.text('ops').first);
     await tester.pumpAndSettle();
 
     expect(find.text('标签: ops'), findsWidgets);

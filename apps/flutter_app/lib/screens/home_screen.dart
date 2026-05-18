@@ -65,6 +65,7 @@ class _HomeScreenState extends State<HomeScreen>
   double _searchHelpHeight = 0;
   double _searchHelpDyAdjustment = 0;
   Offset _searchFieldOffset = Offset.zero;
+  String? _lastAdaptiveLogSignature;
 
   @override
   void initState() {
@@ -1144,15 +1145,88 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _categoryFilterRow() {
-    final platform = Theme.of(context).platform;
-    final isIOS = platform == TargetPlatform.iOS;
+  Future<void> _showFilterPickerSheet({
+    required String title,
+    required String allLabel,
+    required List<String> items,
+    required String? selectedValue,
+    required ValueChanged<String?> onSelected,
+  }) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.outlineVariant,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 12),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: items.length + 1,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  if (index == 0) {
+                    final selected = selectedValue == null;
+                    return ListTile(
+                      title: Text(allLabel),
+                      trailing: selected
+                          ? Icon(
+                              Icons.check_rounded,
+                              color: Theme.of(context).colorScheme.primary,
+                            )
+                          : null,
+                      onTap: () {
+                        onSelected(null);
+                        Navigator.of(context).pop();
+                      },
+                    );
+                  }
+                  final item = items[index - 1];
+                  final selected = selectedValue == item;
+                  return ListTile(
+                    title: Text(item),
+                    trailing: selected
+                        ? Icon(
+                            Icons.check_rounded,
+                            color: Theme.of(context).colorScheme.primary,
+                          )
+                        : null,
+                    onTap: () {
+                      onSelected(item);
+                      Navigator.of(context).pop();
+                    },
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _categoryFilterRow({
+    required bool singleLine,
+    required int maxVisible,
+  }) {
     return FilterChipSection(
       items: widget.controller.metadata.categories,
       allLabel: '全部分类',
       selectedValue: _selectedCategory,
-      singleLine: _isAndroid || isIOS,
-      maxVisible: _isAndroid ? 3 : 999,
+      singleLine: singleLine,
+      maxVisible: maxVisible,
       bottomSheetTitle: '全部分类',
       onSelected: _handleCategorySelection,
     );
@@ -1223,6 +1297,34 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  Widget _buildCompactFilterButton({
+    required BuildContext context,
+    required String label,
+    required IconData icon,
+    required bool active,
+    required VoidCallback onTap,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return OutlinedButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 16),
+      label: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        foregroundColor:
+            active ? colorScheme.onPrimaryContainer : colorScheme.onSurface,
+        backgroundColor:
+            active ? colorScheme.primaryContainer : colorScheme.surface,
+        side: BorderSide(color: colorScheme.outlineVariant),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+  }
+
   Widget _infoPill(IconData icon, String label) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
@@ -1248,19 +1350,46 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _sectionCard({required Widget child}) {
+  Widget _sectionCard({
+    required Widget child,
+    EdgeInsets padding = const EdgeInsets.all(16),
+  }) {
     return GlassSurface(
       borderRadius: 20,
-      padding: const EdgeInsets.all(16),
+      padding: padding,
       child: child,
     );
   }
 
-  Widget _heroCard(BuildContext context) {
+  Widget _heroCard(
+    BuildContext context, {
+    required WindowSizeClass sizeClass,
+    required bool compactVertical,
+  }) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final isExpanded = sizeClass == WindowSizeClass.expanded;
+    final isMedium = sizeClass == WindowSizeClass.medium;
+    final contentPadding =
+        compactVertical ? 14.0 : (isExpanded ? 24.0 : (isMedium ? 20.0 : 16.0));
+    final titleStyle = Theme.of(context).textTheme.titleLarge?.copyWith(
+          color: Colors.white,
+          fontWeight: FontWeight.w700,
+          fontSize:
+              compactVertical ? 20 : (isExpanded ? 30 : (isMedium ? 26 : null)),
+        );
+    final pills = Wrap(
+      spacing: isExpanded ? 10 : 8,
+      runSpacing: isExpanded ? 10 : 8,
+      alignment: isExpanded ? WrapAlignment.end : WrapAlignment.start,
+      children: [
+        _infoPill(Icons.shield_outlined, 'AES-256'),
+        _infoPill(Icons.phonelink_lock_outlined, '多端同步'),
+        _infoPill(Icons.verified_user_outlined, '2FA 保护'),
+      ],
+    );
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(contentPadding),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: isDark
@@ -1278,40 +1407,67 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final baseStyle =
-                  Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                      );
-              final isNarrow = constraints.maxWidth < 340;
-              final scaledStyle = isNarrow && baseStyle?.fontSize != null
-                  ? baseStyle!.copyWith(fontSize: baseStyle.fontSize! * 0.9)
-                  : baseStyle;
-              return Text(
-                '安全地保存账号信息',
-                style: scaledStyle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              );
-            },
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _infoPill(Icons.shield_outlined, 'AES-256'),
-              _infoPill(Icons.phonelink_lock_outlined, '多端同步'),
-              _infoPill(Icons.verified_user_outlined, '2FA 保护'),
-            ],
-          ),
-        ],
-      ),
+      child: compactVertical
+          ? Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '安全地保存账号信息',
+                    style: titleStyle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'AES-256 · 多端同步',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.white.withValues(alpha: 0.88),
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+              ],
+            )
+          : isExpanded
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '安全地保存账号信息',
+                        style: titleStyle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 24),
+                    Flexible(child: pills),
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final isNarrow = constraints.maxWidth < 340;
+                        final scaledStyle =
+                            isNarrow && titleStyle?.fontSize != null
+                                ? titleStyle!.copyWith(
+                                    fontSize: titleStyle.fontSize! * 0.9,
+                                  )
+                                : titleStyle;
+                        return Text(
+                          '安全地保存账号信息',
+                          style: scaledStyle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    pills,
+                  ],
+                ),
     );
   }
 
@@ -1338,20 +1494,52 @@ class _HomeScreenState extends State<HomeScreen>
           constraints.maxWidth,
           constraints.maxHeight,
         );
+        final foldedPosture = isFoldedPosture(context);
         final sizeClass = windowSizeClassFor(constraints.maxWidth);
         final paneSplit = foldablePaneSplitFor(
           context: context,
           availableSize: availableSize,
+          minPaneExtent: foldedPosture ? 280 : 320,
         );
+        final maxContentWidth = contentMaxWidthFor(constraints.maxWidth);
+        final adaptivePadding = foldedPosture
+            ? const EdgeInsets.fromLTRB(16, 10, 16, 16)
+            : basePadding;
         final platform = Theme.of(context).platform;
         final isAndroid = platform == TargetPlatform.android;
-        final singleLineTags = isAndroid || platform == TargetPlatform.iOS;
-        final maxVisibleTags = isAndroid ? 3 : 999;
+        final compactVertical = constraints.maxHeight < 760 &&
+            sizeClass != WindowSizeClass.expanded;
+        final effectivePadding = compactVertical
+            ? const EdgeInsets.fromLTRB(12, 8, 12, 12)
+            : adaptivePadding;
+        final prefersSingleLineFilters = sizeClass == WindowSizeClass.compact &&
+            (isAndroid || platform == TargetPlatform.iOS);
+        final singleLineCategories =
+            prefersSingleLineFilters || compactVertical;
+        final singleLineTags = prefersSingleLineFilters || compactVertical;
+        final maxVisibleCategories =
+            singleLineCategories ? (isAndroid ? 2 : 4) : 999;
+        final maxVisibleTags = singleLineTags ? (isAndroid ? 2 : 4) : 999;
         final useDetailsPane =
             paneSplit != null || sizeClass == WindowSizeClass.expanded;
+        final paneGap = foldedPosture ? 16.0 : 20.0;
+        _logAdaptiveLayout(
+          width: constraints.maxWidth,
+          height: constraints.maxHeight,
+          sizeClass: sizeClass,
+          foldedPosture: foldedPosture,
+          hasDisplayFeature:
+              paneSplit != null || hasFoldableDisplayFeature(context),
+          useDetailsPane: useDetailsPane,
+          paneSplit: paneSplit,
+        );
         final listPane = _buildVaultListPane(
           context,
           useDetailsPane: useDetailsPane,
+          sizeClass: sizeClass,
+          compactVertical: compactVertical,
+          singleLineCategories: singleLineCategories,
+          maxVisibleCategories: maxVisibleCategories,
           singleLineTags: singleLineTags,
           maxVisibleTags: maxVisibleTags,
         );
@@ -1367,9 +1555,15 @@ class _HomeScreenState extends State<HomeScreen>
         );
 
         if (!useDetailsPane) {
-          return Padding(
-            padding: basePadding,
-            child: RepaintBoundary(child: listPane),
+          return Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: maxContentWidth),
+              child: Padding(
+                padding: effectivePadding,
+                child: RepaintBoundary(child: listPane),
+              ),
+            ),
           );
         }
 
@@ -1381,7 +1575,7 @@ class _HomeScreenState extends State<HomeScreen>
                   width: paneSplit.startExtent,
                   height: constraints.maxHeight,
                   child: Padding(
-                    padding: basePadding.copyWith(right: 12),
+                    padding: effectivePadding.copyWith(right: 12),
                     child: RepaintBoundary(child: listPane),
                   ),
                 ),
@@ -1390,7 +1584,7 @@ class _HomeScreenState extends State<HomeScreen>
                   width: paneSplit.endExtent,
                   height: constraints.maxHeight,
                   child: Padding(
-                    padding: basePadding.copyWith(left: 12),
+                    padding: effectivePadding.copyWith(left: 12),
                     child: RepaintBoundary(child: detailsPane),
                   ),
                 ),
@@ -1403,7 +1597,7 @@ class _HomeScreenState extends State<HomeScreen>
                 height: paneSplit.startExtent,
                 width: constraints.maxWidth,
                 child: Padding(
-                  padding: basePadding.copyWith(bottom: 12),
+                  padding: effectivePadding.copyWith(bottom: 12),
                   child: RepaintBoundary(child: listPane),
                 ),
               ),
@@ -1412,7 +1606,7 @@ class _HomeScreenState extends State<HomeScreen>
                 height: paneSplit.endExtent,
                 width: constraints.maxWidth,
                 child: Padding(
-                  padding: basePadding.copyWith(top: 12),
+                  padding: effectivePadding.copyWith(top: 12),
                   child: RepaintBoundary(child: detailsPane),
                 ),
               ),
@@ -1420,59 +1614,132 @@ class _HomeScreenState extends State<HomeScreen>
           );
         }
 
-        return Padding(
-          padding: basePadding,
-          child: Row(
-            children: [
-              Expanded(child: RepaintBoundary(child: listPane)),
-              const SizedBox(width: 20),
-              Expanded(child: RepaintBoundary(child: detailsPane)),
-            ],
+        return Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: maxContentWidth),
+            child: Padding(
+              padding: effectivePadding,
+              child: Row(
+                children: [
+                  Expanded(child: RepaintBoundary(child: listPane)),
+                  SizedBox(width: paneGap),
+                  Expanded(child: RepaintBoundary(child: detailsPane)),
+                ],
+              ),
+            ),
           ),
         );
       },
     );
   }
 
+  void _logAdaptiveLayout({
+    required double width,
+    required double height,
+    required WindowSizeClass sizeClass,
+    required bool foldedPosture,
+    required bool hasDisplayFeature,
+    required bool useDetailsPane,
+    required FoldablePaneSplit? paneSplit,
+  }) {
+    if (!kDebugMode) {
+      return;
+    }
+    final signature = [
+      width.toStringAsFixed(1),
+      height.toStringAsFixed(1),
+      sizeClass.name,
+      foldedPosture,
+      hasDisplayFeature,
+      useDetailsPane,
+      paneSplit?.axis.name ?? 'none',
+      paneSplit?.startExtent.toStringAsFixed(1) ?? '-',
+      paneSplit?.gapExtent.toStringAsFixed(1) ?? '-',
+      paneSplit?.endExtent.toStringAsFixed(1) ?? '-',
+    ].join('|');
+    if (signature == _lastAdaptiveLogSignature) {
+      return;
+    }
+    _lastAdaptiveLogSignature = signature;
+    debugPrint(
+      '[Adaptive][home] width=${width.toStringAsFixed(1)} '
+      'height=${height.toStringAsFixed(1)} '
+      'sizeClass=${sizeClass.name} '
+      'folded=$foldedPosture '
+      'feature=$hasDisplayFeature '
+      'detailsPane=$useDetailsPane '
+      'paneAxis=${paneSplit?.axis.name ?? 'none'} '
+      'paneStart=${paneSplit?.startExtent.toStringAsFixed(1) ?? '-'} '
+      'paneGap=${paneSplit?.gapExtent.toStringAsFixed(1) ?? '-'} '
+      'paneEnd=${paneSplit?.endExtent.toStringAsFixed(1) ?? '-'}',
+    );
+  }
+
   Widget _buildVaultListPane(
     BuildContext context, {
     required bool useDetailsPane,
+    required WindowSizeClass sizeClass,
+    required bool compactVertical,
+    required bool singleLineCategories,
+    required int maxVisibleCategories,
     required bool singleLineTags,
     required int maxVisibleTags,
   }) {
+    final sectionGap = compactVertical
+        ? 10.0
+        : (sizeClass == WindowSizeClass.expanded ? 20.0 : 16.0);
     return Stack(
       clipBehavior: Clip.none,
       children: [
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (!compactVertical) ...[
+              FadeSlide(
+                delay: const Duration(milliseconds: 60),
+                curve: _isAndroid
+                    ? MotionTokens.standardDecelerate
+                    : Curves.easeOutCubic,
+                child: _heroCard(
+                  context,
+                  sizeClass: sizeClass,
+                  compactVertical: compactVertical,
+                ),
+              ),
+              SizedBox(height: sectionGap),
+            ],
             FadeSlide(
-              delay: const Duration(milliseconds: 60),
-              curve: _isAndroid
-                  ? MotionTokens.standardDecelerate
-                  : Curves.easeOutCubic,
-              child: _heroCard(context),
-            ),
-            const SizedBox(height: 16),
-            FadeSlide(
-              delay: const Duration(milliseconds: 140),
+              delay: compactVertical
+                  ? const Duration(milliseconds: 80)
+                  : const Duration(milliseconds: 140),
               curve: _isAndroid
                   ? MotionTokens.standardDecelerate
                   : Curves.easeOutCubic,
               child: _buildFilterPanel(
                 context,
+                sizeClass: sizeClass,
+                compactVertical: compactVertical,
+                singleLineCategories: singleLineCategories,
+                maxVisibleCategories: maxVisibleCategories,
                 singleLineTags: singleLineTags,
                 maxVisibleTags: maxVisibleTags,
               ),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: sectionGap),
             Expanded(
               child: FadeSlide(
-                delay: const Duration(milliseconds: 220),
+                delay: compactVertical
+                    ? const Duration(milliseconds: 120)
+                    : const Duration(milliseconds: 220),
                 curve: _isAndroid
                     ? MotionTokens.standardDecelerate
                     : Curves.easeOutCubic,
-                child: _buildEntryList(context, useDetailsPane: useDetailsPane),
+                child: _buildEntryList(
+                  context,
+                  useDetailsPane: useDetailsPane,
+                  compactVertical: compactVertical,
+                ),
               ),
             ),
           ],
@@ -1527,6 +1794,7 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _buildEntryList(
     BuildContext context, {
     required bool useDetailsPane,
+    required bool compactVertical,
   }) {
     return AnimatedBuilder(
       animation: Listenable.merge([
@@ -1621,6 +1889,9 @@ class _HomeScreenState extends State<HomeScreen>
             },
           ),
         );
+        if (compactVertical) {
+          return listView;
+        }
         if (!hasSearch &&
             !hasTagFilter &&
             !hasCategoryFilter &&
@@ -1644,6 +1915,10 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildFilterPanel(
     BuildContext context, {
+    required WindowSizeClass sizeClass,
+    required bool compactVertical,
+    required bool singleLineCategories,
+    required int maxVisibleCategories,
     required bool singleLineTags,
     required int maxVisibleTags,
   }) {
@@ -1651,7 +1926,12 @@ class _HomeScreenState extends State<HomeScreen>
       animation: Listenable.merge([widget.controller, _searchController]),
       builder: (context, _) {
         final hasSearch = _searchQuery.isNotEmpty;
+        final isExpanded = sizeClass == WindowSizeClass.expanded;
+        final sectionSpacing = compactVertical ? 6.0 : 10.0;
         return _sectionCard(
+          padding: compactVertical
+              ? const EdgeInsets.fromLTRB(12, 10, 12, 10)
+              : const EdgeInsets.all(16),
           child: Theme(
             data: Theme.of(context).copyWith(
               inputDecorationTheme:
@@ -1664,93 +1944,141 @@ class _HomeScreenState extends State<HomeScreen>
             ),
             child: Column(
               children: [
-                Row(
-                  children: [
-                    if (widget.controller.hasConflicts)
-                      FilterChip(
-                        label: const Text('仅冲突'),
-                        selected: _showConflictsOnly,
-                        onSelected: (value) {
-                          setState(() => _showConflictsOnly = value);
+                if (compactVertical) ...[
+                  Row(
+                    children: [
+                      Expanded(child: _buildFilterControls(context)),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        tooltip: '分类',
+                        onPressed: () async {
+                          await _showFilterPickerSheet(
+                            title: '全部分类',
+                            allLabel: '全部分类',
+                            items: widget.controller.metadata.categories,
+                            selectedValue: _selectedCategory,
+                            onSelected: _handleCategorySelection,
+                          );
                         },
-                        labelStyle: const TextStyle(fontSize: 12),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
+                        icon: Icon(
+                          Icons.category_outlined,
+                          color: (_selectedCategory ?? '').isNotEmpty
+                              ? Theme.of(context).colorScheme.primary
+                              : null,
                         ),
                       ),
-                    const Spacer(),
-                    DropdownButtonHideUnderline(
-                      child: DropdownButton<VaultSortOrder>(
-                        value: widget.controller.metadata.sortOrder,
-                        borderRadius: BorderRadius.circular(12),
-                        style: Theme.of(context).textTheme.bodySmall,
-                        onChanged: (value) async {
-                          if (value == null) {
-                            return;
-                          }
-                          await widget.controller.updateSortOrder(value);
+                      IconButton(
+                        tooltip: '标签',
+                        onPressed: () async {
+                          await _showFilterPickerSheet(
+                            title: '全部标签',
+                            allLabel: '全部标签',
+                            items: widget.controller.metadata.tags,
+                            selectedValue: _selectedTag,
+                            onSelected: _handleTagSelection,
+                          );
                         },
-                        items: const [
-                          DropdownMenuItem(
-                            value: VaultSortOrder.updatedDesc,
-                            child: Text('按更新时间'),
-                          ),
-                          DropdownMenuItem(
-                            value: VaultSortOrder.labelAsc,
-                            child: Text('按名称'),
-                          ),
-                        ],
+                        icon: Icon(
+                          Icons.sell_outlined,
+                          color: (_selectedTag ?? '').isNotEmpty
+                              ? Theme.of(context).colorScheme.primary
+                              : null,
+                        ),
                       ),
+                    ],
+                  ),
+                  SizedBox(height: sectionSpacing),
+                  _buildSearchField(context),
+                  if ((_selectedCategory ?? '').isNotEmpty ||
+                      (_selectedTag ?? '').isNotEmpty) ...[
+                    SizedBox(height: sectionSpacing),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildCompactFilterButton(
+                            context: context,
+                            label: (_selectedCategory ?? '').isEmpty
+                                ? '全部分类'
+                                : '分类: ${_selectedCategory!}',
+                            icon: Icons.category_outlined,
+                            active: (_selectedCategory ?? '').isNotEmpty,
+                            onTap: () async {
+                              await _showFilterPickerSheet(
+                                title: '全部分类',
+                                allLabel: '全部分类',
+                                items: widget.controller.metadata.categories,
+                                selectedValue: _selectedCategory,
+                                onSelected: _handleCategorySelection,
+                              );
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _buildCompactFilterButton(
+                            context: context,
+                            label: (_selectedTag ?? '').isEmpty
+                                ? '全部标签'
+                                : '标签: ${_selectedTag!}',
+                            icon: Icons.sell_outlined,
+                            active: (_selectedTag ?? '').isNotEmpty,
+                            onTap: () async {
+                              await _showFilterPickerSheet(
+                                title: '全部标签',
+                                allLabel: '全部标签',
+                                items: widget.controller.metadata.tags,
+                                selectedValue: _selectedTag,
+                                onSelected: _handleTagSelection,
+                              );
+                            },
+                          ),
+                        ),
+                      ],
                     ),
                   ],
-                ),
-                const SizedBox(height: 10),
-                _categoryFilterRow(),
-                const SizedBox(height: 8),
-                CompositedTransformTarget(
-                  key: _searchFieldKey,
-                  link: _searchFieldLink,
-                  child: SizedBox(
-                    height: _searchFieldHeight,
-                    child: ValueListenableBuilder<TextEditingValue>(
-                      valueListenable: _searchController,
-                      builder: (context, value, _) {
-                        final hasText = value.text.trim().isNotEmpty;
-                        return TextField(
-                          controller: _searchController,
-                          focusNode: _searchFocusNode,
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodySmall
-                              ?.copyWith(fontSize: 12),
-                          onTapOutside: (_) {
-                            _searchFocusNode.unfocus();
-                          },
-                          decoration: InputDecoration(
-                            prefixIcon: const Icon(Icons.search, size: 18),
-                            hintText: '字段搜索按当前分类，tag/# 标签搜索全局',
-                            suffixIcon: hasText
-                                ? IconButton(
-                                    tooltip: '清空搜索',
-                                    onPressed: () {
-                                      _searchController.clear();
-                                      _searchFocusNode.requestFocus();
-                                    },
-                                    icon: const Icon(
-                                      Icons.clear_rounded,
-                                      size: 18,
-                                    ),
-                                  )
-                                : null,
-                          ),
-                        );
-                      },
-                    ),
+                ] else if (isExpanded)
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          children: [
+                            _categoryFilterRow(
+                              singleLine: singleLineCategories,
+                              maxVisible: maxVisibleCategories,
+                            ),
+                            SizedBox(height: sectionSpacing),
+                            CompositedTransformTarget(
+                              key: _searchFieldKey,
+                              link: _searchFieldLink,
+                              child: _buildSearchField(context),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      SizedBox(
+                        width: 220,
+                        child: _buildFilterControls(context),
+                      ),
+                    ],
+                  )
+                else ...[
+                  _buildFilterControls(context),
+                  SizedBox(height: sectionSpacing),
+                  _categoryFilterRow(
+                    singleLine: singleLineCategories,
+                    maxVisible: maxVisibleCategories,
                   ),
-                ),
-                const SizedBox(height: 6),
-                if (hasSearch)
+                  SizedBox(height: compactVertical ? 6 : 8),
+                  CompositedTransformTarget(
+                    key: _searchFieldKey,
+                    link: _searchFieldLink,
+                    child: _buildSearchField(context),
+                  ),
+                ],
+                SizedBox(height: compactVertical ? 0 : 6),
+                if (hasSearch && !compactVertical)
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
@@ -1762,16 +2090,100 @@ class _HomeScreenState extends State<HomeScreen>
                           ),
                     ),
                   ),
-                const SizedBox(height: 8),
-                _tagFilterRow(
-                  singleLine: singleLineTags,
-                  maxVisible: maxVisibleTags,
-                ),
+                if (!compactVertical) ...[
+                  SizedBox(height: compactVertical ? 6 : 8),
+                  _tagFilterRow(
+                    singleLine: singleLineTags,
+                    maxVisible: maxVisibleTags,
+                  ),
+                ],
               ],
             ),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildFilterControls(BuildContext context) {
+    return Row(
+      children: [
+        if (widget.controller.hasConflicts)
+          FilterChip(
+            label: const Text('仅冲突'),
+            selected: _showConflictsOnly,
+            onSelected: (value) {
+              setState(() => _showConflictsOnly = value);
+            },
+            labelStyle: const TextStyle(fontSize: 12),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 8,
+              vertical: 2,
+            ),
+          ),
+        const Spacer(),
+        DropdownButtonHideUnderline(
+          child: DropdownButton<VaultSortOrder>(
+            value: widget.controller.metadata.sortOrder,
+            borderRadius: BorderRadius.circular(12),
+            style: Theme.of(context).textTheme.bodySmall,
+            onChanged: (value) async {
+              if (value == null) {
+                return;
+              }
+              await widget.controller.updateSortOrder(value);
+            },
+            items: const [
+              DropdownMenuItem(
+                value: VaultSortOrder.updatedDesc,
+                child: Text('按更新时间'),
+              ),
+              DropdownMenuItem(
+                value: VaultSortOrder.labelAsc,
+                child: Text('按名称'),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSearchField(BuildContext context) {
+    return SizedBox(
+      height: _searchFieldHeight,
+      child: ValueListenableBuilder<TextEditingValue>(
+        valueListenable: _searchController,
+        builder: (context, value, _) {
+          final hasText = value.text.trim().isNotEmpty;
+          return TextField(
+            controller: _searchController,
+            focusNode: _searchFocusNode,
+            style:
+                Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 12),
+            onTapOutside: (_) {
+              _searchFocusNode.unfocus();
+            },
+            decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.search, size: 18),
+              hintText: '字段搜索按当前分类，tag/# 标签搜索全局',
+              suffixIcon: hasText
+                  ? IconButton(
+                      tooltip: '清空搜索',
+                      onPressed: () {
+                        _searchController.clear();
+                        _searchFocusNode.requestFocus();
+                      },
+                      icon: const Icon(
+                        Icons.clear_rounded,
+                        size: 18,
+                      ),
+                    )
+                  : null,
+            ),
+          );
+        },
+      ),
     );
   }
 

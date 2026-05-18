@@ -17,6 +17,7 @@ import 'storage/web_storage.dart';
 import 'state/sync_settings.dart';
 import 'state/vault_controller.dart';
 import 'state/vault_metadata.dart';
+import 'utils/adaptive_layout.dart';
 
 class PasswordManagerApp extends StatelessWidget {
   const PasswordManagerApp({super.key, required this.controller});
@@ -62,9 +63,11 @@ class PasswordManagerApp extends StatelessWidget {
       settingsStore = WebSyncSettingsStore();
       metadataStore = WebVaultMetadataStore();
     } else if (supportDirectoryPath != null) {
-      final settingsPath = path.join(supportDirectoryPath, 'sync_settings.json');
+      final settingsPath =
+          path.join(supportDirectoryPath, 'sync_settings.json');
       settingsStore = FileSyncSettingsStore(filePath: settingsPath);
-      final metadataPath = path.join(supportDirectoryPath, 'vault_metadata.json');
+      final metadataPath =
+          path.join(supportDirectoryPath, 'vault_metadata.json');
       metadataStore = FileVaultMetadataStore(filePath: metadataPath);
     } else {
       settingsStore = MemorySyncSettingsStore();
@@ -342,6 +345,19 @@ class PasswordManagerApp extends StatelessWidget {
       theme: buildTheme(Brightness.light),
       darkTheme: buildTheme(Brightness.dark),
       themeMode: ThemeMode.system,
+      builder: (context, child) {
+        final mediaQuery = MediaQuery.of(context);
+        final width = mediaQuery.size.width;
+        final baseScale = mediaQuery.textScaler.scale(1);
+        final adaptiveScale = adaptiveTextScaleFor(width);
+        final effectiveScale = baseScale * adaptiveScale;
+        return MediaQuery(
+          data: mediaQuery.copyWith(
+            textScaler: TextScaler.linear(effectiveScale),
+          ),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       home: VaultShell(controller: controller),
     );
   }
@@ -357,6 +373,8 @@ class VaultShell extends StatefulWidget {
 }
 
 class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
+  String? _lastMetricsLog;
+
   @override
   void initState() {
     super.initState();
@@ -372,6 +390,47 @@ class _VaultShellState extends State<VaultShell> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     widget.controller.handleAppLifecycleStateChanged(state);
+  }
+
+  @override
+  void didChangeMetrics() {
+    if (!mounted) {
+      return;
+    }
+    _logMetricsIfNeeded();
+    setState(() {});
+  }
+
+  void _logMetricsIfNeeded() {
+    if (!kDebugMode) {
+      return;
+    }
+    final views = WidgetsBinding.instance.platformDispatcher.views;
+    if (views.isEmpty) {
+      return;
+    }
+    final view = views.first;
+    final physicalSize = view.physicalSize;
+    final devicePixelRatio = view.devicePixelRatio;
+    final logicalWidth = physicalSize.width / devicePixelRatio;
+    final logicalHeight = physicalSize.height / devicePixelRatio;
+    final displayFeatures = MediaQueryData.fromView(view).displayFeatures;
+    final signature = [
+      logicalWidth.toStringAsFixed(1),
+      logicalHeight.toStringAsFixed(1),
+      devicePixelRatio.toStringAsFixed(2),
+      displayFeatures.length,
+    ].join('|');
+    if (signature == _lastMetricsLog) {
+      return;
+    }
+    _lastMetricsLog = signature;
+    debugPrint(
+      '[Adaptive][metrics] width=${logicalWidth.toStringAsFixed(1)} '
+      'height=${logicalHeight.toStringAsFixed(1)} '
+      'dpr=${devicePixelRatio.toStringAsFixed(2)} '
+      'features=${displayFeatures.length}',
+    );
   }
 
   @override
