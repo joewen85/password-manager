@@ -565,8 +565,7 @@ class _HomeScreenState extends State<HomeScreen>
   void _handleSearchTextChanged() {
     final trimmed = _searchController.text.trim();
     if (trimmed != _searchQuery) {
-      _searchQuery = trimmed;
-      _searchTerms = _parseSearchTerms(trimmed);
+      _updateSearchState(trimmed);
     }
     final shouldShow = _searchFocusNode.hasFocus && trimmed.isEmpty;
     if (shouldShow != _showSearchHelp) {
@@ -578,64 +577,37 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _handleTagSelection(String? tag) {
-    final previousTag = _selectedTag;
     _searchFocusNode.unfocus();
-    setState(() => _selectedTag = tag);
-    _updateSearchForTagChange(
-      previousTag: previousTag,
-      nextTag: tag,
-    );
-  }
-
-  void _updateSearchForTagChange({
-    required String? previousTag,
-    required String? nextTag,
-  }) {
-    var updated = _stripTagToken(_searchController.text, previousTag);
-    if (nextTag != null && nextTag.trim().isNotEmpty) {
-      final token = '#${nextTag.trim()}';
-      if (!_containsTagToken(updated, nextTag)) {
-        updated = updated.trim().isEmpty ? token : '${updated.trim()} $token';
-      }
-    }
-    updated = updated.trim();
-    if (updated == _searchController.text) {
+    if (_selectedTag == tag) {
       return;
     }
-    _searchController.value = TextEditingValue(
-      text: updated,
-      selection: TextSelection.collapsed(offset: updated.length),
-    );
+    setState(() {
+      _selectedTag = tag;
+      _invalidateSortedViewsCache();
+    });
   }
 
-  bool _containsTagToken(String input, String tag) {
-    final trimmed = input.trim();
-    if (trimmed.isEmpty) {
-      return false;
+  void _handleCategorySelection(String? category) {
+    _searchFocusNode.unfocus();
+    if (_selectedCategory == category) {
+      return;
     }
-    final lowerTag = tag.toLowerCase();
-    final tokens = trimmed.split(RegExp(r'[\s,]+'));
-    for (final token in tokens) {
-      final lower = token.toLowerCase();
-      if (lower == '#$lowerTag' || lower == 'tag:$lowerTag') {
-        return true;
-      }
-    }
-    return false;
+    setState(() {
+      _selectedCategory = category;
+      _invalidateSortedViewsCache();
+    });
   }
 
-  String _stripTagToken(String input, String? tag) {
-    final trimmed = input.trim();
-    if (trimmed.isEmpty || tag == null || tag.trim().isEmpty) {
-      return trimmed;
-    }
-    final lowerTag = tag.toLowerCase();
-    final tokens = trimmed.split(RegExp(r'[\s,]+'));
-    final remaining = tokens.where((token) {
-      final lower = token.toLowerCase();
-      return lower != '#$lowerTag' && lower != 'tag:$lowerTag';
-    }).toList();
-    return remaining.join(' ');
+  void _updateSearchState(String query) {
+    _searchQuery = query;
+    _searchTerms = _parseSearchTerms(query);
+    _invalidateSortedViewsCache();
+  }
+
+  void _invalidateSortedViewsCache() {
+    _cachedViewsVersion = -1;
+    _cachedFilterKey = '';
+    _cachedSortedViews = const [];
   }
 
   void _setReduceEffectsForScroll(bool value) {
@@ -1182,7 +1154,7 @@ class _HomeScreenState extends State<HomeScreen>
       singleLine: _isAndroid || isIOS,
       maxVisible: _isAndroid ? 3 : 999,
       bottomSheetTitle: '全部分类',
-      onSelected: (value) => setState(() => _selectedCategory = value),
+      onSelected: _handleCategorySelection,
     );
   }
 

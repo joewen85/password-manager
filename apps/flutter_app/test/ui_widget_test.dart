@@ -458,6 +458,113 @@ void main() {
     expect(find.text('密码: pass123'), findsOneWidget);
   });
 
+  testWidgets('Category filter remains responsive after search',
+      (tester) async {
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+    await controller.addEntry(
+      label: 'Alpha Dev',
+      payload: const CredentialPayload(
+        username: 'dev-user',
+        password: 'pass123',
+        token: '',
+        appId: '',
+        accessKey: '',
+        secretKey: '',
+        notes: '',
+        tags: ['dev'],
+        category: '研发',
+      ),
+    );
+    await controller.addEntry(
+      label: 'Alpha Ops',
+      payload: const CredentialPayload(
+        username: 'ops-user',
+        password: 'pass456',
+        token: '',
+        appId: '',
+        accessKey: '',
+        secretKey: '',
+        notes: '',
+        tags: ['ops'],
+        category: '运维',
+      ),
+    );
+
+    await tester.pumpWidget(_wrapApp(HomeScreen(controller: controller)));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'Alpha');
+    await tester.pumpAndSettle();
+
+    expect(find.text('结果: 2'), findsOneWidget);
+
+    await tester.tap(find.text('研发'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('分类: 研发'), findsWidgets);
+    expect(find.text('结果: 1'), findsOneWidget);
+
+    await tester.tap(find.text('运维'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('分类: 运维'), findsWidgets);
+    expect(find.text('结果: 1'), findsOneWidget);
+  });
+
+  testWidgets('Tag filter remains responsive after search', (tester) async {
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+    await controller.addEntry(
+      label: 'Alpha Dev',
+      payload: const CredentialPayload(
+        username: 'dev-user',
+        password: 'pass123',
+        token: '',
+        appId: '',
+        accessKey: '',
+        secretKey: '',
+        notes: '',
+        tags: ['dev'],
+        category: '研发',
+      ),
+    );
+    await controller.addEntry(
+      label: 'Alpha Ops',
+      payload: const CredentialPayload(
+        username: 'ops-user',
+        password: 'pass456',
+        token: '',
+        appId: '',
+        accessKey: '',
+        secretKey: '',
+        notes: '',
+        tags: ['ops'],
+        category: '运维',
+      ),
+    );
+
+    await tester.pumpWidget(_wrapApp(HomeScreen(controller: controller)));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'Alpha');
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('dev'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('标签: dev'), findsWidgets);
+    expect(find.text('结果: 1'), findsOneWidget);
+    expect(find.text('Alpha'), findsOneWidget);
+
+    await tester.tap(find.text('ops'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('标签: ops'), findsWidgets);
+    expect(find.text('结果: 1'), findsOneWidget);
+    expect(find.text('Alpha'), findsOneWidget);
+  });
+
   testWidgets('Service details show multiple accounts as separated blocks',
       (tester) async {
     final controller = buildController(requireTotp: false);

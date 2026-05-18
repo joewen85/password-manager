@@ -47,6 +47,7 @@ interface EntryCategoryCarrier {
 struct Index {
   private vaultController: VaultController | null = null;
   private hostContext: Context | null = null;
+  private searchInputController: TextInputController = new TextInputController();
 
   @State private ready: boolean = false;
   @State private hasMasterKey: boolean = false;
@@ -432,17 +433,21 @@ struct Index {
       if (this.categories.length > 0) {
         Flex({ wrap: FlexWrap.Wrap }) {
           this.FilterPill('全部分类', this.selectedCategory.length === 0, () => {
-            this.selectedCategory = '';
+            this.handleCategoryFilterSelection('');
           });
           ForEach(this.categories, (category: string) => {
             this.FilterPill(category, this.selectedCategory === category, () => {
-              this.selectedCategory = this.selectedCategory === category ? '' : category;
+              this.handleCategoryFilterSelection(category);
             });
           }, (category: string) => category);
         }
       }
 
-      TextInput({ placeholder: '字段搜索按当前分类，tag:/# 标签全局', text: $$this.searchQuery })
+      TextInput({
+        placeholder: '字段搜索按当前分类，tag:/# 标签全局',
+        text: $$this.searchQuery,
+        controller: this.searchInputController
+      })
         .width('100%')
         .height(44)
         .backgroundColor('#FFFFFF')
@@ -455,11 +460,11 @@ struct Index {
       if (this.tags.length > 0) {
         Flex({ wrap: FlexWrap.Wrap }) {
           this.FilterPill('全部标签', this.selectedTag.length === 0, () => {
-            this.selectedTag = '';
+            this.handleTagFilterSelection('');
           });
           ForEach(this.tags, (tag: string) => {
             this.FilterPill(tag, this.selectedTag === tag, () => {
-              this.selectedTag = this.selectedTag === tag ? '' : tag;
+              this.handleTagFilterSelection(tag);
             });
           }, (tag: string) => tag);
         }
@@ -1610,6 +1615,25 @@ struct Index {
       .backgroundColor(selected ? '#BEE6D6' : '#FFFFFF')
       .borderRadius(999)
       .onClick(action);
+  }
+
+  private handleCategoryFilterSelection(category: string): void {
+    this.dismissSearchEditing();
+    const clean = category.trim();
+    this.selectedCategory = this.selectedCategory === clean ? '' : clean;
+  }
+
+  private handleTagFilterSelection(tag: string): void {
+    this.dismissSearchEditing();
+    const clean = tag.trim();
+    this.selectedTag = this.selectedTag === clean ? '' : clean;
+  }
+
+  private dismissSearchEditing(): void {
+    try {
+      this.searchInputController.stopEditing();
+    } catch (_) {
+    }
   }
 
   private typeLabel(type: VaultEntryType): string {
