@@ -1,0 +1,181 @@
+package com.example.passwordmanagernative.store
+
+import com.example.passwordmanagernative.model.CredentialPayload
+import com.example.passwordmanagernative.model.EntryDraft
+import com.example.passwordmanagernative.model.VaultEntryType
+import com.example.passwordmanagernative.sync.InMemorySyncSecretStore
+import com.example.passwordmanagernative.sync.RemoteSyncClient
+import com.example.passwordmanagernative.sync.RemoteSyncResult
+import com.example.passwordmanagernative.sync.SyncProviderType
+import com.example.passwordmanagernative.sync.SyncSettings
+import com.example.passwordmanagernative.sync.SyncSettingsRepository
+import com.example.passwordmanagernative.sync.VaultSyncEngine
+import java.io.File
+import java.time.Instant
+import kotlin.io.path.createTempDirectory
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+
+class VaultStoreSyncTest {
+    @Test
+    fun syncSettingsPersistAndReloadThroughRepository() {
+        val directory = createTempDirectory("PasswordManagerAndroidVaultStoreSyncSettingsTests").toFile()
+        try {
+            val syncRepository = SyncSettingsRepository(
+                settingsFile = File(directory, "sync_settings.json"),
+                secretStore = InMemorySyncSecretStore(),
+            )
+            val store = VaultStore(
+                repository = FileVaultRepository(directory),
+                syncSettingsRepository = syncRepository,
+            )
+            val settings = SyncSettings.defaults(deviceId = "device-1").copy(
+                providerType = SyncProviderType.S3_PRESIGNED,
+                presignedDownloadUrl = "https://download.example.com/vault",
+                presignedUploadUrl = "https://upload.example.com/vault",
+            )
+
+            store.updateSyncSettings(settings)
+
+            assertEquals(settings, store.syncSettings)
+            assertEquals("Configured: S3 Presigned URL", store.syncStatus)
+            assertEquals("Sync settings saved.", store.statusMessage)
+
+            val reloadedStore = VaultStore(
+                repository = FileVaultRepository(directory),
+                syncSettingsRepository = syncRepository,
+            )
+            assertEquals(settings, reloadedStore.syncSettings)
+            assertEquals("Configured: S3 Presigned URL", reloadedStore.syncStatus)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun syncNowUploadsSnapshotAndPersistsResult() {
+        val directory = createTempDirectory("PasswordManagerAndroidVaultStoreSyncNowTests").toFile()
+        try {
+            val syncRepository = SyncSettingsRepository(
+                settingsFile = File(directory, "sync_settings.json"),
+                secretStore = InMemorySyncSecretStore(),
+            )
+            val now = Instant.parse("2027-01-15T08:00:00Z")
+            val engine = VaultSyncEngine(clock = { now })
+            val repository = FileVaultRepository(directory)
+            val store = VaultStore(
+                repository = repository,
+                syncSettingsRepository = syncRepository,
+                syncEngine = engine,
+            )
+            assertTrue(store.setupMasterPassword("test-password", "test-password"))
+            store.upsert(
+                EntryDraft(
+                    label = "Sync Login",
+                    type = VaultEntryType.CREDENTIAL,
+                    category = "",
+                    tags = emptyList(),
+                    credential = CredentialPayload(
+                        username = "sync@example.com",
+                        password = "secret",
+                    ),
+                )
+            )
+            val settings = SyncSettings.defaults(deviceId = "android-device").copy(
+                providerType = SyncProviderType.WEBDAV,
+                webdavUrl = "https://dav.example.com/root",
+                webdavPath = "/vault.json",
+            )
+            store.updateSyncSettings(settings)
+            val client = VaultStoreSyncFakeClient(
+                downloads = ArrayDeque(listOf(RemoteSyncResult(payload = null, statusCode = 404))),
+                uploadStatusCodes = ArrayDeque(listOf(201)),
+            )
+
+            store.syncNow(client)
+
+            assertEquals(1, client.uploadedPayloads.size)
+            val uploaded = assertNotNull(engine.decodePayload(client.uploadedPayloads.single()))
+            assertEquals("android-device", uploaded.deviceId)
+            assertTrue(uploaded.snapshot.entries.any { it.label == "Sync Login" })
+            assertEquals("success", store.syncSettings.lastSyncStatus)
+            assertEquals(now, store.syncSettings.lastSyncAt)
+            assertTrue(store.syncStatus.contains("Synced 1 items"))
+
+            val reloadedStore = VaultStore(
+                repository = repository,
+                syncSettingsRepository = syncRepository,
+                syncEngine = engine,
+            )
+            assertTrue(reloadedStore.unlock("test-password"))
+            assertEquals("success", reloadedStore.syncSettings.lastSyncStatus)
+            assertTrue(reloadedStore.syncStatus.contains("Synced 1 items"))
+            assertTrue(reloadedStore.listEntries().any { it.label == "Sync Login" })
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun clearAllDataRequiresMasterPasswordAndKeepsVaultUsable() {
+        val directory = createTempDirectory("PasswordManagerAndroidClearDataTests").toFile()
+        try {
+            val store = VaultStore(repository = FileVaultRepository(directory))
+            assertTrue(store.setupMasterPassword("test-password", "test-password"))
+            store.upsert(
+                EntryDraft(
+                    label = "Clear Me",
+                    type = VaultEntryType.CREDENTIAL,
+                    category = "Temporary",
+                    tags = listOf("wipe"),
+                    credential = CredentialPayload(
+                        username = "clear@example.com",
+                        password = "secret",
+                        category = "Temporary",
+                        tags = listOf("wipe"),
+                    ),
+                )
+            )
+            store.setTotpSecret("JBSWY3DPEHPK3PXP")
+            store.setRequireTotp(true)
+
+            assertFalse(store.clearAllData("wrong-password"))
+            assertEquals(1, store.listEntries().size)
+            assertTrue(store.requireTotp)
+
+            assertTrue(store.clearAllData("test-password"))
+
+            assertEquals(emptyList(), store.listEntries())
+            assertEquals(emptyList(), store.categories())
+            assertEquals(emptyList(), store.tags())
+            assertFalse(store.requireTotp)
+            assertEquals("", store.totpSecret)
+
+            val reloadedStore = VaultStore(repository = FileVaultRepository(directory))
+            assertTrue(reloadedStore.unlock("test-password"))
+            assertEquals(emptyList(), reloadedStore.listEntries())
+            assertFalse(reloadedStore.requireTotp)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+}
+
+private class VaultStoreSyncFakeClient(
+    private val downloads: ArrayDeque<RemoteSyncResult>,
+    private val uploadStatusCodes: ArrayDeque<Int>,
+) : RemoteSyncClient {
+    val uploadedPayloads = mutableListOf<String>()
+
+    override fun download(): RemoteSyncResult =
+        if (downloads.isEmpty()) RemoteSyncResult(payload = null, statusCode = 404) else downloads.removeFirst()
+
+    override fun upload(payload: String): RemoteSyncResult {
+        uploadedPayloads += payload
+        val statusCode = if (uploadStatusCodes.isEmpty()) 200 else uploadStatusCodes.removeFirst()
+        return RemoteSyncResult(payload = null, statusCode = statusCode)
+    }
+}

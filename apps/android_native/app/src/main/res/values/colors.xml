@@ -1,0 +1,14 @@
+<resources>
+    <color name="launcher_background">#0F172A</color>
+    <color name="ui_background">#F4F6F8</color>
+    <color name="ui_surface">#FFFFFF</color>
+    <color name="ui_surface_alt">#F8FAFC</color>
+    <color name="ui_selected">#EBF3FF</color>
+    <color name="ui_text">#181F2A</color>
+    <color name="ui_muted">#636F80</color>
+    <color name="ui_stroke">#DAE1EA</color>
+    <color name="ui_accent">#245DC4</color>
+    <color name="ui_error">#B91C1C</color>
+    <color name="ui_error_surface">#FEF2F2</color>
+    <color name="ui_error_stroke">#FECACA</color>
+</resources>
