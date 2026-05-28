@@ -15,6 +15,10 @@ Push-Location packages/crypto
   dart test
 Pop-Location
 
+Push-Location packages/auth
+  dart test
+Pop-Location
+
 Push-Location packages/core
   dart test
 Pop-Location

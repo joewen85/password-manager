@@ -7,6 +7,7 @@
     <string name="confirm_master_password">确认主密码</string>
     <string name="totp_code">二次验证码</string>
     <string name="unlock">解锁</string>
+    <string name="unlocking_vault">正在解锁密码库…</string>
     <string name="biometric_unlock">使用生物识别解锁</string>
     <string name="enable_biometric_unlock">启用生物识别解锁</string>
     <string name="enable_biometric_unlock_hint">在本设备上使用指纹或面容识别代替输入主密码。</string>
@@ -14,6 +15,8 @@
     <string name="biometric_unlock_prompt">请使用设备生物识别确认</string>
     <string name="biometric_unlock_enabled">已启用生物识别解锁。</string>
     <string name="biometric_unlock_not_enabled">尚未启用生物识别解锁。</string>
+    <string name="biometric_unavailable">此设备没有可用的强生物识别硬件或尚未录入。</string>
+    <string name="biometric_fallback_required">生物识别解锁失败 3 次，请输入主密码解锁。</string>
     <string name="create_vault">创建密码库</string>
     <string name="operation_failed">操作失败</string>
     <string name="settings">设置</string>
@@ -40,6 +43,8 @@
     <string name="choose_tags">选择标签</string>
     <string name="selected_tags">已选标签</string>
     <string name="no_tags_yet">暂无标签，请先创建一个。</string>
+    <string name="no_matching_categories">没有匹配分类，可点击 + 创建。</string>
+    <string name="no_matching_tags">没有匹配标签，可点击 + 创建。</string>
     <string name="category">分类</string>
     <string name="tag">标签</string>
     <string name="all">全部</string>
@@ -79,6 +84,12 @@
     <string name="tags">标签</string>
     <string name="updated">更新时间</string>
     <string name="fields">字段</string>
+    <string name="custom_fields">自定义字段</string>
+    <string name="custom_field">自定义字段</string>
+    <string name="custom_field_name">自定义字段名称</string>
+    <string name="custom_field_value">自定义字段值</string>
+    <string name="add_custom_field">添加自定义字段</string>
+    <string name="no_custom_fields">暂无自定义字段。</string>
     <string name="none">无</string>
     <string name="label_field">标题</string>
     <string name="tags_comma_separated">标签，用英文逗号分隔</string>
@@ -108,6 +119,11 @@
     <string name="server_ids_comma_separated">服务器 ID，用英文逗号分隔</string>
     <string name="service_accounts_format_hint">服务账号，格式 username:password:note; ...</string>
     <string name="export_picker_hint">通过 Android 文件选择器保存 JSON 导出文件。</string>
+    <string name="choose_export_fields">选择导出字段</string>
+    <string name="choose_export_fields_hint">选择此条目 JSON 导出中要保留的字段。</string>
+    <string name="export_all">导出全部</string>
+    <string name="export_selected">导出所选</string>
+    <string name="choose_at_least_one_field">请至少选择一个字段。</string>
     <string name="save_full_vault_json">保存完整密码库 JSON</string>
     <string name="save_selected_entry_json">保存当前条目 JSON</string>
     <string name="save_category_json">保存分类 JSON</string>
@@ -150,6 +166,10 @@
     <string name="export_failed">导出失败</string>
     <string name="require_totp_on_unlock">解锁时需要二次验证码</string>
     <string name="totp_shared_secret">TOTP 共享密钥</string>
+    <string name="idle_auto_lock">闲置自动锁定</string>
+    <string name="idle_auto_lock_minutes">闲置自动锁定分钟数</string>
+    <string name="idle_auto_lock_hint">输入 0 表示关闭；开启后，App 闲置达到该分钟数会自动锁定。</string>
+    <string name="idle_auto_locked">已因闲置超时锁定。</string>
     <string name="webdav_url">WebDAV URL</string>
     <string name="webdav_path">WebDAV 路径</string>
     <string name="webdav_username">WebDAV 用户名</string>
@@ -159,7 +179,10 @@
     <string name="presigned_upload_url">预签名上传 URL</string>
     <string name="presigned_url_settings">预签名 URL 设置</string>
     <string name="auto_sync">自动同步</string>
-    <string name="auto_sync_interval_minutes">自动同步间隔分钟数</string>
+    <string name="auto_sync_interval">自动同步间隔</string>
+    <string name="auto_sync_interval_value">间隔数值</string>
+    <string name="auto_sync_interval_unit_seconds">秒</string>
+    <string name="auto_sync_interval_unit_minutes">分钟</string>
     <string name="sync_on_unlock">解锁后同步</string>
     <string name="sync_master_key_metadata">同步主密钥元数据</string>
     <string name="sync_provider_none">不配置</string>

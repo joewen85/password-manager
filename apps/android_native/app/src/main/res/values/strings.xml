@@ -7,6 +7,7 @@
     <string name="confirm_master_password">Confirm master password</string>
     <string name="totp_code">2FA code</string>
     <string name="unlock">Unlock</string>
+    <string name="unlocking_vault">Unlocking vault...</string>
     <string name="biometric_unlock">Unlock with biometrics</string>
     <string name="enable_biometric_unlock">Enable biometric unlock</string>
     <string name="enable_biometric_unlock_hint">Use this device\'s fingerprint or face unlock instead of typing the master password on this device.</string>
@@ -14,6 +15,8 @@
     <string name="biometric_unlock_prompt">Confirm with device biometrics</string>
     <string name="biometric_unlock_enabled">Biometric unlock enabled.</string>
     <string name="biometric_unlock_not_enabled">Biometric unlock is not enabled.</string>
+    <string name="biometric_unavailable">No strong biometric hardware or enrollment is available on this device.</string>
+    <string name="biometric_fallback_required">Biometric unlock failed 3 times. Enter the master password to unlock.</string>
     <string name="create_vault">Create Vault</string>
     <string name="operation_failed">Operation failed</string>
     <string name="settings">Settings</string>
@@ -40,6 +43,8 @@
     <string name="choose_tags">Choose tags</string>
     <string name="selected_tags">Selected tags</string>
     <string name="no_tags_yet">No tags yet. Create one first.</string>
+    <string name="no_matching_categories">No matching categories. Use + to create one.</string>
+    <string name="no_matching_tags">No matching tags. Use + to create one.</string>
     <string name="category">Category</string>
     <string name="tag">Tag</string>
     <string name="all">All</string>
@@ -79,6 +84,12 @@
     <string name="tags">Tags</string>
     <string name="updated">Updated</string>
     <string name="fields">Fields</string>
+    <string name="custom_fields">Custom Fields</string>
+    <string name="custom_field">Custom Field</string>
+    <string name="custom_field_name">Custom field name</string>
+    <string name="custom_field_value">Custom field value</string>
+    <string name="add_custom_field">Add custom field</string>
+    <string name="no_custom_fields">No custom fields.</string>
     <string name="none">None</string>
     <string name="label_field">Label</string>
     <string name="tags_comma_separated">Tags, comma separated</string>
@@ -108,6 +119,11 @@
     <string name="server_ids_comma_separated">Server IDs, comma separated</string>
     <string name="service_accounts_format_hint">Service Accounts, username:password:note; ...</string>
     <string name="export_picker_hint">Save JSON exports with the Android file picker.</string>
+    <string name="choose_export_fields">Choose export fields</string>
+    <string name="choose_export_fields_hint">Select which entry fields should remain in this JSON export.</string>
+    <string name="export_all">Export all</string>
+    <string name="export_selected">Export selected</string>
+    <string name="choose_at_least_one_field">Choose at least one field.</string>
     <string name="save_full_vault_json">Save full vault JSON</string>
     <string name="save_selected_entry_json">Save selected entry JSON</string>
     <string name="save_category_json">Save category JSON</string>
@@ -150,6 +166,10 @@
     <string name="export_failed">Export failed</string>
     <string name="require_totp_on_unlock">Require 2FA code on unlock</string>
     <string name="totp_shared_secret">TOTP shared secret</string>
+    <string name="idle_auto_lock">Idle auto lock</string>
+    <string name="idle_auto_lock_minutes">Idle auto lock minutes</string>
+    <string name="idle_auto_lock_hint">Enter 0 to disable. When enabled, the app locks after this many idle minutes.</string>
+    <string name="idle_auto_locked">Locked after idle timeout.</string>
     <string name="webdav_url">WebDAV URL</string>
     <string name="webdav_path">WebDAV path</string>
     <string name="webdav_username">WebDAV username</string>
@@ -159,7 +179,10 @@
     <string name="presigned_upload_url">Presigned upload URL</string>
     <string name="presigned_url_settings">Presigned URL settings</string>
     <string name="auto_sync">Auto sync</string>
-    <string name="auto_sync_interval_minutes">Auto sync interval minutes</string>
+    <string name="auto_sync_interval">Auto sync interval</string>
+    <string name="auto_sync_interval_value">Interval value</string>
+    <string name="auto_sync_interval_unit_seconds">Seconds</string>
+    <string name="auto_sync_interval_unit_minutes">Minutes</string>
     <string name="sync_on_unlock">Sync on unlock</string>
     <string name="sync_master_key_metadata">Sync master key metadata</string>
     <string name="sync_provider_none">None</string>

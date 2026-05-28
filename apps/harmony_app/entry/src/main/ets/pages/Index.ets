@@ -18,8 +18,14 @@ import {
   VaultController,
 } from '../src/service/VaultController';
 import { VaultCryptoService } from '../src/security/VaultCryptoService';
+import { BiometricCredentialStore } from '../src/security/BiometricCredentialStore';
 import { InMemoryVaultStore, PreferencesVaultStore } from '../src/storage/VaultStore';
-import { ConflictStrategy, SyncProviderType, SyncSettings } from '../src/sync/SyncTypes';
+import {
+  ConflictStrategy,
+  SyncIntervalUnit,
+  SyncProviderType,
+  SyncSettings,
+} from '../src/sync/SyncTypes';
 
 type DraftType = 'credential' | 'server' | 'service';
 const MAX_UNLOCK_ATTEMPTS: number = 5;
@@ -46,6 +52,7 @@ interface EntryCategoryCarrier {
 @Component
 struct Index {
   private vaultController: VaultController | null = null;
+  private biometricCredentialStore: BiometricCredentialStore | null = null;
   private hostContext: Context | null = null;
   private searchInputController: TextInputController = new TextInputController();
 
@@ -58,6 +65,9 @@ struct Index {
   @State private unlockTotpCode: string = '';
   @State private unlockRemainingSeconds: number = 0;
   @State private unlockFailedAttempts: number = 0;
+  @State private biometricUnlockAvailable: boolean = false;
+  @State private biometricUnlockEnabled: boolean = false;
+  @State private biometricBusy: boolean = false;
   @State private syncBusy: boolean = false;
   @State private syncProviderType: SyncProviderType = SyncProviderType.NONE;
   @State private syncConflictStrategy: ConflictStrategy = ConflictStrategy.REMOTE_WINS;
@@ -67,6 +77,8 @@ struct Index {
   @State private syncWebdavPath: string = '/vault.json';
   @State private syncPresignedDownloadUrl: string = '';
   @State private syncPresignedUploadUrl: string = '';
+  @State private syncIntervalValue: string = '30';
+  @State private syncIntervalUnit: SyncIntervalUnit = SyncIntervalUnit.MINUTES;
   @State private syncStatus: string = '未同步';
   @State private syncRevision: number = 0;
   @State private syncLogs: string[] = [];
@@ -110,14 +122,17 @@ struct Index {
       this.hostContext = hostContext;
       const persistentStore = await PreferencesVaultStore.create(hostContext);
       this.vaultController = new VaultController(persistentStore, crypto);
+      this.biometricCredentialStore = await BiometricCredentialStore.create(hostContext);
     } catch (error) {
       console.error(`Preferences store unavailable, fallback to memory: ${error}`);
       this.vaultController = new VaultController(new InMemoryVaultStore(), crypto);
+      this.biometricCredentialStore = null;
     }
     await this.controller().initialize();
     this.hasMasterKey = this.controller().hasMasterKey();
     this.unlocked = this.controller().isUnlocked();
     this.refreshUnlockGuardState();
+    await this.refreshBiometricState();
     this.refreshData();
     if (this.unlocked) {
       this.refreshSecurityState();
@@ -213,6 +228,17 @@ struct Index {
         .onClick(() => {
           this.onUnlockSubmit();
         });
+
+      if (this.hasMasterKey && this.biometricUnlockEnabled && this.biometricUnlockAvailable) {
+        Button(this.biometricBusy ? '正在验证...' : '使用生物识别解锁')
+          .type(ButtonType.Normal)
+          .width('100%')
+          .height(44)
+          .enabled(!this.biometricBusy)
+          .onClick(() => {
+            this.onBiometricUnlock();
+          });
+      }
     }
     .width('100%')
     .constraintSize({ maxWidth: 520 })
@@ -381,6 +407,23 @@ struct Index {
       }
 
       Row({ space: 8 }) {
+        Text('同步间隔').fontSize(12).fontColor('#6F7A7C');
+        Button('秒')
+          .onClick(() => this.syncIntervalUnit = SyncIntervalUnit.SECONDS)
+          .backgroundColor(this.syncIntervalUnit === SyncIntervalUnit.SECONDS ? '#2F7F79' : '#CED8D9');
+        Button('分钟')
+          .onClick(() => this.syncIntervalUnit = SyncIntervalUnit.MINUTES)
+          .backgroundColor(this.syncIntervalUnit === SyncIntervalUnit.MINUTES ? '#2F7F79' : '#CED8D9');
+      }
+      TextInput({ placeholder: '间隔数值', text: $$this.syncIntervalValue })
+        .type(InputType.Number)
+        .width('100%')
+        .height(42)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(10)
+        .padding({ left: 10, right: 10 });
+
+      Row({ space: 8 }) {
         Text('冲突策略').fontSize(12).fontColor('#6F7A7C');
         Button('远端优先')
           .onClick(() => this.syncConflictStrategy = ConflictStrategy.REMOTE_WINS)
@@ -443,19 +486,28 @@ struct Index {
         }
       }
 
-      TextInput({
-        placeholder: '字段搜索按当前分类，tag:/# 标签全局',
-        text: $$this.searchQuery,
-        controller: this.searchInputController
-      })
+      Row({ space: 8 }) {
+        TextInput({
+          placeholder: '字段搜索按当前分类，tag:/# 标签全局',
+          text: $$this.searchQuery,
+          controller: this.searchInputController
+        })
+          .layoutWeight(1)
+          .height(44)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(12)
+          .padding({ left: 12, right: 12 });
+        Button('?')
+          .width(44)
+          .height(44)
+          .backgroundColor('#FFFFFF')
+          .fontColor('#1F4E46')
+          .borderRadius(12)
+          .onClick(() => {
+            this.showSearchHelp();
+          });
+      }
         .width('100%')
-        .height(44)
-        .backgroundColor('#FFFFFF')
-        .borderRadius(12)
-        .padding({ left: 12, right: 12 });
-      Text('字段搜索遵循当前分类筛选；仅 tag:/# 搜索可跨分类全局匹配标签')
-        .fontSize(12)
-        .fontColor('#5A6668');
 
       if (this.tags.length > 0) {
         Flex({ wrap: FlexWrap.Wrap }) {
@@ -868,6 +920,7 @@ struct Index {
       this.refreshSecurityState();
       this.refreshSyncState();
       this.refreshUnlockGuardState();
+      this.offerBiometricUnlock(password);
       this.toast('密码库已初始化');
       return;
     }
@@ -886,7 +939,52 @@ struct Index {
     this.refreshSecurityState();
     this.refreshSyncState();
     this.refreshUnlockGuardState();
+    this.offerBiometricUnlock(password);
     this.schedulePostUnlockRefresh();
+  }
+
+  private async onBiometricUnlock(): Promise<void> {
+    const store = this.biometricCredentialStore;
+    if (store === null || this.biometricBusy) {
+      return;
+    }
+    this.biometricBusy = true;
+    try {
+      const savedPassword = await store.readPassword();
+      const unlocked = await this.controller().unlock(savedPassword, this.unlockTotpCode);
+      if (!unlocked) {
+        this.refreshUnlockGuardState();
+        this.toast(this.controller().getLastUnlockError());
+        return;
+      }
+      this.unlocked = true;
+      this.password = '';
+      this.confirmPassword = '';
+      this.unlockTotpCode = '';
+      this.refreshData();
+      this.refreshSecurityState();
+      this.refreshSyncState();
+      this.refreshUnlockGuardState();
+      this.schedulePostUnlockRefresh();
+    } catch (error) {
+      this.toast(`${error}`);
+    } finally {
+      this.biometricBusy = false;
+    }
+  }
+
+  private async offerBiometricUnlock(password: string): Promise<void> {
+    const store = this.biometricCredentialStore;
+    if (store === null || this.biometricUnlockEnabled || !this.biometricUnlockAvailable) {
+      return;
+    }
+    try {
+      await store.savePassword(password);
+      await this.refreshBiometricState();
+      this.toast('已启用生物识别解锁');
+    } catch (error) {
+      console.error(`Enable biometric unlock skipped: ${error}`);
+    }
   }
 
   private async onCreateEntry(): Promise<void> {
@@ -1104,7 +1202,11 @@ struct Index {
         presignedDownloadUrl: this.syncPresignedDownloadUrl.trim(),
         presignedUploadUrl: this.syncPresignedUploadUrl.trim(),
         autoSyncEnabled: current.autoSyncEnabled,
-        autoSyncIntervalMinutes: current.autoSyncIntervalMinutes,
+        autoSyncIntervalMinutes: this.syncIntervalUnit === SyncIntervalUnit.SECONDS
+          ? Math.max(Math.ceil(Math.max(Number(this.syncIntervalValue) || 0, 1) / 60), 1)
+          : Math.max(Math.floor(Number(this.syncIntervalValue) || 0), 1),
+        autoSyncIntervalValue: Math.max(Math.floor(Number(this.syncIntervalValue) || 0), 1),
+        autoSyncIntervalUnit: this.syncIntervalUnit,
         autoSyncOnUnlock: current.autoSyncOnUnlock,
         conflictStrategy: this.syncConflictStrategy,
         syncMasterKey: current.syncMasterKey,
@@ -1296,6 +1398,21 @@ struct Index {
     return this.getUIContext().getPromptAction();
   }
 
+  private async showSearchHelp(): Promise<void> {
+    try {
+      const prompt = this.uiPromptAction();
+      await prompt.showDialog({
+        title: '搜索用法',
+        message: '普通关键词按当前分类匹配；tag:xxx 或 #xxx 可跨分类全局匹配标签；多个词按 AND 过滤。\n\n字段前缀：title:xxx / label:xxx 标题，service:xxx 服务名称，appid:xxx 应用ID，server:xxx 服务器名称，ip:xxx 服务器IP。\n\n示例：tag:prod tag:cn，title:aws tag:prod ip:10.0。',
+        buttons: [
+          { text: '知道了', color: '#0F4C5C', primary: true },
+        ],
+      });
+    } catch (error) {
+      this.toast(`搜索用法打开失败: ${error}`);
+    }
+  }
+
   private refreshSyncState(): void {
     const settings = this.controller().getSyncSettings();
     this.syncProviderType = settings.providerType;
@@ -1306,6 +1423,8 @@ struct Index {
     this.syncWebdavPath = settings.webdavPath;
     this.syncPresignedDownloadUrl = settings.presignedDownloadUrl;
     this.syncPresignedUploadUrl = settings.presignedUploadUrl;
+    this.syncIntervalValue = String(settings.autoSyncIntervalValue ?? settings.autoSyncIntervalMinutes ?? 30);
+    this.syncIntervalUnit = settings.autoSyncIntervalUnit ?? SyncIntervalUnit.MINUTES;
     this.syncRevision = settings.lastSyncRevision;
     this.syncBusy = this.controller().isSyncing();
     if (settings.lastSyncStatus.trim().length === 0) {
@@ -1331,6 +1450,17 @@ struct Index {
     const guard = this.controller().getUnlockGuardState();
     this.unlockFailedAttempts = guard.failedAttempts;
     this.unlockRemainingSeconds = this.controller().getLockRemainingSeconds();
+  }
+
+  private async refreshBiometricState(): Promise<void> {
+    const store = this.biometricCredentialStore;
+    if (store === null) {
+      this.biometricUnlockAvailable = false;
+      this.biometricUnlockEnabled = false;
+      return;
+    }
+    this.biometricUnlockAvailable = await store.canAuthenticate();
+    this.biometricUnlockEnabled = await store.hasSavedCredential();
   }
 
   private parseTags(raw: string): string[] {

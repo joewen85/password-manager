@@ -4,11 +4,18 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 
-import 'models.dart';
+import 'package:password_manager_crypto/src/models.dart';
 
 class KeyDerivationService {
-  KeyDerivationService({int iterations = 120000})
-      : _defaultIterations = iterations;
+  KeyDerivationService({int iterations = defaultIterations})
+      : _defaultIterations = _validateDefaultIterations(iterations);
+
+  KeyDerivationService.insecureForTesting({int iterations = 1000})
+      : _defaultIterations = _validateRecordIterations(iterations);
+
+  static const int defaultIterations = 600000;
+  static const int minIterations = 120000;
+  static const int saltLength = 16;
 
   final int _defaultIterations;
 
@@ -18,7 +25,16 @@ class KeyDerivationService {
     int? iterations,
   }) async {
     final saltBytes = salt ?? _randomSalt();
-    final kdfIterations = iterations ?? _defaultIterations;
+    if (saltBytes.length < saltLength) {
+      throw ArgumentError.value(
+        saltBytes.length,
+        'salt',
+        'Salt must be at least $saltLength bytes.',
+      );
+    }
+    final kdfIterations = _validateRecordIterations(
+      iterations ?? _defaultIterations,
+    );
     final pbkdf2 = _pbkdf2For(kdfIterations);
     final secretKey = await pbkdf2.deriveKey(
       secretKey: SecretKey(Uint8List.fromList(utf8.encode(password))),
@@ -42,8 +58,29 @@ class KeyDerivationService {
 
   Uint8List _randomSalt() {
     final random = Random.secure();
-    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    final bytes = List<int>.generate(saltLength, (_) => random.nextInt(256));
     return Uint8List.fromList(bytes);
   }
 
+  static int _validateDefaultIterations(int iterations) {
+    if (iterations < minIterations) {
+      throw ArgumentError.value(
+        iterations,
+        'iterations',
+        'PBKDF2 iterations must be at least $minIterations.',
+      );
+    }
+    return iterations;
+  }
+
+  static int _validateRecordIterations(int iterations) {
+    if (iterations <= 0) {
+      throw ArgumentError.value(
+        iterations,
+        'iterations',
+        'PBKDF2 iterations must be positive.',
+      );
+    }
+    return iterations;
+  }
 }

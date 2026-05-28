@@ -70,7 +70,8 @@ class InMemoryVaultMetadataStore implements VaultMetadataStore {
 }
 
 VaultController buildController({required bool requireTotp}) {
-  final keyDerivationService = KeyDerivationService(iterations: 1000);
+  final keyDerivationService =
+      KeyDerivationService.insecureForTesting(iterations: 1000);
   final cryptoService = AesGcmCryptoService();
   final masterKeyStore = InMemoryMasterKeyStore();
   final syncSettingsStore = InMemorySyncSettingsStore();
@@ -104,6 +105,25 @@ Widget _wrapApp(Widget home) {
     ),
     home: home,
   );
+}
+
+Future<void> _selectCompactFilter(
+  WidgetTester tester, {
+  required String tooltip,
+  required String value,
+}) async {
+  await tester.tap(find.byTooltip(tooltip));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(value).last);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _searchAndroid(WidgetTester tester, String query) async {
+  await tester.tap(find.byType(TextField));
+  await tester.pumpAndSettle();
+  await tester.enterText(find.byType(TextField).last, query);
+  await tester.tap(find.text('完成'));
+  await tester.pumpAndSettle();
 }
 
 void main() {
@@ -178,8 +198,7 @@ void main() {
     expect(find.byTooltip('标签'), findsOneWidget);
     expect(find.text('Alpha Dev'), findsOneWidget);
 
-    await tester.enterText(find.byType(TextField), 'Alpha');
-    await tester.pumpAndSettle();
+    await _searchAndroid(tester, 'Alpha');
 
     expect(find.text('Alpha Dev'), findsOneWidget);
     expect(find.text('结果: 1'), findsNothing);
@@ -227,8 +246,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField), 'Alpha');
-    await tester.pumpAndSettle();
+    await _searchAndroid(tester, 'Alpha');
     expect(find.text('Alpha Dev'), findsOneWidget);
     expect(find.text('Alpha Ops'), findsOneWidget);
 
@@ -317,7 +335,8 @@ void main() {
     );
 
     final cryptoService = AesGcmCryptoService();
-    final keyDerivationService = KeyDerivationService(iterations: 1000);
+    final keyDerivationService =
+        KeyDerivationService.insecureForTesting(iterations: 1000);
 
     Future<VaultItemRecord> buildRecord({
       required String label,
@@ -599,22 +618,245 @@ void main() {
     await tester.pumpWidget(_wrapApp(HomeScreen(controller: controller)));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField), 'Alpha');
-    await tester.pumpAndSettle();
+    await _searchAndroid(tester, 'Alpha');
 
     expect(find.text('结果: 2'), findsOneWidget);
 
-    await tester.tap(find.text('研发'));
-    await tester.pumpAndSettle();
+    await _selectCompactFilter(tester, tooltip: '分类', value: '研发');
 
     expect(find.text('分类: 研发'), findsWidgets);
     expect(find.text('结果: 1'), findsOneWidget);
 
-    await tester.tap(find.text('运维'));
-    await tester.pumpAndSettle();
+    await _selectCompactFilter(tester, tooltip: '分类', value: '运维');
 
     expect(find.text('分类: 运维'), findsWidgets);
     expect(find.text('结果: 1'), findsOneWidget);
+  });
+
+  testWidgets('Android medium freeform uses stable collapsed filters',
+      (tester) async {
+    tester.view.physicalSize = const Size(1600, 1800);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.reset);
+
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+    await controller.addEntry(
+      label: 'Alpha Dev',
+      payload: const CredentialPayload(
+        username: 'dev-user',
+        password: 'pass123',
+        token: '',
+        appId: '',
+        accessKey: '',
+        secretKey: '',
+        notes: '',
+        tags: ['dev'],
+        category: '研发',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(
+          platform: TargetPlatform.android,
+          useMaterial3: true,
+          splashFactory: NoSplash.splashFactory,
+        ),
+        home: HomeScreen(controller: controller),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('分类'), findsOneWidget);
+    expect(find.byTooltip('标签'), findsOneWidget);
+    expect(find.text('全部分类'), findsNothing);
+
+    await tester.tap(find.byType(TextField));
+    await tester.pumpAndSettle();
+    expect(find.text('搜索'), findsWidgets);
+    await tester.enterText(find.byType(TextField).last, 'Alpha');
+    await tester.tap(find.text('完成'));
+    await tester.pumpAndSettle();
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 600);
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('分类'), findsOneWidget);
+    expect(find.byTooltip('标签'), findsOneWidget);
+    expect(find.text('全部分类'), findsNothing);
+    expect(tester.testTextInput.isVisible, isFalse);
+  });
+
+  testWidgets('Android entry details releases search keyboard', (tester) async {
+    tester.view.physicalSize = const Size(1600, 1800);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.reset);
+
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+    await controller.addEntry(
+      label: 'Alpha Dev',
+      payload: const CredentialPayload(
+        username: 'dev-user',
+        password: 'pass123',
+        token: '',
+        appId: '',
+        accessKey: '',
+        secretKey: '',
+        notes: '',
+        tags: ['dev'],
+        category: '研发',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(
+          platform: TargetPlatform.android,
+          useMaterial3: true,
+          splashFactory: NoSplash.splashFactory,
+        ),
+        home: HomeScreen(controller: controller),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(TextField));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'Alpha');
+    await tester.tap(find.text('完成'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Alpha Dev'), findsOneWidget);
+    await tester.tap(find.text('Alpha Dev'));
+    await tester.pumpAndSettle();
+
+    expect(tester.testTextInput.isVisible, isFalse);
+  });
+
+  testWidgets('Android search opens dedicated search page', (tester) async {
+    tester.view.physicalSize = const Size(1800, 1800);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.reset);
+
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+    await controller.addEntry(
+      label: 'Alpha Dev',
+      payload: const CredentialPayload(
+        username: 'dev-user',
+        password: 'pass123',
+        token: '',
+        appId: '',
+        accessKey: '',
+        secretKey: '',
+        notes: '',
+        tags: ['dev'],
+        category: '研发',
+      ),
+    );
+
+    await tester.pumpWidget(_wrapApp(HomeScreen(controller: controller)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(TextField));
+    await tester.pumpAndSettle();
+
+    expect(find.text('搜索'), findsWidgets);
+    expect(find.text('Search 用法'), findsNothing);
+    await tester.tap(find.byTooltip('搜索用法').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Search 用法'), findsOneWidget);
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(TextField).last);
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.isVisible, isTrue);
+
+    await tester.enterText(find.byType(TextField).last, 'Alpha');
+    await tester.tap(find.text('完成'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('搜索'), findsNothing);
+    expect(find.text('结果: 1'), findsOneWidget);
+    expect(tester.testTextInput.isVisible, isFalse);
+  });
+
+  testWidgets('Android keyboard preserves compact filter layout',
+      (tester) async {
+    tester.view.physicalSize = const Size(1600, 1088);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.reset);
+
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+    await controller.addEntry(
+      label: 'Alpha Dev',
+      payload: const CredentialPayload(
+        username: 'dev-user',
+        password: 'pass123',
+        token: '',
+        appId: '',
+        accessKey: '',
+        secretKey: '',
+        notes: '',
+        tags: ['dev'],
+        category: '研发',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(
+          platform: TargetPlatform.android,
+          useMaterial3: true,
+          splashFactory: NoSplash.splashFactory,
+        ),
+        home: HomeScreen(controller: controller),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('分类'), findsOneWidget);
+    expect(find.byTooltip('标签'), findsOneWidget);
+
+    await _searchAndroid(tester, 'Alpha');
+    tester.view.viewInsets = const FakeViewPadding(bottom: 600);
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('分类'), findsOneWidget);
+    expect(find.byTooltip('标签'), findsOneWidget);
+    expect(tester.testTextInput.isVisible, isFalse);
+  });
+
+  testWidgets('Expanded tag filters collapse after three tags', (tester) async {
+    tester.view.physicalSize = const Size(2000, 1800);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.reset);
+
+    final controller = buildController(requireTotp: false);
+    await controller.setupMasterPassword('master', 'master');
+    for (final tag in ['dev', 'ops', 'prod', 'qa', 'stage']) {
+      await controller.addTag(tag);
+    }
+
+    await tester.pumpWidget(_wrapApp(HomeScreen(controller: controller)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('dev'), findsOneWidget);
+    expect(find.text('ops'), findsOneWidget);
+    expect(find.text('prod'), findsOneWidget);
+    expect(find.text('qa'), findsNothing);
+    expect(find.text('stage'), findsNothing);
+    expect(find.text('...+2'), findsOneWidget);
+
+    await tester.tap(find.text('...+2'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('全部标签'), findsOneWidget);
+    expect(find.text('qa'), findsOneWidget);
+    expect(find.text('stage'), findsOneWidget);
   });
 
   testWidgets('Tag filter remains responsive after search', (tester) async {
@@ -656,18 +898,15 @@ void main() {
     await tester.pumpWidget(_wrapApp(HomeScreen(controller: controller)));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField), 'Alpha');
-    await tester.pumpAndSettle();
+    await _searchAndroid(tester, 'Alpha');
 
-    await tester.tap(find.text('dev').first);
-    await tester.pumpAndSettle();
+    await _selectCompactFilter(tester, tooltip: '标签', value: 'dev');
 
     expect(find.text('标签: dev'), findsWidgets);
     expect(find.text('结果: 1'), findsOneWidget);
     expect(find.text('Alpha'), findsOneWidget);
 
-    await tester.tap(find.text('ops').first);
-    await tester.pumpAndSettle();
+    await _selectCompactFilter(tester, tooltip: '标签', value: 'ops');
 
     expect(find.text('标签: ops'), findsWidgets);
     expect(find.text('结果: 1'), findsOneWidget);

@@ -8,6 +8,12 @@ pubspec.lock
 **/.packages
 **/pubspec.lock
 
+# Swift / native build artifacts
+**/.build/
+**/.swiftpm/
+**/dist/
+*.dSYM/
+
 # IDE
 .idea/
 .vscode/
@@ -34,3 +40,4 @@ apps/harmony_app/.preview/
 apps/harmony_app/local.properties
 
 signing.env
+.gitnexus

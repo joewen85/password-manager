@@ -2,7 +2,9 @@ package com.example.passwordmanagernative
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
@@ -13,10 +15,14 @@ import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
 import android.view.Gravity
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
@@ -41,6 +47,7 @@ import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowLayoutInfo
 import androidx.window.layout.WindowInfoTracker
 import com.example.passwordmanagernative.model.CredentialPayload
+import com.example.passwordmanagernative.model.CustomField
 import com.example.passwordmanagernative.model.EntryDraft
 import com.example.passwordmanagernative.model.ImportConflictStrategy
 import com.example.passwordmanagernative.model.ServerPayload
@@ -53,8 +60,10 @@ import com.example.passwordmanagernative.store.BiometricCredentialStore
 import com.example.passwordmanagernative.store.BackupInfo
 import com.example.passwordmanagernative.store.VaultStore
 import com.example.passwordmanagernative.sync.SyncLogEntry
+import com.example.passwordmanagernative.sync.SyncIntervalUnit
 import com.example.passwordmanagernative.sync.SyncProviderType
 import com.example.passwordmanagernative.sync.SyncSettingsConflictStrategy
+import com.example.passwordmanagernative.sync.toIntervalMinutes
 import com.example.passwordmanagernative.ui.WindowLayoutPolicy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -72,6 +81,7 @@ import java.time.format.DateTimeFormatter
 class MainActivity : FragmentActivity() {
     private lateinit var store: VaultStore
     private lateinit var biometricCredentialStore: BiometricCredentialStore
+    private lateinit var appPreferences: SharedPreferences
     private lateinit var searchField: EditText
     private var entriesContainer: LinearLayout? = null
     private var detailPane: LinearLayout? = null
@@ -84,6 +94,18 @@ class MainActivity : FragmentActivity() {
     private var pendingImportKind: PendingImportKind? = null
     private var pendingImportStrategy: ImportConflictStrategy = ImportConflictStrategy.KEEP_COPY
     private var activeTaxonomyListDialog: AlertDialog? = null
+    private var biometricFailureCount: Int = 0
+    private var biometricPromptInFlight: Boolean = false
+    private var biometricFallbackRequired: Boolean = false
+    private var currentBiometricPrompt: BiometricPrompt? = null
+    private var lastUserActivityAt: Long = System.currentTimeMillis()
+    private val idleLockHandler = Handler(Looper.getMainLooper())
+    private val idleLockRunnable = object : Runnable {
+        override fun run() {
+            checkIdleAutoLock()
+            idleLockHandler.postDelayed(this, IdleLockCheckIntervalMs)
+        }
+    }
     private val layoutScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var windowLayoutInfo: WindowLayoutInfo? = null
     private var windowLayoutJob: Job? = null
@@ -92,14 +114,32 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         store = VaultStore(this)
         biometricCredentialStore = BiometricCredentialStore(this)
+        appPreferences = getSharedPreferences(AppPreferencesName, Context.MODE_PRIVATE)
         observeWindowLayout()
+        idleLockHandler.postDelayed(idleLockRunnable, IdleLockCheckIntervalMs)
         showUnlock()
     }
 
     override fun onDestroy() {
+        idleLockHandler.removeCallbacks(idleLockRunnable)
         windowLayoutJob?.cancel()
         layoutScope.cancel()
         super.onDestroy()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        checkIdleAutoLock()
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
+        markUserActivity()
+        return super.dispatchTouchEvent(ev)
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent?): Boolean {
+        markUserActivity()
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -159,6 +199,8 @@ class MainActivity : FragmentActivity() {
                 store.setupMasterPassword(enteredPassword, confirmation.text.toString())
             }
             if (success) {
+                biometricFallbackRequired = false
+                biometricFailureCount = 0
                 handlePasswordUnlockSuccess(enteredPassword)
             } else {
                 toast(store.statusMessage ?: text(R.string.operation_failed))
@@ -169,7 +211,13 @@ class MainActivity : FragmentActivity() {
         card.addView(confirmation, matchWrap(top = dp(10)))
         card.addView(totp, matchWrap(top = dp(10)))
         card.addView(submit, matchWrap(top = dp(18)))
-        if (store.hasMasterKey && biometricCredentialStore.hasSavedCredential() && biometricCredentialStore.canAuthenticate()) {
+        if (
+            store.hasMasterKey &&
+            isBiometricUnlockEnabled() &&
+            !biometricFallbackRequired &&
+            biometricCredentialStore.hasSavedCredential() &&
+            biometricCredentialStore.canAuthenticate()
+        ) {
             card.addView(actionButton(text(R.string.biometric_unlock), primary = false) {
                 authenticateBiometricUnlock(totp.text.toString())
             }, matchWrap(top = dp(10)))
@@ -188,54 +236,87 @@ class MainActivity : FragmentActivity() {
             width = resources.displayMetrics.widthPixels.coerceAtMost(dp(520))
         })
         setContentViewWithSystemBars(page)
+        maybeStartAutoBiometricUnlock(totp.text.toString())
     }
 
     private fun handlePasswordUnlockSuccess(password: String) {
+        markUserActivity()
         showHome()
-        if (!store.hasMasterKey || biometricCredentialStore.hasSavedCredential() || !biometricCredentialStore.canAuthenticate()) {
-            return
-        }
-        AlertDialog.Builder(this)
-            .setTitle(text(R.string.enable_biometric_unlock))
-            .setMessage(text(R.string.enable_biometric_unlock_hint))
-            .setPositiveButton(text(R.string.enable)) { _, _ ->
-                enableBiometricUnlock(password)
-            }
-            .setNegativeButton(text(R.string.cancel), null)
-            .show()
     }
 
-    private fun authenticateBiometricUnlock(totpCode: String) {
+    private fun authenticateBiometricUnlock(totpCode: String, automatic: Boolean = false) {
+        if (biometricPromptInFlight) return
         val cipher = biometricCredentialStore.createDecryptCipher() ?: run {
             toast(text(R.string.biometric_unlock_not_enabled))
             return
         }
+        biometricPromptInFlight = true
         val prompt = BiometricPrompt(
             this,
             ContextCompat.getMainExecutor(this),
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    biometricPromptInFlight = false
+                    currentBiometricPrompt = null
+                    biometricFailureCount = 0
+                    biometricFallbackRequired = false
                     val authenticatedCipher = result.cryptoObject?.cipher ?: cipher
-                    val message = runCatching {
-                        val password = biometricCredentialStore.readPassword(authenticatedCipher)
-                        if (store.unlock(password, totpCode)) {
-                            showHome()
-                            store.statusMessage ?: text(R.string.unlock)
-                        } else {
-                            store.statusMessage ?: text(R.string.operation_failed)
-                        }
+                    val password = runCatching {
+                        biometricCredentialStore.readPassword(authenticatedCipher)
                     }.getOrElse {
                         biometricCredentialStore.clear()
-                        it.message ?: text(R.string.operation_failed)
+                        setBiometricUnlockEnabled(false)
+                        biometricFallbackRequired = true
+                        toast(it.message ?: text(R.string.operation_failed))
+                        return
                     }
-                    toast(message)
+                    toast(text(R.string.unlocking_vault))
+                    layoutScope.launch {
+                        val resultMessage = withContext(Dispatchers.IO) {
+                            if (store.unlock(password, totpCode)) {
+                                UnlockResult(
+                                    success = true,
+                                    message = store.statusMessage ?: text(R.string.unlock),
+                                )
+                            } else {
+                                UnlockResult(
+                                    success = false,
+                                    message = store.statusMessage ?: text(R.string.operation_failed),
+                                )
+                            }
+                        }
+                        if (resultMessage.success) {
+                            markUserActivity()
+                            showHome()
+                        } else {
+                            biometricFallbackRequired = true
+                        }
+                        toast(resultMessage.message)
+                    }
+                }
+
+                override fun onAuthenticationFailed() {
+                    biometricFailureCount += 1
+                    if (biometricFailureCount >= MaxBiometricFailures) {
+                        biometricFallbackRequired = true
+                        biometricPromptInFlight = false
+                        toast(text(R.string.biometric_fallback_required))
+                        currentBiometricPrompt?.cancelAuthentication()
+                        currentBiometricPrompt = null
+                        showUnlock()
+                    }
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    toast(errString.toString())
+                    biometricPromptInFlight = false
+                    currentBiometricPrompt = null
+                    if (!automatic) {
+                        toast(errString.toString())
+                    }
                 }
             }
         )
+        currentBiometricPrompt = prompt
         prompt.authenticate(biometricPromptInfo(text(R.string.biometric_unlock)), BiometricPrompt.CryptoObject(cipher))
     }
 
@@ -249,9 +330,13 @@ class MainActivity : FragmentActivity() {
             ContextCompat.getMainExecutor(this),
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    currentBiometricPrompt = null
                     val authenticatedCipher = result.cryptoObject?.cipher ?: cipher
                     runCatching {
                         biometricCredentialStore.savePassword(authenticatedCipher, password)
+                        setBiometricUnlockEnabled(true)
+                        biometricFallbackRequired = false
+                        biometricFailureCount = 0
                         toast(text(R.string.biometric_unlock_enabled))
                     }.onFailure {
                         toast(it.message ?: text(R.string.operation_failed))
@@ -259,14 +344,30 @@ class MainActivity : FragmentActivity() {
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    currentBiometricPrompt = null
                     toast(errString.toString())
                 }
             }
         )
+        currentBiometricPrompt = prompt
         prompt.authenticate(
             biometricPromptInfo(text(R.string.enable_biometric_unlock)),
             BiometricPrompt.CryptoObject(cipher),
         )
+    }
+
+    private fun maybeStartAutoBiometricUnlock(totpCode: String) {
+        if (!store.hasMasterKey || store.requireTotp || biometricFallbackRequired || biometricPromptInFlight) {
+            return
+        }
+        if (!isBiometricUnlockEnabled() || !biometricCredentialStore.hasSavedCredential() || !biometricCredentialStore.canAuthenticate()) {
+            return
+        }
+        window.decorView.post {
+            if (!store.isUnlocked && !biometricFallbackRequired) {
+                authenticateBiometricUnlock(totpCode, automatic = true)
+            }
+        }
     }
 
     private fun biometricPromptInfo(title: String): BiometricPrompt.PromptInfo =
@@ -352,8 +453,7 @@ class MainActivity : FragmentActivity() {
                 showMoreActions(it)
             }, wrapWrap(right = dp(2)))
             addView(toolbarIconButton(R.drawable.ic_lock_24, text(R.string.lock)) {
-                store.lock()
-                showUnlock()
+                lockVaultAndShowUnlock()
             }, wrapWrap())
         }
 
@@ -616,8 +716,7 @@ class MainActivity : FragmentActivity() {
                 refreshEntries()
             }
             .setNeutralButton(text(R.string.export)) { _, _ ->
-                store.exportEntry(entry)
-                toast(store.statusMessage ?: text(R.string.export_complete))
+                showEntryExportFieldDialog(entry)
             }
             .show()
     }
@@ -865,8 +964,7 @@ class MainActivity : FragmentActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END
             addView(actionButton(text(R.string.export), primary = false) {
-                store.exportEntry(entry)
-                toast(store.statusMessage ?: text(R.string.export_complete))
+                showEntryExportFieldDialog(entry)
             }, wrapWrap(right = dp(8)))
             addView(actionButton(text(R.string.edit), primary = true) { showEditor(entry) }, wrapWrap(right = dp(8)))
             addView(actionButton(text(R.string.delete), primary = false) {
@@ -891,8 +989,16 @@ class MainActivity : FragmentActivity() {
                     setPadding(0, dp(8), 0, dp(14))
                     addView(pill(entry.payload.category.ifBlank { text(R.string.uncategorized) }, selected = false), wrapWrap())
                 })
+                if (entry.payload.tags.isNotEmpty()) {
+                    addView(LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        setPadding(0, 0, 0, dp(12))
+                        entry.payload.tags.forEachIndexed { index, tag ->
+                            addView(pill("#$tag", selected = false), wrapWrap(right = if (index == entry.payload.tags.lastIndex) 0 else dp(8)))
+                        }
+                    })
+                }
                 addView(detailSection(text(R.string.overview), listOf(
-                    text(R.string.tags) to entry.payload.tags.joinToString(", ").ifBlank { text(R.string.none) },
                     text(R.string.updated) to entry.updatedAt.toString(),
                 )))
                 addView(detailSection(text(R.string.fields), entry.detailPairs(this@MainActivity)), matchWrap(top = dp(12)))
@@ -930,24 +1036,41 @@ class MainActivity : FragmentActivity() {
         )
         val form = formRoot()
         val payloadFields = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val customFieldsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val label = input(text(R.string.label_field)).apply { setText(draft.label) }
         var selectedCategory = draft.category
         lateinit var categoryPicker: TextView
-        categoryPicker = compactTextButton(categoryDisplayName(selectedCategory)) {
+        categoryPicker = selectBoxText(categoryDisplayName(selectedCategory)) {
             showCategorySelectionDialog(selectedCategory) { selected ->
                 selectedCategory = selected
                 categoryPicker.text = categoryDisplayName(selectedCategory)
             }
         }
         val selectedTags = draft.tags.toMutableSet()
+        val customFields = draft.customFields.toMutableList()
         val tagsSummary = TextView(this).apply {
             setTextColor(uiColor(R.color.ui_muted))
             textSize = 12f
         }
+        lateinit var renderSelectedTags: () -> Unit
         val tagsPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            isClickable = true
+            isFocusable = true
+            background = rounded(uiColor(R.color.ui_surface_alt), dp(12), uiColor(R.color.ui_stroke))
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setOnClickListener {
+                showTagSelectionDialog(
+                    availableTags = store.tags(),
+                    selectedTags = selectedTags,
+                ) { updated ->
+                    selectedTags.clear()
+                    selectedTags += updated
+                    renderSelectedTags()
+                }
+            }
         }
-        fun renderSelectedTags() {
+        renderSelectedTags = {
             tagsPanel.removeAllViews()
             tagsPanel.addView(tagsSummary)
             val chips = HorizontalScrollView(this@MainActivity).apply {
@@ -968,48 +1091,12 @@ class MainActivity : FragmentActivity() {
         val categoryRow = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(label(text(R.string.category), 12f, uiColor(R.color.ui_muted), Typeface.BOLD))
-            addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                addView(categoryPicker, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                addView(actionButton(text(R.string.create_category), primary = false, compact = true) {
-                    showTaxonomyInputDialog(
-                        kind = TaxonomyKind.CATEGORY,
-                        onSaved = { newValue ->
-                            selectedCategory = newValue
-                            categoryPicker.text = categoryDisplayName(selectedCategory)
-                        },
-                        returnToHomeAfterSave = false,
-                    )
-                }, wrapWrap(left = dp(8)))
-            }, matchWrap(top = dp(4)))
+            addView(categoryPicker, matchWrap(top = dp(4)))
         }
         val tagsRow = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(label(text(R.string.tags), 12f, uiColor(R.color.ui_muted), Typeface.BOLD))
             addView(tagsPanel, matchWrap(top = dp(4)))
-            addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                addView(actionButton(text(R.string.choose_tags), primary = false, compact = true) {
-                    showTagSelectionDialog(
-                        availableTags = store.tags(),
-                        selectedTags = selectedTags,
-                    ) { updated ->
-                        selectedTags.clear()
-                        selectedTags += updated
-                        renderSelectedTags()
-                    }
-                }, wrapWrap(right = dp(8)))
-                addView(actionButton(text(R.string.create_tag), primary = false, compact = true) {
-                    showTaxonomyInputDialog(
-                        kind = TaxonomyKind.TAG,
-                        onSaved = { newValue ->
-                            selectedTags += newValue
-                            renderSelectedTags()
-                        },
-                        returnToHomeAfterSave = false,
-                    )
-                }, wrapWrap())
-            }, matchWrap(top = dp(6)))
         }
         tagsSummary.text = text(R.string.selected_tags)
         renderSelectedTags()
@@ -1027,12 +1114,46 @@ class MainActivity : FragmentActivity() {
                 }.also { payloadFields.addView(it, matchWrap(top = dp(10))) }
             }
         }
+        fun renderCustomFields() {
+            customFieldsContainer.removeAllViews()
+            customFieldsContainer.addView(sectionTitle(text(R.string.custom_fields)), matchWrap(top = dp(14)))
+            if (customFields.isEmpty()) {
+                customFieldsContainer.addView(label(text(R.string.no_custom_fields), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(8)))
+            }
+            customFields.forEachIndexed { index, field ->
+                val nameInput = input(text(R.string.custom_field_name)).apply { setText(field.name) }
+                val valueInput = input(text(R.string.custom_field_value)).apply { setText(field.value) }
+                customFieldsContainer.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    background = rounded(uiColor(R.color.ui_surface_alt), dp(12), uiColor(R.color.ui_stroke))
+                    setPadding(dp(12), dp(12), dp(12), dp(12))
+                    addView(nameInput, matchWrap())
+                    addView(valueInput, matchWrap(top = dp(8)))
+                    addView(actionButton(text(R.string.delete), primary = false, compact = true) {
+                        customFields.removeAt(index)
+                        renderCustomFields()
+                    }, wrapWrap(top = dp(8)))
+                    nameInput.addTextChangedListener(SimpleTextWatcher { value ->
+                        customFields[index] = customFields[index].copy(name = value)
+                    })
+                    valueInput.addTextChangedListener(SimpleTextWatcher { value ->
+                        customFields[index] = customFields[index].copy(value = value)
+                    })
+                }, matchWrap(top = dp(8)))
+            }
+            customFieldsContainer.addView(actionButton(text(R.string.add_custom_field), primary = false) {
+                customFields += CustomField()
+                renderCustomFields()
+            }, matchWrap(top = dp(10)))
+        }
         form.addView(formTitle(if (entry == null) text(R.string.new_entry) else text(R.string.edit_entry)))
         form.addView(label, matchWrap(top = dp(12)))
         form.addView(categoryRow, matchWrap(top = dp(10)))
         form.addView(tagsRow, matchWrap(top = dp(10)))
         form.addView(payloadFields)
+        form.addView(customFieldsContainer)
         rebuildPayloadFields(draft.type)
+        renderCustomFields()
         val dialog = AlertDialog.Builder(this)
             .setView(ScrollView(this).apply { addView(form) })
             .setPositiveButton(text(R.string.save), null)
@@ -1049,6 +1170,9 @@ class MainActivity : FragmentActivity() {
                     type = draft.type,
                     category = selectedCategory,
                     tags = selectedTags.sorted(),
+                    customFields = customFields
+                        .map { it.copy(name = it.name.trim(), value = it.value.trim()) }
+                        .filter { it.name.isNotBlank() || it.value.isNotBlank() },
                     credential = credentialPayload(payloadInputs),
                     server = serverPayload(payloadInputs),
                     service = servicePayload(payloadInputs),
@@ -1073,9 +1197,7 @@ class MainActivity : FragmentActivity() {
         }, matchWrap(top = dp(16)))
         selectedEntry?.let { entry ->
             form.addView(actionButton(text(R.string.save_selected_entry_json), primary = false) {
-                store.exportEntryJson(entry)?.let { json ->
-                    createJsonDocument("entry-export-${safeExportName(entry.label)}-${exportTimestamp()}.json", json)
-                } ?: toast(store.statusMessage ?: text(R.string.export_failed))
+                showEntryExportFieldDialog(entry)
             }, matchWrap(top = dp(10)))
         }
         form.addView(actionButton(text(R.string.save_category_json), primary = false) {
@@ -1088,6 +1210,59 @@ class MainActivity : FragmentActivity() {
             .setView(form)
             .setNegativeButton(text(R.string.close), null)
             .show()
+    }
+
+    private fun showEntryExportFieldDialog(entry: VaultEntry) {
+        val fields = entry.exportFields(this)
+        val selected = fields.map { it.id }.toMutableSet()
+        val form = formRoot()
+        val checks = mutableListOf<Pair<EntryExportField, CheckBox>>()
+        form.addView(formTitle(text(R.string.choose_export_fields)))
+        form.addView(label(text(R.string.choose_export_fields_hint), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(8)))
+        fields.forEach { field ->
+            val checkBox = CheckBox(this).apply {
+                text = field.title
+                isChecked = true
+                setTextColor(uiColor(R.color.ui_text))
+                setOnCheckedChangeListener { _, checked ->
+                    if (checked) {
+                        selected += field.id
+                    } else {
+                        selected -= field.id
+                    }
+                }
+            }
+            checks += field to checkBox
+            form.addView(checkBox, matchWrap(top = dp(6)))
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setView(ScrollView(this).apply { addView(form) })
+            .setPositiveButton(text(R.string.export_selected), null)
+            .setNeutralButton(text(R.string.export_all), null)
+            .setNegativeButton(text(R.string.cancel), null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                checks.forEach { (_, check) -> check.isChecked = true }
+                exportEntryJson(entry, fields.map { field -> field.id }.toSet())
+                dialog.dismiss()
+            }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                if (selected.isEmpty()) {
+                    toast(text(R.string.choose_at_least_one_field))
+                    return@setOnClickListener
+                }
+                exportEntryJson(entry, selected.toSet())
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
+    }
+
+    private fun exportEntryJson(entry: VaultEntry, selectedFieldIds: Set<String>) {
+        store.exportEntryJson(entry, selectedFieldIds)?.let { json ->
+            createJsonDocument("entry-export-${safeExportName(entry.label)}-${exportTimestamp()}.json", json)
+        } ?: toast(store.statusMessage ?: text(R.string.export_failed))
     }
 
     private fun showImportCenterDialog() {
@@ -1358,6 +1533,18 @@ class MainActivity : FragmentActivity() {
             setTextColor(uiColor(R.color.ui_text))
         }
         val secret = input(text(R.string.totp_shared_secret), secret = true).apply { setText(store.totpSecret) }
+        val biometricUnlock = CheckBox(this).apply {
+            text = text(R.string.enable_biometric_unlock)
+            isChecked = isBiometricUnlockEnabled() && biometricCredentialStore.hasSavedCredential()
+            isEnabled = biometricCredentialStore.canAuthenticate()
+            setTextColor(uiColor(R.color.ui_text))
+        }
+        val biometricPassword = input(text(R.string.master_password), secret = true).apply {
+            visibility = if (biometricUnlock.isChecked || !biometricCredentialStore.canAuthenticate()) View.GONE else View.VISIBLE
+        }
+        val idleAutoLockMinutes = input(text(R.string.idle_auto_lock_minutes), inputType = InputType.TYPE_CLASS_NUMBER).apply {
+            setText(getIdleAutoLockMinutes().toString())
+        }
         val provider = Spinner(this).apply {
             adapter = ArrayAdapter(
                 this@MainActivity,
@@ -1379,8 +1566,16 @@ class MainActivity : FragmentActivity() {
             isChecked = settings.autoSyncEnabled
             setTextColor(uiColor(R.color.ui_text))
         }
-        val autoSyncInterval = input(text(R.string.auto_sync_interval_minutes), inputType = InputType.TYPE_CLASS_NUMBER).apply {
-            setText(settings.autoSyncIntervalMinutes.toString())
+        val autoSyncInterval = input(text(R.string.auto_sync_interval_value), inputType = InputType.TYPE_CLASS_NUMBER).apply {
+            setText(settings.autoSyncIntervalValue.toString())
+        }
+        val autoSyncIntervalUnit = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                SyncIntervalUnit.entries.map { it.localizedTitle(this@MainActivity) },
+            )
+            setSelection(SyncIntervalUnit.entries.indexOf(settings.autoSyncIntervalUnit))
         }
         val autoSyncOnUnlock = CheckBox(this).apply {
             text = text(R.string.sync_on_unlock)
@@ -1421,11 +1616,22 @@ class MainActivity : FragmentActivity() {
 
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
         }
+        biometricUnlock.setOnCheckedChangeListener { _, checked ->
+            biometricPassword.visibility = if (checked && !biometricCredentialStore.hasSavedCredential()) View.VISIBLE else View.GONE
+        }
 
         form.addView(formTitle(text(R.string.settings)))
         form.addView(sectionTitle(text(R.string.security)), matchWrap(top = dp(12)))
         form.addView(requireTotp, matchWrap(top = dp(4)))
         form.addView(secret, matchWrap(top = dp(8)))
+        form.addView(biometricUnlock, matchWrap(top = dp(10)))
+        if (!biometricCredentialStore.canAuthenticate()) {
+            form.addView(label(text(R.string.biometric_unavailable), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(4)))
+        }
+        form.addView(biometricPassword, matchWrap(top = dp(8)))
+        form.addView(label(text(R.string.idle_auto_lock), 12f, uiColor(R.color.ui_muted), Typeface.BOLD), matchWrap(top = dp(12)))
+        form.addView(idleAutoLockMinutes, matchWrap(top = dp(8)))
+        form.addView(label(text(R.string.idle_auto_lock_hint), 12f, uiColor(R.color.ui_muted)), matchWrap(top = dp(4)))
         form.addView(sectionTitle(text(R.string.sync)), matchWrap(top = dp(18)))
         form.addView(provider, matchWrap(top = dp(8)))
         form.addView(webdavSection, matchWrap(top = dp(12)))
@@ -1437,7 +1643,9 @@ class MainActivity : FragmentActivity() {
         form.addView(presignedDownloadUrl, matchWrap(top = dp(8)))
         form.addView(presignedUploadUrl, matchWrap(top = dp(8)))
         form.addView(autoSync, matchWrap(top = dp(10)))
+        form.addView(label(text(R.string.auto_sync_interval), 12f, uiColor(R.color.ui_muted), Typeface.BOLD), matchWrap(top = dp(8)))
         form.addView(autoSyncInterval, matchWrap(top = dp(8)))
+        form.addView(autoSyncIntervalUnit, matchWrap(top = dp(6)))
         form.addView(autoSyncOnUnlock, matchWrap(top = dp(8)))
         form.addView(label(text(R.string.conflict_strategy), 12f, uiColor(R.color.ui_muted), Typeface.BOLD), matchWrap(top = dp(12)))
         form.addView(conflictStrategy, matchWrap(top = dp(4)))
@@ -1447,11 +1655,36 @@ class MainActivity : FragmentActivity() {
         form.addView(label(text(R.string.revision_value, settings.lastSyncRevision), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(2)))
         updateProviderFieldVisibility()
 
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setView(ScrollView(this).apply { addView(form) })
-            .setPositiveButton(text(R.string.save)) { _, _ ->
+            .setPositiveButton(text(R.string.save), null)
+            .setNegativeButton(text(R.string.cancel), null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                if (biometricUnlock.isChecked && !biometricCredentialStore.hasSavedCredential()) {
+                    val password = biometricPassword.text.toString()
+                    if (!store.verifyMasterPassword(password)) {
+                        toast(store.statusMessage ?: text(R.string.operation_failed))
+                        return@setOnClickListener
+                    }
+                    enableBiometricUnlock(password)
+                } else if (biometricUnlock.isChecked) {
+                    setBiometricUnlockEnabled(true)
+                } else {
+                    biometricCredentialStore.clear()
+                    setBiometricUnlockEnabled(false)
+                    biometricFallbackRequired = false
+                    biometricFailureCount = 0
+                }
                 store.setTotpSecret(secret.text.toString())
                 store.setRequireTotp(requireTotp.isChecked)
+                setIdleAutoLockMinutes(idleAutoLockMinutes.text.toString().toIntOrNull()?.coerceIn(0, 1440) ?: 0)
+                val selectedIntervalUnit = SyncIntervalUnit.entries[autoSyncIntervalUnit.selectedItemPosition]
+                val selectedIntervalValue = autoSyncInterval.text.toString()
+                    .toIntOrNull()
+                    ?.coerceIn(1, 1440)
+                    ?: store.syncSettings.autoSyncIntervalValue
                 store.updateSyncSettings(
                     store.syncSettings.copy(
                         providerType = SyncProviderType.entries[provider.selectedItemPosition],
@@ -1462,20 +1695,20 @@ class MainActivity : FragmentActivity() {
                         presignedDownloadUrl = presignedDownloadUrl.text.toString(),
                         presignedUploadUrl = presignedUploadUrl.text.toString(),
                         autoSyncEnabled = autoSync.isChecked,
-                        autoSyncIntervalMinutes = autoSyncInterval.text.toString()
-                            .toIntOrNull()
-                            ?.coerceIn(5, 1440)
-                            ?: store.syncSettings.autoSyncIntervalMinutes,
+                        autoSyncIntervalMinutes = selectedIntervalValue.toIntervalMinutes(selectedIntervalUnit),
+                        autoSyncIntervalValue = selectedIntervalValue,
+                        autoSyncIntervalUnit = selectedIntervalUnit,
                         autoSyncOnUnlock = autoSyncOnUnlock.isChecked,
                         conflictStrategy = SyncSettingsConflictStrategy.entries[conflictStrategy.selectedItemPosition],
                         syncMasterKey = syncMasterKey.isChecked,
                     )
                 )
+                dialog.dismiss()
                 showHome()
                 toast(store.statusMessage ?: text(R.string.settings_saved))
             }
-            .setNegativeButton(text(R.string.cancel), null)
-            .show()
+        }
+        dialog.show()
     }
 
     private fun runSync() {
@@ -1578,6 +1811,48 @@ class MainActivity : FragmentActivity() {
     private fun statusRefresh(message: String) {
         showHome()
         toast(message)
+    }
+
+    private fun lockVaultAndShowUnlock(idleTimeout: Boolean = false) {
+        currentBiometricPrompt?.cancelAuthentication()
+        currentBiometricPrompt = null
+        store.lock()
+        selectedEntry = null
+        biometricPromptInFlight = false
+        biometricFailureCount = 0
+        biometricFallbackRequired = false
+        showUnlock()
+        if (idleTimeout) {
+            toast(text(R.string.idle_auto_locked))
+        }
+    }
+
+    private fun markUserActivity() {
+        lastUserActivityAt = System.currentTimeMillis()
+    }
+
+    private fun checkIdleAutoLock() {
+        val minutes = getIdleAutoLockMinutes()
+        if (!store.isUnlocked || minutes <= 0) return
+        val elapsed = System.currentTimeMillis() - lastUserActivityAt
+        if (elapsed >= minutes * 60_000L) {
+            lockVaultAndShowUnlock(idleTimeout = true)
+        }
+    }
+
+    private fun isBiometricUnlockEnabled(): Boolean =
+        appPreferences.getBoolean(PrefBiometricUnlockEnabled, false)
+
+    private fun setBiometricUnlockEnabled(enabled: Boolean) {
+        appPreferences.edit().putBoolean(PrefBiometricUnlockEnabled, enabled).apply()
+    }
+
+    private fun getIdleAutoLockMinutes(): Int =
+        appPreferences.getInt(PrefIdleAutoLockMinutes, 0)
+
+    private fun setIdleAutoLockMinutes(minutes: Int) {
+        appPreferences.edit().putInt(PrefIdleAutoLockMinutes, minutes.coerceIn(0, 1440)).apply()
+        markUserActivity()
     }
 
     private fun showImportResult(message: String) {
@@ -1690,19 +1965,47 @@ class MainActivity : FragmentActivity() {
         selectedTags: Set<String>,
         onSelected: (Set<String>) -> Unit,
     ) {
-        if (availableTags.isEmpty()) {
-            toast(text(R.string.no_tags_yet))
-            return
-        }
         val selected = selectedTags.toMutableSet()
         val form = formRoot()
         val search = input(text(R.string.search_tags))
+        val addButton = toolbarIconButton(R.drawable.ic_add_24, text(R.string.create_tag), accent = true) {}
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val selectedStrip = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        var dialog: AlertDialog? = null
+        fun exactMatch(query: String): Boolean =
+            availableTags.any { it.equals(query.trim(), ignoreCase = true) } ||
+                selected.any { it.equals(query.trim(), ignoreCase = true) }
+        fun renderSelected() {
+            selectedStrip.removeAllViews()
+            selectedStrip.addView(label(text(R.string.selected_tags), 12f, uiColor(R.color.ui_muted), Typeface.BOLD))
+            selectedStrip.addView(HorizontalScrollView(this).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    if (selected.isEmpty()) {
+                        addView(label(text(R.string.none), 13f, uiColor(R.color.ui_muted)))
+                    } else {
+                        selected.sorted().forEachIndexed { index, tag ->
+                            addView(pill(tag, selected = true).apply {
+                                isClickable = true
+                                setOnClickListener {
+                                    search.requestFocus()
+                                }
+                            }, wrapWrap(right = if (index == selected.size - 1) 0 else dp(8)))
+                        }
+                    }
+                })
+            }, matchWrap(top = dp(6)))
+        }
         fun render(query: String = "") {
             list.removeAllViews()
-            val filtered = availableTags.filter { it.contains(query.trim(), ignoreCase = true) }
+            val normalizedQuery = query.trim()
+            val filtered = (availableTags + selected)
+                .distinct()
+                .filter { it.contains(normalizedQuery, ignoreCase = true) }
+            addButton.visibility = if (normalizedQuery.isNotBlank() && !exactMatch(normalizedQuery)) View.VISIBLE else View.GONE
             if (filtered.isEmpty()) {
-                list.addView(label(text(R.string.none), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(10)))
+                list.addView(label(text(R.string.no_matching_tags), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(10)))
             } else {
                 filtered.forEach { tag ->
                     list.addView(CheckBox(this).apply {
@@ -1715,9 +2018,22 @@ class MainActivity : FragmentActivity() {
                             } else {
                                 selected -= tag
                             }
+                            renderSelected()
                         }
                     }, matchWrap(top = dp(6)))
                 }
+            }
+        }
+        addButton.setOnClickListener {
+            val value = search.text.toString().trim()
+            if (value.isBlank()) return@setOnClickListener
+            if (store.addTag(value)) {
+                selected += value
+                renderSelected()
+                render(value)
+                toast(store.statusMessage ?: text(R.string.saved))
+            } else {
+                toast(store.statusMessage ?: text(R.string.operation_failed))
             }
         }
         search.addTextChangedListener(object : TextWatcher {
@@ -1728,10 +2044,17 @@ class MainActivity : FragmentActivity() {
             override fun afterTextChanged(s: Editable?) = Unit
         })
         form.addView(formTitle(text(R.string.choose_tags)))
-        form.addView(search, matchWrap(top = dp(12)))
+        form.addView(selectedStrip, matchWrap(top = dp(12)))
+        form.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(search, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(addButton, wrapWrap(left = dp(8)))
+        }, matchWrap(top = dp(12)))
         form.addView(list, matchWrap(top = dp(8)))
+        renderSelected()
         render()
-        AlertDialog.Builder(this)
+        dialog = AlertDialog.Builder(this)
             .setView(ScrollView(this).apply { addView(form) })
             .setPositiveButton(text(R.string.save)) { _, _ -> onSelected(selected) }
             .setNegativeButton(text(R.string.cancel), null)
@@ -1745,22 +2068,38 @@ class MainActivity : FragmentActivity() {
         val options = listOf("") + store.categories()
         val form = formRoot()
         val search = searchInput(text(R.string.search_categories))
+        val addButton = toolbarIconButton(R.drawable.ic_add_24, text(R.string.create_category), accent = true) {}
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         var dialog: AlertDialog? = null
+        fun exactMatch(query: String): Boolean =
+            options.any { it.equals(query.trim(), ignoreCase = true) }
         fun render(query: String = "") {
             list.removeAllViews()
+            val normalizedQuery = query.trim()
+            addButton.visibility = if (normalizedQuery.isNotBlank() && !exactMatch(normalizedQuery)) View.VISIBLE else View.GONE
             val filtered = options.filter { option ->
-                categoryDisplayName(option).contains(query.trim(), ignoreCase = true)
+                categoryDisplayName(option).contains(normalizedQuery, ignoreCase = true)
             }
             if (filtered.isEmpty()) {
-                list.addView(label(text(R.string.none), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(10)))
+                list.addView(label(text(R.string.no_matching_categories), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(10)))
             } else {
                 filtered.forEach { category ->
-                    list.addView(compactTextButton(categoryDisplayName(category), selected = category == currentCategory) {
+                    list.addView(selectBoxText(categoryDisplayName(category), selected = category == currentCategory) {
                         onSelected(category)
                         dialog?.dismiss()
                     }, matchWrap(top = compactGap()))
                 }
+            }
+        }
+        addButton.setOnClickListener {
+            val value = search.text.toString().trim()
+            if (value.isBlank()) return@setOnClickListener
+            if (store.addCategory(value)) {
+                onSelected(value)
+                dialog?.dismiss()
+                toast(store.statusMessage ?: text(R.string.saved))
+            } else {
+                toast(store.statusMessage ?: text(R.string.operation_failed))
             }
         }
         search.addTextChangedListener(object : TextWatcher {
@@ -1771,7 +2110,12 @@ class MainActivity : FragmentActivity() {
             override fun afterTextChanged(s: Editable?) = Unit
         })
         form.addView(formTitle(text(R.string.category)))
-        form.addView(search, matchWrap(top = compactGap()))
+        form.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(search, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(addButton, wrapWrap(left = dp(8)))
+        }, matchWrap(top = compactGap()))
         form.addView(list, matchWrap(top = compactGap()))
         render()
         dialog = AlertDialog.Builder(this)
@@ -1845,6 +2189,25 @@ class MainActivity : FragmentActivity() {
             setTextColor(if (selected) Color.WHITE else uiColor(R.color.ui_text))
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             background = rounded(if (selected) uiColor(R.color.ui_accent) else uiColor(R.color.ui_surface_alt), compactRadius(), if (selected) uiColor(R.color.ui_accent) else uiColor(R.color.ui_stroke))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+        }
+
+    private fun selectBoxText(
+        textValue: String,
+        selected: Boolean = false,
+        onClick: () -> Unit,
+    ): TextView =
+        TextView(this).apply {
+            text = textValue
+            textSize = 14f
+            minHeight = dp(48)
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), 0, dp(14), 0)
+            setTextColor(if (selected) Color.WHITE else uiColor(R.color.ui_text))
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            background = rounded(if (selected) uiColor(R.color.ui_accent) else uiColor(R.color.ui_surface_alt), dp(12), if (selected) uiColor(R.color.ui_accent) else uiColor(R.color.ui_stroke))
             isClickable = true
             isFocusable = true
             setOnClickListener { onClick() }
@@ -2097,6 +2460,11 @@ class MainActivity : FragmentActivity() {
         val message: String,
     )
 
+    private data class UnlockResult(
+        val success: Boolean,
+        val message: String,
+    )
+
     private enum class TaxonomyKind {
         CATEGORY,
         TAG
@@ -2114,6 +2482,11 @@ class MainActivity : FragmentActivity() {
     private companion object {
         const val RequestCodeCreateDocument = 4101
         const val RequestCodeOpenDocument = 4102
+        const val AppPreferencesName = "password_manager_android_preferences"
+        const val PrefBiometricUnlockEnabled = "biometric_unlock_enabled"
+        const val PrefIdleAutoLockMinutes = "idle_auto_lock_minutes"
+        const val MaxBiometricFailures = 3
+        const val IdleLockCheckIntervalMs = 10_000L
         val ExportTimestamp: DateTimeFormatter = DateTimeFormatter
             .ofPattern("yyyyMMdd-HHmmss")
             .withZone(ZoneOffset.UTC)
@@ -2130,6 +2503,7 @@ private fun VaultEntry.toDraft(): EntryDraft =
             type = type,
             category = payload.category,
             tags = payload.tags,
+            customFields = customFields,
             credential = payload.value,
         )
         is VaultPayload.Server -> EntryDraft(
@@ -2137,6 +2511,7 @@ private fun VaultEntry.toDraft(): EntryDraft =
             type = type,
             category = payload.category,
             tags = payload.tags,
+            customFields = customFields,
             server = payload.value,
         )
         is VaultPayload.Service -> EntryDraft(
@@ -2144,6 +2519,7 @@ private fun VaultEntry.toDraft(): EntryDraft =
             type = type,
             category = payload.category,
             tags = payload.tags,
+            customFields = customFields,
             service = payload.value,
         )
     }
@@ -2153,6 +2529,11 @@ private data class PayloadFieldSpec(
     val value: String,
     val secret: Boolean = false,
     val multiline: Boolean = false,
+)
+
+private data class EntryExportField(
+    val id: String,
+    val title: String,
 )
 
 private fun payloadFieldSpecs(type: VaultEntryType, draft: EntryDraft, activity: Activity): List<PayloadFieldSpec> =
@@ -2187,6 +2568,49 @@ private fun payloadFieldSpecs(type: VaultEntryType, draft: EntryDraft, activity:
             PayloadFieldSpec(activity.getString(R.string.notes), draft.service.notes, multiline = true),
         )
     }
+
+private fun VaultEntry.exportFields(activity: Activity): List<EntryExportField> {
+    val fields = mutableListOf(
+        EntryExportField("label", activity.getString(R.string.label_field)),
+        EntryExportField("category", activity.getString(R.string.category)),
+        EntryExportField("tags", activity.getString(R.string.tags)),
+    )
+    when (payload) {
+        is VaultPayload.Credential -> fields += listOf(
+            EntryExportField("credential.username", activity.getString(R.string.username)),
+            EntryExportField("credential.password", activity.getString(R.string.password)),
+            EntryExportField("credential.token", activity.getString(R.string.token)),
+            EntryExportField("credential.appId", activity.getString(R.string.app_id)),
+            EntryExportField("credential.accessKey", activity.getString(R.string.access_key)),
+            EntryExportField("credential.secretKey", activity.getString(R.string.secret_key)),
+            EntryExportField("credential.notes", activity.getString(R.string.notes)),
+        )
+        is VaultPayload.Server -> fields += listOf(
+            EntryExportField("server.name", activity.getString(R.string.name)),
+            EntryExportField("server.ipAddress", activity.getString(R.string.ip_address)),
+            EntryExportField("server.port", activity.getString(R.string.port)),
+            EntryExportField("server.username", activity.getString(R.string.username)),
+            EntryExportField("server.password", activity.getString(R.string.password)),
+            EntryExportField("server.basicConfig", activity.getString(R.string.basic_config)),
+            EntryExportField("server.operatingSystem", activity.getString(R.string.os)),
+            EntryExportField("server.location", activity.getString(R.string.location)),
+            EntryExportField("server.notes", activity.getString(R.string.notes)),
+        )
+        is VaultPayload.Service -> fields += listOf(
+            EntryExportField("service.name", activity.getString(R.string.name)),
+            EntryExportField("service.connectionAddress", activity.getString(R.string.connection_address)),
+            EntryExportField("service.connectionPort", activity.getString(R.string.connection_port)),
+            EntryExportField("service.accountId", activity.getString(R.string.account_id)),
+            EntryExportField("service.serverIds", activity.getString(R.string.server_ids)),
+            EntryExportField("service.accounts", activity.getString(R.string.service_accounts)),
+            EntryExportField("service.notes", activity.getString(R.string.notes)),
+        )
+    }
+    fields += customFields.map { field ->
+        EntryExportField("custom.${field.id}", field.name.ifBlank { activity.getString(R.string.custom_field) })
+    }
+    return fields
+}
 
 private fun credentialPayload(inputs: List<EditText>): CredentialPayload =
     CredentialPayload(
@@ -2259,7 +2683,19 @@ private fun VaultEntry.detailPairs(activity: MainActivity): List<Pair<String, St
             },
             activity.getString(R.string.notes) to currentPayload.value.notes,
         )
+    } + customFields.map { field ->
+        field.name.ifBlank { activity.getString(R.string.custom_field) } to field.value
     }
+
+private class SimpleTextWatcher(
+    private val onChanged: (String) -> Unit,
+) : TextWatcher {
+    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+        onChanged(s?.toString().orEmpty())
+    }
+    override fun afterTextChanged(s: Editable?) = Unit
+}
 
 private fun ImportConflictStrategy.localizedTitle(activity: Activity): String =
     activity.getString(
@@ -2277,6 +2713,14 @@ private fun SyncProviderType.localizedTitle(activity: Activity): String =
             SyncProviderType.WEBDAV -> R.string.sync_provider_webdav
             SyncProviderType.S3_PRESIGNED -> R.string.sync_provider_s3_presigned
             SyncProviderType.NAS_WEBDAV -> R.string.sync_provider_nas_webdav
+        }
+    )
+
+private fun SyncIntervalUnit.localizedTitle(activity: Activity): String =
+    activity.getString(
+        when (this) {
+            SyncIntervalUnit.SECONDS -> R.string.auto_sync_interval_unit_seconds
+            SyncIntervalUnit.MINUTES -> R.string.auto_sync_interval_unit_minutes
         }
     )
 

@@ -1,5 +1,8 @@
 .gradle/
+.kotlin/
+.idea/
 build/
+dist/
 local.properties
 captures/
 app/build/

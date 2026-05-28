@@ -12,6 +12,10 @@ echo "==> Running package tests (Dart only)"
   dart test
 )
 (
+  cd packages/auth
+  dart test
+)
+(
   cd packages/core
   dart test
 )

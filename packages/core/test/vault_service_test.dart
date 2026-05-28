@@ -36,7 +36,8 @@ void main() {
     final repository = InMemoryVaultRepository();
     final service = VaultService(
       cryptoService: AesGcmCryptoService(),
-      keyDerivationService: KeyDerivationService(iterations: 1000),
+      keyDerivationService:
+          KeyDerivationService.insecureForTesting(iterations: 1000),
       repository: repository,
     );
 
@@ -79,7 +80,8 @@ void main() {
     final repository = InMemoryVaultRepository();
     final service = VaultService(
       cryptoService: AesGcmCryptoService(),
-      keyDerivationService: KeyDerivationService(iterations: 1000),
+      keyDerivationService:
+          KeyDerivationService.insecureForTesting(iterations: 1000),
       repository: repository,
     );
 
@@ -111,7 +113,8 @@ void main() {
     final repository = InMemoryVaultRepository();
     final service = VaultService(
       cryptoService: AesGcmCryptoService(),
-      keyDerivationService: KeyDerivationService(iterations: 1000),
+      keyDerivationService:
+          KeyDerivationService.insecureForTesting(iterations: 1000),
       repository: repository,
     );
 
@@ -143,7 +146,8 @@ void main() {
     final repository = InMemoryVaultRepository();
     final service = VaultService(
       cryptoService: AesGcmCryptoService(),
-      keyDerivationService: KeyDerivationService(iterations: 1000),
+      keyDerivationService:
+          KeyDerivationService.insecureForTesting(iterations: 1000),
       repository: repository,
     );
 
@@ -177,7 +181,8 @@ void main() {
     final repository = InMemoryVaultRepository();
     final service = VaultService(
       cryptoService: AesGcmCryptoService(),
-      keyDerivationService: KeyDerivationService(iterations: 1000),
+      keyDerivationService:
+          KeyDerivationService.insecureForTesting(iterations: 1000),
       repository: repository,
     );
 

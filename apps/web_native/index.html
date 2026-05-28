@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0f172a">
+    <title>Password Manager Web Native</title>
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section id="unlock-screen" class="unlock-screen">
+        <div class="brand-block">
+          <div class="brand-mark" aria-hidden="true">PM</div>
+          <div>
+            <h1>Password Manager</h1>
+            <p>Encrypted vault stored locally in this browser.</p>
+          </div>
+        </div>
+        <form id="unlock-form" class="panel auth-panel">
+          <label>
+            Master password
+            <input id="master-password" type="password" autocomplete="current-password" required>
+          </label>
+          <label id="confirm-row">
+            Confirm master password
+            <input id="confirm-password" type="password" autocomplete="new-password">
+          </label>
+          <label id="totp-row" hidden>
+            2FA code
+            <input id="totp-code" inputmode="numeric" autocomplete="one-time-code">
+          </label>
+          <button id="unlock-submit" type="submit">Create Vault</button>
+          <p id="auth-message" class="status-text" role="status"></p>
+        </form>
+      </section>
+
+      <section id="vault-screen" class="vault-screen" hidden>
+        <aside class="sidebar">
+          <div class="brand-block compact">
+            <div class="brand-mark" aria-hidden="true">PM</div>
+            <div>
+              <h2>Vault</h2>
+              <p id="sync-status">Not configured</p>
+            </div>
+          </div>
+          <input id="search-input" class="search-input" placeholder="Search vault" aria-label="Search vault">
+          <nav class="filter-list" aria-label="Vault filters">
+            <button class="filter active" data-filter="all">All Items</button>
+            <button class="filter" data-filter="credential">Credentials</button>
+            <button class="filter" data-filter="server">Servers</button>
+            <button class="filter" data-filter="service">Services</button>
+          </nav>
+          <div class="sidebar-actions">
+            <button id="sync-button" type="button">Sync Now</button>
+            <button id="backup-button" type="button">Backup</button>
+            <button id="restore-button" type="button">Restore Latest</button>
+            <button id="export-button" type="button">Export JSON</button>
+            <button id="import-button" type="button">Import JSON</button>
+            <button id="settings-button" type="button">Settings</button>
+            <button id="lock-button" type="button" class="secondary">Lock</button>
+          </div>
+        </aside>
+
+        <section class="content-panel">
+          <header class="content-header">
+            <div>
+              <h2>Items</h2>
+              <p id="item-count">0 active entries</p>
+            </div>
+            <button id="add-button" type="button">Add Entry</button>
+          </header>
+          <div id="entry-list" class="entry-list" aria-live="polite"></div>
+        </section>
+
+        <section class="detail-panel" id="detail-panel">
+          <p class="empty-state">Select an entry to view details.</p>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="entry-dialog">
+      <form method="dialog" class="dialog-form" id="entry-form">
+        <h2 id="entry-dialog-title">Add Entry</h2>
+        <label>
+          Label
+          <input id="entry-label" required>
+        </label>
+        <label>
+          Type
+          <select id="entry-type">
+            <option value="credential">Credential</option>
+            <option value="server">Server</option>
+            <option value="service">Service</option>
+          </select>
+        </label>
+        <label>
+          Username / name
+          <input id="entry-username">
+        </label>
+        <label>
+          Password / secret
+          <input id="entry-secret" type="password">
+        </label>
+        <label>
+          Category
+          <input id="entry-category">
+        </label>
+        <label>
+          Tags
+          <input id="entry-tags" placeholder="comma, separated">
+        </label>
+        <label>
+          Notes
+          <textarea id="entry-notes" rows="4"></textarea>
+        </label>
+        <menu>
+          <button value="cancel" type="button" id="entry-cancel">Cancel</button>
+          <button value="default" type="submit">Save</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="settings-dialog">
+      <form method="dialog" class="dialog-form" id="settings-form">
+        <h2>Settings</h2>
+        <label class="checkbox-row">
+          <input id="require-totp" type="checkbox">
+          Require 2FA code on unlock
+        </label>
+        <label>
+          TOTP shared secret
+          <input id="totp-secret" type="password">
+        </label>
+        <label>
+          Sync provider
+          <select id="sync-provider">
+            <option value="none">None</option>
+            <option value="webdav">WebDAV</option>
+            <option value="nasWebdav">NAS WebDAV</option>
+            <option value="s3Presigned">S3 Presigned URL</option>
+          </select>
+        </label>
+        <label>
+          WebDAV URL
+          <input id="webdav-url" type="url">
+        </label>
+        <label>
+          WebDAV username
+          <input id="webdav-username">
+        </label>
+        <label>
+          WebDAV password
+          <input id="webdav-password" type="password">
+        </label>
+        <label>
+          WebDAV path
+          <input id="webdav-path">
+        </label>
+        <label>
+          Presigned download URL
+          <input id="presigned-download-url" type="url">
+        </label>
+        <label>
+          Presigned upload URL
+          <input id="presigned-upload-url" type="url">
+        </label>
+        <menu>
+          <button value="cancel" type="button" id="settings-cancel">Cancel</button>
+          <button value="default" type="submit">Save</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <input id="import-file" type="file" accept="application/json,.json" hidden>
+    <script type="module" src="./src/app.mjs"></script>
+  </body>
+</html>

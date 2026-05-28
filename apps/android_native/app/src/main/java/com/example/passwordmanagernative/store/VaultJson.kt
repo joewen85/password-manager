@@ -1,6 +1,7 @@
 package com.example.passwordmanagernative.store
 
 import com.example.passwordmanagernative.model.CredentialPayload
+import com.example.passwordmanagernative.model.CustomField
 import com.example.passwordmanagernative.model.EncryptedPayloadRecord
 import com.example.passwordmanagernative.model.MasterKeyRecord
 import com.example.passwordmanagernative.model.SecuritySettings
@@ -174,6 +175,7 @@ object VaultJson {
             .put("label", label)
             .put("type", type.name.lowercase())
             .put("payload", payload.toJson())
+            .put("customFields", JSONArray(customFields.map { it.toJson() }))
             .put("createdAt", createdAt.toString())
             .put("updatedAt", updatedAt.toString())
             .put("version", JSONObject(version))
@@ -192,6 +194,7 @@ object VaultJson {
             label = optString("label"),
             type = type,
             payload = optJSONObject("payload").toVaultPayload(type),
+            customFields = optJSONArray("customFields").toCustomFieldList(),
             createdAt = optInstant("createdAt") ?: Instant.now(),
             updatedAt = optInstant("updatedAt") ?: Instant.now(),
             version = optJSONObject("version").toIntMap(),
@@ -323,6 +326,19 @@ object VaultJson {
             note = optString("note"),
         )
 
+    private fun CustomField.toJson(): JSONObject =
+        JSONObject()
+            .put("id", id)
+            .put("name", name)
+            .put("value", value)
+
+    private fun JSONObject.toCustomField(): CustomField =
+        CustomField(
+            id = optString("id").ifBlank { java.util.UUID.randomUUID().toString() },
+            name = optString("name"),
+            value = optString("value"),
+        )
+
     private fun SecuritySettings.toJson(): JSONObject =
         JSONObject()
             .put("requireTotp", requireTotp)
@@ -352,6 +368,11 @@ object VaultJson {
     private fun JSONArray?.toServiceAccountList(): List<ServiceAccount> {
         if (this == null) return emptyList()
         return (0 until length()).mapNotNull { index -> optJSONObject(index)?.toServiceAccount() }
+    }
+
+    private fun JSONArray?.toCustomFieldList(): List<CustomField> {
+        if (this == null) return emptyList()
+        return (0 until length()).mapNotNull { index -> optJSONObject(index)?.toCustomField() }
     }
 
     private fun decodeFlutterEncryptedExport(
@@ -447,6 +468,7 @@ object VaultJson {
             label = metadata.optString("label", optString("id")),
             type = type,
             payload = payloadJson.toVaultPayload(type),
+            customFields = payloadJson.optJSONArray("customFields").toCustomFieldList(),
             createdAt = metadata.optInstant("createdAt") ?: Instant.now(),
             updatedAt = metadata.optInstant("updatedAt") ?: Instant.now(),
             version = metadata.optJSONObject("version").toIntMap(),

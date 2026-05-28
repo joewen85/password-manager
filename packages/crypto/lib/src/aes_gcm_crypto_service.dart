@@ -2,11 +2,12 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 
-import 'crypto_service.dart';
-import 'models.dart';
+import 'package:password_manager_crypto/src/crypto_service.dart';
+import 'package:password_manager_crypto/src/models.dart';
 
 class AesGcmCryptoService implements CryptoService {
-  AesGcmCryptoService({AesGcm? cipher}) : _cipher = cipher ?? AesGcm.with256bits();
+  AesGcmCryptoService({AesGcm? cipher})
+      : _cipher = cipher ?? AesGcm.with256bits();
 
   final AesGcm _cipher;
 

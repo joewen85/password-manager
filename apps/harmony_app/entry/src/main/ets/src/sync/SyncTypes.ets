@@ -11,6 +11,11 @@ export enum ConflictStrategy {
   KEEP_BOTH = 'keepBoth'
 }
 
+export enum SyncIntervalUnit {
+  SECONDS = 'seconds',
+  MINUTES = 'minutes'
+}
+
 export interface SyncLogEntry {
   timestamp: number;
   level: 'info' | 'error';
@@ -27,6 +32,8 @@ export interface SyncSettings {
   presignedUploadUrl: string;
   autoSyncEnabled: boolean;
   autoSyncIntervalMinutes: number;
+  autoSyncIntervalValue: number;
+  autoSyncIntervalUnit: SyncIntervalUnit;
   autoSyncOnUnlock: boolean;
   conflictStrategy: ConflictStrategy;
   syncMasterKey: boolean;
@@ -49,6 +56,8 @@ export function defaultSyncSettings(): SyncSettings {
     presignedUploadUrl: '',
     autoSyncEnabled: false,
     autoSyncIntervalMinutes: 30,
+    autoSyncIntervalValue: 30,
+    autoSyncIntervalUnit: SyncIntervalUnit.MINUTES,
     autoSyncOnUnlock: true,
     conflictStrategy: ConflictStrategy.REMOTE_WINS,
     syncMasterKey: true,

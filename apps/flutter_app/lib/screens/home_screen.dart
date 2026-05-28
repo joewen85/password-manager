@@ -37,15 +37,12 @@ class _HomeScreenState extends State<HomeScreen>
   bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
 
   static const double _searchFieldHeight = 52.0;
-  static const double _searchHelpSpacing = 8.0;
-  static const double _searchHelpBottomGap = 10.0;
   static const int _reduceEffectsThreshold = 20;
+  static const bool _enableAdaptiveLayoutLogs =
+      bool.fromEnvironment('PASSWORD_MANAGER_ADAPTIVE_LOGS');
 
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
-  final LayerLink _searchFieldLink = LayerLink();
-  final GlobalKey _searchFieldKey = GlobalKey();
-  final GlobalKey _searchHelpKey = GlobalKey();
   late final Listenable _entryListListenable;
   late final AnimationController _syncRotationController;
   String? _selectedCategory;
@@ -53,24 +50,19 @@ class _HomeScreenState extends State<HomeScreen>
   bool _showConflictsOnly = false;
   final ValueNotifier<VaultItem?> _selectedItemNotifier =
       ValueNotifier<VaultItem?>(null);
-  bool _showSearchHelp = false;
   bool _isSyncing = false;
-  bool _searchHelpMetricsScheduled = false;
   bool _reduceEffectsForScroll = false;
   String _searchQuery = '';
   List<_SearchTerm> _searchTerms = const [];
   int _cachedViewsVersion = -1;
   String _cachedFilterKey = '';
   List<VaultEntryView> _cachedSortedViews = const [];
-  double _searchHelpHeight = 0;
-  double _searchHelpDyAdjustment = 0;
-  Offset _searchFieldOffset = Offset.zero;
+  double? _keyboardClosedLayoutHeight;
   String? _lastAdaptiveLogSignature;
 
   @override
   void initState() {
     super.initState();
-    _searchFocusNode.addListener(_handleSearchFocusChanged);
     _searchController.addListener(_handleSearchTextChanged);
     _entryListListenable =
         Listenable.merge([widget.controller, _searchController]);
@@ -88,21 +80,12 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void dispose() {
     widget.controller.removeListener(_handleSyncStateChanged);
-    _searchFocusNode.removeListener(_handleSearchFocusChanged);
     _searchController.removeListener(_handleSearchTextChanged);
     _searchController.dispose();
     _searchFocusNode.dispose();
     _syncRotationController.dispose();
     _selectedItemNotifier.dispose();
     super.dispose();
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_showSearchHelp) {
-      _scheduleSearchHelpMetricsUpdate();
-    }
   }
 
   Future<void> _editEntry(VaultItem item) async {
@@ -245,6 +228,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _showEntryDetailsDialog(VaultItem item) async {
+    _releaseSearchFocusForNavigation();
     await showDialog<void>(
       context: context,
       builder: (context) => EntryDetailsDialog(
@@ -541,7 +525,14 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _selectItem(VaultItem item) {
+    _releaseSearchFocusForNavigation();
     _selectedItemNotifier.value = item;
+  }
+
+  void _releaseSearchFocusForNavigation() {
+    if (_searchFocusNode.hasFocus) {
+      _searchFocusNode.unfocus();
+    }
   }
 
   void _clearSelection() {
@@ -551,29 +542,10 @@ class _HomeScreenState extends State<HomeScreen>
     _selectedItemNotifier.value = null;
   }
 
-  void _handleSearchFocusChanged() {
-    final shouldShow =
-        _searchFocusNode.hasFocus && _searchController.text.trim().isEmpty;
-    if (shouldShow == _showSearchHelp) {
-      return;
-    }
-    setState(() => _showSearchHelp = shouldShow);
-    if (shouldShow) {
-      _scheduleSearchHelpMetricsUpdate();
-    }
-  }
-
   void _handleSearchTextChanged() {
     final trimmed = _searchController.text.trim();
     if (trimmed != _searchQuery) {
       _updateSearchState(trimmed);
-    }
-    final shouldShow = _searchFocusNode.hasFocus && trimmed.isEmpty;
-    if (shouldShow != _showSearchHelp) {
-      setState(() => _showSearchHelp = shouldShow);
-      if (shouldShow) {
-        _scheduleSearchHelpMetricsUpdate();
-      }
     }
   }
 
@@ -629,24 +601,6 @@ class _HomeScreenState extends State<HomeScreen>
       _setReduceEffectsForScroll(false);
     }
     return false;
-  }
-
-  void _scheduleSearchHelpMetricsUpdate() {
-    if (_searchHelpMetricsScheduled) {
-      return;
-    }
-    _searchHelpMetricsScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _searchHelpMetricsScheduled = false;
-      if (!mounted || !_showSearchHelp) {
-        return;
-      }
-      _updateSearchHelpMetrics(
-        searchFieldHeight: _searchFieldHeight,
-        searchHelpSpacing: _searchHelpSpacing,
-        searchHelpBottomGap: _searchHelpBottomGap,
-      );
-    });
   }
 
   void _handleSyncStateChanged() {
@@ -713,45 +667,6 @@ class _HomeScreenState extends State<HomeScreen>
               ],
             ),
     );
-  }
-
-  void _updateSearchHelpMetrics({
-    required double searchFieldHeight,
-    required double searchHelpSpacing,
-    required double searchHelpBottomGap,
-  }) {
-    final fieldContext = _searchFieldKey.currentContext;
-    if (fieldContext == null) {
-      return;
-    }
-    final fieldBox = fieldContext.findRenderObject();
-    if (fieldBox is! RenderBox || !fieldBox.hasSize) {
-      return;
-    }
-    var helpHeight = _searchHelpHeight;
-    final helpContext = _searchHelpKey.currentContext;
-    if (helpContext != null) {
-      final helpBox = helpContext.findRenderObject();
-      if (helpBox is RenderBox && helpBox.hasSize) {
-        helpHeight = helpBox.size.height;
-      }
-    }
-    final fieldOffset = fieldBox.localToGlobal(Offset.zero);
-    final mediaQuery = MediaQuery.of(context);
-    final screenHeight = mediaQuery.size.height;
-    final safeBottom = mediaQuery.padding.bottom;
-    final desiredTop = fieldOffset.dy + searchFieldHeight + searchHelpSpacing;
-    final maxTop = screenHeight - safeBottom - searchHelpBottomGap - helpHeight;
-    final adjustment = desiredTop > maxTop ? maxTop - desiredTop : 0.0;
-    if ((helpHeight - _searchHelpHeight).abs() > 0.5 ||
-        (adjustment - _searchHelpDyAdjustment).abs() > 0.5 ||
-        (fieldOffset - _searchFieldOffset).distance > 0.5) {
-      setState(() {
-        _searchHelpHeight = helpHeight;
-        _searchHelpDyAdjustment = adjustment;
-        _searchFieldOffset = fieldOffset;
-      });
-    }
   }
 
   List<_SearchTerm> _parseSearchTerms(String raw) {
@@ -892,120 +807,156 @@ class _HomeScreenState extends State<HomeScreen>
       fontSize: 15,
       fontWeight: FontWeight.w700,
     );
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final maxWidth = constraints.maxWidth * (2 / 3);
-        final width = maxWidth < 260
-            ? maxWidth
-            : maxWidth > 560
-                ? 560.0
-                : maxWidth;
-        return Align(
-          alignment: Alignment.topLeft,
-          child: SizedBox(
-            width: width,
-            child: KeyedSubtree(
-              key: _searchHelpKey,
-              child: GlassSurface(
-                borderRadius: 14,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                blur: 16,
-                opacityLight: isAndroid ? 0.9 : 0.97,
-                opacityDark: isAndroid ? 0.9 : 0.9,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Search 用法', style: titleStyle),
-                    const SizedBox(height: 6),
-                    Text(
-                      '普通关键词仍在当前分类中匹配；纯标签搜索(tag:/#)会跨分类全局匹配，多个词按 AND 过滤。',
-                      style: textStyle,
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '分类筛选与标签筛选可叠加；分类筛选只影响当前结果集，不改变搜索语法。',
-                      style: textStyle,
-                    ),
-                    const SizedBox(height: 6),
-                    Text('指定字段前缀：', style: labelStyle),
-                    const SizedBox(height: 4),
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        final isNarrow = constraints.maxWidth < 360;
-                        final leftColumn = [
-                          'title:xxx / label:xxx 标题',
-                          'service:xxx 服务名称',
-                          'appid:xxx 应用ID',
-                        ];
-                        final rightColumn = [
-                          'server:xxx 服务器名称',
-                          'ip:xxx 服务器IP',
-                          'tag:xxx 或 #xxx 标签',
-                        ];
-                        if (isNarrow) {
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              for (final line in leftColumn)
-                                Text(line, style: textStyle),
-                              for (final line in rightColumn)
-                                Text(line, style: textStyle),
-                            ],
-                          );
-                        }
-                        return Row(
+    return Align(
+      alignment: Alignment.topLeft,
+      child: SizedBox(
+        width: double.infinity,
+        child: GlassSurface(
+          borderRadius: 8,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          blur: 16,
+          opacityLight: isAndroid ? 0.9 : 0.97,
+          opacityDark: isAndroid ? 0.9 : 0.9,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Search 用法', style: titleStyle),
+              const SizedBox(height: 6),
+              Text(
+                '普通关键词仍在当前分类中匹配；纯标签搜索(tag:/#)会跨分类全局匹配，多个词按 AND 过滤。',
+                style: textStyle,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '分类筛选与标签筛选可叠加；分类筛选只影响当前结果集，不改变搜索语法。',
+                style: textStyle,
+              ),
+              const SizedBox(height: 6),
+              Text('指定字段前缀：', style: labelStyle),
+              const SizedBox(height: 4),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final isNarrow = constraints.maxWidth < 360;
+                  final leftColumn = [
+                    'title:xxx / label:xxx 标题',
+                    'service:xxx 服务名称',
+                    'appid:xxx 应用ID',
+                  ];
+                  final rightColumn = [
+                    'server:xxx 服务器名称',
+                    'ip:xxx 服务器IP',
+                    'tag:xxx 或 #xxx 标签',
+                  ];
+                  if (isNarrow) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (final line in leftColumn)
+                          Text(line, style: textStyle),
+                        for (final line in rightColumn)
+                          Text(line, style: textStyle),
+                      ],
+                    );
+                  }
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  for (final line in leftColumn)
-                                    Text(line, style: textStyle),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  for (final line in rightColumn)
-                                    Text(line, style: textStyle),
-                                ],
-                              ),
-                            ),
+                            for (final line in leftColumn)
+                              Text(line, style: textStyle),
                           ],
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '多标签示例：tag:prod tag:cn 或 #prod #cn',
-                      style: textStyle,
-                    ),
-                    Text(
-                      '多条件示例：title:aws tag:prod ip:10.0',
-                      style: textStyle,
-                    ),
-                    Text(
-                      '筛选示例：先点分类“云平台”，再搜 title:aws',
-                      style: textStyle,
-                    ),
-                    Text(
-                      '全局示例：先点任意分类，输入 #prod 仍会跨分类搜索标签',
-                      style: textStyle,
-                    ),
-                  ],
-                ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (final line in rightColumn)
+                              Text(line, style: textStyle),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
-            ),
+              const SizedBox(height: 6),
+              Text(
+                '多标签示例：tag:prod tag:cn 或 #prod #cn',
+                style: textStyle,
+              ),
+              Text(
+                '多条件示例：title:aws tag:prod ip:10.0',
+                style: textStyle,
+              ),
+              Text(
+                '筛选示例：先点分类“云平台”，再搜 title:aws',
+                style: textStyle,
+              ),
+              Text(
+                '全局示例：先点任意分类，输入 #prod 仍会跨分类搜索标签',
+                style: textStyle,
+              ),
+            ],
           ),
-        );
-      },
+        ),
+      ),
     );
+  }
+
+  Future<void> _showSearchHelpSheet(BuildContext context) async {
+    _searchFocusNode.unfocus();
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+          child: _buildSearchHelp(context),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openAndroidSearchPage(BuildContext context) async {
+    _searchFocusNode.unfocus();
+    final result = await Navigator.of(context).push<String>(
+      PageRouteBuilder<String>(
+        opaque: false,
+        barrierColor: Colors.black26,
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            _AndroidSearchPage(
+          initialQuery: _searchController.text,
+          helpBuilder: _buildSearchHelp,
+        ),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          final curved = CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+            reverseCurve: Curves.easeInCubic,
+          );
+          return FadeTransition(
+            opacity: curved,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0, -0.04),
+                end: Offset.zero,
+              ).animate(curved),
+              child: child,
+            ),
+          );
+        },
+      ),
+    );
+    if (result == null || !mounted) {
+      return;
+    }
+    _searchController.text = result;
   }
 
   Future<void> _openCreateSheet() async {
@@ -1495,7 +1446,15 @@ class _HomeScreenState extends State<HomeScreen>
           constraints.maxHeight,
         );
         final foldedPosture = isFoldedPosture(context);
-        final sizeClass = windowSizeClassFor(constraints.maxWidth);
+        final platform = Theme.of(context).platform;
+        final isAndroid = platform == TargetPlatform.android;
+        final rawSizeClass = windowSizeClassFor(constraints.maxWidth);
+        final sizeClass = isAndroid &&
+                !foldedPosture &&
+                rawSizeClass == WindowSizeClass.expanded &&
+                constraints.maxWidth < 960
+            ? WindowSizeClass.medium
+            : rawSizeClass;
         final paneSplit = foldablePaneSplitFor(
           context: context,
           availableSize: availableSize,
@@ -1505,23 +1464,37 @@ class _HomeScreenState extends State<HomeScreen>
         final adaptivePadding = foldedPosture
             ? const EdgeInsets.fromLTRB(16, 10, 16, 16)
             : basePadding;
-        final platform = Theme.of(context).platform;
-        final isAndroid = platform == TargetPlatform.android;
-        final compactVertical = constraints.maxHeight < 760 &&
-            sizeClass != WindowSizeClass.expanded;
+        final view = View.of(context);
+        final keyboardInset = view.viewInsets.bottom / view.devicePixelRatio;
+        if (keyboardInset == 0) {
+          _keyboardClosedLayoutHeight = constraints.maxHeight;
+        }
+        final layoutHeight = keyboardInset > 0
+            ? (_keyboardClosedLayoutHeight ??
+                constraints.maxHeight + keyboardInset)
+            : constraints.maxHeight;
+        final compactVertical =
+            layoutHeight < 760 && sizeClass != WindowSizeClass.expanded;
+        final useDetailsPane =
+            paneSplit != null || sizeClass == WindowSizeClass.expanded;
+        final androidFreeformStableFilters =
+            isAndroid && sizeClass == WindowSizeClass.medium && !useDetailsPane;
+        final compactFilterPanel =
+            compactVertical || androidFreeformStableFilters;
         final effectivePadding = compactVertical
             ? const EdgeInsets.fromLTRB(12, 8, 12, 12)
             : adaptivePadding;
         final prefersSingleLineFilters = sizeClass == WindowSizeClass.compact &&
             (isAndroid || platform == TargetPlatform.iOS);
-        final singleLineCategories =
-            prefersSingleLineFilters || compactVertical;
-        final singleLineTags = prefersSingleLineFilters || compactVertical;
+        final singleLineCategories = prefersSingleLineFilters ||
+            compactFilterPanel ||
+            androidFreeformStableFilters;
+        final singleLineTags = prefersSingleLineFilters ||
+            compactFilterPanel ||
+            androidFreeformStableFilters;
         final maxVisibleCategories =
             singleLineCategories ? (isAndroid ? 2 : 4) : 999;
-        final maxVisibleTags = singleLineTags ? (isAndroid ? 2 : 4) : 999;
-        final useDetailsPane =
-            paneSplit != null || sizeClass == WindowSizeClass.expanded;
+        const maxVisibleTags = 3;
         final paneGap = foldedPosture ? 16.0 : 20.0;
         _logAdaptiveLayout(
           width: constraints.maxWidth,
@@ -1538,6 +1511,7 @@ class _HomeScreenState extends State<HomeScreen>
           useDetailsPane: useDetailsPane,
           sizeClass: sizeClass,
           compactVertical: compactVertical,
+          compactFilterPanel: compactFilterPanel,
           singleLineCategories: singleLineCategories,
           maxVisibleCategories: maxVisibleCategories,
           singleLineTags: singleLineTags,
@@ -1643,7 +1617,7 @@ class _HomeScreenState extends State<HomeScreen>
     required bool useDetailsPane,
     required FoldablePaneSplit? paneSplit,
   }) {
-    if (!kDebugMode) {
+    if (!kDebugMode || !_enableAdaptiveLayoutLogs) {
       return;
     }
     final signature = [
@@ -1681,6 +1655,7 @@ class _HomeScreenState extends State<HomeScreen>
     required bool useDetailsPane,
     required WindowSizeClass sizeClass,
     required bool compactVertical,
+    required bool compactFilterPanel,
     required bool singleLineCategories,
     required int maxVisibleCategories,
     required bool singleLineTags,
@@ -1720,6 +1695,7 @@ class _HomeScreenState extends State<HomeScreen>
                 context,
                 sizeClass: sizeClass,
                 compactVertical: compactVertical,
+                compactFilterPanel: compactFilterPanel,
                 singleLineCategories: singleLineCategories,
                 maxVisibleCategories: maxVisibleCategories,
                 singleLineTags: singleLineTags,
@@ -1743,49 +1719,6 @@ class _HomeScreenState extends State<HomeScreen>
               ),
             ),
           ],
-        ),
-        Positioned.fill(
-          child: IgnorePointer(
-            ignoring: !_showSearchHelp,
-            child: CompositedTransformFollower(
-              link: _searchFieldLink,
-              showWhenUnlinked: false,
-              targetAnchor: Alignment.bottomLeft,
-              followerAnchor: Alignment.topLeft,
-              offset: Offset(0, _searchHelpSpacing + _searchHelpDyAdjustment),
-              child: AnimatedSwitcher(
-                duration: _isAndroid
-                    ? MotionTokens.medium1
-                    : const Duration(milliseconds: 180),
-                switchInCurve: _isAndroid
-                    ? MotionTokens.emphasizedDecelerate
-                    : Curves.easeOut,
-                switchOutCurve: _isAndroid
-                    ? MotionTokens.emphasizedAccelerate
-                    : Curves.easeOut,
-                transitionBuilder: (child, animation) {
-                  return FadeTransition(
-                    opacity: animation,
-                    child: SlideTransition(
-                      position: Tween<Offset>(
-                        begin: const Offset(0, -0.04),
-                        end: Offset.zero,
-                      ).animate(animation),
-                      child: child,
-                    ),
-                  );
-                },
-                child: _showSearchHelp
-                    ? KeyedSubtree(
-                        key: const ValueKey('search-help'),
-                        child: _buildSearchHelp(context),
-                      )
-                    : const SizedBox.shrink(
-                        key: ValueKey('search-help-hidden'),
-                      ),
-              ),
-            ),
-          ),
         ),
       ],
     );
@@ -1917,6 +1850,7 @@ class _HomeScreenState extends State<HomeScreen>
     BuildContext context, {
     required WindowSizeClass sizeClass,
     required bool compactVertical,
+    required bool compactFilterPanel,
     required bool singleLineCategories,
     required int maxVisibleCategories,
     required bool singleLineTags,
@@ -1927,9 +1861,9 @@ class _HomeScreenState extends State<HomeScreen>
       builder: (context, _) {
         final hasSearch = _searchQuery.isNotEmpty;
         final isExpanded = sizeClass == WindowSizeClass.expanded;
-        final sectionSpacing = compactVertical ? 6.0 : 10.0;
+        final sectionSpacing = compactFilterPanel ? 6.0 : 10.0;
         return _sectionCard(
-          padding: compactVertical
+          padding: compactFilterPanel
               ? const EdgeInsets.fromLTRB(12, 10, 12, 10)
               : const EdgeInsets.all(16),
           child: Theme(
@@ -1944,7 +1878,7 @@ class _HomeScreenState extends State<HomeScreen>
             ),
             child: Column(
               children: [
-                if (compactVertical) ...[
+                if (compactFilterPanel) ...[
                   Row(
                     children: [
                       Expanded(child: _buildFilterControls(context)),
@@ -2048,11 +1982,7 @@ class _HomeScreenState extends State<HomeScreen>
                               maxVisible: maxVisibleCategories,
                             ),
                             SizedBox(height: sectionSpacing),
-                            CompositedTransformTarget(
-                              key: _searchFieldKey,
-                              link: _searchFieldLink,
-                              child: _buildSearchField(context),
-                            ),
+                            _buildSearchField(context),
                           ],
                         ),
                       ),
@@ -2071,14 +2001,10 @@ class _HomeScreenState extends State<HomeScreen>
                     maxVisible: maxVisibleCategories,
                   ),
                   SizedBox(height: compactVertical ? 6 : 8),
-                  CompositedTransformTarget(
-                    key: _searchFieldKey,
-                    link: _searchFieldLink,
-                    child: _buildSearchField(context),
-                  ),
+                  _buildSearchField(context),
                 ],
-                SizedBox(height: compactVertical ? 0 : 6),
-                if (hasSearch && !compactVertical)
+                SizedBox(height: compactFilterPanel ? 0 : 6),
+                if (hasSearch && !compactFilterPanel)
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
@@ -2090,8 +2016,8 @@ class _HomeScreenState extends State<HomeScreen>
                           ),
                     ),
                   ),
-                if (!compactVertical) ...[
-                  SizedBox(height: compactVertical ? 6 : 8),
+                if (!compactFilterPanel) ...[
+                  const SizedBox(height: 8),
                   _tagFilterRow(
                     singleLine: singleLineTags,
                     maxVisible: maxVisibleTags,
@@ -2150,6 +2076,8 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _buildSearchField(BuildContext context) {
+    final platform = Theme.of(context).platform;
+    final useSearchPage = platform == TargetPlatform.android;
     return SizedBox(
       height: _searchFieldHeight,
       child: ValueListenableBuilder<TextEditingValue>(
@@ -2158,28 +2086,45 @@ class _HomeScreenState extends State<HomeScreen>
           final hasText = value.text.trim().isNotEmpty;
           return TextField(
             controller: _searchController,
-            focusNode: _searchFocusNode,
+            focusNode: useSearchPage ? null : _searchFocusNode,
+            readOnly: useSearchPage,
+            canRequestFocus: !useSearchPage,
+            showCursor: !useSearchPage,
+            enableInteractiveSelection: !useSearchPage,
+            onTap: useSearchPage
+                ? () {
+                    _openAndroidSearchPage(context);
+                  }
+                : null,
             style:
                 Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 12),
-            onTapOutside: (_) {
-              _searchFocusNode.unfocus();
-            },
             decoration: InputDecoration(
               prefixIcon: const Icon(Icons.search, size: 18),
               hintText: '字段搜索按当前分类，tag/# 标签搜索全局',
-              suffixIcon: hasText
-                  ? IconButton(
+              suffixIcon: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (hasText)
+                    IconButton(
                       tooltip: '清空搜索',
                       onPressed: () {
                         _searchController.clear();
-                        _searchFocusNode.requestFocus();
+                        if (!useSearchPage) {
+                          _searchFocusNode.requestFocus();
+                        }
                       },
                       icon: const Icon(
                         Icons.clear_rounded,
                         size: 18,
                       ),
-                    )
-                  : null,
+                    ),
+                  IconButton(
+                    tooltip: '搜索用法',
+                    onPressed: () => _showSearchHelpSheet(context),
+                    icon: const Icon(Icons.help_outline_rounded, size: 18),
+                  ),
+                ],
+              ),
             ),
           );
         },
@@ -2379,6 +2324,7 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         ],
       ),
+      resizeToAvoidBottomInset: false,
       body: AppBackground(
         child: SafeArea(
           child: _buildAdaptiveBody(context),
@@ -2426,6 +2372,147 @@ bool _matchesTagHighlight(String tag, List<_SearchTerm> terms) {
     }
   }
   return false;
+}
+
+class _AndroidSearchPage extends StatefulWidget {
+  const _AndroidSearchPage({
+    required this.initialQuery,
+    required this.helpBuilder,
+  });
+
+  final String initialQuery;
+  final WidgetBuilder helpBuilder;
+
+  @override
+  State<_AndroidSearchPage> createState() => _AndroidSearchPageState();
+}
+
+class _AndroidSearchPageState extends State<_AndroidSearchPage> {
+  late final TextEditingController _controller;
+  late final FocusNode _focusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialQuery);
+    _focusNode = FocusNode();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _focusNode.requestFocus();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    Navigator.of(context).pop(_controller.text);
+  }
+
+  Future<void> _showSearchHelpSheet() async {
+    _focusNode.unfocus();
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+          child: widget.helpBuilder(context),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      resizeToAvoidBottomInset: true,
+      backgroundColor: colorScheme.surface.withValues(alpha: 0.9),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              child: Material(
+                color: colorScheme.surface,
+                elevation: 8,
+                shadowColor: Colors.black26,
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 4, 8, 4),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        tooltip: '关闭',
+                        onPressed: () =>
+                            Navigator.of(context).pop(widget.initialQuery),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                      Expanded(
+                        child: TextField(
+                          controller: _controller,
+                          focusNode: _focusNode,
+                          autofocus: true,
+                          textInputAction: TextInputAction.search,
+                          onSubmitted: (_) => _submit(),
+                          decoration: InputDecoration(
+                            border: InputBorder.none,
+                            prefixIcon: const Icon(Icons.search_rounded),
+                            hintText: '搜索',
+                            suffixIcon: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                ValueListenableBuilder<TextEditingValue>(
+                                  valueListenable: _controller,
+                                  builder: (context, value, _) {
+                                    if (value.text.isEmpty) {
+                                      return const SizedBox.shrink();
+                                    }
+                                    return IconButton(
+                                      tooltip: '清空搜索',
+                                      onPressed: _controller.clear,
+                                      icon: const Icon(Icons.clear_rounded),
+                                    );
+                                  },
+                                ),
+                                IconButton(
+                                  tooltip: '搜索用法',
+                                  onPressed: _showSearchHelpSheet,
+                                  icon: const Icon(Icons.help_outline_rounded),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _submit,
+                        child: const Text('完成'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.manual,
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                children: const [SizedBox.shrink()],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _HighlightedText extends StatelessWidget {

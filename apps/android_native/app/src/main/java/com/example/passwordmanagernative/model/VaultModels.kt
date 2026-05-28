@@ -69,6 +69,12 @@ data class ServicePayload(
     val category: String = "",
 )
 
+data class CustomField(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String = "",
+    val value: String = "",
+)
+
 sealed interface VaultPayload {
     val category: String
     val tags: List<String>
@@ -94,6 +100,7 @@ data class VaultEntry(
     val label: String,
     val type: VaultEntryType,
     val payload: VaultPayload,
+    val customFields: List<CustomField> = emptyList(),
     val createdAt: Instant = Instant.now(),
     val updatedAt: Instant = Instant.now(),
     val version: Map<String, Int> = emptyMap(),
@@ -177,6 +184,7 @@ data class EntryDraft(
     val type: VaultEntryType,
     val category: String,
     val tags: List<String>,
+    val customFields: List<CustomField> = emptyList(),
     val credential: CredentialPayload = CredentialPayload(),
     val server: ServerPayload = ServerPayload(),
     val service: ServicePayload = ServicePayload(),

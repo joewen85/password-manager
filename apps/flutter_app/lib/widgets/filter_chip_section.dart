@@ -64,11 +64,18 @@ class FilterChipSection extends StatelessWidget {
         _buildChoiceChip(context, allLabel, selectedValue == null, () {
           onSelected(null);
         }),
-        ...items.map((item) {
+        ...items.take(maxVisible).map((item) {
           return _buildChoiceChip(context, item, selectedValue == item, () {
             onSelected(item);
           });
         }),
+        if (items.length > maxVisible)
+          ActionChip(
+            label: Text('...+${items.length - maxVisible}'),
+            onPressed: () => _showAll(context, items),
+            labelStyle: const TextStyle(fontSize: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          ),
       ],
     );
   }

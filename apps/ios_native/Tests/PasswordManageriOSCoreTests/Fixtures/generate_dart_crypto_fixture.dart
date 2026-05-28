@@ -1,0 +1,159 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:password_manager_crypto/password_manager_crypto.dart';
+
+Future<void> main() async {
+  final password = 'fixture-master-password';
+  final salt = Uint8List.fromList(List<int>.generate(16, (index) => index + 1));
+  final metadataSalt =
+      Uint8List.fromList(List<int>.generate(16, (index) => index + 17));
+  final nonce =
+      Uint8List.fromList(List<int>.generate(12, (index) => index + 33));
+  final iterations = KeyDerivationService.defaultIterations;
+  final keyDerivation = KeyDerivationService();
+  final derived = await keyDerivation.deriveKey(
+    password,
+    salt: salt,
+    iterations: iterations,
+  );
+  final metadataDerived = await keyDerivation.deriveKey(
+    password,
+    salt: metadataSalt,
+    iterations: iterations,
+  );
+  final plaintext = jsonEncode({
+    'entries': [
+      {
+        'id': '11111111-2222-3333-4444-555555555555',
+        'label': 'Dart Fixture Credential',
+        'type': 'credential',
+        'payload': {
+          'credential': {
+            'username': 'fixture-user',
+            'password': 'fixture-password',
+            'token': 'fixture-token',
+            'appId': 'fixture-app',
+            'accessKey': 'fixture-access-key',
+            'secretKey': 'fixture-secret-key',
+            'notes': 'fixture-note',
+            'tags': ['fixture', 'dart'],
+            'category': 'Compatibility',
+          },
+        },
+        'createdAt': '2026-05-23T00:00:00Z',
+        'updatedAt': '2026-05-23T00:01:00Z',
+        'isDeleted': false,
+        'deletedAt': null,
+        'version': {'dart-fixture': 1},
+        'updatedBy': 'dart-fixture',
+      },
+      {
+        'id': '22222222-3333-4444-5555-666666666666',
+        'label': 'Dart Fixture Server',
+        'type': 'server',
+        'payload': {
+          'server': {
+            'name': 'fixture-server',
+            'ipAddress': '10.0.0.12',
+            'port': '22',
+            'username': 'root',
+            'password': 'server-password',
+            'basicConfig': '2CPU 4GB',
+            'operatingSystem': 'Ubuntu 24.04',
+            'location': 'rack-a',
+            'notes': 'server-note',
+            'tags': ['server', 'ops'],
+            'accountId': '11111111-2222-3333-4444-555555555555',
+            'category': 'Infrastructure',
+          },
+        },
+        'createdAt': '2026-05-23T00:03:00Z',
+        'updatedAt': '2026-05-23T00:04:00Z',
+        'isDeleted': false,
+        'deletedAt': null,
+        'version': {'dart-fixture': 2},
+        'updatedBy': 'dart-fixture',
+      },
+      {
+        'id': '33333333-4444-5555-6666-777777777777',
+        'label': 'Dart Fixture Service',
+        'type': 'service',
+        'payload': {
+          'service': {
+            'name': 'fixture-service',
+            'connectionAddress': 'service.internal',
+            'connectionPort': '443',
+            'accountId': '11111111-2222-3333-4444-555555555555',
+            'serverIds': ['22222222-3333-4444-5555-666666666666'],
+            'accounts': [
+              {
+                'username': 'svc-admin',
+                'password': 'svc-password',
+                'note': 'primary service account',
+              },
+            ],
+            'notes': 'service-note',
+            'tags': ['service', 'prod'],
+            'category': 'Services',
+          },
+        },
+        'createdAt': '2026-05-23T00:05:00Z',
+        'updatedAt': '2026-05-23T00:06:00Z',
+        'isDeleted': false,
+        'deletedAt': null,
+        'version': {'dart-fixture': 3},
+        'updatedBy': 'dart-fixture',
+      },
+      {
+        'id': '44444444-5555-6666-7777-888888888888',
+        'label': 'Dart Fixture Tombstone',
+        'type': 'credential',
+        'payload': {
+          'credential': {
+            'username': 'deleted-user',
+            'password': 'deleted-password',
+            'token': '',
+            'appId': '',
+            'accessKey': '',
+            'secretKey': '',
+            'notes': 'deleted-note',
+            'tags': ['deleted'],
+            'category': 'Archive',
+          },
+        },
+        'createdAt': '2026-05-23T00:07:00Z',
+        'updatedAt': '2026-05-23T00:08:00Z',
+        'isDeleted': true,
+        'deletedAt': '2026-05-23T00:09:00Z',
+        'version': {'dart-fixture': 4},
+        'updatedBy': 'dart-fixture',
+      },
+    ],
+    'categories': ['Archive', 'Compatibility', 'Infrastructure', 'Services'],
+    'tags': ['dart', 'deleted', 'fixture', 'ops', 'prod', 'server', 'service'],
+    'security': {'requireTotp': true, 'totpSecret': 'JBSWY3DPEHPK3PXP'},
+    'syncStatus': 'Fixture sync idle',
+    'lastBackupStatus': 'No backup has run',
+    'updatedAt': '2026-05-23T00:10:00Z',
+  });
+  final crypto = AesGcmCryptoService();
+  final encrypted = await crypto.encrypt(
+    Uint8List.fromList(utf8.encode(plaintext)),
+    derived.bytes,
+    nonce: nonce,
+  );
+  final fixture = {
+    'description':
+        'Generated by packages/crypto using KeyDerivationService.defaultIterations and AesGcmCryptoService.',
+    'password': password,
+    'iterations': iterations,
+    'saltBase64': base64Encode(salt),
+    'metadataSaltBase64': base64Encode(metadataSalt),
+    'derivedKeyBase64': base64Encode(derived.bytes),
+    'metadataDerivedKeyBase64': base64Encode(metadataDerived.bytes),
+    'plaintextUtf8': plaintext,
+    'encryptedPayload': encrypted.toJson(),
+  };
+  print(const JsonEncoder.withIndent('  ').convert(fixture));
+}

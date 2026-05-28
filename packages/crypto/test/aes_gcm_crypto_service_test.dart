@@ -24,7 +24,8 @@ void main() {
     test('decrypt fails with wrong key', () async {
       final service = AesGcmCryptoService();
       final key = Uint8List.fromList(List<int>.generate(32, (i) => i));
-      final wrongKey = Uint8List.fromList(List<int>.generate(32, (i) => 31 - i));
+      final wrongKey =
+          Uint8List.fromList(List<int>.generate(32, (i) => 31 - i));
       final nonce = Uint8List.fromList(List<int>.generate(12, (i) => i));
       final plaintext = Uint8List.fromList('secret'.codeUnits);
 
@@ -34,13 +35,14 @@ void main() {
         nonce: nonce,
       );
 
-      expect(() => service.decrypt(encrypted, wrongKey), throwsA(isA<Exception>()));
+      expect(() => service.decrypt(encrypted, wrongKey),
+          throwsA(isA<Exception>()));
     });
   });
 
   group('KeyDerivationService', () {
     test('derives same key with same salt and iterations', () async {
-      final service = KeyDerivationService(iterations: 1000);
+      final service = KeyDerivationService.insecureForTesting(iterations: 1000);
       final salt = Uint8List.fromList(List<int>.generate(16, (i) => i + 1));
 
       final first = await service.deriveKey('password', salt: salt);
@@ -48,6 +50,44 @@ void main() {
 
       expect(first.bytes, equals(second.bytes));
       expect(first.iterations, equals(1000));
+    });
+
+    test('uses hardened PBKDF2 default for new keys', () async {
+      final service = KeyDerivationService();
+      final salt = Uint8List.fromList(List<int>.generate(16, (i) => i + 1));
+
+      final derived = await service.deriveKey('password', salt: salt);
+
+      expect(
+          derived.iterations, equals(KeyDerivationService.defaultIterations));
+      expect(derived.iterations, greaterThanOrEqualTo(600000));
+    });
+
+    test('rejects weak default iteration configuration', () {
+      expect(
+        () => KeyDerivationService(iterations: 1000),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('rejects short salts and non-positive record iterations', () async {
+      final service = KeyDerivationService();
+
+      await expectLater(
+        () => service.deriveKey(
+          'password',
+          salt: Uint8List.fromList(List<int>.generate(15, (i) => i)),
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+      await expectLater(
+        () => service.deriveKey(
+          'password',
+          salt: Uint8List.fromList(List<int>.generate(16, (i) => i)),
+          iterations: 0,
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
     });
   });
 

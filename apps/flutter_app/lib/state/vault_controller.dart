@@ -67,6 +67,8 @@ class VaultController extends ChangeNotifier {
   List<VaultEntryView> _entryViews = [];
   int _entryViewsVersion = 0;
   static const int _tagScanSkipThreshold = 500;
+  static const bool _enablePerfLogs =
+      bool.fromEnvironment('PASSWORD_MANAGER_PERF_LOGS');
   bool _syncInProgress = false;
   Timer? _syncTimer;
   Timer? _syncDebounceTimer;
@@ -3563,7 +3565,7 @@ class VaultController extends ChangeNotifier {
   }
 
   void _logDebugPerf(String stage, [Map<String, Object?> details = const {}]) {
-    if (!kDebugMode) {
+    if (!kDebugMode || !_enablePerfLogs) {
       return;
     }
     final buffer = StringBuffer('[Perf][$stage]');

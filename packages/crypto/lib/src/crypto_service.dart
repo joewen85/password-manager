@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import 'models.dart';
+import 'package:password_manager_crypto/src/models.dart';
 
 abstract class CryptoService {
   Future<EncryptedPayload> encrypt(

@@ -19,6 +19,8 @@ class SyncSettingsTest {
         assertEquals("/vault.json", settings.webdavPath)
         assertEquals(false, settings.autoSyncEnabled)
         assertEquals(30, settings.autoSyncIntervalMinutes)
+        assertEquals(30, settings.autoSyncIntervalValue)
+        assertEquals(SyncIntervalUnit.MINUTES, settings.autoSyncIntervalUnit)
         assertEquals(true, settings.autoSyncOnUnlock)
         assertEquals(SyncSettingsConflictStrategy.REMOTE_WINS, settings.conflictStrategy)
         assertEquals(true, settings.syncMasterKey)
@@ -58,11 +60,55 @@ class SyncSettingsTest {
     }
 
     @Test
+    fun jsonDecodeSupportsSecondBasedInterval() {
+        val settings = SyncSettings.fromJson(
+            JSONObject(
+                """
+                {
+                  "autoSyncIntervalValue": 30,
+                  "autoSyncIntervalUnit": "seconds"
+                }
+                """.trimIndent()
+            )
+        )
+
+        assertEquals(1, settings.autoSyncIntervalMinutes)
+        assertEquals(30, settings.autoSyncIntervalValue)
+        assertEquals(SyncIntervalUnit.SECONDS, settings.autoSyncIntervalUnit)
+    }
+
+    @Test
+    fun jsonDecodeKeepsLegacyMinuteInterval() {
+        val settings = SyncSettings.fromJson(
+            JSONObject(
+                """
+                {
+                  "autoSyncIntervalMinutes": 15
+                }
+                """.trimIndent()
+            )
+        )
+
+        assertEquals(15, settings.autoSyncIntervalMinutes)
+        assertEquals(15, settings.autoSyncIntervalValue)
+        assertEquals(SyncIntervalUnit.MINUTES, settings.autoSyncIntervalUnit)
+    }
+
+    @Test
     fun jsonEncodeKeepsFlutterFieldNames() {
-        val json = SyncSettings.defaults(deviceId = "device-1").toJson()
+        val json = SyncSettings.defaults(deviceId = "device-1")
+            .copy(
+                autoSyncIntervalMinutes = 1,
+                autoSyncIntervalValue = 30,
+                autoSyncIntervalUnit = SyncIntervalUnit.SECONDS,
+            )
+            .toJson()
 
         assertEquals("none", json.getString("providerType"))
         assertEquals("/vault.json", json.getString("webdavPath"))
+        assertEquals(1, json.getInt("autoSyncIntervalMinutes"))
+        assertEquals(30, json.getInt("autoSyncIntervalValue"))
+        assertEquals("seconds", json.getString("autoSyncIntervalUnit"))
         assertEquals("remoteWins", json.getString("conflictStrategy"))
         assertEquals(true, json.getBoolean("syncMasterKey"))
     }

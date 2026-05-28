@@ -184,6 +184,9 @@ class VaultStore(
         val normalizedDraft = draft.copy(
             category = draft.category.trim(),
             tags = normalizedTags,
+            customFields = draft.customFields
+                .map { it.copy(name = it.name.trim(), value = it.value.trim()) }
+                .filter { it.name.isNotBlank() || it.value.isNotBlank() },
         )
         val existingIndex = editingId?.let { id -> entries.indexOfFirst { it.id == id } } ?: -1
         val entry = if (existingIndex >= 0) {
@@ -191,6 +194,7 @@ class VaultStore(
                 label = normalizedDraft.label,
                 type = normalizedDraft.type,
                 payload = normalizedDraft.toPayload(),
+                customFields = normalizedDraft.customFields,
                 updatedAt = now,
                 isDeleted = false,
                 deletedAt = null,
@@ -200,6 +204,7 @@ class VaultStore(
                 label = normalizedDraft.label,
                 type = normalizedDraft.type,
                 payload = normalizedDraft.toPayload(),
+                customFields = normalizedDraft.customFields,
                 createdAt = now,
                 updatedAt = now,
             )
@@ -509,18 +514,19 @@ class VaultStore(
         }
     }
 
-    fun exportEntryJson(entry: VaultEntry): String? {
+    fun exportEntryJson(entry: VaultEntry, selectedFieldIds: Set<String>? = null): String? {
         if (!isUnlocked) {
             statusMessage = "Unlock the vault before exporting."
             return null
         }
         return runCatching {
             statusMessage = "Entry export is ready."
+            val exportedEntry = selectedFieldIds?.let { entry.keepingExportFields(it) } ?: entry
             VaultJson.encodeScopedExport(
                 ScopedVaultExport(
                     scope = ScopedExportScope.ITEM,
                     exportedAt = Instant.now(),
-                    item = entry,
+                    item = exportedEntry,
                     category = null,
                     items = null,
                 )
@@ -861,4 +867,56 @@ private fun VaultPayload.withTags(tags: List<String>): VaultPayload =
         is VaultPayload.Credential -> copy(value = value.copy(tags = tags))
         is VaultPayload.Server -> copy(value = value.copy(tags = tags))
         is VaultPayload.Service -> copy(value = value.copy(tags = tags))
+    }
+
+private fun VaultEntry.keepingExportFields(selectedFieldIds: Set<String>): VaultEntry =
+    copy(
+        label = if ("label" in selectedFieldIds) label else "",
+        payload = payload.keepingExportFields(selectedFieldIds),
+        customFields = customFields.filter { "custom.${it.id}" in selectedFieldIds },
+    )
+
+private fun VaultPayload.keepingExportFields(selectedFieldIds: Set<String>): VaultPayload =
+    when (this) {
+        is VaultPayload.Credential -> copy(
+            value = value.copy(
+                username = if ("credential.username" in selectedFieldIds) value.username else "",
+                password = if ("credential.password" in selectedFieldIds) value.password else "",
+                token = if ("credential.token" in selectedFieldIds) value.token else "",
+                appId = if ("credential.appId" in selectedFieldIds) value.appId else "",
+                accessKey = if ("credential.accessKey" in selectedFieldIds) value.accessKey else "",
+                secretKey = if ("credential.secretKey" in selectedFieldIds) value.secretKey else "",
+                notes = if ("credential.notes" in selectedFieldIds) value.notes else "",
+                tags = if ("tags" in selectedFieldIds) value.tags else emptyList(),
+                category = if ("category" in selectedFieldIds) value.category else "",
+            )
+        )
+        is VaultPayload.Server -> copy(
+            value = value.copy(
+                name = if ("server.name" in selectedFieldIds) value.name else "",
+                ipAddress = if ("server.ipAddress" in selectedFieldIds) value.ipAddress else "",
+                port = if ("server.port" in selectedFieldIds) value.port else "",
+                username = if ("server.username" in selectedFieldIds) value.username else "",
+                password = if ("server.password" in selectedFieldIds) value.password else "",
+                basicConfig = if ("server.basicConfig" in selectedFieldIds) value.basicConfig else "",
+                operatingSystem = if ("server.operatingSystem" in selectedFieldIds) value.operatingSystem else "",
+                location = if ("server.location" in selectedFieldIds) value.location else "",
+                notes = if ("server.notes" in selectedFieldIds) value.notes else "",
+                tags = if ("tags" in selectedFieldIds) value.tags else emptyList(),
+                category = if ("category" in selectedFieldIds) value.category else "",
+            )
+        )
+        is VaultPayload.Service -> copy(
+            value = value.copy(
+                name = if ("service.name" in selectedFieldIds) value.name else "",
+                connectionAddress = if ("service.connectionAddress" in selectedFieldIds) value.connectionAddress else "",
+                connectionPort = if ("service.connectionPort" in selectedFieldIds) value.connectionPort else "",
+                accountId = if ("service.accountId" in selectedFieldIds) value.accountId else null,
+                serverIds = if ("service.serverIds" in selectedFieldIds) value.serverIds else emptyList(),
+                accounts = if ("service.accounts" in selectedFieldIds) value.accounts else emptyList(),
+                notes = if ("service.notes" in selectedFieldIds) value.notes else "",
+                tags = if ("tags" in selectedFieldIds) value.tags else emptyList(),
+                category = if ("category" in selectedFieldIds) value.category else "",
+            )
+        )
     }

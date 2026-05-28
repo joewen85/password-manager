@@ -17,6 +17,7 @@ import {
   ConflictStrategy,
   defaultSyncSettings,
   SyncLogEntry,
+  SyncIntervalUnit,
   SyncProviderType,
   SyncSettings,
 } from '../sync/SyncTypes';
@@ -1637,6 +1638,16 @@ function normalizeSyncSettings(settings: SyncSettings): SyncSettings {
   if (normalized.webdavPath.trim().length === 0) {
     normalized.webdavPath = '/vault.json';
   }
+  normalized.autoSyncIntervalUnit = normalized.autoSyncIntervalUnit ?? SyncIntervalUnit.MINUTES;
+  normalized.autoSyncIntervalValue = normalizeIntervalValue(
+    normalized.autoSyncIntervalValue,
+    normalized.autoSyncIntervalMinutes,
+  );
+  normalized.autoSyncIntervalMinutes = normalizeIntervalMinutes(
+    normalized.autoSyncIntervalMinutes,
+    normalized.autoSyncIntervalValue,
+    normalized.autoSyncIntervalUnit,
+  );
   normalized.logs = normalized.logs
     .slice(0, 50)
     .map((log: SyncLogEntry) => {
@@ -1666,6 +1677,8 @@ function cloneSyncSettings(settings: SyncSettings): SyncSettings {
     presignedUploadUrl: settings.presignedUploadUrl,
     autoSyncEnabled: settings.autoSyncEnabled,
     autoSyncIntervalMinutes: settings.autoSyncIntervalMinutes,
+    autoSyncIntervalValue: settings.autoSyncIntervalValue,
+    autoSyncIntervalUnit: settings.autoSyncIntervalUnit,
     autoSyncOnUnlock: settings.autoSyncOnUnlock,
     conflictStrategy: settings.conflictStrategy,
     syncMasterKey: settings.syncMasterKey,
@@ -1683,6 +1696,30 @@ function cloneSyncSettings(settings: SyncSettings): SyncSettings {
       return log;
     }),
   };
+}
+
+function normalizeIntervalValue(value: number | undefined, fallback: number): number {
+  const candidate = typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  return Math.max(Math.floor(candidate), 1);
+}
+
+function normalizeIntervalMinutes(
+  minutes: number | undefined,
+  value: number,
+  unit: SyncIntervalUnit | undefined,
+): number {
+  const candidate = typeof minutes === 'number' && Number.isFinite(minutes)
+    ? minutes
+    : intervalValueToMinutes(value, unit ?? SyncIntervalUnit.MINUTES);
+  return Math.max(Math.floor(candidate), 1);
+}
+
+function intervalValueToMinutes(value: number, unit: SyncIntervalUnit): number {
+  const safeValue = Math.max(Math.floor(value), 1);
+  if (unit === SyncIntervalUnit.SECONDS) {
+    return Math.max(Math.ceil(safeValue / 60), 1);
+  }
+  return Math.max(safeValue, 1);
 }
 
 function defaultSecuritySettings(): SecuritySettings {

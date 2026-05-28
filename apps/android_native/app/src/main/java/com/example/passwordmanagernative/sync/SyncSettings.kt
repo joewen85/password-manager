@@ -66,6 +66,22 @@ enum class SyncSettingsConflictStrategy {
     }
 }
 
+enum class SyncIntervalUnit {
+    SECONDS,
+    MINUTES;
+
+    val wireName: String
+        get() = when (this) {
+            SECONDS -> "seconds"
+            MINUTES -> "minutes"
+        }
+
+    companion object {
+        fun fromWireName(value: String?): SyncIntervalUnit =
+            entries.firstOrNull { it.wireName == value } ?: MINUTES
+    }
+}
+
 data class SyncLogEntry(
     val timestamp: Instant,
     val message: String,
@@ -82,6 +98,8 @@ data class SyncSettings(
     val presignedUploadUrl: String,
     val autoSyncEnabled: Boolean,
     val autoSyncIntervalMinutes: Int,
+    val autoSyncIntervalValue: Int,
+    val autoSyncIntervalUnit: SyncIntervalUnit,
     val autoSyncOnUnlock: Boolean,
     val conflictStrategy: SyncSettingsConflictStrategy,
     val syncMasterKey: Boolean,
@@ -120,6 +138,8 @@ data class SyncSettings(
             .put("presignedUploadUrl", presignedUploadUrl)
             .put("autoSyncEnabled", autoSyncEnabled)
             .put("autoSyncIntervalMinutes", autoSyncIntervalMinutes)
+            .put("autoSyncIntervalValue", autoSyncIntervalValue)
+            .put("autoSyncIntervalUnit", autoSyncIntervalUnit.wireName)
             .put("autoSyncOnUnlock", autoSyncOnUnlock)
             .put("conflictStrategy", conflictStrategy.wireName)
             .put("syncMasterKey", syncMasterKey)
@@ -152,6 +172,8 @@ data class SyncSettings(
                 presignedUploadUrl = "",
                 autoSyncEnabled = false,
                 autoSyncIntervalMinutes = 30,
+                autoSyncIntervalValue = 30,
+                autoSyncIntervalUnit = SyncIntervalUnit.MINUTES,
                 autoSyncOnUnlock = true,
                 conflictStrategy = SyncSettingsConflictStrategy.REMOTE_WINS,
                 syncMasterKey = true,
@@ -165,6 +187,17 @@ data class SyncSettings(
 
         fun fromJson(json: JSONObject): SyncSettings {
             val defaults = defaults(deviceId = "")
+            val intervalUnit = SyncIntervalUnit.fromWireName(json.optionalString("autoSyncIntervalUnit"))
+            val intervalValue = if (json.has("autoSyncIntervalValue") && !json.isNull("autoSyncIntervalValue")) {
+                json.optInt("autoSyncIntervalValue", defaults.autoSyncIntervalValue)
+            } else {
+                json.optInt("autoSyncIntervalMinutes", defaults.autoSyncIntervalMinutes)
+            }.coerceAtLeast(1)
+            val intervalMinutes = if (json.has("autoSyncIntervalMinutes") && !json.isNull("autoSyncIntervalMinutes")) {
+                json.optInt("autoSyncIntervalMinutes", defaults.autoSyncIntervalMinutes)
+            } else {
+                intervalValue.toIntervalMinutes(intervalUnit)
+            }.coerceAtLeast(1)
             return SyncSettings(
                 providerType = SyncProviderType.fromWireName(json.optionalString("providerType")),
                 webdavUrl = json.optString("webdavUrl", defaults.webdavUrl),
@@ -174,7 +207,9 @@ data class SyncSettings(
                 presignedDownloadUrl = json.optString("presignedDownloadUrl", defaults.presignedDownloadUrl),
                 presignedUploadUrl = json.optString("presignedUploadUrl", defaults.presignedUploadUrl),
                 autoSyncEnabled = json.optBoolean("autoSyncEnabled", defaults.autoSyncEnabled),
-                autoSyncIntervalMinutes = json.optInt("autoSyncIntervalMinutes", defaults.autoSyncIntervalMinutes),
+                autoSyncIntervalMinutes = intervalMinutes,
+                autoSyncIntervalValue = intervalValue,
+                autoSyncIntervalUnit = intervalUnit,
                 autoSyncOnUnlock = json.optBoolean("autoSyncOnUnlock", defaults.autoSyncOnUnlock),
                 conflictStrategy = SyncSettingsConflictStrategy.fromWireName(json.optionalString("conflictStrategy")),
                 syncMasterKey = json.optBoolean("syncMasterKey", defaults.syncMasterKey),
@@ -191,6 +226,12 @@ data class SyncSettings(
             "${Instant.now().toEpochMilli() * 1000}-${UUID.randomUUID().toString().take(8).lowercase(Locale.US)}"
     }
 }
+
+fun Int.toIntervalMinutes(unit: SyncIntervalUnit): Int =
+    when (unit) {
+        SyncIntervalUnit.SECONDS -> ((this.coerceAtLeast(1) + 59) / 60).coerceAtLeast(1)
+        SyncIntervalUnit.MINUTES -> coerceAtLeast(1)
+    }
 
 data class SyncSecretBundle(
     val webdavPassword: String = "",
