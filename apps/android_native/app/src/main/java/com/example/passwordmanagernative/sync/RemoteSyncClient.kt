@@ -12,7 +12,28 @@ data class RemoteSyncResult(
     val statusCode: Int,
 )
 
+data class RemoteSyncMetadata(
+    val statusCode: Int,
+    val eTag: String? = null,
+    val lastModified: String? = null,
+    val contentLength: Long? = null,
+) {
+    val fingerprint: String?
+        get() {
+            val strongParts = listOfNotNull(
+                eTag?.trim()?.takeIf { it.isNotEmpty() }?.let { "etag:$it" },
+                lastModified?.trim()?.takeIf { it.isNotEmpty() }?.let { "modified:$it" },
+            )
+            if (strongParts.isEmpty()) {
+                return null
+            }
+            return (strongParts + listOfNotNull(contentLength?.takeIf { it >= 0 }?.let { "length:$it" }))
+                .joinToString("|")
+        }
+}
+
 interface RemoteSyncClient {
+    fun metadata(): RemoteSyncMetadata = RemoteSyncMetadata(statusCode = 501)
     fun download(): RemoteSyncResult
     fun upload(payload: String): RemoteSyncResult
 }
@@ -27,6 +48,7 @@ data class RemoteSyncRequest(
 data class RemoteSyncHttpResponse(
     val statusCode: Int,
     val body: String? = null,
+    val headers: Map<String, String> = emptyMap(),
 )
 
 interface RemoteSyncHttpTransport {
@@ -56,7 +78,16 @@ class UrlConnectionRemoteSyncTransport(
         val stream = if (statusCode >= 400) connection.errorStream else connection.inputStream
         val body = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }
         connection.disconnect()
-        return RemoteSyncHttpResponse(statusCode = statusCode, body = body)
+        return RemoteSyncHttpResponse(
+            statusCode = statusCode,
+            body = body,
+            headers = connection.headerFields
+                .orEmpty()
+                .mapNotNull { (name, values) ->
+                    name?.let { it to values.orEmpty().joinToString(",") }
+                }
+                .toMap(),
+        )
     }
 }
 
@@ -67,6 +98,22 @@ class WebDavSyncClient(
     private val password: String? = null,
     private val transport: RemoteSyncHttpTransport = UrlConnectionRemoteSyncTransport(),
 ) : RemoteSyncClient {
+    override fun metadata(): RemoteSyncMetadata =
+        try {
+            val response = transport.perform(
+                RemoteSyncRequest(
+                    url = buildUri(),
+                    method = "HEAD",
+                    headers = authHeaders(),
+                )
+            )
+            response.toMetadata()
+        } catch (_: SocketTimeoutException) {
+            RemoteSyncMetadata(statusCode = 408)
+        } catch (_: Exception) {
+            RemoteSyncMetadata(statusCode = 503)
+        }
+
     override fun download(): RemoteSyncResult =
         try {
             val response = transport.perform(
@@ -147,6 +194,26 @@ class PresignedUrlSyncClient(
     private val uploadUrl: String,
     private val transport: RemoteSyncHttpTransport = UrlConnectionRemoteSyncTransport(),
 ) : RemoteSyncClient {
+    override fun metadata(): RemoteSyncMetadata {
+        val trimmedUrl = downloadUrl.trim()
+        if (trimmedUrl.isEmpty()) {
+            return RemoteSyncMetadata(statusCode = 400)
+        }
+        return try {
+            val response = transport.perform(
+                RemoteSyncRequest(
+                    url = URI(trimmedUrl),
+                    method = "HEAD",
+                )
+            )
+            response.toMetadata()
+        } catch (_: SocketTimeoutException) {
+            RemoteSyncMetadata(statusCode = 408)
+        } catch (_: Exception) {
+            RemoteSyncMetadata(statusCode = 503)
+        }
+    }
+
     override fun download(): RemoteSyncResult {
         val trimmedUrl = downloadUrl.trim()
         if (trimmedUrl.isEmpty()) {
@@ -199,5 +266,22 @@ private fun RemoteSyncHttpResponse.toDownloadResult(): RemoteSyncResult {
         statusCode = statusCode,
     )
 }
+
+private fun RemoteSyncHttpResponse.toMetadata(): RemoteSyncMetadata {
+    if (statusCode == 404 || statusCode == 204) {
+        return RemoteSyncMetadata(statusCode = 404)
+    }
+    return RemoteSyncMetadata(
+        statusCode = statusCode,
+        eTag = headerValue("ETag"),
+        lastModified = headerValue("Last-Modified"),
+        contentLength = headerValue("Content-Length")?.toLongOrNull(),
+    )
+}
+
+private fun RemoteSyncHttpResponse.headerValue(name: String): String? =
+    headers.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }
+        ?.value
+        ?.takeIf { it.isNotBlank() }
 
 private const val NETWORK_TIMEOUT_MILLIS = 12_000

@@ -49,20 +49,20 @@ struct EntryEditorView: View {
                         categories: availableCategories,
                         onCreateCategory: createCategory
                     )
-                }
-
-                Section(L10n.t("Tags")) {
-                    TagMultiSelectField(
-                        selectedTags: $selectedTags,
-                        tags: availableTags,
-                        onCreateTag: createTag
-                    )
 
                     if let taxonomyMessage {
                         Text(taxonomyMessage)
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
+                }
+
+                Section {
+                    TagMultiSelectField(
+                        selectedTags: $selectedTags,
+                        tags: availableTags,
+                        onCreateTag: createTag
+                    )
                 }
 
                 switch draft.payload {
@@ -99,6 +99,19 @@ struct EntryEditorView: View {
         .onChange(of: tags) { _, nextTags in
             availableTags = mergedValues(availableTags + nextTags)
         }
+        .onAppear {
+            resetDraft(from: entry)
+        }
+        .onChange(of: entry) { _, nextEntry in
+            resetDraft(from: nextEntry)
+        }
+    }
+
+    private func resetDraft(from entry: VaultEntry?) {
+        let nextDraft = entry.map(EntryDraft.init(entry:)) ?? EntryDraft()
+        draft = nextDraft
+        selectedTags = Set(nextDraft.tags)
+        taxonomyMessage = nil
     }
 
     private func createCategory(_ value: String) -> Bool {

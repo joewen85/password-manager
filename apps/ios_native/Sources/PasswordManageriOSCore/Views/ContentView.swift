@@ -8,10 +8,12 @@ struct ContentView: View {
     @State private var isPresentingEditor = false
     @State private var isPresentingImport = false
     @State private var isPresentingScopedImport = false
+    @State private var isPresentingSettings = false
     @State private var importFileName = ""
     @State private var scopedImportFileName = ""
     @State private var importStrategy: ImportConflictStrategy = .keepCopy
     @State private var editingEntry: VaultEntry?
+    @State private var exportingEntry: VaultEntry?
 
     var body: some View {
         if store.isUnlocked {
@@ -26,7 +28,8 @@ struct ContentView: View {
                     exportSnapshot: store.exportSnapshot,
                     importSnapshot: { isPresentingImport = true },
                     exportCategory: store.exportCategory,
-                    syncNow: store.syncNow
+                    syncNow: store.syncNow,
+                    showSettings: { isPresentingSettings = true }
                 )
             } content: {
                 EntryListView(
@@ -38,7 +41,7 @@ struct ContentView: View {
                     entry: selectedEntry,
                     editEntry: beginEditing,
                     deleteEntry: deleteSelectedEntry,
-                    exportEntry: store.exportEntry
+                    exportEntry: { exportingEntry = $0 }
                 )
             }
             .sheet(isPresented: $isPresentingEditor) {
@@ -46,6 +49,8 @@ struct ContentView: View {
                     entry: editingEntry,
                     categories: store.categories,
                     tags: store.tags,
+                    onCreateCategory: store.addCategory,
+                    onCreateTag: store.addTag,
                     onSave: { draft in
                         store.upsert(draft, editing: editingEntry)
                         selection = store.entries.sorted { $0.updatedAt > $1.updatedAt }.first?.id
@@ -56,6 +61,23 @@ struct ContentView: View {
                     }
                 )
                 .frame(minWidth: 520, minHeight: 600)
+            }
+            .sheet(item: $exportingEntry) { entry in
+                EntryExportFieldSelectionView(
+                    entry: entry,
+                    exportAll: {
+                        store.exportEntry(entry)
+                        exportingEntry = nil
+                    },
+                    exportSelected: { selectedFieldIDs in
+                        store.exportEntry(entry, selectedFieldIDs: selectedFieldIDs)
+                        exportingEntry = nil
+                    }
+                )
+                .presentationDetents([.medium, .large])
+            }
+            .sheet(isPresented: $isPresentingSettings) {
+                SettingsView(store: store)
             }
             .sheet(isPresented: $isPresentingImport) {
                 VStack(alignment: .leading, spacing: 16) {
@@ -145,6 +167,66 @@ struct ContentView: View {
         store.delete(entry)
         if selection == entry.id {
             selection = visibleEntries.first?.id
+        }
+    }
+}
+
+private struct EntryExportFieldSelectionView: View {
+    var entry: VaultEntry
+    var exportAll: () -> Void
+    var exportSelected: (Set<String>) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedFieldIDs: Set<String> = []
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("Choose the fields to include when exporting this entry. Fields are not selected by default because full export is available separately.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Fields") {
+                    ForEach(entry.exportFields) { field in
+                        Button {
+                            toggle(field.id)
+                        } label: {
+                            HStack {
+                                Text(field.title)
+                                Spacer()
+                                Image(systemName: selectedFieldIDs.contains(field.id) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(selectedFieldIDs.contains(field.id) ? Color.accentColor : Color.secondary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .navigationTitle("Choose Export Fields")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItemGroup(placement: .confirmationAction) {
+                    Button("Export All", action: exportAll)
+                    Button("Export Selected") {
+                        exportSelected(selectedFieldIDs)
+                    }
+                    .disabled(selectedFieldIDs.isEmpty)
+                }
+            }
+        }
+    }
+
+    private func toggle(_ id: String) {
+        if selectedFieldIDs.contains(id) {
+            selectedFieldIDs.remove(id)
+        } else {
+            selectedFieldIDs.insert(id)
         }
     }
 }

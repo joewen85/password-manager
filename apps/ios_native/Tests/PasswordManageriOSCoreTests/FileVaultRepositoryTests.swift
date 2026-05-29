@@ -277,4 +277,53 @@ struct FileVaultRepositoryTests {
         #expect(categoryImport.category == "Scoped")
         #expect(categoryImport.items?.count == 1)
     }
+
+    @Test("Entry export can keep only selected fields")
+    func entryExportCanKeepOnlySelectedFields() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManageriOSSelectedEntryExportTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let customFieldID = UUID()
+        let entry = VaultEntry(
+            label: "Scoped Email",
+            type: .credential,
+            payload: .credential(
+                CredentialPayload(
+                    username: "scoped@example.com",
+                    password: "secret",
+                    token: "token",
+                    tags: ["selected", "private"],
+                    category: "Scoped"
+                )
+            ),
+            customFields: [
+                CustomField(id: customFieldID, name: "Recovery", value: "code"),
+                CustomField(name: "Private note", value: "hidden")
+            ]
+        )
+
+        let exportURL = try repository.saveEntryExport(
+            entry,
+            selectedFieldIDs: ["label", "credential.username", "custom.\(customFieldID.uuidString)"],
+            at: Date(timeIntervalSince1970: 1_700_000_001)
+        )
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let export = try decoder.decode(ScopedVaultExport.self, from: Data(contentsOf: exportURL))
+        let exportedEntry = try #require(export.item)
+        guard case .credential(let credential) = exportedEntry.payload else {
+            Issue.record("Expected credential payload")
+            return
+        }
+
+        #expect(exportedEntry.label == "Scoped Email")
+        #expect(credential.username == "scoped@example.com")
+        #expect(credential.password.isEmpty)
+        #expect(credential.token.isEmpty)
+        #expect(credential.tags.isEmpty)
+        #expect(credential.category.isEmpty)
+        #expect(exportedEntry.customFields == [CustomField(id: customFieldID, name: "Recovery", value: "code")])
+    }
 }

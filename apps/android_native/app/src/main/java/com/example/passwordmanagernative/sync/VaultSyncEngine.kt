@@ -56,6 +56,17 @@ class VaultSyncEngine(
         settings: SyncSettings,
         client: RemoteSyncClient,
     ): VaultSyncEngineResult {
+        val remoteMetadata = client.metadata()
+        val remoteFingerprint = remoteMetadata.fingerprint
+        if (
+            !settings.hasLocalChanges &&
+            remoteFingerprint != null &&
+            remoteFingerprint == settings.lastRemoteFingerprint &&
+            isSuccessfulDownload(remoteMetadata.statusCode)
+        ) {
+            return noChangeResult(localSnapshot, settings, remoteFingerprint)
+        }
+
         val download = client.download()
         if (!isSuccessfulDownload(download.statusCode)) {
             throw VaultSyncEngineException("Sync download failed with status ${download.statusCode}.")
@@ -81,6 +92,26 @@ class VaultSyncEngine(
                 ),
                 uploaded = true,
                 appliedRemote = false,
+                remoteFingerprint = remoteFingerprint,
+            )
+        }
+
+        if (settings.hasLocalChanges && remotePayload.revision <= settings.lastSyncRevision) {
+            val nextRevision = settings.lastSyncRevision + 1
+            val uploadPayload = localPayload.copy(revision = nextRevision)
+            upload(uploadPayload, client)
+            return result(
+                snapshot = localSnapshot,
+                settings = settings,
+                revision = nextRevision,
+                stats = SyncMergeStats(
+                    total = localSnapshot.entries.size,
+                    conflicts = 0,
+                    deletes = localSnapshot.entries.count { it.isDeleted },
+                ),
+                uploaded = true,
+                appliedRemote = false,
+                remoteFingerprint = null,
             )
         }
 
@@ -102,6 +133,7 @@ class VaultSyncEngine(
             local = localSnapshot,
             remote = remotePayload.snapshot,
             entries = mergeResult.entries,
+            localHasChanges = settings.hasLocalChanges,
         )
 
         if (mergedSnapshot == remotePayload.snapshot) {
@@ -112,6 +144,7 @@ class VaultSyncEngine(
                 stats = mergeResult.stats,
                 uploaded = false,
                 appliedRemote = mergedSnapshot != localSnapshot,
+                remoteFingerprint = remoteFingerprint,
             )
         }
 
@@ -132,6 +165,7 @@ class VaultSyncEngine(
             stats = mergeResult.stats,
             uploaded = true,
             appliedRemote = mergedSnapshot != localSnapshot,
+            remoteFingerprint = null,
         )
     }
 
@@ -156,18 +190,35 @@ class VaultSyncEngine(
         local: VaultSnapshot,
         remote: VaultSnapshot,
         entries: List<VaultEntry>,
+        localHasChanges: Boolean,
     ): VaultSnapshot {
         val latestSnapshot = if (local.updatedAt >= remote.updatedAt) local else remote
+        val activeEntries = entries.filterNot { it.isDeleted }
+        val categories = mergeTaxonomy(
+            base = if (localHasChanges) local.categories else remote.categories,
+            entries = activeEntries.map { it.payload.category },
+        )
+        val tags = mergeTaxonomy(
+            base = if (localHasChanges) local.tags else remote.tags,
+            entries = activeEntries.flatMap { it.payload.tags },
+        )
         return VaultSnapshot(
             entries = entries.sortedByDescending { it.updatedAt },
-            categories = (local.categories + remote.categories).toSet().sorted(),
-            tags = (local.tags + remote.tags).toSet().sorted(),
+            categories = categories,
+            tags = tags,
             security = latestSnapshot.security.takeUnless { it == SecuritySettings() } ?: local.security,
             syncStatus = latestSnapshot.syncStatus,
             backupStatus = latestSnapshot.backupStatus,
             updatedAt = maxOf(local.updatedAt, remote.updatedAt),
         )
     }
+
+    private fun mergeTaxonomy(base: List<String>, entries: List<String>): List<String> =
+        (base + entries)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .toSet()
+            .sorted()
 
     private fun result(
         snapshot: VaultSnapshot,
@@ -176,6 +227,7 @@ class VaultSyncEngine(
         stats: SyncMergeStats,
         uploaded: Boolean,
         appliedRemote: Boolean,
+        remoteFingerprint: String?,
     ): VaultSyncEngineResult {
         val message = "Synced ${stats.total} items, ${stats.conflicts} conflicts, ${stats.deletes} deletes, revision $revision."
         val updatedSettings = settings.copy(
@@ -183,6 +235,7 @@ class VaultSyncEngine(
             lastSyncAt = clock(),
             lastSyncStatus = "success",
             lastSyncMessage = message,
+            lastRemoteFingerprint = remoteFingerprint,
             logs = (listOf(SyncLogEntry(timestamp = clock(), message = message, level = "info")) + settings.logs).take(50),
         )
         return VaultSyncEngineResult(
@@ -191,6 +244,28 @@ class VaultSyncEngine(
             stats = stats,
             uploaded = uploaded,
             appliedRemote = appliedRemote,
+        )
+    }
+
+    private fun noChangeResult(
+        snapshot: VaultSnapshot,
+        settings: SyncSettings,
+        remoteFingerprint: String,
+    ): VaultSyncEngineResult {
+        val message = "Remote unchanged; skipped full sync download."
+        val updatedSettings = settings.copy(
+            lastSyncAt = clock(),
+            lastSyncStatus = "success",
+            lastSyncMessage = message,
+            lastRemoteFingerprint = remoteFingerprint,
+            logs = (listOf(SyncLogEntry(timestamp = clock(), message = message, level = "info")) + settings.logs).take(50),
+        )
+        return VaultSyncEngineResult(
+            snapshot = snapshot,
+            settings = updatedSettings,
+            stats = SyncMergeStats(total = snapshot.entries.size, conflicts = 0, deletes = snapshot.entries.count { it.isDeleted }),
+            uploaded = false,
+            appliedRemote = false,
         )
     }
 

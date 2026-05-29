@@ -13,7 +13,7 @@ struct DetailView: View {
                     VStack(alignment: .leading, spacing: 18) {
                         HStack(alignment: .firstTextBaseline) {
                             VStack(alignment: .leading, spacing: 6) {
-                                Label(entry.type.title, systemImage: entry.type.systemImage)
+                                Label(entry.payload.category.isEmpty ? "Uncategorized" : entry.payload.category, systemImage: "folder")
                                     .foregroundStyle(.secondary)
                                 Text(entry.label)
                                     .font(.largeTitle.bold())
@@ -24,11 +24,19 @@ struct DetailView: View {
                             Button("Delete", role: .destructive) { deleteEntry(entry) }
                         }
 
-                        PayloadFieldsView(payload: entry.payload)
+                        DetailSection(title: "Overview") {
+                            OverviewFieldsView(entry: entry)
+                        }
 
-                        LabeledContent("Category", value: entry.payload.category.isEmpty ? "Uncategorized" : entry.payload.category)
-                        LabeledContent("Tags", value: entry.payload.tags.isEmpty ? "None" : entry.payload.tags.joined(separator: ", "))
-                        LabeledContent("Updated", value: entry.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                        DetailSection(title: "Fields") {
+                            PayloadFieldsView(payload: entry.payload)
+                        }
+
+                        if !entry.customFields.isEmpty {
+                            DetailSection(title: "Custom Fields") {
+                                CustomFieldsView(fields: entry.customFields)
+                            }
+                        }
                     }
                     .padding(24)
                     .frame(maxWidth: 760, alignment: .leading)
@@ -36,6 +44,31 @@ struct DetailView: View {
             } else {
                 ContentUnavailableView("Select an Entry", systemImage: "sidebar.left")
             }
+        }
+    }
+}
+
+private struct DetailSection<Content: View>: View {
+    var title: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.headline)
+            content
+        }
+    }
+}
+
+private struct OverviewFieldsView: View {
+    var entry: VaultEntry
+
+    var body: some View {
+        Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 12) {
+            FieldRow("Category", entry.payload.category.isEmpty ? "Uncategorized" : entry.payload.category)
+            FieldRow("Tags", entry.payload.tags.isEmpty ? "None" : entry.payload.tags.joined(separator: ", "))
+            FieldRow("Updated", entry.updatedAt.formatted(date: .abbreviated, time: .shortened))
         }
     }
 }
@@ -70,8 +103,20 @@ struct PayloadFieldsView: View {
                 FieldRow("Port", service.connectionPort)
                 FieldRow("Account ID", service.accountId ?? "")
                 FieldRow("Servers", service.serverIds.joined(separator: ", "))
-                FieldRow("Accounts", service.accounts.map(\.username).joined(separator: ", "))
+                SecretRow("Accounts", service.accounts.detailText)
                 FieldRow("Notes", service.notes)
+            }
+        }
+    }
+}
+
+private struct CustomFieldsView: View {
+    var fields: [CustomField]
+
+    var body: some View {
+        Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 12) {
+            ForEach(fields) { field in
+                FieldRow(field.name, field.value)
             }
         }
     }
@@ -99,6 +144,7 @@ private struct FieldRow: View {
 private struct SecretRow: View {
     var title: String
     var value: String
+    @State private var isRevealed = false
 
     init(_ title: String, _ value: String) {
         self.title = title
@@ -109,8 +155,34 @@ private struct SecretRow: View {
         GridRow {
             Text(title)
                 .foregroundStyle(.secondary)
-            SecureField("", text: .constant(value))
-                .textFieldStyle(.plain)
+            HStack(spacing: 8) {
+                Text(displayValue)
+                    .fontDesign(isRevealed ? .default : .monospaced)
+                    .textSelection(.enabled)
+                Spacer()
+                Button {
+                    isRevealed.toggle()
+                } label: {
+                    Label(isRevealed ? "Hide" : "Reveal", systemImage: isRevealed ? "eye.slash" : "eye")
+                }
+                .labelStyle(.iconOnly)
+                .disabled(value.isEmpty)
+            }
         }
+    }
+
+    private var displayValue: String {
+        guard !value.isEmpty else { return "-" }
+        return isRevealed ? value : String(repeating: "*", count: min(max(value.count, 8), 24))
+    }
+}
+
+private extension Array where Element == ServiceAccount {
+    var detailText: String {
+        map { account in
+            let suffix = account.note.isEmpty ? "" : " - \(account.note)"
+            return "\(account.username): \(account.password)\(suffix)"
+        }
+        .joined(separator: "\n")
     }
 }

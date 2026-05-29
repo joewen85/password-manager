@@ -91,6 +91,7 @@ class VaultStore(
             activeVaultKey = key
             hasMasterKey = true
             isUnlocked = true
+            markLocalChangesForSync()
             saveSnapshot()
             statusMessage = "Vault initialized and encrypted locally."
             true
@@ -198,7 +199,7 @@ class VaultStore(
                 updatedAt = now,
                 isDeleted = false,
                 deletedAt = null,
-            )
+            ).markLocalEntryChange(syncSettings.deviceId, now)
         } else {
             VaultEntry(
                 label = normalizedDraft.label,
@@ -207,7 +208,7 @@ class VaultStore(
                 customFields = normalizedDraft.customFields,
                 createdAt = now,
                 updatedAt = now,
-            )
+            ).markLocalEntryChange(syncSettings.deviceId, now)
         }
         if (existingIndex >= 0) {
             entries[existingIndex] = entry
@@ -221,18 +222,19 @@ class VaultStore(
     fun delete(id: String) {
         val index = entries.indexOfFirst { it.id == id }
         if (index < 0) return
+        val now = Instant.now()
         entries[index] = entries[index].copy(
             isDeleted = true,
-            deletedAt = Instant.now(),
-            updatedAt = Instant.now(),
-        )
+            deletedAt = now,
+            updatedAt = now,
+        ).markLocalEntryChange(syncSettings.deviceId, now)
         persistUnlockedSnapshot()
     }
 
     fun categories(): List<String> =
         buildSet {
             addAll(manualCategories)
-            addAll(entries.map { it.payload.category })
+            addAll(entries.filterNot { it.isDeleted }.map { it.payload.category })
         }
             .filter { it.isNotBlank() }
             .sorted()
@@ -240,7 +242,7 @@ class VaultStore(
     fun tags(): List<String> =
         buildSet {
             addAll(manualTags)
-            addAll(entries.flatMap { it.payload.tags })
+            addAll(entries.filterNot { it.isDeleted }.flatMap { it.payload.tags })
         }
             .filter { it.isNotBlank() }
             .sorted()
@@ -264,9 +266,11 @@ class VaultStore(
         }
         manualCategories.removeAll { it.equals(oldNormalized, ignoreCase = true) }
         manualCategories += newNormalized
+        val now = Instant.now()
         entries.replaceAll { entry ->
-            if (entry.payload.category.equals(oldNormalized, ignoreCase = true)) {
-                entry.copy(payload = entry.payload.withCategory(newNormalized), updatedAt = Instant.now())
+            if (!entry.isDeleted && entry.payload.category.equals(oldNormalized, ignoreCase = true)) {
+                entry.copy(payload = entry.payload.withCategory(newNormalized), updatedAt = now)
+                    .markLocalEntryChange(syncSettings.deviceId, now)
             } else {
                 entry
             }
@@ -283,10 +287,12 @@ class VaultStore(
             return false
         }
         var changed = manualCategories.removeAll { it.equals(normalized, ignoreCase = true) }
+        val now = Instant.now()
         entries.replaceAll { entry ->
-            if (entry.payload.category.equals(normalized, ignoreCase = true)) {
+            if (!entry.isDeleted && entry.payload.category.equals(normalized, ignoreCase = true)) {
                 changed = true
-                entry.copy(payload = entry.payload.withCategory(""), updatedAt = Instant.now())
+                entry.copy(payload = entry.payload.withCategory(""), updatedAt = now)
+                    .markLocalEntryChange(syncSettings.deviceId, now)
             } else {
                 entry
             }
@@ -313,12 +319,17 @@ class VaultStore(
         }
         manualTags.removeAll { it.equals(oldNormalized, ignoreCase = true) }
         manualTags += newNormalized
+        val now = Instant.now()
         entries.replaceAll { entry ->
+            if (entry.isDeleted) {
+                return@replaceAll entry
+            }
             val updatedTags = entry.payload.tags.map { tag ->
                 if (tag.equals(oldNormalized, ignoreCase = true)) newNormalized else tag
             }.distinct()
             if (updatedTags != entry.payload.tags) {
-                entry.copy(payload = entry.payload.withTags(updatedTags), updatedAt = Instant.now())
+                entry.copy(payload = entry.payload.withTags(updatedTags), updatedAt = now)
+                    .markLocalEntryChange(syncSettings.deviceId, now)
             } else {
                 entry
             }
@@ -335,11 +346,16 @@ class VaultStore(
             return false
         }
         var changed = manualTags.removeAll { it.equals(normalized, ignoreCase = true) }
+        val now = Instant.now()
         entries.replaceAll { entry ->
+            if (entry.isDeleted) {
+                return@replaceAll entry
+            }
             val updatedTags = entry.payload.tags.filterNot { it.equals(normalized, ignoreCase = true) }
             if (updatedTags.size != entry.payload.tags.size) {
                 changed = true
-                entry.copy(payload = entry.payload.withTags(updatedTags), updatedAt = Instant.now())
+                entry.copy(payload = entry.payload.withTags(updatedTags), updatedAt = now)
+                    .markLocalEntryChange(syncSettings.deviceId, now)
             } else {
                 entry
             }
@@ -358,7 +374,7 @@ class VaultStore(
         if (client == null) {
             syncStatus = "Not configured"
             statusMessage = "Configure a sync provider before syncing."
-            persistUnlockedSnapshot()
+            persistUnlockedSnapshot(markLocalChange = false)
             return
         }
         syncNow(client)
@@ -386,14 +402,15 @@ class VaultStore(
 
     fun updateSyncSettings(settings: SyncSettings) {
         runCatching {
-            val saved = syncSettingsRepository?.save(settings) ?: settings
+            val updated = settings.copy(hasLocalChanges = syncSettings.hasLocalChanges)
+            val saved = syncSettingsRepository?.save(updated) ?: updated
             syncSettings = saved
             syncStatus = if (saved.providerType == SyncProviderType.NONE) {
                 "Not configured"
             } else {
                 "Configured: ${saved.providerType.title}"
             }
-            persistUnlockedSnapshot()
+            persistUnlockedSnapshot(markLocalChange = false)
             statusMessage = "Sync settings saved."
         }.onFailure {
             statusMessage = it.message
@@ -444,6 +461,7 @@ class VaultStore(
             loadEnvelopeMetadata()
             loadSnapshot(key)
             backupStatus = "Restored backup: ${backupFile.name}"
+            markLocalChangesForSync()
             saveSnapshot()
             statusMessage = backupStatus
         }.onFailure {
@@ -465,6 +483,7 @@ class VaultStore(
             loadEnvelopeMetadata()
             loadSnapshot(key)
             backupStatus = "Restored backup: ${backupFile.name}"
+            markLocalChangesForSync()
             saveSnapshot()
             statusMessage = backupStatus
         }.onFailure {
@@ -586,6 +605,7 @@ class VaultStore(
         runCatching {
             val snapshot = repository.loadSnapshotImport(fileName)
             applySnapshotState(snapshot)
+            markLocalChangesForSync()
             saveSnapshot()
             statusMessage = "Imported ${entries.count { !it.isDeleted }} active entries."
         }.onFailure {
@@ -601,6 +621,7 @@ class VaultStore(
         return runCatching {
             val snapshot = VaultJson.decodeImportSnapshot(raw, masterPassword, crypto)
             applySnapshotState(snapshot)
+            markLocalChangesForSync()
             saveSnapshot()
             statusMessage = "Imported ${entries.count { !it.isDeleted }} active entries."
             true
@@ -621,7 +642,7 @@ class VaultStore(
                 ScopedExportScope.CATEGORY -> scopedExport.items.orEmpty()
             }
             val result = applyImportedEntries(importedEntries, strategy)
-            persistUnlockedSnapshot()
+            persistUnlockedSnapshot(markLocalChange = result.created > 0 || result.updated > 0)
             statusMessage = "Imported ${result.created} created, ${result.updated} updated, ${result.skipped} skipped."
         }.onFailure {
             statusMessage = it.message
@@ -640,7 +661,7 @@ class VaultStore(
                 ScopedExportScope.CATEGORY -> scopedExport.items.orEmpty()
             }
             val result = applyImportedEntries(importedEntries, strategy)
-            persistUnlockedSnapshot()
+            persistUnlockedSnapshot(markLocalChange = result.created > 0 || result.updated > 0)
             statusMessage = "Imported ${result.created} created, ${result.updated} updated, ${result.skipped} skipped."
             true
         }.onFailure {
@@ -672,6 +693,7 @@ class VaultStore(
         requireTotp = false
         totpSecret = ""
         backupStatus = "No backup has run"
+        markLocalChangesForSync()
         saveSnapshot()
         statusMessage = "Vault data cleared."
         return true
@@ -741,10 +763,10 @@ class VaultStore(
 
     private fun applySyncResult(result: VaultSyncEngineResult) {
         applySnapshotState(result.snapshot)
-        syncSettings = result.settings
+        syncSettings = result.settings.copy(hasLocalChanges = false)
         syncStatus = result.settings.lastSyncMessage ?: "Sync complete."
         statusMessage = syncStatus
-        syncSettingsRepository?.save(result.settings)
+        syncSettingsRepository?.save(syncSettings)
         saveSnapshot()
     }
 
@@ -766,7 +788,7 @@ class VaultStore(
         syncStatus = "Sync failed"
         statusMessage = message
         runCatching { syncSettingsRepository?.save(failedSettings) }
-        persistUnlockedSnapshot()
+        persistUnlockedSnapshot(markLocalChange = false)
     }
 
     private fun applyImportedEntries(
@@ -838,14 +860,25 @@ class VaultStore(
         return false
     }
 
-    private fun persistUnlockedSnapshot() {
+    private fun persistUnlockedSnapshot(markLocalChange: Boolean = true) {
         if (!isUnlocked) return
         runCatching {
+            if (markLocalChange) {
+                markLocalChangesForSync()
+            }
             saveSnapshot()
             statusMessage = "Vault saved"
         }.onFailure {
             statusMessage = it.message
         }
+    }
+
+    private fun markLocalChangesForSync() {
+        if (syncSettings.hasLocalChanges) {
+            return
+        }
+        syncSettings = syncSettings.copy(hasLocalChanges = true)
+        syncSettingsRepository?.save(syncSettings)
     }
 }
 
@@ -868,6 +901,17 @@ private fun VaultPayload.withTags(tags: List<String>): VaultPayload =
         is VaultPayload.Server -> copy(value = value.copy(tags = tags))
         is VaultPayload.Service -> copy(value = value.copy(tags = tags))
     }
+
+private fun VaultEntry.markLocalEntryChange(deviceId: String, updatedAt: Instant): VaultEntry {
+    val updater = deviceId.ifBlank { updatedBy.ifBlank { "android-native" } }
+    val nextVersion = version.toMutableMap()
+    nextVersion[updater] = (nextVersion[updater] ?: 0) + 1
+    return copy(
+        updatedAt = updatedAt,
+        updatedBy = updater,
+        version = nextVersion,
+    )
+}
 
 private fun VaultEntry.keepingExportFields(selectedFieldIds: Set<String>): VaultEntry =
     copy(

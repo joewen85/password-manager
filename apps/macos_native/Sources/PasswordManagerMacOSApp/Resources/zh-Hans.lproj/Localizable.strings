@@ -168,7 +168,7 @@
 "Enable" = "启用";
 "Not Now" = "暂不";
 "Operation failed. Check the password, confirmation, and 2FA code." = "操作失败。请检查密码、确认密码和 2FA 验证码。";
-"Label" = "标签";
+"Label" = "名称";
 "Search categories" = "搜索分类";
 "New category" = "新分类";
 "No matching categories" = "无匹配分类";

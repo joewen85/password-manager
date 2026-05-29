@@ -59,6 +59,7 @@ import com.example.passwordmanagernative.model.VaultPayload
 import com.example.passwordmanagernative.store.BiometricCredentialStore
 import com.example.passwordmanagernative.store.BackupInfo
 import com.example.passwordmanagernative.store.VaultStore
+import com.example.passwordmanagernative.sync.AutoSyncSchedulePolicy
 import com.example.passwordmanagernative.sync.SyncLogEntry
 import com.example.passwordmanagernative.sync.SyncIntervalUnit
 import com.example.passwordmanagernative.sync.SyncProviderType
@@ -99,11 +100,21 @@ class MainActivity : FragmentActivity() {
     private var biometricFallbackRequired: Boolean = false
     private var currentBiometricPrompt: BiometricPrompt? = null
     private var lastUserActivityAt: Long = System.currentTimeMillis()
+    private var lastAutoSyncAttemptAt: Instant? = null
+    private var lastAutoSyncUnlockState: Boolean = false
+    private var activeSyncJob: Job? = null
     private val idleLockHandler = Handler(Looper.getMainLooper())
     private val idleLockRunnable = object : Runnable {
         override fun run() {
             checkIdleAutoLock()
             idleLockHandler.postDelayed(this, IdleLockCheckIntervalMs)
+        }
+    }
+    private val autoSyncHandler = Handler(Looper.getMainLooper())
+    private val autoSyncRunnable = object : Runnable {
+        override fun run() {
+            runAutoSyncIfNeeded()
+            autoSyncHandler.postDelayed(this, AutoSyncCheckIntervalMs)
         }
     }
     private val layoutScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -117,11 +128,13 @@ class MainActivity : FragmentActivity() {
         appPreferences = getSharedPreferences(AppPreferencesName, Context.MODE_PRIVATE)
         observeWindowLayout()
         idleLockHandler.postDelayed(idleLockRunnable, IdleLockCheckIntervalMs)
+        autoSyncHandler.postDelayed(autoSyncRunnable, AutoSyncCheckIntervalMs)
         showUnlock()
     }
 
     override fun onDestroy() {
         idleLockHandler.removeCallbacks(idleLockRunnable)
+        autoSyncHandler.removeCallbacks(autoSyncRunnable)
         windowLayoutJob?.cancel()
         layoutScope.cancel()
         super.onDestroy()
@@ -130,6 +143,7 @@ class MainActivity : FragmentActivity() {
     override fun onResume() {
         super.onResume()
         checkIdleAutoLock()
+        runAutoSyncIfNeeded()
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
@@ -242,6 +256,7 @@ class MainActivity : FragmentActivity() {
     private fun handlePasswordUnlockSuccess(password: String) {
         markUserActivity()
         showHome()
+        syncOnUnlockIfNeeded()
     }
 
     private fun authenticateBiometricUnlock(totpCode: String, automatic: Boolean = false) {
@@ -288,6 +303,7 @@ class MainActivity : FragmentActivity() {
                         if (resultMessage.success) {
                             markUserActivity()
                             showHome()
+                            syncOnUnlockIfNeeded()
                         } else {
                             biometricFallbackRequired = true
                         }
@@ -1214,15 +1230,14 @@ class MainActivity : FragmentActivity() {
 
     private fun showEntryExportFieldDialog(entry: VaultEntry) {
         val fields = entry.exportFields(this)
-        val selected = fields.map { it.id }.toMutableSet()
+        val selected = mutableSetOf<String>()
         val form = formRoot()
-        val checks = mutableListOf<Pair<EntryExportField, CheckBox>>()
         form.addView(formTitle(text(R.string.choose_export_fields)))
         form.addView(label(text(R.string.choose_export_fields_hint), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(8)))
         fields.forEach { field ->
             val checkBox = CheckBox(this).apply {
                 text = field.title
-                isChecked = true
+                isChecked = false
                 setTextColor(uiColor(R.color.ui_text))
                 setOnCheckedChangeListener { _, checked ->
                     if (checked) {
@@ -1232,7 +1247,6 @@ class MainActivity : FragmentActivity() {
                     }
                 }
             }
-            checks += field to checkBox
             form.addView(checkBox, matchWrap(top = dp(6)))
         }
         val dialog = AlertDialog.Builder(this)
@@ -1243,8 +1257,7 @@ class MainActivity : FragmentActivity() {
             .create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                checks.forEach { (_, check) -> check.isChecked = true }
-                exportEntryJson(entry, fields.map { field -> field.id }.toSet())
+                exportEntryJson(entry, null)
                 dialog.dismiss()
             }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -1259,7 +1272,7 @@ class MainActivity : FragmentActivity() {
         dialog.show()
     }
 
-    private fun exportEntryJson(entry: VaultEntry, selectedFieldIds: Set<String>) {
+    private fun exportEntryJson(entry: VaultEntry, selectedFieldIds: Set<String>?) {
         store.exportEntryJson(entry, selectedFieldIds)?.let { json ->
             createJsonDocument("entry-export-${safeExportName(entry.label)}-${exportTimestamp()}.json", json)
         } ?: toast(store.statusMessage ?: text(R.string.export_failed))
@@ -1712,13 +1725,29 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun runSync() {
-        layoutScope.launch {
+        startSync(showToast = true)
+    }
+
+    private fun startSync(showToast: Boolean) {
+        if (activeSyncJob?.isActive == true) {
+            if (showToast) {
+                toast(store.syncStatus)
+            }
+            return
+        }
+        activeSyncJob = layoutScope.launch {
             val message = withContext(Dispatchers.IO) {
                 store.syncNow()
                 store.statusMessage ?: store.syncStatus
             }
-            showHome()
-            toast(message)
+            if (store.isUnlocked) {
+                showHome()
+            } else {
+                showUnlock()
+            }
+            if (showToast) {
+                toast(message)
+            }
         }
     }
 
@@ -1818,6 +1847,7 @@ class MainActivity : FragmentActivity() {
         currentBiometricPrompt = null
         store.lock()
         selectedEntry = null
+        lastAutoSyncUnlockState = false
         biometricPromptInFlight = false
         biometricFailureCount = 0
         biometricFallbackRequired = false
@@ -1839,6 +1869,41 @@ class MainActivity : FragmentActivity() {
             lockVaultAndShowUnlock(idleTimeout = true)
         }
     }
+
+    private fun syncOnUnlockIfNeeded() {
+        if (!store.isUnlocked) {
+            lastAutoSyncUnlockState = false
+            return
+        }
+        val policy = autoSyncPolicy()
+        if (!policy.shouldSyncOnUnlock(hasTriggeredForCurrentUnlock = lastAutoSyncUnlockState)) {
+            return
+        }
+        lastAutoSyncUnlockState = true
+        lastAutoSyncAttemptAt = Instant.now()
+        startSync(showToast = false)
+    }
+
+    private fun runAutoSyncIfNeeded() {
+        if (!store.isUnlocked) {
+            lastAutoSyncUnlockState = false
+            return
+        }
+        val now = Instant.now()
+        if (!autoSyncPolicy().shouldRunIntervalSync(now)) {
+            return
+        }
+        lastAutoSyncAttemptAt = now
+        startSync(showToast = false)
+    }
+
+    private fun autoSyncPolicy(): AutoSyncSchedulePolicy =
+        AutoSyncSchedulePolicy(
+            settings = store.syncSettings,
+            isUnlocked = store.isUnlocked,
+            syncStatus = store.syncStatus,
+            lastAutoSyncAttemptAt = lastAutoSyncAttemptAt,
+        )
 
     private fun isBiometricUnlockEnabled(): Boolean =
         appPreferences.getBoolean(PrefBiometricUnlockEnabled, false)
@@ -2487,6 +2552,7 @@ class MainActivity : FragmentActivity() {
         const val PrefIdleAutoLockMinutes = "idle_auto_lock_minutes"
         const val MaxBiometricFailures = 3
         const val IdleLockCheckIntervalMs = 10_000L
+        const val AutoSyncCheckIntervalMs = 1_000L
         val ExportTimestamp: DateTimeFormatter = DateTimeFormatter
             .ofPattern("yyyyMMdd-HHmmss")
             .withZone(ZoneOffset.UTC)

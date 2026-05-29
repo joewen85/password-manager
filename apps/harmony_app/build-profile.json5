@@ -4,7 +4,6 @@
       {
         "name": "default",
         "runtimeOS": "HarmonyOS",
-        "compileSdkVersion": "6.0.1(21)",
         "compatibleSdkVersion": "6.0.1(21)",
         "targetSdkVersion": "6.0.1(21)",
         "buildOption": {
@@ -22,7 +21,9 @@
       "targets": [
         {
           "name": "default",
-          "applyToProducts": ["default"]
+          "applyToProducts": [
+            "default"
+          ]
         }
       ]
     }

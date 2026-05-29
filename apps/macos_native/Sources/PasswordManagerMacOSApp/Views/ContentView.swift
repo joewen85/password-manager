@@ -6,7 +6,6 @@ struct ContentView: View {
     @State private var selection: VaultEntry.ID?
     @State private var filter: VaultFilter = .all
     @State private var searchText = ""
-    @State private var isPresentingEditor = false
     @State private var isPresentingImport = false
     @State private var isPresentingScopedImport = false
     @State private var isPresentingBackups = false
@@ -35,8 +34,7 @@ struct ContentView: View {
     @State private var createTaxonomyError: String?
     @State private var clearDataPassword = ""
     @State private var clearDataError: String?
-    @State private var editingEntry: VaultEntry?
-    @State private var editorSessionID = UUID()
+    @State private var editorSession: EntryEditorSession?
 
     private let biometricCredentialStore = MacBiometricCredentialStore()
 
@@ -73,26 +71,25 @@ struct ContentView: View {
             }
             .searchable(text: $searchText, prompt: "Search vault")
             .searchToolbarBehavior(.automatic)
-            .sheet(isPresented: $isPresentingEditor, onDismiss: {
-                editingEntry = nil
-            }) {
+            .sheet(item: $editorSession, onDismiss: {
+                editorSession = nil
+            }) { session in
                 EntryEditorView(
-                    entry: editingEntry,
+                    entry: session.entry,
                     categories: store.categories,
                     tags: store.tags,
                     onCreateCategory: { store.addCategory($0) },
                     onCreateTag: { store.addTag($0) },
                     onSave: { draft in
-                        store.upsert(draft, editing: editingEntry)
+                        store.upsert(draft, editing: session.entry)
                         selection = store.entries.sorted { $0.updatedAt > $1.updatedAt }.first?.id
                         validateNavigationState()
-                        isPresentingEditor = false
+                        editorSession = nil
                     },
                     onCancel: {
-                        isPresentingEditor = false
+                        editorSession = nil
                     }
                 )
-                .id(editorSessionID)
                 .frame(minWidth: 520, minHeight: 600)
             }
             .sheet(isPresented: $isPresentingBackups) {
@@ -482,9 +479,7 @@ struct ContentView: View {
     }
 
     private func beginAddingEntry() {
-        editingEntry = nil
-        editorSessionID = UUID()
-        isPresentingEditor = true
+        editorSession = EntryEditorSession(entry: nil)
     }
 
     private func beginCreatingTaxonomy(_ kind: CreateTaxonomyKind) {
@@ -541,9 +536,7 @@ struct ContentView: View {
     }
 
     private func beginEditing(_ entry: VaultEntry) {
-        editingEntry = entry
-        editorSessionID = UUID()
-        isPresentingEditor = true
+        editorSession = EntryEditorSession(entry: entry)
     }
 
     private func deleteSelectedEntry(_ entry: VaultEntry) {
@@ -563,7 +556,7 @@ struct ContentView: View {
     }
 
     private func exportEntry(_ entry: VaultEntry) {
-        selectedExportFieldIDs = Set(entry.exportFields.map(\.id))
+        selectedExportFieldIDs = []
         entryPendingExport = entry
     }
 
@@ -641,6 +634,11 @@ struct ContentView: View {
             }
         )
     }
+}
+
+private struct EntryEditorSession: Identifiable {
+    let id = UUID()
+    var entry: VaultEntry?
 }
 
 private struct EntryExportOptionsView: View {

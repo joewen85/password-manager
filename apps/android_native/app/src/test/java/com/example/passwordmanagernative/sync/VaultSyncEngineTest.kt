@@ -71,6 +71,92 @@ class VaultSyncEngineTest {
     }
 
     @Test
+    fun remoteTombstoneAppliesWithoutRestoringDeletedTaxonomy() {
+        val now = Instant.parse("2027-01-15T08:00:00Z")
+        val engine = VaultSyncEngine(clock = { now })
+        val settings = SyncSettings.defaults(deviceId = "android-device").copy(
+            lastSyncRevision = 1,
+            hasLocalChanges = false,
+        )
+        val sharedId = "deleted-shared"
+        val local = makeSnapshot(
+            categories = listOf("Deleted Category"),
+            tags = listOf("deleted-tag"),
+            entries = listOf(
+                makeEntry(
+                    id = sharedId,
+                    label = "Local",
+                    category = "Deleted Category",
+                    tags = listOf("deleted-tag"),
+                    device = "android",
+                    version = mapOf("android" to 1),
+                )
+            )
+        )
+        val remote = makeSnapshot(
+            categories = emptyList(),
+            tags = emptyList(),
+            entries = listOf(
+                makeEntry(
+                    id = sharedId,
+                    label = "Local",
+                    category = "Deleted Category",
+                    tags = listOf("deleted-tag"),
+                    device = "remote",
+                    version = mapOf("android" to 1, "remote" to 1),
+                    isDeleted = true,
+                )
+            )
+        )
+        val remotePayload = engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt = now,
+                deviceId = "remote-device",
+                revision = 2,
+                snapshot = remote,
+            )
+        )
+        val client = FakeSyncClient(
+            downloads = ArrayDeque(listOf(RemoteSyncResult(payload = remotePayload, statusCode = 200)))
+        )
+
+        val result = engine.synchronize(localSnapshot = local, settings = settings, client = client)
+
+        assertFalse(result.uploaded)
+        assertTrue(result.appliedRemote)
+        assertTrue(result.snapshot.entries.single().isDeleted)
+        assertEquals(emptyList(), result.snapshot.categories)
+        assertEquals(emptyList(), result.snapshot.tags)
+        assertTrue(client.uploadedPayloads.isEmpty())
+    }
+
+    @Test
+    fun unchangedRemoteFingerprintSkipsFullDownloadWhenLocalIsClean() {
+        val now = Instant.parse("2027-01-15T08:00:00Z")
+        val engine = VaultSyncEngine(clock = { now })
+        val settings = SyncSettings.defaults(deviceId = "android-device").copy(
+            lastRemoteFingerprint = "etag:\"same\"",
+            hasLocalChanges = false,
+        )
+        val local = makeSnapshot(
+            entries = listOf(makeEntry(id = "local-1", label = "Local", device = "android"))
+        )
+        val client = FakeSyncClient(
+            downloads = ArrayDeque(listOf(RemoteSyncResult(payload = "should-not-download", statusCode = 200))),
+            metadata = RemoteSyncMetadata(statusCode = 200, eTag = "\"same\""),
+        )
+
+        val result = engine.synchronize(localSnapshot = local, settings = settings, client = client)
+
+        assertFalse(result.uploaded)
+        assertFalse(result.appliedRemote)
+        assertEquals(0, client.downloadCount)
+        assertEquals(1, client.metadataCount)
+        assertEquals("Remote unchanged; skipped full sync download.", result.settings.lastSyncMessage)
+        assertEquals("etag:\"same\"", result.settings.lastRemoteFingerprint)
+    }
+
+    @Test
     fun concurrentPayloadMergesAndUploadsNextRevision() {
         val now = Instant.parse("2027-01-15T08:00:00Z")
         val engine = VaultSyncEngine(clock = { now }, idGenerator = { "conflict-id" })
@@ -132,16 +218,134 @@ class VaultSyncEngineTest {
         assertEquals(5, uploaded.revision)
         assertTrue(uploaded.snapshot.entries.any { it.id == "conflict-id" })
     }
+
+    @Test
+    fun localTaxonomyDeletionIsNotRestoredFromRemoteMetadataWhenLocalHasChanges() {
+        val now = Instant.parse("2027-01-15T08:00:00Z")
+        val engine = VaultSyncEngine(clock = { now })
+        val settings = SyncSettings.defaults(deviceId = "android-device").copy(
+            lastSyncRevision = 2,
+            hasLocalChanges = true,
+        )
+        val local = makeSnapshot(
+            categories = emptyList(),
+            tags = emptyList(),
+            entries = listOf(makeEntry(id = "shared", label = "Local", device = "android", version = mapOf("android" to 2)))
+        )
+        val remote = makeSnapshot(
+            categories = listOf("Deleted Category"),
+            tags = listOf("deleted-tag"),
+            entries = listOf(makeEntry(id = "shared", label = "Remote", device = "remote", version = mapOf("android" to 1)))
+        )
+        val remotePayload = engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt = now,
+                deviceId = "remote-device",
+                revision = 2,
+                snapshot = remote,
+            )
+        )
+        val client = FakeSyncClient(
+            downloads = ArrayDeque(listOf(RemoteSyncResult(payload = remotePayload, statusCode = 200))),
+            uploadStatusCodes = ArrayDeque(listOf(200)),
+        )
+
+        val result = engine.synchronize(localSnapshot = local, settings = settings, client = client)
+
+        assertTrue(result.uploaded)
+        assertEquals(emptyList(), result.snapshot.categories)
+        assertEquals(emptyList(), result.snapshot.tags)
+        val uploaded = engine.decodePayload(client.uploadedPayloads.single())!!
+        assertEquals(emptyList(), uploaded.snapshot.categories)
+        assertEquals(emptyList(), uploaded.snapshot.tags)
+    }
+
+    @Test
+    fun localChangesUploadDirectlyWhenRemoteRevisionHasNotAdvanced() {
+        val now = Instant.parse("2027-01-15T08:00:00Z")
+        val engine = VaultSyncEngine(clock = { now })
+        val settings = SyncSettings.defaults(deviceId = "android-device").copy(
+            lastSyncRevision = 3,
+            hasLocalChanges = true,
+        )
+        val local = makeSnapshot(
+            categories = emptyList(),
+            tags = emptyList(),
+            entries = listOf(
+                makeEntry(
+                    id = "shared",
+                    label = "Local",
+                    category = "",
+                    tags = emptyList(),
+                    device = "android",
+                    updatedAt = Instant.parse("2027-01-15T08:00:00Z"),
+                    version = mapOf("android" to 1),
+                )
+            )
+        )
+        val remote = makeSnapshot(
+            categories = listOf("Old Category"),
+            tags = listOf("old-tag"),
+            entries = listOf(
+                makeEntry(
+                    id = "shared",
+                    label = "Remote",
+                    category = "Old Category",
+                    tags = listOf("old-tag"),
+                    device = "android",
+                    updatedAt = Instant.parse("2027-01-15T09:00:00Z"),
+                    version = mapOf("android" to 1),
+                )
+            )
+        )
+        val remotePayload = engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt = now,
+                deviceId = "remote-device",
+                revision = 3,
+                snapshot = remote,
+            )
+        )
+        val client = FakeSyncClient(
+            downloads = ArrayDeque(listOf(RemoteSyncResult(payload = remotePayload, statusCode = 200))),
+            uploadStatusCodes = ArrayDeque(listOf(200)),
+        )
+
+        val result = engine.synchronize(localSnapshot = local, settings = settings, client = client)
+
+        assertTrue(result.uploaded)
+        assertFalse(result.appliedRemote)
+        assertEquals(4, result.settings.lastSyncRevision)
+        assertEquals(emptyList(), result.snapshot.categories)
+        assertEquals(emptyList(), result.snapshot.tags)
+        val uploaded = engine.decodePayload(client.uploadedPayloads.single())!!
+        assertEquals(4, uploaded.revision)
+        assertEquals("Local", uploaded.snapshot.entries.single().label)
+        assertEquals("", uploaded.snapshot.entries.single().payload.category)
+        assertEquals(emptyList(), uploaded.snapshot.entries.single().payload.tags)
+    }
 }
 
 private class FakeSyncClient(
     private val downloads: ArrayDeque<RemoteSyncResult>,
     private val uploadStatusCodes: ArrayDeque<Int> = ArrayDeque(),
+    private val metadata: RemoteSyncMetadata = RemoteSyncMetadata(statusCode = 501),
 ) : RemoteSyncClient {
     val uploadedPayloads = mutableListOf<String>()
+    var downloadCount = 0
+        private set
+    var metadataCount = 0
+        private set
 
-    override fun download(): RemoteSyncResult =
-        if (downloads.isEmpty()) RemoteSyncResult(payload = null, statusCode = 404) else downloads.removeFirst()
+    override fun metadata(): RemoteSyncMetadata {
+        metadataCount += 1
+        return metadata
+    }
+
+    override fun download(): RemoteSyncResult {
+        downloadCount += 1
+        return if (downloads.isEmpty()) RemoteSyncResult(payload = null, statusCode = 404) else downloads.removeFirst()
+    }
 
     override fun upload(payload: String): RemoteSyncResult {
         uploadedPayloads += payload
@@ -172,7 +376,9 @@ private fun makeEntry(
     category: String = "",
     tags: List<String> = emptyList(),
     device: String,
+    updatedAt: Instant = Instant.parse("2026-01-01T00:01:00Z"),
     version: Map<String, Int> = emptyMap(),
+    isDeleted: Boolean = false,
 ): VaultEntry =
     VaultEntry(
         id = id,
@@ -187,7 +393,9 @@ private fun makeEntry(
             )
         ),
         createdAt = Instant.parse("2026-01-01T00:00:00Z"),
-        updatedAt = Instant.parse("2026-01-01T00:01:00Z"),
+        updatedAt = updatedAt,
         version = version,
         updatedBy = device,
+        isDeleted = isDeleted,
+        deletedAt = if (isDeleted) updatedAt else null,
     )

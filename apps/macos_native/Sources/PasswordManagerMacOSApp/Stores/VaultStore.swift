@@ -66,6 +66,7 @@ final class VaultStore {
             hasMasterKey = true
             isUnlocked = true
             seedInitialCollectionsIfNeeded()
+            try markLocalChangesForSync()
             try saveSnapshot()
             statusMessage = "Vault initialized and encrypted locally."
             return true
@@ -174,17 +175,18 @@ final class VaultStore {
             entries[index].updatedAt = now
             entries[index].isDeleted = false
             entries[index].deletedAt = nil
+            entries[index].markLocalEntryChange(deviceId: syncSettings.deviceId, updatedAt: now)
         } else {
-            entries.append(
-                VaultEntry(
-                    label: draft.label,
-                    type: finalPayload.storageKind,
-                    payload: finalPayload,
-                    customFields: draft.normalizedCustomFields,
-                    createdAt: now,
-                    updatedAt: now
-                )
+            var newEntry = VaultEntry(
+                label: draft.label,
+                type: finalPayload.storageKind,
+                payload: finalPayload,
+                customFields: draft.normalizedCustomFields,
+                createdAt: now,
+                updatedAt: now
             )
+            newEntry.markLocalEntryChange(deviceId: syncSettings.deviceId, updatedAt: now)
+            entries.append(newEntry)
         }
         rebuildCollections()
         persistUnlockedSnapshot()
@@ -196,6 +198,7 @@ final class VaultStore {
         entries[index].isDeleted = true
         entries[index].deletedAt = now
         entries[index].updatedAt = now
+        entries[index].markLocalEntryChange(deviceId: syncSettings.deviceId, updatedAt: now)
         rebuildCollections()
         persistUnlockedSnapshot()
     }
@@ -247,11 +250,13 @@ final class VaultStore {
         removeTaxonomyValue(oldNormalized, from: &manualCategories)
         manualCategories.insert(newNormalized)
         for index in entries.indices where entries[index].payload.category.caseInsensitiveEquals(oldNormalized) {
+            let now = Date()
             entries[index].payload = entries[index].payload.replacingCategory(
                 newNormalized,
                 tags: entries[index].payload.tags
             )
-            entries[index].updatedAt = Date()
+            entries[index].updatedAt = now
+            entries[index].markLocalEntryChange(deviceId: syncSettings.deviceId, updatedAt: now)
         }
         rebuildCollections()
         persistUnlockedSnapshot()
@@ -268,12 +273,14 @@ final class VaultStore {
 
         var changed = removeTaxonomyValue(normalized, from: &manualCategories)
         for index in entries.indices where entries[index].payload.category.caseInsensitiveEquals(normalized) {
+            let now = Date()
             changed = true
             entries[index].payload = entries[index].payload.replacingCategory(
                 "",
                 tags: entries[index].payload.tags
             )
-            entries[index].updatedAt = Date()
+            entries[index].updatedAt = now
+            entries[index].markLocalEntryChange(deviceId: syncSettings.deviceId, updatedAt: now)
         }
         guard changed else {
             statusMessage = "Category not found."
@@ -306,11 +313,13 @@ final class VaultStore {
                 .map { $0.caseInsensitiveEquals(oldNormalized) ? newNormalized : $0 }
                 .removingDuplicates()
             if updatedTags != entries[index].payload.tags {
+                let now = Date()
                 entries[index].payload = entries[index].payload.replacingCategory(
                     entries[index].payload.category,
                     tags: updatedTags
                 )
-                entries[index].updatedAt = Date()
+                entries[index].updatedAt = now
+                entries[index].markLocalEntryChange(deviceId: syncSettings.deviceId, updatedAt: now)
             }
         }
         rebuildCollections()
@@ -330,12 +339,14 @@ final class VaultStore {
         for index in entries.indices {
             let updatedTags = entries[index].payload.tags.filter { !$0.caseInsensitiveEquals(normalized) }
             if updatedTags.count != entries[index].payload.tags.count {
+                let now = Date()
                 changed = true
                 entries[index].payload = entries[index].payload.replacingCategory(
                     entries[index].payload.category,
                     tags: updatedTags
                 )
-                entries[index].updatedAt = Date()
+                entries[index].updatedAt = now
+                entries[index].markLocalEntryChange(deviceId: syncSettings.deviceId, updatedAt: now)
             }
         }
         guard changed else {
@@ -366,6 +377,7 @@ final class VaultStore {
         totpSecret = ""
         lastBackupStatus = "No backup has run"
         do {
+            try markLocalChangesForSync()
             try saveSnapshot()
             statusMessage = "Vault data cleared."
             return true
@@ -417,6 +429,7 @@ final class VaultStore {
             loadEnvelopeMetadata()
             try loadSnapshot(key: key)
             lastBackupStatus = "Restored backup: \(backupURL.lastPathComponent)"
+            try markLocalChangesForSync()
             try saveSnapshot()
             statusMessage = lastBackupStatus
         } catch {
@@ -434,6 +447,7 @@ final class VaultStore {
             loadEnvelopeMetadata()
             try loadSnapshot(key: key)
             lastBackupStatus = "Restored backup: \(backupURL.lastPathComponent)"
+            try markLocalChangesForSync()
             try saveSnapshot()
             statusMessage = lastBackupStatus
         } catch {
@@ -608,7 +622,7 @@ final class VaultStore {
         guard let client = syncClientFactory.makeClient(settings: syncSettings) else {
             syncStatus = "Not configured"
             statusMessage = "Configure a sync provider before syncing."
-            persistUnlockedSnapshot()
+            persistUnlockedSnapshot(markLocalChange: false)
             return
         }
         Task {
@@ -643,12 +657,14 @@ final class VaultStore {
 
     func updateSyncSettings(_ settings: SyncSettings) {
         do {
-            let savedSettings = try syncSettingsRepository?.save(settings) ?? settings
+            var updatedSettings = settings
+            updatedSettings.hasLocalChanges = syncSettings.hasLocalChanges
+            let savedSettings = try syncSettingsRepository?.save(updatedSettings) ?? updatedSettings
             syncSettings = savedSettings
             let providerLabel = savedSettings.providerType.title
             syncStatus = savedSettings.providerType == .none ? "Not configured" : "Configured: \(providerLabel)"
             statusMessage = "Sync settings saved."
-            persistUnlockedSnapshot()
+            persistUnlockedSnapshot(markLocalChange: false)
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -700,8 +716,9 @@ final class VaultStore {
     }
 
     private func rebuildCollections() {
-        categories = normalizedTaxonomyValues(Array(manualCategories) + entries.map(\.payload.category))
-        tags = normalizedTaxonomyValues(Array(manualTags) + entries.flatMap(\.payload.tags))
+        let activeEntries = entries.filter { !$0.isDeleted }
+        categories = normalizedTaxonomyValues(Array(manualCategories) + activeEntries.map(\.payload.category))
+        tags = normalizedTaxonomyValues(Array(manualTags) + activeEntries.flatMap(\.payload.tags))
     }
 
     private func loadEnvelopeMetadata() {
@@ -831,10 +848,11 @@ final class VaultStore {
         totpSecret = result.snapshot.security.totpSecret
         lastBackupStatus = result.snapshot.lastBackupStatus
         syncSettings = result.settings
+        syncSettings.hasLocalChanges = false
         syncStatus = result.settings.lastSyncMessage ?? "Sync complete."
         statusMessage = syncStatus
         rebuildCollections()
-        try syncSettingsRepository?.save(result.settings)
+        try syncSettingsRepository?.save(syncSettings)
         try saveSnapshot()
     }
 
@@ -847,6 +865,7 @@ final class VaultStore {
         syncStatus = snapshot.syncStatus
         lastBackupStatus = snapshot.lastBackupStatus
         rebuildCollections()
+        try markLocalChangesForSync()
         try saveSnapshot()
     }
 
@@ -863,6 +882,9 @@ final class VaultStore {
         }
         let result = applyImportedEntries(importedEntries, strategy: strategy)
         rebuildCollections()
+        if result.created > 0 || result.updated > 0 {
+            try markLocalChangesForSync()
+        }
         try saveSnapshot()
         return result
     }
@@ -882,7 +904,7 @@ final class VaultStore {
         syncStatus = "Sync failed"
         statusMessage = message
         _ = try? syncSettingsRepository?.save(failedSettings)
-        persistUnlockedSnapshot()
+        persistUnlockedSnapshot(markLocalChange: false)
     }
 
     private func applyImportedEntries(
@@ -945,14 +967,32 @@ final class VaultStore {
         return !matches.isEmpty
     }
 
-    private func persistUnlockedSnapshot() {
+    private func persistUnlockedSnapshot(markLocalChange: Bool = true) {
         guard isUnlocked else { return }
         do {
+            if markLocalChange {
+                try markLocalChangesForSync()
+            }
             try saveSnapshot()
             statusMessage = "Vault saved at \(DateFormatter.shortDateTime.string(from: Date()))"
         } catch {
             statusMessage = error.localizedDescription
         }
+    }
+
+    private func markLocalChangesForSync() throws {
+        guard !syncSettings.hasLocalChanges else { return }
+        syncSettings.hasLocalChanges = true
+        try syncSettingsRepository?.save(syncSettings)
+    }
+}
+
+private extension VaultEntry {
+    mutating func markLocalEntryChange(deviceId: String, updatedAt: Date) {
+        let updater = deviceId.isEmpty ? (updatedBy.isEmpty ? "macos-native" : updatedBy) : deviceId
+        version[updater] = (version[updater] ?? 0) + 1
+        updatedBy = updater
+        self.updatedAt = updatedAt
     }
 }
 

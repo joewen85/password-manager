@@ -11,6 +11,7 @@ struct SidebarView: View {
     var importSnapshot: () -> Void
     var exportCategory: (String) -> Void
     var syncNow: () -> Void
+    var showSettings: () -> Void
 
     var body: some View {
         List {
@@ -66,6 +67,9 @@ struct SidebarView: View {
                 }
                 Button(action: importSnapshot) {
                     Label("Import JSON", systemImage: "square.and.arrow.down")
+                }
+                Button(action: showSettings) {
+                    Label("Settings", systemImage: "gearshape")
                 }
             }
         }

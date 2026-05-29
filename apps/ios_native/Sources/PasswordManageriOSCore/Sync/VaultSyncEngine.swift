@@ -50,6 +50,19 @@ struct VaultSyncEngine: Sendable {
         settings: SyncSettings,
         client: RemoteSyncClient
     ) async throws -> VaultSyncEngineResult {
+        let remoteMetadata = await client.metadata()
+        let remoteFingerprint = remoteMetadata.fingerprint
+        if !settings.hasLocalChanges,
+           let remoteFingerprint,
+           remoteFingerprint == settings.lastRemoteFingerprint,
+           Self.isSuccessfulDownload(remoteMetadata.statusCode) {
+            return noChangeResult(
+                snapshot: localSnapshot,
+                settings: settings,
+                remoteFingerprint: remoteFingerprint
+            )
+        }
+
         let download = await client.download()
         guard Self.isSuccessfulDownload(download.statusCode) else {
             throw VaultSyncEngineError.downloadFailed(download.statusCode)
@@ -74,7 +87,32 @@ struct VaultSyncEngine: Sendable {
                     deletes: localSnapshot.entries.filter(\.isDeleted).count
                 ),
                 uploaded: true,
-                appliedRemote: false
+                appliedRemote: false,
+                remoteFingerprint: remoteFingerprint
+            )
+        }
+
+        if settings.hasLocalChanges, remotePayload.revision <= settings.lastSyncRevision {
+            let nextRevision = settings.lastSyncRevision + 1
+            let uploadPayload = VaultSyncPayload(
+                exportedAt: now(),
+                deviceId: settings.deviceId,
+                revision: nextRevision,
+                snapshot: localSnapshot
+            )
+            try await upload(uploadPayload, with: client)
+            return result(
+                snapshot: localSnapshot,
+                settings: settings,
+                revision: nextRevision,
+                stats: SyncMergeStats(
+                    total: localSnapshot.entries.count,
+                    conflicts: 0,
+                    deletes: localSnapshot.entries.filter(\.isDeleted).count
+                ),
+                uploaded: true,
+                appliedRemote: false,
+                remoteFingerprint: nil
             )
         }
 
@@ -95,7 +133,8 @@ struct VaultSyncEngine: Sendable {
         let mergedSnapshot = mergeSnapshot(
             local: localSnapshot,
             remote: remotePayload.snapshot,
-            entries: mergeResult.entries
+            entries: mergeResult.entries,
+            localHasChanges: settings.hasLocalChanges
         )
 
         if mergedSnapshot == remotePayload.snapshot {
@@ -105,7 +144,8 @@ struct VaultSyncEngine: Sendable {
                 revision: remotePayload.revision,
                 stats: mergeResult.stats,
                 uploaded: false,
-                appliedRemote: mergedSnapshot != localSnapshot
+                appliedRemote: mergedSnapshot != localSnapshot,
+                remoteFingerprint: remoteFingerprint
             )
         }
 
@@ -123,7 +163,8 @@ struct VaultSyncEngine: Sendable {
             revision: mergedRevision,
             stats: mergeResult.stats,
             uploaded: true,
-            appliedRemote: mergedSnapshot != localSnapshot
+            appliedRemote: mergedSnapshot != localSnapshot,
+            remoteFingerprint: nil
         )
     }
 
@@ -155,18 +196,32 @@ struct VaultSyncEngine: Sendable {
     private func mergeSnapshot(
         local: VaultSnapshot,
         remote: VaultSnapshot,
-        entries: [VaultEntry]
+        entries: [VaultEntry],
+        localHasChanges: Bool
     ) -> VaultSnapshot {
         let latestSnapshot = local.updatedAt >= remote.updatedAt ? local : remote
+        let activeEntries = entries.filter { !$0.isDeleted }
+        let categories = mergeTaxonomy(
+            base: localHasChanges ? local.categories : remote.categories,
+            values: activeEntries.map(\.payload.category)
+        )
+        let tags = mergeTaxonomy(
+            base: localHasChanges ? local.tags : remote.tags,
+            values: activeEntries.flatMap(\.payload.tags)
+        )
         return VaultSnapshot(
             entries: entries.sorted { $0.updatedAt > $1.updatedAt },
-            categories: Array(Set(local.categories).union(remote.categories)).sorted(),
-            tags: Array(Set(local.tags).union(remote.tags)).sorted(),
+            categories: categories,
+            tags: tags,
             security: latestSnapshot.security,
             syncStatus: latestSnapshot.syncStatus,
             lastBackupStatus: latestSnapshot.lastBackupStatus,
             updatedAt: max(local.updatedAt, remote.updatedAt)
         )
+    }
+
+    private func mergeTaxonomy(base: [String], values: [String]) -> [String] {
+        Array(Set((base + values).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
     }
 
     private func result(
@@ -175,13 +230,15 @@ struct VaultSyncEngine: Sendable {
         revision: Int,
         stats: SyncMergeStats,
         uploaded: Bool,
-        appliedRemote: Bool
+        appliedRemote: Bool,
+        remoteFingerprint: String?
     ) -> VaultSyncEngineResult {
         var updatedSettings = settings
         updatedSettings.lastSyncRevision = revision
         updatedSettings.lastSyncAt = now()
         updatedSettings.lastSyncStatus = "success"
         updatedSettings.lastSyncMessage = "Synced \(stats.total) items, \(stats.conflicts) conflicts, \(stats.deletes) deletes, revision \(revision)."
+        updatedSettings.lastRemoteFingerprint = remoteFingerprint
         updatedSettings.logs = ([SyncLogEntry(
             timestamp: now(),
             message: updatedSettings.lastSyncMessage ?? "",
@@ -193,6 +250,34 @@ struct VaultSyncEngine: Sendable {
             stats: stats,
             uploaded: uploaded,
             appliedRemote: appliedRemote
+        )
+    }
+
+    private func noChangeResult(
+        snapshot: VaultSnapshot,
+        settings: SyncSettings,
+        remoteFingerprint: String
+    ) -> VaultSyncEngineResult {
+        var updatedSettings = settings
+        updatedSettings.lastSyncAt = now()
+        updatedSettings.lastSyncStatus = "success"
+        updatedSettings.lastSyncMessage = "Remote unchanged; skipped full sync download."
+        updatedSettings.lastRemoteFingerprint = remoteFingerprint
+        updatedSettings.logs = ([SyncLogEntry(
+            timestamp: now(),
+            message: updatedSettings.lastSyncMessage ?? "",
+            level: "info"
+        )] + settings.logs).prefix(50).map { $0 }
+        return VaultSyncEngineResult(
+            snapshot: snapshot,
+            settings: updatedSettings,
+            stats: SyncMergeStats(
+                total: snapshot.entries.count,
+                conflicts: 0,
+                deletes: snapshot.entries.filter(\.isDeleted).count
+            ),
+            uploaded: false,
+            appliedRemote: false
         )
     }
 

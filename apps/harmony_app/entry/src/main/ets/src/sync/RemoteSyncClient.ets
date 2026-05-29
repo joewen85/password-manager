@@ -6,7 +6,16 @@ export interface RemoteSyncResult {
   statusCode: number;
 }
 
+export interface RemoteSyncMetadata {
+  statusCode: number;
+  eTag: string;
+  lastModified: string;
+  contentLength: number;
+  fingerprint: string;
+}
+
 export interface RemoteSyncClient {
+  metadata(): Promise<RemoteSyncMetadata>;
   download(): Promise<RemoteSyncResult>;
   upload(payload: string): Promise<RemoteSyncResult>;
 }
@@ -19,6 +28,7 @@ interface HttpHeaderMap {
 interface HttpTextResponse {
   statusCode: number;
   body: string;
+  headers: Record<string, string>;
 }
 
 export class WebDavSyncClient implements RemoteSyncClient {
@@ -53,6 +63,16 @@ export class WebDavSyncClient implements RemoteSyncClient {
       payload: response.body,
       statusCode: response.statusCode,
     };
+  }
+
+  async metadata(): Promise<RemoteSyncMetadata> {
+    const response = await requestText(
+      this.buildUri(),
+      http.RequestMethod.HEAD,
+      this.headers(),
+      '',
+    );
+    return metadataFromResponse(response);
   }
 
   async upload(payload: string): Promise<RemoteSyncResult> {
@@ -122,6 +142,20 @@ export class PresignedUrlSyncClient implements RemoteSyncClient {
     };
   }
 
+  async metadata(): Promise<RemoteSyncMetadata> {
+    if (this.downloadUrl.length === 0) {
+      return emptyMetadata(400);
+    }
+
+    const response = await requestText(
+      this.downloadUrl,
+      http.RequestMethod.HEAD,
+      createHeaderMap(),
+      '',
+    );
+    return metadataFromResponse(response);
+  }
+
   async upload(payload: string): Promise<RemoteSyncResult> {
     if (this.uploadUrl.length === 0) {
       return { payload: '', statusCode: 400 };
@@ -167,6 +201,7 @@ async function requestText(
     return {
       statusCode: Number(response.responseCode),
       body: responseResultToText(response.result),
+      headers: normalizeResponseHeaders(response.header),
     };
   } catch (error) {
     throw new Error(`HTTP request failed: ${error}`);
@@ -177,6 +212,75 @@ async function requestText(
       console.error(`Destroy http request failed: ${error}`);
     }
   }
+}
+
+function metadataFromResponse(response: HttpTextResponse): RemoteSyncMetadata {
+  if (response.statusCode === 404 || response.statusCode === 204) {
+    return emptyMetadata(404);
+  }
+  const eTag = headerValue(response.headers, 'ETag');
+  const lastModified = headerValue(response.headers, 'Last-Modified');
+  const contentLength = Number(headerValue(response.headers, 'Content-Length'));
+  const safeLength = Number.isFinite(contentLength) && contentLength >= 0 ? contentLength : -1;
+  return {
+    statusCode: response.statusCode,
+    eTag,
+    lastModified,
+    contentLength: safeLength,
+    fingerprint: buildFingerprint(eTag, lastModified, safeLength),
+  };
+}
+
+function emptyMetadata(statusCode: number): RemoteSyncMetadata {
+  return {
+    statusCode,
+    eTag: '',
+    lastModified: '',
+    contentLength: -1,
+    fingerprint: '',
+  };
+}
+
+function buildFingerprint(eTag: string, lastModified: string, contentLength: number): string {
+  const strongParts: string[] = [];
+  if (eTag.trim().length > 0) {
+    strongParts.push(`etag:${eTag.trim()}`);
+  }
+  if (lastModified.trim().length > 0) {
+    strongParts.push(`modified:${lastModified.trim()}`);
+  }
+  if (strongParts.length === 0) {
+    return '';
+  }
+  if (contentLength >= 0) {
+    strongParts.push(`length:${contentLength}`);
+  }
+  return strongParts.join('|');
+}
+
+function normalizeResponseHeaders(rawHeaders: Object | undefined): Record<string, string> {
+  const output: Record<string, string> = {};
+  if (rawHeaders === undefined || rawHeaders === null) {
+    return output;
+  }
+  const record = rawHeaders as Record<string, string | string[] | number | undefined>;
+  Object.keys(record).forEach((name: string) => {
+    const value = record[name];
+    if (Array.isArray(value)) {
+      output[name] = value.join(',');
+    } else if (value !== undefined) {
+      output[name] = `${value}`;
+    }
+  });
+  return output;
+}
+
+function headerValue(headers: Record<string, string>, name: string): string {
+  const match = Object.keys(headers).find((key: string) => key.toLowerCase() === name.toLowerCase());
+  if (match === undefined) {
+    return '';
+  }
+  return headers[match] ?? '';
 }
 
 function responseResultToText(result: string | Object | ArrayBuffer): string {

@@ -5,9 +5,35 @@ struct RemoteSyncResult: Equatable, Sendable {
     var statusCode: Int
 }
 
+struct RemoteSyncMetadata: Equatable, Sendable {
+    var statusCode: Int
+    var eTag: String?
+    var lastModified: String?
+    var contentLength: Int64?
+
+    var fingerprint: String? {
+        let strongParts = [
+            eTag?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty.map { "etag:\($0)" },
+            lastModified?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty.map { "modified:\($0)" }
+        ].compactMap { $0 }
+        guard !strongParts.isEmpty else {
+            return nil
+        }
+        let parts = strongParts + [contentLength.map { "length:\($0)" }].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: "|")
+    }
+}
+
 protocol RemoteSyncClient: Sendable {
+    func metadata() async -> RemoteSyncMetadata
     func download() async -> RemoteSyncResult
     func upload(_ payload: String) async -> RemoteSyncResult
+}
+
+extension RemoteSyncClient {
+    func metadata() async -> RemoteSyncMetadata {
+        RemoteSyncMetadata(statusCode: 501)
+    }
 }
 
 private let remoteSyncTimeout: TimeInterval = 12
@@ -60,6 +86,21 @@ struct WebDavSyncClient: RemoteSyncClient {
         self.username = username
         self.password = password
         self.transport = transport
+    }
+
+    func metadata() async -> RemoteSyncMetadata {
+        do {
+            let url = try buildURL()
+            var request = URLRequest(url: url)
+            request.httpMethod = "HEAD"
+            applyAuthHeader(to: &request)
+            let (_, response) = try await transport.perform(request)
+            return Self.metadata(from: response)
+        } catch let error as URLError where error.code == .timedOut {
+            return RemoteSyncMetadata(statusCode: 408)
+        } catch {
+            return RemoteSyncMetadata(statusCode: 503)
+        }
     }
 
     func download() async -> RemoteSyncResult {
@@ -140,6 +181,18 @@ struct WebDavSyncClient: RemoteSyncClient {
         let payload = payloadData.isEmpty ? nil : String(data: payloadData, encoding: .utf8)
         return RemoteSyncResult(payload: payload, statusCode: statusCode)
     }
+
+    private static func metadata(from response: HTTPURLResponse) -> RemoteSyncMetadata {
+        if response.statusCode == 404 || response.statusCode == 204 {
+            return RemoteSyncMetadata(statusCode: 404)
+        }
+        return RemoteSyncMetadata(
+            statusCode: response.statusCode,
+            eTag: response.headerValue("ETag"),
+            lastModified: response.headerValue("Last-Modified"),
+            contentLength: response.headerValue("Content-Length").flatMap(Int64.init)
+        )
+    }
 }
 
 struct PresignedUrlSyncClient: RemoteSyncClient {
@@ -156,6 +209,22 @@ struct PresignedUrlSyncClient: RemoteSyncClient {
         self.downloadUrl = downloadUrl
         self.uploadUrl = uploadUrl
         self.transport = transport
+    }
+
+    func metadata() async -> RemoteSyncMetadata {
+        guard let url = URL(string: downloadUrl.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            return RemoteSyncMetadata(statusCode: 400)
+        }
+        do {
+            var request = URLRequest(url: url)
+            request.httpMethod = "HEAD"
+            let (_, response) = try await transport.perform(request)
+            return metadata(from: response)
+        } catch let error as URLError where error.code == .timedOut {
+            return RemoteSyncMetadata(statusCode: 408)
+        } catch {
+            return RemoteSyncMetadata(statusCode: 503)
+        }
     }
 
     func download() async -> RemoteSyncResult {
@@ -198,5 +267,31 @@ struct PresignedUrlSyncClient: RemoteSyncClient {
         }
         let payload = payloadData.isEmpty ? nil : String(data: payloadData, encoding: .utf8)
         return RemoteSyncResult(payload: payload, statusCode: statusCode)
+    }
+
+    private func metadata(from response: HTTPURLResponse) -> RemoteSyncMetadata {
+        if response.statusCode == 404 || response.statusCode == 204 {
+            return RemoteSyncMetadata(statusCode: 404)
+        }
+        return RemoteSyncMetadata(
+            statusCode: response.statusCode,
+            eTag: response.headerValue("ETag"),
+            lastModified: response.headerValue("Last-Modified"),
+            contentLength: response.headerValue("Content-Length").flatMap(Int64.init)
+        )
+    }
+}
+
+private extension String {
+    var nonEmpty: String? {
+        isEmpty ? nil : self
+    }
+}
+
+private extension HTTPURLResponse {
+    func headerValue(_ name: String) -> String? {
+        allHeaderFields.first { key, _ in
+            String(describing: key).caseInsensitiveCompare(name) == .orderedSame
+        }.map { String(describing: $0.value) }
     }
 }

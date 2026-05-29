@@ -61,6 +61,40 @@ struct RemoteSyncClientTests {
         #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
     }
 
+    @Test("WebDAV metadata uses HEAD response headers as fingerprint")
+    func webDavMetadataUsesHEADResponseHeadersAsFingerprint() async {
+        let transport = FakeRemoteSyncTransport(
+            responses: [
+                .success(httpResult(
+                    url: URL(string: "https://example.com/root/folder/vault.json")!,
+                    statusCode: 200,
+                    headers: [
+                        "ETag": #""abc123""#,
+                        "Last-Modified": "Wed, 28 May 2026 10:00:00 GMT",
+                        "Content-Length": "42"
+                    ]
+                ))
+            ]
+        )
+        let client = WebDavSyncClient(
+            baseUrl: "https://example.com/root/",
+            remotePath: "folder/vault.json",
+            username: "alice",
+            password: "secret",
+            transport: transport
+        )
+
+        let metadata = await client.metadata()
+
+        #expect(metadata.statusCode == 200)
+        #expect(metadata.eTag == #""abc123""#)
+        #expect(metadata.lastModified == "Wed, 28 May 2026 10:00:00 GMT")
+        #expect(metadata.contentLength == 42)
+        #expect(metadata.fingerprint == #"etag:"abc123"|modified:Wed, 28 May 2026 10:00:00 GMT|length:42"#)
+        #expect(transport.requests.single?.httpMethod == "HEAD")
+        #expect(transport.requests.single?.value(forHTTPHeaderField: "Authorization") == "Basic YWxpY2U6c2VjcmV0")
+    }
+
     @Test("Download maps empty remote status to missing payload")
     func downloadMapsEmptyRemoteStatusToMissingPayload() async {
         let transport = FakeRemoteSyncTransport(
@@ -115,16 +149,27 @@ struct RemoteSyncClientTests {
     }
 }
 
-private func httpResult(url: URL, statusCode: Int, body: String = "") -> (Data, HTTPURLResponse) {
+private func httpResult(
+    url: URL,
+    statusCode: Int,
+    body: String = "",
+    headers: [String: String]? = nil
+) -> (Data, HTTPURLResponse) {
     (
         Data(body.utf8),
         HTTPURLResponse(
             url: url,
             statusCode: statusCode,
             httpVersion: nil,
-            headerFields: nil
+            headerFields: headers
         )!
     )
+}
+
+private extension Array where Element == URLRequest {
+    var single: URLRequest? {
+        count == 1 ? self[0] : nil
+    }
 }
 
 private final class FakeRemoteSyncTransport: RemoteSyncHTTPTransport, @unchecked Sendable {

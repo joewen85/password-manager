@@ -50,12 +50,19 @@ export interface ServicePayload {
 
 export type VaultPayload = CredentialPayload | ServerPayload | ServicePayload;
 
+export interface CustomField {
+  id: string;
+  name: string;
+  value: string;
+}
+
 export interface VaultEntry {
   id: string;
   label: string;
   type: VaultEntryType;
   payload: VaultPayload;
   tags: string[];
+  customFields: CustomField[];
   createdAt: number;
   updatedAt: number;
   isDeleted: boolean;
@@ -103,6 +110,8 @@ export interface VaultPersistenceEnvelope {
 export interface SecuritySettings {
   requireTotp: boolean;
   totpSecret: string;
+  biometricUnlockEnabled?: boolean;
+  idleAutoLockMinutes?: number;
 }
 
 export interface UnlockGuardState {
@@ -121,6 +130,7 @@ export interface CreateCredentialInput {
   notes: string;
   tags: string[];
   category: string;
+  customFields?: CustomField[];
 }
 
 export interface CreateServerInput {
@@ -136,6 +146,7 @@ export interface CreateServerInput {
   notes: string;
   tags: string[];
   category: string;
+  customFields?: CustomField[];
 }
 
 export interface CreateServiceInput {
@@ -149,4 +160,5 @@ export interface CreateServiceInput {
   notes: string;
   tags: string[];
   category: string;
+  customFields?: CustomField[];
 }

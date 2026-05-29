@@ -2,6 +2,7 @@ import {
   CreateCredentialInput,
   CreateServerInput,
   CreateServiceInput,
+  CustomField,
   EncryptedPayloadRecord,
   MasterKeyRecord,
   SecuritySettings,
@@ -58,6 +59,8 @@ interface ExportItemRecord {
   label: string;
   type: VaultEntryType;
   category: string;
+  tags: string[];
+  customFields: CustomField[];
   createdAt: string;
   updatedAt: string;
   payload: object;
@@ -67,7 +70,7 @@ interface ExportSingleItemRecord {
   version: number;
   scope: string;
   exportedAt: string;
-  item: ExportItemRecord;
+  item: object;
 }
 
 interface ExportCategoryRecord {
@@ -77,6 +80,18 @@ interface ExportCategoryRecord {
   category: string;
   count: number;
   items: ExportItemRecord[];
+}
+
+interface SelectedExportItemRecord {
+  id: string;
+  type: VaultEntryType;
+  label?: string;
+  category?: string;
+  tags?: string[];
+  customFields?: CustomField[];
+  createdAt?: string;
+  updatedAt?: string;
+  payload?: object;
 }
 
 interface ImportSingleItemRecord {
@@ -150,7 +165,9 @@ interface EntryPayloadCarrier extends CategoryCarrier, TagsCarrier {}
 
 interface EntryCarrier extends CategoryCarrier, TagsCarrier {
   payload?: EntryPayloadCarrier;
+  customFields?: CustomField[];
   isDeleted?: boolean;
+  deletedAt?: number;
   createdAt?: number;
   updatedAt?: number;
   label?: string;
@@ -163,6 +180,7 @@ interface AccessKeyCarrier {
 
 const MAX_UNLOCK_ATTEMPTS: number = 5;
 const LOCKOUT_DURATION_MS: number = 5 * 60 * 1000;
+const AUTO_SYNC_SYNCING_STATUS: string = '同步中';
 
 export class VaultController {
   private static readonly SCHEMA_VERSION: number = 1;
@@ -177,6 +195,7 @@ export class VaultController {
   private lastUnlockError: string = '';
   private unlocked: boolean = false;
   private syncInProgress: boolean = false;
+  private lastAutoSyncAttemptAt: number = 0;
 
   constructor(store: VaultStore, crypto: VaultCryptoService) {
     this.store = store;
@@ -397,12 +416,15 @@ export class VaultController {
     this.sessionKeyToken = null;
     this.snapshot = createEmptyPayload();
     this.syncInProgress = false;
+    this.lastAutoSyncAttemptAt = 0;
   }
 
   async updateSyncSettings(settings: SyncSettings): Promise<void> {
     this.ensureUnlocked();
-    this.snapshot.syncSettings = normalizeSyncSettings(settings);
-    await this.persist();
+    const normalized = normalizeSyncSettings(settings);
+    normalized.hasLocalChanges = this.snapshot.syncSettings.hasLocalChanges;
+    this.snapshot.syncSettings = normalized;
+    await this.persist(false);
   }
 
   async updateSecuritySettings(settings: SecuritySettings): Promise<void> {
@@ -420,14 +442,14 @@ export class VaultController {
     const localSettings = this.snapshot.syncSettings;
     if (localSettings.providerType === SyncProviderType.NONE) {
       this.recordSyncStatus('skipped', '未配置同步', localSettings.lastSyncRevision);
-      await this.persist();
+      await this.persist(false);
       return;
     }
 
     const client = this.buildSyncClient(localSettings);
     if (client === null) {
       this.recordSyncStatus('error', '同步配置不完整', localSettings.lastSyncRevision);
-      await this.persist();
+      await this.persist(false);
       return;
     }
 
@@ -436,6 +458,29 @@ export class VaultController {
       let mergedPayload = deepCopyRuntimePayload(this.snapshot);
       let remoteRevision = localSettings.lastSyncRevision;
       let mergedMasterKey = this.masterKeyRecord;
+      let remoteFingerprint = '';
+
+      try {
+        const metadata = await client.metadata();
+        remoteFingerprint = metadata.fingerprint;
+        if (
+          !localSettings.hasLocalChanges &&
+          remoteFingerprint.length > 0 &&
+          remoteFingerprint === localSettings.lastRemoteFingerprint &&
+          isSuccessfulRemoteStatus(metadata.statusCode)
+        ) {
+          this.recordSyncStatus(
+            'success',
+            '远端未变化，已跳过完整同步下载',
+            localSettings.lastSyncRevision,
+            remoteFingerprint,
+          );
+          await this.persist(false);
+          return;
+        }
+      } catch (error) {
+        console.warn(`Remote metadata check failed, falling back to full sync: ${error}`);
+      }
 
       const remote = await client.download();
       if (remote.statusCode === 404 || remote.statusCode === 204) {
@@ -447,6 +492,40 @@ export class VaultController {
         } else {
           const remoteEnvelope = parseSyncEnvelope(remote.payload);
           remoteRevision = remoteEnvelope.revision;
+
+          if (localSettings.hasLocalChanges && remoteRevision <= localSettings.lastSyncRevision) {
+            const nextRevision = localSettings.lastSyncRevision + 1;
+            const uploadPayload = deepCopyRuntimePayload(this.snapshot);
+            uploadPayload.syncSettings = cloneSyncSettings(localSettings);
+            uploadPayload.syncSettings.hasLocalChanges = false;
+            uploadPayload.syncSettings.lastRemoteFingerprint = '';
+            const payload = await this.buildSyncPayload(
+              uploadPayload,
+              nextRevision,
+              uploadPayload.syncSettings,
+              mergedMasterKey,
+            );
+            const upload = await client.upload(payload);
+            if (upload.statusCode < 200 || upload.statusCode >= 300) {
+              this.recordSyncStatus(
+                'error',
+                `上传失败(${upload.statusCode})`,
+                localSettings.lastSyncRevision,
+              );
+              await this.persist(false);
+              return;
+            }
+            this.snapshot = uploadPayload;
+            const uploadedFingerprint = await this.safeRemoteFingerprint(client);
+            this.recordSyncStatus(
+              'success',
+              `同步完成：修订${nextRevision}，条目${uploadPayload.entries.length}项`,
+              nextRevision,
+              uploadedFingerprint,
+            );
+            await this.persist(false);
+            return;
+          }
 
           if (
             localSettings.syncMasterKey &&
@@ -480,17 +559,20 @@ export class VaultController {
           `远端下载失败(${remote.statusCode})`,
           localSettings.lastSyncRevision,
         );
-        await this.persist();
+        await this.persist(false);
         return;
       }
 
       mergedPayload.syncSettings = cloneSyncSettings(localSettings);
+      const uploadPayload = deepCopyRuntimePayload(mergedPayload);
+      uploadPayload.syncSettings.hasLocalChanges = false;
+      uploadPayload.syncSettings.lastRemoteFingerprint = '';
       const nextRevision =
         Math.max(localSettings.lastSyncRevision, remoteRevision) + 1;
       const payload = await this.buildSyncPayload(
-        mergedPayload,
+        uploadPayload,
         nextRevision,
-        mergedPayload.syncSettings,
+        uploadPayload.syncSettings,
         mergedMasterKey,
       );
 
@@ -503,34 +585,67 @@ export class VaultController {
           `上传失败(${upload.statusCode})`,
           localSettings.lastSyncRevision,
         );
-        await this.persist();
+        await this.persist(false);
         return;
       }
 
-      this.snapshot = mergedPayload;
+      this.snapshot = uploadPayload;
       this.masterKeyRecord = mergedMasterKey;
+      const uploadedFingerprint = await this.safeRemoteFingerprint(client);
       this.recordSyncStatus(
         'success',
         `同步完成：修订${nextRevision}，条目${mergedPayload.entries.length}项`,
         nextRevision,
+        uploadedFingerprint,
       );
-      await this.persist();
+      await this.persist(false);
     } catch (error) {
       this.recordSyncStatus(
         'error',
         `同步失败: ${error}`,
         this.snapshot.syncSettings.lastSyncRevision,
       );
-      await this.persist();
+      await this.persist(false);
     } finally {
       this.syncInProgress = false;
     }
+  }
+
+  shouldRunAutoSync(now: number = Date.now()): boolean {
+    if (!this.unlocked || this.syncInProgress) {
+      return false;
+    }
+
+    const settings = this.snapshot.syncSettings;
+    if (
+      !settings.autoSyncEnabled ||
+      settings.providerType === SyncProviderType.NONE ||
+      settings.lastSyncStatus === AUTO_SYNC_SYNCING_STATUS
+    ) {
+      return false;
+    }
+
+    const reference = Math.max(this.lastAutoSyncAttemptAt, settings.lastSyncAt || 0);
+    if (reference <= 0) {
+      return true;
+    }
+    return now - reference >= autoSyncIntervalMillis(settings);
+  }
+
+  async runAutoSyncIfNeeded(now: number = Date.now()): Promise<boolean> {
+    if (!this.shouldRunAutoSync(now)) {
+      return false;
+    }
+    this.lastAutoSyncAttemptAt = now;
+    await this.syncNow();
+    return true;
   }
 
   async addCredential(input: CreateCredentialInput): Promise<void> {
     this.ensureUnlocked();
     const now = Date.now();
     const tags = normalizeTags(input.tags);
+    const customFields = normalizeCustomFields(input.customFields);
     this.snapshot.entries.push({
       id: nextId(),
       label: input.label.trim(),
@@ -547,6 +662,7 @@ export class VaultController {
         category: input.category.trim(),
       },
       tags,
+      customFields,
       createdAt: now,
       updatedAt: now,
       isDeleted: false,
@@ -560,6 +676,7 @@ export class VaultController {
     this.ensureUnlocked();
     const now = Date.now();
     const tags = normalizeTags(input.tags);
+    const customFields = normalizeCustomFields(input.customFields);
     this.snapshot.entries.push({
       id: nextId(),
       label: input.label.trim(),
@@ -578,6 +695,7 @@ export class VaultController {
         category: input.category.trim(),
       },
       tags,
+      customFields,
       createdAt: now,
       updatedAt: now,
       isDeleted: false,
@@ -591,6 +709,7 @@ export class VaultController {
     this.ensureUnlocked();
     const now = Date.now();
     const tags = normalizeTags(input.tags);
+    const customFields = normalizeCustomFields(input.customFields);
     this.snapshot.entries.push({
       id: nextId(),
       label: input.label.trim(),
@@ -607,6 +726,7 @@ export class VaultController {
         category: input.category.trim(),
       },
       tags,
+      customFields,
       createdAt: now,
       updatedAt: now,
       isDeleted: false,
@@ -620,6 +740,7 @@ export class VaultController {
     this.ensureUnlocked();
     const target = this.requireVisibleEntry(entryId, VaultEntryType.CREDENTIAL);
     const tags = normalizeTags(input.tags);
+    const customFields = normalizeCustomFields(input.customFields);
     target.label = input.label.trim();
     target.payload = {
       username: input.username,
@@ -633,6 +754,7 @@ export class VaultController {
       category: input.category.trim(),
     };
     target.tags = tags;
+    target.customFields = customFields;
     target.updatedAt = Date.now();
     this.mergeCategories([input.category.trim()]);
     this.mergeTags(tags);
@@ -643,6 +765,7 @@ export class VaultController {
     this.ensureUnlocked();
     const target = this.requireVisibleEntry(entryId, VaultEntryType.SERVER);
     const tags = normalizeTags(input.tags);
+    const customFields = normalizeCustomFields(input.customFields);
     target.label = input.label.trim();
     target.payload = {
       name: input.name,
@@ -658,6 +781,7 @@ export class VaultController {
       category: input.category.trim(),
     };
     target.tags = tags;
+    target.customFields = customFields;
     target.updatedAt = Date.now();
     this.mergeCategories([input.category.trim()]);
     this.mergeTags(tags);
@@ -668,6 +792,7 @@ export class VaultController {
     this.ensureUnlocked();
     const target = this.requireVisibleEntry(entryId, VaultEntryType.SERVICE);
     const tags = normalizeTags(input.tags);
+    const customFields = normalizeCustomFields(input.customFields);
     target.label = input.label.trim();
     target.payload = {
       name: input.name,
@@ -681,6 +806,7 @@ export class VaultController {
       category: input.category.trim(),
     };
     target.tags = tags;
+    target.customFields = customFields;
     target.updatedAt = Date.now();
     this.mergeCategories([input.category.trim()]);
     this.mergeTags(tags);
@@ -696,7 +822,9 @@ export class VaultController {
       return;
     }
     target.isDeleted = true;
-    target.updatedAt = Date.now();
+    const now = Date.now();
+    target.updatedAt = now;
+    (target as EntryCarrier).deletedAt = now;
     await this.persist();
   }
 
@@ -820,7 +948,7 @@ export class VaultController {
     return JSON.stringify(payload, null, 2);
   }
 
-  exportEntryData(entryId: string): string {
+  exportEntryData(entryId: string, selectedFieldIds: string[] | null = null): string {
     this.ensureUnlocked();
     const entry = this.snapshot.entries.find(
       (value: VaultEntry) => value.id === entryId && !value.isDeleted,
@@ -832,7 +960,9 @@ export class VaultController {
       version: VaultController.SCHEMA_VERSION,
       scope: 'item',
       exportedAt: new Date().toISOString(),
-      item: this.buildExportItem(entry),
+      item: selectedFieldIds === null
+        ? this.buildExportItem(entry)
+        : this.buildSelectedExportItem(entry, selectedFieldIds),
     };
     return JSON.stringify(payload, null, 2);
   }
@@ -925,9 +1055,22 @@ export class VaultController {
   }
 
   private scheduleAutoSyncAfterUnlock(): void {
+    this.lastAutoSyncAttemptAt = Date.now();
     this.syncNow().catch(() => {
       console.error('Auto sync after unlock failed');
     });
+  }
+
+  private async safeRemoteFingerprint(client: RemoteSyncClient): Promise<string> {
+    try {
+      const metadata = await client.metadata();
+      if (isSuccessfulRemoteStatus(metadata.statusCode)) {
+        return metadata.fingerprint;
+      }
+    } catch (error) {
+      console.warn(`Remote metadata refresh failed: ${error}`);
+    }
+    return '';
   }
 
   private buildExportItem(entry: VaultEntry): ExportItemRecord {
@@ -936,10 +1079,52 @@ export class VaultController {
       label: entry.label,
       type: entry.type,
       category: this.entryCategory(entry),
+      tags: [...entry.tags],
+      customFields: normalizeCustomFields(entry.customFields),
       createdAt: new Date(entry.createdAt).toISOString(),
       updatedAt: new Date(entry.updatedAt).toISOString(),
       payload: JSON.parse(JSON.stringify(entry.payload)) as object,
     };
+  }
+
+  private buildSelectedExportItem(entry: VaultEntry, selectedFieldIds: string[]): object {
+    const selected = new Set<string>(selectedFieldIds);
+    const item = JSON.parse('{}') as SelectedExportItemRecord;
+    item.id = entry.id;
+    item.type = entry.type;
+    if (selected.has('label')) {
+      item.label = entry.label;
+    }
+    if (selected.has('category')) {
+      item.category = this.entryCategory(entry);
+    }
+    if (selected.has('tags')) {
+      item.tags = [...entry.tags];
+    }
+    if (selected.has('createdAt')) {
+      item.createdAt = new Date(entry.createdAt).toISOString();
+    }
+    if (selected.has('updatedAt')) {
+      item.updatedAt = new Date(entry.updatedAt).toISOString();
+    }
+
+    const payload = JSON.parse(JSON.stringify(entry.payload)) as Record<string, Object>;
+    const selectedPayload = JSON.parse('{}') as Record<string, Object>;
+    Object.keys(payload).forEach((key: string) => {
+      if (selected.has(`payload.${key}`)) {
+        selectedPayload[key] = payload[key];
+      }
+    });
+    if (Object.keys(selectedPayload).length > 0) {
+      item.payload = selectedPayload;
+    }
+
+    const customFields = normalizeCustomFields(entry.customFields)
+      .filter((field: CustomField) => selected.has(`custom.${field.id}`));
+    if (customFields.length > 0) {
+      item.customFields = customFields;
+    }
+    return item as object;
   }
 
   private async buildImportPlan(contents: string, scope: string): Promise<ImportPlanItem[]> {
@@ -1094,8 +1279,14 @@ export class VaultController {
     item: ExportItemRecord,
     idMap: Map<string, string>,
   ): boolean {
-    const normalizedIncoming = JSON.stringify(this.resolveImportedPayload(item, idMap));
-    const normalizedExisting = JSON.stringify(existing.payload);
+    const normalizedIncoming = JSON.stringify({
+      payload: this.resolveImportedPayload(item, idMap),
+      customFields: normalizeCustomFields(item.customFields),
+    });
+    const normalizedExisting = JSON.stringify({
+      payload: existing.payload,
+      customFields: normalizeCustomFields(existing.customFields),
+    });
     return normalizedIncoming === normalizedExisting;
   }
 
@@ -1116,6 +1307,7 @@ export class VaultController {
         notes: payload.notes ?? '',
         tags: payload.tags ?? [],
         category: payload.category ?? item.category ?? '',
+        customFields: item.customFields ?? payload.customFields ?? [],
       });
       return this.snapshot.entries[this.snapshot.entries.length - 1].id;
     }
@@ -1134,6 +1326,7 @@ export class VaultController {
         notes: payload.notes ?? '',
         tags: payload.tags ?? [],
         category: payload.category ?? item.category ?? '',
+        customFields: item.customFields ?? payload.customFields ?? [],
       });
       return this.snapshot.entries[this.snapshot.entries.length - 1].id;
     }
@@ -1152,6 +1345,7 @@ export class VaultController {
         notes: payload.notes ?? '',
         tags: payload.tags ?? [],
         category: payload.category ?? item.category ?? '',
+        customFields: item.customFields ?? payload.customFields ?? [],
       });
       return this.snapshot.entries[this.snapshot.entries.length - 1].id;
     }
@@ -1177,6 +1371,7 @@ export class VaultController {
         notes: payload.notes ?? '',
         tags: payload.tags ?? [],
         category: payload.category ?? item.category ?? '',
+        customFields: item.customFields ?? payload.customFields ?? [],
       });
       return;
     }
@@ -1195,6 +1390,7 @@ export class VaultController {
         notes: payload.notes ?? '',
         tags: payload.tags ?? [],
         category: payload.category ?? item.category ?? '',
+        customFields: item.customFields ?? payload.customFields ?? [],
       });
       return;
     }
@@ -1210,6 +1406,7 @@ export class VaultController {
       notes: payload.notes ?? '',
       tags: payload.tags ?? [],
       category: payload.category ?? item.category ?? '',
+      customFields: item.customFields ?? payload.customFields ?? [],
     });
   }
 
@@ -1244,11 +1441,14 @@ export class VaultController {
     payload.category = clean;
   }
 
-  private async persist(): Promise<void> {
+  private async persist(markLocalChange: boolean = true): Promise<void> {
     this.ensureUnlocked();
     const sessionKey = this.sessionKeyToken;
     if (sessionKey === null) {
       throw new Error('Session key is missing');
+    }
+    if (markLocalChange) {
+      this.snapshot.syncSettings.hasLocalChanges = true;
     }
     this.snapshot.updatedAt = Date.now();
 
@@ -1448,11 +1648,11 @@ export class VaultController {
 
     const tags = new Set<string>();
     const categories = new Set<string>();
-    local.tags.forEach((tag: string) => tags.add(tag));
-    remote.tags.forEach((tag: string) => tags.add(tag));
-    local.categories.forEach((category: string) => categories.add(category));
-    remote.categories.forEach((category: string) => categories.add(category));
-    mergedEntries.forEach((entry: VaultEntry) => {
+    const baseTags = local.syncSettings.hasLocalChanges ? local.tags : remote.tags;
+    const baseCategories = local.syncSettings.hasLocalChanges ? local.categories : remote.categories;
+    baseTags.forEach((tag: string) => tags.add(tag));
+    baseCategories.forEach((category: string) => categories.add(category));
+    mergedEntries.filter((entry: VaultEntry) => !entry.isDeleted).forEach((entry: VaultEntry) => {
       entry.tags.forEach((tag: string) => tags.add(tag));
       const category = this.entryCategory(entry);
       if (category.length > 0) {
@@ -1474,6 +1674,7 @@ export class VaultController {
     status: string,
     message: string,
     revision: number,
+    remoteFingerprint?: string,
   ): void {
     const settings = cloneSyncSettings(this.snapshot.syncSettings);
     const safeMessage = sanitizeLogMessage(message);
@@ -1482,6 +1683,9 @@ export class VaultController {
     settings.lastSyncStatus = status;
     settings.lastSyncMessage = safeMessage;
     settings.lastSyncRevision = revision;
+    if (remoteFingerprint !== undefined) {
+      settings.lastRemoteFingerprint = remoteFingerprint;
+    }
 
     const newLog: SyncLogEntry = {
       timestamp: now,
@@ -1524,7 +1728,7 @@ function sanitizeRuntimePayload(
   normalizeTags(input.categories ?? []).forEach((category: string) =>
     categoryUnion.add(category),
   );
-  normalizedEntries.forEach((entry: VaultEntry) => {
+  normalizedEntries.filter((entry: VaultEntry) => !entry.isDeleted).forEach((entry: VaultEntry) => {
     entry.tags.forEach((tag: string) => tagUnion.add(tag));
     const category = resolveEntryCategory(entry);
     if (category.length > 0) {
@@ -1563,6 +1767,7 @@ function normalizeRuntimeEntry(entry: VaultEntry): VaultEntry {
   carrier.tags = mergedTags;
   payload.tags = mergedTags;
   payload.category = resolvedCategory;
+  carrier.customFields = normalizeCustomFields(carrier.customFields);
   carrier.payload = payload;
   carrier.label = readString(carrier.label);
   if (typeof carrier.isDeleted !== 'boolean') {
@@ -1659,7 +1864,21 @@ function normalizeSyncSettings(settings: SyncSettings): SyncSettings {
       return normalizedLog;
     })
     .filter((log: SyncLogEntry) => !isSyncTimingLogMessage(log.message));
+  normalized.hasLocalChanges = normalized.hasLocalChanges === true;
+  normalized.lastRemoteFingerprint = normalized.lastRemoteFingerprint ?? '';
   return normalized;
+}
+
+function autoSyncIntervalMillis(settings: SyncSettings): number {
+  const value = Math.max(Math.floor(settings.autoSyncIntervalValue || 0), 1);
+  if (settings.autoSyncIntervalUnit === SyncIntervalUnit.SECONDS) {
+    return value * 1000;
+  }
+  return value * 60 * 1000;
+}
+
+function isSuccessfulRemoteStatus(statusCode: number): boolean {
+  return (statusCode >= 200 && statusCode < 300) || statusCode === 404;
 }
 
 function isSyncTimingLogMessage(message: string): boolean {
@@ -1687,6 +1906,8 @@ function cloneSyncSettings(settings: SyncSettings): SyncSettings {
     lastSyncAt: settings.lastSyncAt,
     lastSyncStatus: settings.lastSyncStatus,
     lastSyncMessage: settings.lastSyncMessage,
+    lastRemoteFingerprint: settings.lastRemoteFingerprint ?? '',
+    hasLocalChanges: settings.hasLocalChanges === true,
     logs: settings.logs.map((entry: SyncLogEntry) => {
       const log: SyncLogEntry = {
         timestamp: entry.timestamp,
@@ -1726,6 +1947,8 @@ function defaultSecuritySettings(): SecuritySettings {
   return {
     requireTotp: false,
     totpSecret: '',
+    biometricUnlockEnabled: false,
+    idleAutoLockMinutes: 0,
   };
 }
 
@@ -1740,6 +1963,8 @@ function normalizeSecuritySettings(
   return {
     requireTotp,
     totpSecret: secret,
+    biometricUnlockEnabled: input.biometricUnlockEnabled === true,
+    idleAutoLockMinutes: normalizeIdleAutoLockMinutes(input.idleAutoLockMinutes),
   };
 }
 
@@ -1747,7 +1972,16 @@ function cloneSecuritySettings(settings: SecuritySettings): SecuritySettings {
   return {
     requireTotp: settings.requireTotp,
     totpSecret: settings.totpSecret,
+    biometricUnlockEnabled: settings.biometricUnlockEnabled === true,
+    idleAutoLockMinutes: normalizeIdleAutoLockMinutes(settings.idleAutoLockMinutes),
   };
+}
+
+function normalizeIdleAutoLockMinutes(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(Math.floor(value), 0);
 }
 
 function defaultUnlockGuardState(): UnlockGuardState {
@@ -1854,6 +2088,27 @@ function normalizeTags(tags: string[]): string[] {
     .forEach((tag: string) => uniq.add(tag));
   const result = setToArray(uniq);
   result.sort((a: string, b: string) => a.localeCompare(b));
+  return result;
+}
+
+function normalizeCustomFields(fields: CustomField[] | undefined): CustomField[] {
+  if (fields === undefined) {
+    return [];
+  }
+  const result: CustomField[] = [];
+  fields.forEach((field: CustomField) => {
+    const name = readString(field.name);
+    const value = typeof field.value === 'string' ? field.value : '';
+    if (name.length === 0 && value.trim().length === 0) {
+      return;
+    }
+    const normalized: CustomField = {
+      id: readString(field.id).length > 0 ? readString(field.id) : nextId(),
+      name,
+      value,
+    };
+    result.push(normalized);
+  });
   return result;
 }
 

@@ -2,8 +2,14 @@ import SwiftUI
 
 struct SettingsView: View {
     @Bindable var store: VaultStore
+    @AppStorage("biometric_unlock_enabled") private var biometricUnlockEnabled = false
+    @AppStorage("idle_auto_lock_minutes") private var idleAutoLockMinutes = 0
     @State private var totpSecret = ""
     @State private var syncDraft = SyncSettings.defaults()
+    @State private var biometricMasterPassword = ""
+    @State private var biometricStatus: String?
+
+    private let biometricCredentialStore = iOSBiometricCredentialStore()
 
     var body: some View {
         Form {
@@ -23,6 +29,46 @@ struct SettingsView: View {
                     store.setTotpSecret(totpSecret)
                 }
                 .disabled(totpSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                Toggle("Enable biometric unlock", isOn: Binding(
+                    get: { biometricUnlockEnabled && biometricCredentialStore.hasSavedCredential() },
+                    set: { enabled in
+                        if enabled {
+                            biometricUnlockEnabled = true
+                        } else {
+                            biometricCredentialStore.clear()
+                            biometricUnlockEnabled = false
+                            biometricMasterPassword = ""
+                            biometricStatus = "Biometric unlock disabled."
+                        }
+                    }
+                ))
+                .disabled(!biometricCredentialStore.canAuthenticate())
+
+                if !biometricCredentialStore.canAuthenticate() {
+                    Text("Biometric authentication is not available on this device.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else if biometricUnlockEnabled && !biometricCredentialStore.hasSavedCredential() {
+                    SecureField("Master password", text: $biometricMasterPassword)
+                    Button("Save Biometric Credential") {
+                        enableBiometricUnlock()
+                    }
+                    .disabled(biometricMasterPassword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                Stepper(
+                    idleAutoLockMinutes == 0 ? "Idle auto-lock: Off" : "Idle auto-lock: \(idleAutoLockMinutes) min",
+                    value: $idleAutoLockMinutes,
+                    in: 0...1440,
+                    step: 1
+                )
+
+                if let biometricStatus {
+                    Text(biometricStatus)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Sync") {
@@ -84,6 +130,35 @@ struct SettingsView: View {
         .onAppear {
             totpSecret = store.totpSecret
             syncDraft = store.syncSettings
+            if !biometricCredentialStore.hasSavedCredential() {
+                biometricUnlockEnabled = false
+            }
+        }
+    }
+
+    private func enableBiometricUnlock() {
+        let password = biometricMasterPassword
+        guard store.verifyMasterPassword(password) else {
+            biometricStatus = store.statusMessage ?? "Master password is invalid."
+            return
+        }
+        Task {
+            do {
+                try await biometricCredentialStore.savePassword(
+                    password,
+                    reason: "Enable biometric unlock for Password Manager."
+                )
+                await MainActor.run {
+                    biometricMasterPassword = ""
+                    biometricUnlockEnabled = true
+                    biometricStatus = "Biometric unlock enabled."
+                }
+            } catch {
+                await MainActor.run {
+                    biometricUnlockEnabled = false
+                    biometricStatus = error.localizedDescription
+                }
+            }
         }
     }
 }

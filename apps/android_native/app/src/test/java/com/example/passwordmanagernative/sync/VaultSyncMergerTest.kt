@@ -32,6 +32,30 @@ class VaultSyncMergerTest {
     }
 
     @Test
+    fun uuidIdsAreMatchedCaseInsensitivelyAcrossSwiftAndAndroid() {
+        val merger = VaultSyncMerger()
+        val local = buildEntry(
+            id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            label = "Android original",
+            updatedBy = "android",
+            version = mapOf("android" to 1),
+        )
+        val remote = buildEntry(
+            id = "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+            label = "macOS edit",
+            updatedBy = "macos",
+            version = mapOf("android" to 1, "macos" to 1),
+        )
+
+        val result = merger.merge(localEntries = listOf(local), remoteEntries = listOf(remote))
+
+        assertEquals(1, result.entries.size)
+        assertEquals("macOS edit", result.entries.single().label)
+        assertEquals("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", result.entries.single().id)
+        assertEquals(0, result.stats.conflicts)
+    }
+
+    @Test
     fun concurrentRenameConflictProducesConflictCopy() {
         var counter = 0
         val merger = VaultSyncMerger(

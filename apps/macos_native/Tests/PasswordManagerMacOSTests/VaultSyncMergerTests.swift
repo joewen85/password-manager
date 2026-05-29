@@ -28,6 +28,31 @@ struct VaultSyncMergerTests {
         #expect(result.stats.conflicts == 0)
     }
 
+    @Test("Vault entry JSON encoding keeps UUID identifiers lowercase")
+    func vaultEntryJSONEncodingKeepsUUIDIdentifiersLowercase() throws {
+        let entry = buildEntry(
+            id: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+            label: "Canonical",
+            updatedBy: "macos",
+            version: ["macos": 1]
+        )
+        var entryWithCustomField = entry
+        entryWithCustomField.customFields = [
+            CustomField(
+                id: UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!,
+                name: "Field",
+                value: "Value"
+            )
+        ]
+
+        let data = try JSONEncoder().encode(entryWithCustomField)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let fields = try #require(object["customFields"] as? [[String: Any]])
+
+        #expect(object["id"] as? String == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        #expect(fields.first?["id"] as? String == "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    }
+
     @Test("Concurrent rename conflict produces conflict copy")
     func concurrentRenameConflictProducesConflictCopy() {
         var counter = 0

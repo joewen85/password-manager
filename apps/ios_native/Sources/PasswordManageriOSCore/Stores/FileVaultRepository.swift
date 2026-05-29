@@ -111,11 +111,16 @@ struct FileVaultRepository {
         return exportURL
     }
 
-    func saveEntryExport(_ entry: VaultEntry, at date: Date = Date()) throws -> URL {
+    func saveEntryExport(
+        _ entry: VaultEntry,
+        selectedFieldIDs: Set<String>? = nil,
+        at date: Date = Date()
+    ) throws -> URL {
+        let exportedEntry = selectedFieldIDs.map { entry.keepingExportFields($0) } ?? entry
         let export = ScopedVaultExport(
             scope: .item,
             exportedAt: date,
-            item: entry,
+            item: exportedEntry,
             category: nil,
             items: nil
         )

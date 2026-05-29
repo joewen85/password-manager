@@ -3,6 +3,7 @@ package com.example.passwordmanagernative.sync
 import java.net.SocketTimeoutException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 class RemoteSyncClientTest {
@@ -63,6 +64,43 @@ class RemoteSyncClientTest {
         assertEquals("application/json", request.headers["Content-Type"])
         assertEquals("""{"revision":2}""", request.body)
         assertNull(request.headers["Authorization"])
+    }
+
+    @Test
+    fun webDavMetadataUsesHeadAndBuildsFingerprint() {
+        val transport = FakeRemoteSyncTransport(
+            responses = ArrayDeque(
+                listOf(
+                    Result.success(
+                        RemoteSyncHttpResponse(
+                            statusCode = 200,
+                            headers = mapOf(
+                                "ETag" to "\"abc123\"",
+                                "Last-Modified" to "Wed, 28 May 2026 10:00:00 GMT",
+                                "Content-Length" to "42",
+                            ),
+                        )
+                    )
+                )
+            )
+        )
+        val client = WebDavSyncClient(
+            baseUrl = "https://example.com/root/",
+            remotePath = "folder/vault.json",
+            username = "alice",
+            password = "secret",
+            transport = transport,
+        )
+
+        val metadata = client.metadata()
+
+        assertEquals(200, metadata.statusCode)
+        assertEquals("\"abc123\"", metadata.eTag)
+        assertEquals("Wed, 28 May 2026 10:00:00 GMT", metadata.lastModified)
+        assertEquals(42, metadata.contentLength)
+        assertEquals("etag:\"abc123\"|modified:Wed, 28 May 2026 10:00:00 GMT|length:42", assertNotNull(metadata.fingerprint))
+        assertEquals("HEAD", transport.requests.single().method)
+        assertEquals("Basic YWxpY2U6c2VjcmV0", transport.requests.single().headers["Authorization"])
     }
 
     @Test

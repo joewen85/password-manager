@@ -130,6 +130,13 @@ struct CustomField: Identifiable, Codable, Equatable, Sendable {
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
         value = try container.decodeIfPresent(String.self, forKey: .value) ?? ""
     }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id.uuidString.lowercased(), forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(value, forKey: .value)
+    }
 }
 
 enum VaultPayload: Codable, Equatable, Sendable {
@@ -260,6 +267,21 @@ struct VaultEntry: Identifiable, Codable, Equatable, Sendable {
         deletedAt = try container.decodeIfPresent(Date.self, forKey: .deletedAt)
         version = try container.decodeIfPresent([String: Int].self, forKey: .version) ?? [:]
         updatedBy = try container.decodeIfPresent(String.self, forKey: .updatedBy) ?? "macos-native"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id.uuidString.lowercased(), forKey: .id)
+        try container.encode(label, forKey: .label)
+        try container.encode(type, forKey: .type)
+        try container.encode(payload, forKey: .payload)
+        try container.encode(customFields, forKey: .customFields)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encode(isDeleted, forKey: .isDeleted)
+        try container.encodeIfPresent(deletedAt, forKey: .deletedAt)
+        try container.encode(version, forKey: .version)
+        try container.encode(updatedBy, forKey: .updatedBy)
     }
 }
 

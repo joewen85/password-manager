@@ -108,6 +108,8 @@ data class SyncSettings(
     val lastSyncAt: Instant?,
     val lastSyncStatus: String?,
     val lastSyncMessage: String?,
+    val lastRemoteFingerprint: String?,
+    val hasLocalChanges: Boolean,
     val logs: List<SyncLogEntry>,
 ) {
     val syncSecrets: SyncSecretBundle
@@ -148,6 +150,8 @@ data class SyncSettings(
             .put("lastSyncAt", lastSyncAt?.toString())
             .put("lastSyncStatus", lastSyncStatus)
             .put("lastSyncMessage", lastSyncMessage)
+            .put("lastRemoteFingerprint", lastRemoteFingerprint)
+            .put("hasLocalChanges", hasLocalChanges)
             .put(
                 "logs",
                 JSONArray(
@@ -182,6 +186,8 @@ data class SyncSettings(
                 lastSyncAt = null,
                 lastSyncStatus = null,
                 lastSyncMessage = null,
+                lastRemoteFingerprint = null,
+                hasLocalChanges = false,
                 logs = emptyList(),
             )
 
@@ -218,6 +224,8 @@ data class SyncSettings(
                 lastSyncAt = json.optionalString("lastSyncAt")?.let(Instant::parse),
                 lastSyncStatus = json.optionalString("lastSyncStatus"),
                 lastSyncMessage = json.optionalString("lastSyncMessage"),
+                lastRemoteFingerprint = json.optionalString("lastRemoteFingerprint"),
+                hasLocalChanges = json.optBoolean("hasLocalChanges", defaults.hasLocalChanges),
                 logs = json.optJSONArray("logs")?.toSyncLogs().orEmpty(),
             )
         }

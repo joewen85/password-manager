@@ -2,6 +2,7 @@ import SwiftUI
 
 struct UnlockView: View {
     @Bindable var store: VaultStore
+    @AppStorage("biometric_unlock_enabled") private var biometricUnlockEnabled = false
     @State private var password = ""
     @State private var confirmation = ""
     @State private var totpCode = ""
@@ -9,6 +10,8 @@ struct UnlockView: View {
     @State private var pendingBiometricPassword = ""
     @State private var isShowingEnableBiometricPrompt = false
     @State private var isAuthenticatingWithBiometrics = false
+    @State private var biometricFailureCount = 0
+    @State private var biometricFallbackRequired = false
 
     private let biometricCredentialStore = iOSBiometricCredentialStore()
 
@@ -57,10 +60,12 @@ struct UnlockView: View {
             .keyboardShortcut(.defaultAction)
 
             if store.hasMasterKey,
+               biometricUnlockEnabled,
+               !biometricFallbackRequired,
                biometricCredentialStore.hasSavedCredential(),
                biometricCredentialStore.canAuthenticate() {
                 Button("Unlock with Face ID / Touch ID") {
-                    unlockWithBiometrics()
+                    unlockWithBiometrics(automatic: false)
                 }
                 .disabled(isAuthenticatingWithBiometrics)
             }
@@ -76,6 +81,14 @@ struct UnlockView: View {
         } message: {
             Text("Use this device's biometric authentication instead of entering the master password.")
         }
+        .task {
+            startAutomaticBiometricUnlockIfNeeded()
+        }
+        .onChange(of: store.isUnlocked) { _, isUnlocked in
+            if !isUnlocked {
+                startAutomaticBiometricUnlockIfNeeded()
+            }
+        }
     }
 
     private func submit() {
@@ -89,6 +102,8 @@ struct UnlockView: View {
             password = ""
             confirmation = ""
             totpCode = ""
+            biometricFailureCount = 0
+            biometricFallbackRequired = false
             offerBiometricUnlock(for: enteredPassword)
         } else {
             errorMessage = "Operation failed. Check the password, confirmation, and 2FA code."
@@ -115,6 +130,7 @@ struct UnlockView: View {
                     reason: "Enable biometric unlock for Password Manager."
                 )
                 await MainActor.run {
+                    biometricUnlockEnabled = true
                     errorMessage = nil
                 }
             } catch {
@@ -125,7 +141,21 @@ struct UnlockView: View {
         }
     }
 
-    private func unlockWithBiometrics() {
+    private func startAutomaticBiometricUnlockIfNeeded() {
+        guard store.hasMasterKey,
+              !store.isUnlocked,
+              !store.requireTotp,
+              biometricUnlockEnabled,
+              !biometricFallbackRequired,
+              !isAuthenticatingWithBiometrics,
+              biometricCredentialStore.hasSavedCredential(),
+              biometricCredentialStore.canAuthenticate() else {
+            return
+        }
+        unlockWithBiometrics(automatic: true)
+    }
+
+    private func unlockWithBiometrics(automatic: Bool) {
         isAuthenticatingWithBiometrics = true
         Task {
             do {
@@ -139,14 +169,23 @@ struct UnlockView: View {
                         password = ""
                         confirmation = ""
                         totpCode = ""
+                        biometricFailureCount = 0
+                        biometricFallbackRequired = false
                     } else {
+                        biometricFallbackRequired = true
                         errorMessage = "Operation failed. Check the password, confirmation, and 2FA code."
                     }
                     isAuthenticatingWithBiometrics = false
                 }
             } catch {
                 await MainActor.run {
-                    errorMessage = error.localizedDescription
+                    biometricFailureCount += 1
+                    if biometricFailureCount >= 3 {
+                        biometricFallbackRequired = true
+                        errorMessage = "Biometric unlock failed 3 times. Enter the master password."
+                    } else if !automatic {
+                        errorMessage = error.localizedDescription
+                    }
                     isAuthenticatingWithBiometrics = false
                 }
             }

@@ -6,6 +6,7 @@ import {
   CreateServerInput,
   CreateServiceInput,
   CredentialPayload,
+  CustomField,
   SecuritySettings,
   ServerPayload,
   ServicePayload,
@@ -48,6 +49,11 @@ interface EntryCategoryCarrier {
   metadataCategory?: string;
 }
 
+interface ExportFieldOption {
+  id: string;
+  label: string;
+}
+
 @Entry
 @Component
 struct Index {
@@ -55,6 +61,10 @@ struct Index {
   private biometricCredentialStore: BiometricCredentialStore | null = null;
   private hostContext: Context | null = null;
   private searchInputController: TextInputController = new TextInputController();
+  private autoSyncTimerId: number = -1;
+  private idleLockTimerId: number = -1;
+  private lastActivityAt: number = Date.now();
+  private biometricAutoPrompted: boolean = false;
 
   @State private ready: boolean = false;
   @State private hasMasterKey: boolean = false;
@@ -67,6 +77,8 @@ struct Index {
   @State private unlockFailedAttempts: number = 0;
   @State private biometricUnlockAvailable: boolean = false;
   @State private biometricUnlockEnabled: boolean = false;
+  @State private biometricUnlockRequested: boolean = false;
+  @State private biometricFailureCount: number = 0;
   @State private biometricBusy: boolean = false;
   @State private syncBusy: boolean = false;
   @State private syncProviderType: SyncProviderType = SyncProviderType.NONE;
@@ -77,6 +89,8 @@ struct Index {
   @State private syncWebdavPath: string = '/vault.json';
   @State private syncPresignedDownloadUrl: string = '';
   @State private syncPresignedUploadUrl: string = '';
+  @State private syncAutoEnabled: boolean = false;
+  @State private syncAutoOnUnlock: boolean = true;
   @State private syncIntervalValue: string = '30';
   @State private syncIntervalUnit: SyncIntervalUnit = SyncIntervalUnit.MINUTES;
   @State private syncStatus: string = '未同步';
@@ -84,6 +98,7 @@ struct Index {
   @State private syncLogs: string[] = [];
   @State private securityRequireTotp: boolean = false;
   @State private securityTotpSecret: string = '';
+  @State private securityIdleAutoLockMinutes: string = '0';
   @State private toastMessage: string = '';
   @State private toastVersion: number = 0;
 
@@ -102,7 +117,13 @@ struct Index {
   @State private draftType: DraftType = 'credential';
   @State private draftLabel: string = '';
   @State private draftCategory: string = '';
-  @State private draftTags: string = '';
+  @State private draftCategorySearch: string = '';
+  @State private draftTagSearch: string = '';
+  @State private draftSelectedTags: string[] = [];
+  @State private draftCustomFields: CustomField[] = [];
+  @State private editingEntryId: string = '';
+  @State private exportEntryId: string = '';
+  @State private exportSelectedFieldIds: string[] = [];
 
   @State private draftCredentialUsername: string = '';
   @State private draftCredentialPassword: string = '';
@@ -139,6 +160,14 @@ struct Index {
       this.refreshSyncState();
     }
     this.ready = true;
+    this.configureAutoSyncTimer();
+    this.configureIdleLockTimer();
+    this.scheduleBiometricUnlockPrompt();
+  }
+
+  aboutToDisappear(): void {
+    this.stopAutoSyncTimer();
+    this.stopIdleLockTimer();
   }
 
   build() {
@@ -157,7 +186,10 @@ struct Index {
     .width('100%')
     .height('100%')
     .padding(16)
-    .backgroundColor('#F4F6F0');
+    .backgroundColor('#F4F6F0')
+    .onClick(() => {
+      this.recordUserActivity();
+    });
   }
 
   @Builder
@@ -179,7 +211,9 @@ struct Index {
         .fontSize(26)
         .fontWeight(FontWeight.Bold);
 
-      Text(this.hasMasterKey ? '请输入主密码继续。' : '首次使用，请设置主密码。')
+      Text(this.hasMasterKey && this.biometricUnlockEnabled && this.biometricUnlockAvailable && this.biometricFailureCount < 3
+        ? '正在调用生物识别；失败 3 次后请输入主密码。'
+        : (this.hasMasterKey ? '请输入主密码继续。' : '首次使用，请设置主密码。'))
         .fontSize(14)
         .fontColor('#566060');
 
@@ -229,8 +263,8 @@ struct Index {
           this.onUnlockSubmit();
         });
 
-      if (this.hasMasterKey && this.biometricUnlockEnabled && this.biometricUnlockAvailable) {
-        Button(this.biometricBusy ? '正在验证...' : '使用生物识别解锁')
+      if (this.hasMasterKey && this.biometricUnlockEnabled && this.biometricUnlockAvailable && this.biometricFailureCount > 0 && this.biometricFailureCount < 3) {
+        Button(this.biometricBusy ? '正在验证...' : '重试生物识别')
           .type(ButtonType.Normal)
           .width('100%')
           .height(44)
@@ -282,15 +316,7 @@ struct Index {
       Button('锁定')
         .type(ButtonType.Normal)
         .onClick(() => {
-          this.controller().lock();
-          this.unlocked = false;
-          this.password = '';
-          this.confirmPassword = '';
-          this.unlockTotpCode = '';
-          this.syncBusy = false;
-          this.syncStatus = '未同步';
-          this.syncLogs = [];
-          this.refreshUnlockGuardState();
+          this.lockVault();
         });
     }
     .width('100%');
@@ -323,6 +349,24 @@ struct Index {
         .onClick(() => {
           this.onSaveSecuritySettings();
         });
+
+      Row({ space: 8 }) {
+        Text('生物识别').fontSize(12).fontColor('#6F7A7C');
+        Button(this.biometricUnlockRequested ? '已开启' : '已关闭')
+          .enabled(this.biometricUnlockAvailable)
+          .onClick(() => {
+            this.biometricUnlockRequested = !this.biometricUnlockRequested;
+          })
+          .backgroundColor(this.biometricUnlockRequested ? '#2F7F79' : '#CED8D9');
+      }
+
+      TextInput({ placeholder: '闲置自动锁定(分钟，0为关闭)', text: $$this.securityIdleAutoLockMinutes })
+        .type(InputType.Number)
+        .width('100%')
+        .height(42)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(10)
+        .padding({ left: 10, right: 10 });
 
       Text(this.securityRequireTotp ? '解锁时将强制校验动态验证码。' : '当前未启用2FA。')
         .fontSize(12)
@@ -404,6 +448,16 @@ struct Index {
           .backgroundColor('#FFFFFF')
           .borderRadius(10)
           .padding({ left: 10, right: 10 });
+      }
+
+      Row({ space: 8 }) {
+        Text('自动同步').fontSize(12).fontColor('#6F7A7C');
+        Button(this.syncAutoEnabled ? '已开启' : '已关闭')
+          .onClick(() => this.syncAutoEnabled = !this.syncAutoEnabled)
+          .backgroundColor(this.syncAutoEnabled ? '#2F7F79' : '#CED8D9');
+        Button(this.syncAutoOnUnlock ? '解锁后同步' : '解锁后不同步')
+          .onClick(() => this.syncAutoOnUnlock = !this.syncAutoOnUnlock)
+          .backgroundColor(this.syncAutoOnUnlock ? '#2F7F79' : '#CED8D9');
       }
 
       Row({ space: 8 }) {
@@ -531,13 +585,25 @@ struct Index {
   @Builder
   private NewEntrySection() {
     Column({ space: 8 }) {
-      Text('新建条目').fontSize(18).fontWeight(FontWeight.Medium);
+      Row() {
+        Text(this.editingEntryId.length > 0 ? '编辑条目' : '新建条目')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium);
+        Blank();
+        if (this.editingEntryId.length > 0) {
+          Button('取消编辑')
+            .height(30)
+            .onClick(() => {
+              this.clearEntryDraft();
+            });
+        }
+      }
       Text('条目类型').fontSize(12).fontColor('#5A6668');
 
       Row({ space: 8 }) {
-        Button('账号').onClick(() => this.draftType = 'credential').backgroundColor(this.draftType === 'credential' ? '#2F7F79' : '#CED8D9');
-        Button('服务器').onClick(() => this.draftType = 'server').backgroundColor(this.draftType === 'server' ? '#2F7F79' : '#CED8D9');
-        Button('服务').onClick(() => this.draftType = 'service').backgroundColor(this.draftType === 'service' ? '#2F7F79' : '#CED8D9');
+        Button('账号').enabled(this.editingEntryId.length === 0).onClick(() => this.draftType = 'credential').backgroundColor(this.draftType === 'credential' ? '#2F7F79' : '#CED8D9');
+        Button('服务器').enabled(this.editingEntryId.length === 0).onClick(() => this.draftType = 'server').backgroundColor(this.draftType === 'server' ? '#2F7F79' : '#CED8D9');
+        Button('服务').enabled(this.editingEntryId.length === 0).onClick(() => this.draftType = 'service').backgroundColor(this.draftType === 'service' ? '#2F7F79' : '#CED8D9');
       }
 
       TextInput({ placeholder: '标题（必填）', text: $$this.draftLabel })
@@ -547,28 +613,8 @@ struct Index {
         .borderRadius(10)
         .padding({ left: 10, right: 10 });
 
-      TextInput({ placeholder: '分类（可选）', text: $$this.draftCategory })
-        .width('100%')
-        .height(42)
-        .backgroundColor('#FFFFFF')
-        .borderRadius(10)
-        .padding({ left: 10, right: 10 });
-
-      if (this.categories.length > 0) {
-        Text('可直接输入新分类，或点选已有分类')
-          .fontSize(12)
-          .fontColor('#5A6668');
-        this.CategoryDraftPills(this.draftCategory.trim(), (category: string) => {
-          this.draftCategory = category;
-        });
-      }
-
-      TextInput({ placeholder: '标签，逗号分隔', text: $$this.draftTags })
-        .width('100%')
-        .height(42)
-        .backgroundColor('#FFFFFF')
-        .borderRadius(10)
-        .padding({ left: 10, right: 10 });
+      this.EntryCategorySelect();
+      this.EntryTagMultiSelect();
 
       if (this.draftType === 'credential') {
         TextInput({ placeholder: '用户名', text: $$this.draftCredentialUsername })
@@ -628,11 +674,13 @@ struct Index {
           .padding({ left: 10, right: 10 });
       }
 
-      Button('保存条目')
+      this.CustomFieldsEditor();
+
+      Button(this.editingEntryId.length > 0 ? '保存修改' : '保存条目')
         .type(ButtonType.Capsule)
         .width('100%')
         .onClick(() => {
-          this.onCreateEntry();
+          this.onSaveEntry();
         });
     }
     .width('100%')
@@ -806,6 +854,8 @@ struct Index {
                 Text('标签: -').fontSize(11).fontColor('#6D787A');
               }
 
+              this.EntryOverview(entry);
+
               if (this.entryMatchLabels(entry).length > 0) {
                 this.EntryMatchPills(entry);
               }
@@ -819,7 +869,15 @@ struct Index {
                   .backgroundColor('#D7EAF3')
                   .fontColor('#1F4E6B')
                   .onClick(() => {
-                    this.onExportEntry(entry);
+                    this.toggleExportPanel(entry);
+                  });
+                Button('编辑')
+                  .type(ButtonType.Normal)
+                  .margin({ right: 8 })
+                  .backgroundColor('#DDE9E4')
+                  .fontColor('#1F4E46')
+                  .onClick(() => {
+                    this.startEditEntry(entry);
                   });
                 Button('删除')
                   .type(ButtonType.Normal)
@@ -828,6 +886,10 @@ struct Index {
                   .onClick(() => {
                     this.onDeleteEntry(entry.id);
                   });
+              }
+
+              if (this.exportEntryId === entry.id) {
+                this.EntryExportPanel(entry);
               }
             }
             .width('100%')
@@ -860,6 +922,66 @@ struct Index {
           .borderRadius(999);
       }, (tag: string, index: number) => `${tag}-${index}`);
     }
+  }
+
+  @Builder
+  private EntryOverview(entry: VaultEntry) {
+    Column({ space: 4 }) {
+      Text('概览').fontSize(12).fontWeight(FontWeight.Medium).fontColor('#1F2B2D');
+      Text(`标签: ${entry.tags.length > 0 ? entry.tags.join(', ') : '-'}`)
+        .fontSize(11)
+        .fontColor('#5E6A6C')
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis });
+      if (entry.customFields.length > 0) {
+        Text(`自定义字段: ${entry.customFields.map((field: CustomField) => field.name).join(', ')}`)
+          .fontSize(11)
+          .fontColor('#5E6A6C')
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis });
+      }
+    }
+    .width('100%')
+    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+    .backgroundColor('#F6F8F6')
+    .borderRadius(10);
+  }
+
+  @Builder
+  private EntryExportPanel(entry: VaultEntry) {
+    Column({ space: 8 }) {
+      Text('选择导出字段').fontSize(12).fontWeight(FontWeight.Medium).fontColor('#1F2B2D');
+      Flex({ wrap: FlexWrap.Wrap }) {
+        ForEach(this.exportFieldOptions(entry), (option: ExportFieldOption) => {
+          this.FilterPill(option.label, this.exportSelectedFieldIds.includes(option.id), () => {
+            this.toggleExportField(option.id);
+          });
+        }, (option: ExportFieldOption) => option.id);
+      }
+      Row({ space: 8 }) {
+        Button('导出全部')
+          .type(ButtonType.Normal)
+          .layoutWeight(1)
+          .backgroundColor('#D7EAF3')
+          .fontColor('#1F4E6B')
+          .onClick(() => {
+            this.onExportEntryAll(entry);
+          });
+        Button('导出所选')
+          .type(ButtonType.Normal)
+          .layoutWeight(1)
+          .enabled(this.exportSelectedFieldIds.length > 0)
+          .backgroundColor(this.exportSelectedFieldIds.length > 0 ? '#2F7F79' : '#CED8D9')
+          .fontColor('#FFFFFF')
+          .onClick(() => {
+            this.onExportEntrySelected(entry);
+          });
+      }
+    }
+    .width('100%')
+    .padding(10)
+    .backgroundColor('#F6F8F6')
+    .borderRadius(10);
   }
 
   @Builder
@@ -913,6 +1035,8 @@ struct Index {
       }
       this.hasMasterKey = true;
       this.unlocked = true;
+      this.biometricFailureCount = 0;
+      this.biometricAutoPrompted = false;
       this.password = '';
       this.confirmPassword = '';
       this.unlockTotpCode = '';
@@ -921,6 +1045,8 @@ struct Index {
       this.refreshSyncState();
       this.refreshUnlockGuardState();
       this.offerBiometricUnlock(password);
+      this.configureAutoSyncTimer();
+      this.configureIdleLockTimer();
       this.toast('密码库已初始化');
       return;
     }
@@ -932,6 +1058,8 @@ struct Index {
       return;
     }
     this.unlocked = true;
+    this.biometricFailureCount = 0;
+    this.biometricAutoPrompted = false;
     this.password = '';
     this.confirmPassword = '';
     this.unlockTotpCode = '';
@@ -940,12 +1068,14 @@ struct Index {
     this.refreshSyncState();
     this.refreshUnlockGuardState();
     this.offerBiometricUnlock(password);
+    this.configureAutoSyncTimer();
+    this.configureIdleLockTimer();
     this.schedulePostUnlockRefresh();
   }
 
   private async onBiometricUnlock(): Promise<void> {
     const store = this.biometricCredentialStore;
-    if (store === null || this.biometricBusy) {
+    if (store === null || this.biometricBusy || this.biometricFailureCount >= 3) {
       return;
     }
     this.biometricBusy = true;
@@ -953,11 +1083,14 @@ struct Index {
       const savedPassword = await store.readPassword();
       const unlocked = await this.controller().unlock(savedPassword, this.unlockTotpCode);
       if (!unlocked) {
+        this.biometricFailureCount += 1;
         this.refreshUnlockGuardState();
         this.toast(this.controller().getLastUnlockError());
         return;
       }
       this.unlocked = true;
+      this.biometricFailureCount = 0;
+      this.biometricAutoPrompted = false;
       this.password = '';
       this.confirmPassword = '';
       this.unlockTotpCode = '';
@@ -965,17 +1098,23 @@ struct Index {
       this.refreshSecurityState();
       this.refreshSyncState();
       this.refreshUnlockGuardState();
+      this.configureAutoSyncTimer();
+      this.configureIdleLockTimer();
       this.schedulePostUnlockRefresh();
     } catch (error) {
+      this.biometricFailureCount += 1;
       this.toast(`${error}`);
     } finally {
       this.biometricBusy = false;
+      if (!this.unlocked && this.biometricFailureCount >= 3) {
+        this.toast('生物识别失败 3 次，请输入主密码解锁');
+      }
     }
   }
 
   private async offerBiometricUnlock(password: string): Promise<void> {
     const store = this.biometricCredentialStore;
-    if (store === null || this.biometricUnlockEnabled || !this.biometricUnlockAvailable) {
+    if (store === null || this.biometricUnlockEnabled || !this.biometricUnlockAvailable || !this.biometricUnlockRequested) {
       return;
     }
     try {
@@ -987,15 +1126,16 @@ struct Index {
     }
   }
 
-  private async onCreateEntry(): Promise<void> {
+  private async onSaveEntry(): Promise<void> {
     const label = this.draftLabel.trim();
     if (label.length === 0) {
       this.toast('标题必填');
       return;
     }
 
-    const tags = this.parseTags(this.draftTags);
+    const tags = [...this.draftSelectedTags];
     const category = this.draftCategory.trim();
+    const customFields = this.normalizedDraftCustomFields();
 
     if (this.draftType === 'credential') {
       const input: CreateCredentialInput = {
@@ -1008,9 +1148,14 @@ struct Index {
         secretKey: '',
         notes: '',
         tags: tags,
-        category: category
+        category: category,
+        customFields: customFields,
       };
-      await this.controller().addCredential(input);
+      if (this.editingEntryId.length > 0) {
+        await this.controller().updateCredentialEntry(this.editingEntryId, input);
+      } else {
+        await this.controller().addCredential(input);
+      }
     }
 
     if (this.draftType === 'server') {
@@ -1026,9 +1171,14 @@ struct Index {
         location: '',
         notes: '',
         tags: tags,
-        category: category
+        category: category,
+        customFields: customFields,
       };
-      await this.controller().addServer(input);
+      if (this.editingEntryId.length > 0) {
+        await this.controller().updateServerEntry(this.editingEntryId, input);
+      } else {
+        await this.controller().addServer(input);
+      }
     }
 
     if (this.draftType === 'service') {
@@ -1042,9 +1192,14 @@ struct Index {
         accounts: [],
         notes: '',
         tags: tags,
-        category: category
+        category: category,
+        customFields: customFields,
       };
-      await this.controller().addService(input);
+      if (this.editingEntryId.length > 0) {
+        await this.controller().updateServiceEntry(this.editingEntryId, input);
+      } else {
+        await this.controller().addService(input);
+      }
     }
 
     this.clearEntryDraft();
@@ -1105,11 +1260,25 @@ struct Index {
     }
   }
 
-  private async onExportEntry(entry: VaultEntry): Promise<void> {
+  private async onExportEntryAll(entry: VaultEntry): Promise<void> {
     try {
       const data = this.controller().exportEntryData(entry.id);
       const filePath = await this.saveJsonExportFile('entry-export', entry.label, data);
       this.toast(`条目已导出到 ${filePath}`);
+    } catch (error) {
+      this.toast(`导出失败: ${error}`);
+    }
+  }
+
+  private async onExportEntrySelected(entry: VaultEntry): Promise<void> {
+    if (this.exportSelectedFieldIds.length === 0) {
+      this.toast('请先选择导出字段');
+      return;
+    }
+    try {
+      const data = this.controller().exportEntryData(entry.id, this.exportSelectedFieldIds);
+      const filePath = await this.saveJsonExportFile('entry-export-selected', entry.label, data);
+      this.toast(`条目所选字段已导出到 ${filePath}`);
     } catch (error) {
       this.toast(`导出失败: ${error}`);
     }
@@ -1201,13 +1370,13 @@ struct Index {
         webdavPath: this.syncWebdavPath.trim(),
         presignedDownloadUrl: this.syncPresignedDownloadUrl.trim(),
         presignedUploadUrl: this.syncPresignedUploadUrl.trim(),
-        autoSyncEnabled: current.autoSyncEnabled,
+        autoSyncEnabled: this.syncAutoEnabled,
         autoSyncIntervalMinutes: this.syncIntervalUnit === SyncIntervalUnit.SECONDS
           ? Math.max(Math.ceil(Math.max(Number(this.syncIntervalValue) || 0, 1) / 60), 1)
           : Math.max(Math.floor(Number(this.syncIntervalValue) || 0), 1),
         autoSyncIntervalValue: Math.max(Math.floor(Number(this.syncIntervalValue) || 0), 1),
         autoSyncIntervalUnit: this.syncIntervalUnit,
-        autoSyncOnUnlock: current.autoSyncOnUnlock,
+        autoSyncOnUnlock: this.syncAutoOnUnlock,
         conflictStrategy: this.syncConflictStrategy,
         syncMasterKey: current.syncMasterKey,
         deviceId: current.deviceId,
@@ -1215,10 +1384,13 @@ struct Index {
         lastSyncAt: current.lastSyncAt,
         lastSyncStatus: current.lastSyncStatus,
         lastSyncMessage: current.lastSyncMessage,
+        lastRemoteFingerprint: current.lastRemoteFingerprint,
+        hasLocalChanges: current.hasLocalChanges,
         logs: current.logs,
       };
       await this.controller().updateSyncSettings(updated);
       this.refreshSyncState();
+      this.configureAutoSyncTimer();
       this.toast('同步设置已保存');
     } catch (error) {
       this.toast(`保存失败: ${error}`);
@@ -1238,6 +1410,44 @@ struct Index {
     }
   }
 
+  private configureAutoSyncTimer(): void {
+    this.stopAutoSyncTimer();
+    if (!this.unlocked || !this.syncAutoEnabled || this.syncProviderType === SyncProviderType.NONE) {
+      return;
+    }
+    this.autoSyncTimerId = setInterval(() => {
+      this.runScheduledAutoSync();
+    }, 1000);
+  }
+
+  private stopAutoSyncTimer(): void {
+    if (this.autoSyncTimerId < 0) {
+      return;
+    }
+    clearInterval(this.autoSyncTimerId);
+    this.autoSyncTimerId = -1;
+  }
+
+  private async runScheduledAutoSync(): Promise<void> {
+    if (!this.unlocked || this.syncBusy) {
+      return;
+    }
+    if (!this.controller().shouldRunAutoSync()) {
+      return;
+    }
+    this.syncBusy = true;
+    try {
+      await this.controller().runAutoSyncIfNeeded();
+    } catch (error) {
+      console.error(`Scheduled auto sync failed: ${error}`);
+    } finally {
+      this.refreshData();
+      this.refreshSyncState();
+      this.syncBusy = false;
+      this.configureAutoSyncTimer();
+    }
+  }
+
   private async onSaveSecuritySettings(): Promise<void> {
     try {
       const secret = this.securityTotpSecret.trim().replace(/\s+/g, '').toUpperCase();
@@ -1248,9 +1458,20 @@ struct Index {
       const settings: SecuritySettings = {
         requireTotp: this.securityRequireTotp,
         totpSecret: this.securityRequireTotp ? secret : '',
+        biometricUnlockEnabled: this.biometricUnlockRequested,
+        idleAutoLockMinutes: Math.max(Math.floor(Number(this.securityIdleAutoLockMinutes) || 0), 0),
       };
       await this.controller().updateSecuritySettings(settings);
+      if (!this.biometricUnlockRequested) {
+        const store = this.biometricCredentialStore;
+        if (store !== null) {
+          await store.clear();
+        }
+        this.biometricFailureCount = 0;
+      }
       this.refreshSecurityState();
+      await this.refreshBiometricState();
+      this.configureIdleLockTimer();
       this.toast('安全设置已保存');
     } catch (error) {
       this.toast(`保存失败: ${error}`);
@@ -1261,6 +1482,157 @@ struct Index {
     this.entries = this.controller().getEntries();
     this.tags = this.controller().getTags();
     this.categories = this.controller().getCategories();
+  }
+
+  @Builder
+  private EntryCategorySelect() {
+    Column({ space: 6 }) {
+      Text('分类').fontSize(12).fontColor('#5A6668');
+      if (this.draftCategory.length > 0) {
+        Row({ space: 6 }) {
+          Text(`已选: ${this.draftCategory}`)
+            .fontSize(12)
+            .fontColor('#0F4C5C')
+            .layoutWeight(1);
+          Button('清除')
+            .fontSize(12)
+            .height(28)
+            .onClick(() => {
+              this.draftCategory = '';
+              this.draftCategorySearch = '';
+            });
+        }
+      }
+      Row({ space: 8 }) {
+        TextInput({ placeholder: '搜索分类', text: $$this.draftCategorySearch })
+          .layoutWeight(1)
+          .height(42)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(10)
+          .padding({ left: 10, right: 10 });
+        Button('+')
+          .width(42)
+          .height(42)
+          .enabled(this.canCreateDraftCategory())
+          .onClick(() => {
+            this.createDraftCategoryFromSearch();
+          });
+      }
+      if (this.filteredDraftCategories().length > 0) {
+        Flex({ wrap: FlexWrap.Wrap }) {
+          ForEach(this.filteredDraftCategories(), (category: string) => {
+            this.FilterPill(category, this.draftCategory === category, () => {
+              this.selectDraftCategory(category);
+            });
+          }, (category: string) => category);
+        }
+      } else {
+        Text('没有匹配分类，可点 + 创建')
+          .fontSize(12)
+          .fontColor('#5A6668');
+      }
+    }
+  }
+
+  @Builder
+  private EntryTagMultiSelect() {
+    Column({ space: 6 }) {
+      Text('标签').fontSize(12).fontColor('#5A6668');
+      if (this.draftSelectedTags.length > 0) {
+        Flex({ wrap: FlexWrap.Wrap }) {
+          ForEach(this.draftSelectedTags, (tag: string) => {
+            this.FilterPill(`✓ ${tag}`, true, () => {
+              this.draftTagSearch = tag;
+            });
+          }, (tag: string) => tag);
+        }
+      } else {
+        Text('未选择标签')
+          .fontSize(12)
+          .fontColor('#5A6668');
+      }
+      Row({ space: 8 }) {
+        TextInput({ placeholder: '搜索标签', text: $$this.draftTagSearch })
+          .layoutWeight(1)
+          .height(42)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(10)
+          .padding({ left: 10, right: 10 });
+        Button('+')
+          .width(42)
+          .height(42)
+          .enabled(this.canCreateDraftTag())
+          .onClick(() => {
+            this.createDraftTagFromSearch();
+          });
+      }
+      if (this.filteredDraftTags().length > 0) {
+        Flex({ wrap: FlexWrap.Wrap }) {
+          ForEach(this.filteredDraftTags(), (tag: string) => {
+            this.FilterPill(
+              this.draftSelectedTags.includes(tag) ? `✓ ${tag}` : tag,
+              this.draftSelectedTags.includes(tag),
+              () => {
+                this.toggleDraftTag(tag);
+              },
+            );
+          }, (tag: string) => tag);
+        }
+      } else {
+        Text('没有匹配标签，可点 + 创建')
+          .fontSize(12)
+          .fontColor('#5A6668');
+      }
+    }
+  }
+
+  @Builder
+  private CustomFieldsEditor() {
+    Column({ space: 6 }) {
+      Row() {
+        Text('自定义字段').fontSize(12).fontColor('#5A6668');
+        Blank();
+        Button('+')
+          .width(42)
+          .height(32)
+          .onClick(() => {
+            this.addDraftCustomField();
+          });
+      }
+      if (this.draftCustomFields.length === 0) {
+        Text('未添加自定义字段')
+          .fontSize(12)
+          .fontColor('#5A6668');
+      }
+      ForEach(this.draftCustomFields, (field: CustomField) => {
+        Row({ space: 8 }) {
+          TextInput({ placeholder: '字段名称', text: field.name })
+            .layoutWeight(1)
+            .height(42)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(10)
+            .padding({ left: 10, right: 10 })
+            .onChange((value: string) => {
+              this.updateDraftCustomFieldName(field.id, value);
+            });
+          TextInput({ placeholder: '字段值', text: field.value })
+            .layoutWeight(1)
+            .height(42)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(10)
+            .padding({ left: 10, right: 10 })
+            .onChange((value: string) => {
+              this.updateDraftCustomFieldValue(field.id, value);
+            });
+          Button('x')
+            .width(36)
+            .height(36)
+            .onClick(() => {
+              this.removeDraftCustomField(field.id);
+            });
+        }
+      }, (field: CustomField) => field.id);
+    }
   }
 
   private async saveJsonExportFile(prefix: string, name: string, contents: string): Promise<string> {
@@ -1423,6 +1795,8 @@ struct Index {
     this.syncWebdavPath = settings.webdavPath;
     this.syncPresignedDownloadUrl = settings.presignedDownloadUrl;
     this.syncPresignedUploadUrl = settings.presignedUploadUrl;
+    this.syncAutoEnabled = settings.autoSyncEnabled;
+    this.syncAutoOnUnlock = settings.autoSyncOnUnlock;
     this.syncIntervalValue = String(settings.autoSyncIntervalValue ?? settings.autoSyncIntervalMinutes ?? 30);
     this.syncIntervalUnit = settings.autoSyncIntervalUnit ?? SyncIntervalUnit.MINUTES;
     this.syncRevision = settings.lastSyncRevision;
@@ -1444,6 +1818,8 @@ struct Index {
     const settings = this.controller().getSecuritySettings();
     this.securityRequireTotp = settings.requireTotp;
     this.securityTotpSecret = settings.totpSecret;
+    this.biometricUnlockRequested = settings.biometricUnlockEnabled === true;
+    this.securityIdleAutoLockMinutes = String(settings.idleAutoLockMinutes ?? 0);
   }
 
   private refreshUnlockGuardState(): void {
@@ -1460,7 +1836,11 @@ struct Index {
       return;
     }
     this.biometricUnlockAvailable = await store.canAuthenticate();
-    this.biometricUnlockEnabled = await store.hasSavedCredential();
+    const hasCredential = await store.hasSavedCredential();
+    if (!this.unlocked && hasCredential) {
+      this.biometricUnlockRequested = true;
+    }
+    this.biometricUnlockEnabled = this.biometricUnlockRequested && hasCredential;
   }
 
   private parseTags(raw: string): string[] {
@@ -1472,10 +1852,81 @@ struct Index {
     return normalized;
   }
 
+  private filteredDraftCategories(): string[] {
+    const query = this.draftCategorySearch.trim().toLowerCase();
+    if (query.length === 0) {
+      return this.categories.slice(0, 12);
+    }
+    return this.categories
+      .filter((category: string) => category.toLowerCase().includes(query))
+      .slice(0, 12);
+  }
+
+  private canCreateDraftCategory(): boolean {
+    const value = this.draftCategorySearch.trim();
+    return value.length > 0 &&
+      !this.categories.some((category: string) => category.toLowerCase() === value.toLowerCase());
+  }
+
+  private async createDraftCategoryFromSearch(): Promise<void> {
+    if (!this.canCreateDraftCategory()) {
+      return;
+    }
+    const category = this.draftCategorySearch.trim();
+    await this.controller().addCategory(category);
+    this.refreshData();
+    this.selectDraftCategory(category);
+  }
+
+  private selectDraftCategory(category: string): void {
+    this.draftCategory = category;
+    this.draftCategorySearch = '';
+  }
+
+  private filteredDraftTags(): string[] {
+    const query = this.draftTagSearch.trim().toLowerCase();
+    if (query.length === 0) {
+      return this.tags.slice(0, 12);
+    }
+    return this.tags
+      .filter((tag: string) => tag.toLowerCase().includes(query))
+      .slice(0, 12);
+  }
+
+  private canCreateDraftTag(): boolean {
+    const value = this.draftTagSearch.trim();
+    return value.length > 0 &&
+      !this.tags.some((tag: string) => tag.toLowerCase() === value.toLowerCase()) &&
+      !this.draftSelectedTags.some((tag: string) => tag.toLowerCase() === value.toLowerCase());
+  }
+
+  private async createDraftTagFromSearch(): Promise<void> {
+    if (!this.canCreateDraftTag()) {
+      return;
+    }
+    const tag = this.draftTagSearch.trim();
+    await this.controller().addTag(tag);
+    this.refreshData();
+    this.draftSelectedTags = [...this.draftSelectedTags, tag].sort((left: string, right: string) => left.localeCompare(right));
+    this.draftTagSearch = '';
+  }
+
+  private toggleDraftTag(tag: string): void {
+    if (this.draftSelectedTags.includes(tag)) {
+      this.draftSelectedTags = this.draftSelectedTags.filter((entry: string) => entry !== tag);
+      return;
+    }
+    this.draftSelectedTags = [...this.draftSelectedTags, tag].sort((left: string, right: string) => left.localeCompare(right));
+  }
+
   private clearEntryDraft(): void {
     this.draftLabel = '';
     this.draftCategory = '';
-    this.draftTags = '';
+    this.draftCategorySearch = '';
+    this.draftTagSearch = '';
+    this.draftSelectedTags = [];
+    this.draftCustomFields = [];
+    this.editingEntryId = '';
     this.draftCredentialUsername = '';
     this.draftCredentialPassword = '';
     this.draftServerName = '';
@@ -1484,6 +1935,253 @@ struct Index {
     this.draftServiceName = '';
     this.draftServiceAddress = '';
     this.draftServicePort = '';
+  }
+
+  private startEditEntry(entry: VaultEntry): void {
+    this.clearEntryDraft();
+    this.editingEntryId = entry.id;
+    this.exportEntryId = '';
+    this.draftLabel = entry.label;
+    this.draftCategory = this.entryCategory(entry);
+    this.draftSelectedTags = [...entry.tags];
+    this.draftCustomFields = this.copyCustomFields(entry.customFields);
+
+    if (entry.type === VaultEntryType.CREDENTIAL) {
+      const payload = entry.payload as CredentialPayload;
+      this.draftType = 'credential';
+      this.draftCredentialUsername = payload.username ?? '';
+      this.draftCredentialPassword = payload.password ?? '';
+      return;
+    }
+    if (entry.type === VaultEntryType.SERVER) {
+      const payload = entry.payload as ServerPayload;
+      this.draftType = 'server';
+      this.draftServerName = payload.name ?? '';
+      this.draftServerIp = payload.ipAddress ?? '';
+      this.draftServerPort = payload.port ?? '';
+      return;
+    }
+    const payload = entry.payload as ServicePayload;
+    this.draftType = 'service';
+    this.draftServiceName = payload.name ?? '';
+    this.draftServiceAddress = payload.connectionAddress ?? '';
+    this.draftServicePort = payload.connectionPort ?? '';
+  }
+
+  private addDraftCustomField(): void {
+    const field: CustomField = {
+      id: this.nextUiId(),
+      name: '',
+      value: '',
+    };
+    this.draftCustomFields = [...this.draftCustomFields, field];
+  }
+
+  private updateDraftCustomFieldName(id: string, value: string): void {
+    this.draftCustomFields = this.draftCustomFields.map((field: CustomField) => {
+      if (field.id !== id) {
+        return field;
+      }
+      return {
+        id: field.id,
+        name: value,
+        value: field.value,
+      };
+    });
+  }
+
+  private updateDraftCustomFieldValue(id: string, value: string): void {
+    this.draftCustomFields = this.draftCustomFields.map((field: CustomField) => {
+      if (field.id !== id) {
+        return field;
+      }
+      return {
+        id: field.id,
+        name: field.name,
+        value: value,
+      };
+    });
+  }
+
+  private removeDraftCustomField(id: string): void {
+    this.draftCustomFields = this.draftCustomFields.filter((field: CustomField) => field.id !== id);
+  }
+
+  private normalizedDraftCustomFields(): CustomField[] {
+    return this.draftCustomFields
+      .map((field: CustomField) => {
+        const normalized: CustomField = {
+          id: field.id.length > 0 ? field.id : this.nextUiId(),
+          name: field.name.trim(),
+          value: field.value,
+        };
+        return normalized;
+      })
+      .filter((field: CustomField) => field.name.length > 0 || field.value.trim().length > 0);
+  }
+
+  private copyCustomFields(fields: CustomField[]): CustomField[] {
+    return fields.map((field: CustomField) => {
+      const copy: CustomField = {
+        id: field.id.length > 0 ? field.id : this.nextUiId(),
+        name: field.name,
+        value: field.value,
+      };
+      return copy;
+    });
+  }
+
+  private toggleExportPanel(entry: VaultEntry): void {
+    if (this.exportEntryId === entry.id) {
+      this.exportEntryId = '';
+      this.exportSelectedFieldIds = [];
+      return;
+    }
+    this.exportEntryId = entry.id;
+    this.exportSelectedFieldIds = [];
+  }
+
+  private toggleExportField(fieldId: string): void {
+    if (this.exportSelectedFieldIds.includes(fieldId)) {
+      this.exportSelectedFieldIds = this.exportSelectedFieldIds.filter((id: string) => id !== fieldId);
+      return;
+    }
+    this.exportSelectedFieldIds = [...this.exportSelectedFieldIds, fieldId];
+  }
+
+  private exportFieldOptions(entry: VaultEntry): ExportFieldOption[] {
+    const options: ExportFieldOption[] = [
+      { id: 'label', label: '标题' },
+      { id: 'category', label: '分类' },
+      { id: 'tags', label: '标签' },
+      { id: 'createdAt', label: '创建时间' },
+      { id: 'updatedAt', label: '更新时间' },
+    ];
+    this.payloadExportFieldOptions(entry).forEach((option: ExportFieldOption) => options.push(option));
+    entry.customFields.forEach((field: CustomField) => {
+      options.push({
+        id: `custom.${field.id}`,
+        label: field.name.length > 0 ? field.name : '自定义字段',
+      });
+    });
+    return options;
+  }
+
+  private payloadExportFieldOptions(entry: VaultEntry): ExportFieldOption[] {
+    if (entry.type === VaultEntryType.CREDENTIAL) {
+      return [
+        { id: 'payload.username', label: '用户名' },
+        { id: 'payload.password', label: '密码' },
+        { id: 'payload.token', label: 'Token' },
+        { id: 'payload.appId', label: 'App ID' },
+        { id: 'payload.accessKey', label: 'Access Key' },
+        { id: 'payload.secretKey', label: 'Secret Key' },
+        { id: 'payload.notes', label: '备注' },
+      ];
+    }
+    if (entry.type === VaultEntryType.SERVER) {
+      return [
+        { id: 'payload.name', label: '服务器名称' },
+        { id: 'payload.ipAddress', label: 'IP地址' },
+        { id: 'payload.port', label: '端口' },
+        { id: 'payload.username', label: '用户名' },
+        { id: 'payload.password', label: '密码' },
+        { id: 'payload.basicConfig', label: '基础配置' },
+        { id: 'payload.operatingSystem', label: '操作系统' },
+        { id: 'payload.location', label: '位置' },
+        { id: 'payload.notes', label: '备注' },
+      ];
+    }
+    return [
+      { id: 'payload.name', label: '服务名称' },
+      { id: 'payload.connectionAddress', label: '连接地址' },
+      { id: 'payload.connectionPort', label: '端口' },
+      { id: 'payload.accountId', label: '账号ID' },
+      { id: 'payload.serverIds', label: '服务器ID' },
+      { id: 'payload.accounts', label: '账号列表' },
+      { id: 'payload.notes', label: '备注' },
+    ];
+  }
+
+  private lockVault(): void {
+    this.controller().lock();
+    this.unlocked = false;
+    this.password = '';
+    this.confirmPassword = '';
+    this.unlockTotpCode = '';
+    this.syncBusy = false;
+    this.syncStatus = '未同步';
+    this.syncLogs = [];
+    this.biometricAutoPrompted = false;
+    this.refreshUnlockGuardState();
+    this.stopAutoSyncTimer();
+    this.stopIdleLockTimer();
+    this.refreshBiometricState().then(() => {
+      this.scheduleBiometricUnlockPrompt();
+    });
+  }
+
+  private recordUserActivity(): void {
+    if (!this.unlocked) {
+      return;
+    }
+    this.lastActivityAt = Date.now();
+  }
+
+  private configureIdleLockTimer(): void {
+    this.stopIdleLockTimer();
+    if (!this.unlocked) {
+      return;
+    }
+    const minutes = Math.max(Math.floor(Number(this.securityIdleAutoLockMinutes) || 0), 0);
+    if (minutes <= 0) {
+      return;
+    }
+    this.lastActivityAt = Date.now();
+    this.idleLockTimerId = setInterval(() => {
+      if (!this.unlocked) {
+        this.stopIdleLockTimer();
+        return;
+      }
+      if (Date.now() - this.lastActivityAt >= minutes * 60 * 1000) {
+        this.lockVault();
+        this.toast('闲置超时，已自动锁定');
+      }
+    }, 1000);
+  }
+
+  private stopIdleLockTimer(): void {
+    if (this.idleLockTimerId < 0) {
+      return;
+    }
+    clearInterval(this.idleLockTimerId);
+    this.idleLockTimerId = -1;
+  }
+
+  private scheduleBiometricUnlockPrompt(): void {
+    if (
+      !this.ready ||
+      !this.hasMasterKey ||
+      this.unlocked ||
+      !this.biometricUnlockEnabled ||
+      !this.biometricUnlockAvailable ||
+      this.biometricFailureCount >= 3 ||
+      this.biometricAutoPrompted
+    ) {
+      return;
+    }
+    this.biometricAutoPrompted = true;
+    setTimeout(() => {
+      if (!this.unlocked && this.biometricFailureCount < 3) {
+        this.onBiometricUnlock();
+      }
+    }, 300);
+  }
+
+  private nextUiId(): string {
+    const ts = Date.now().toString(36);
+    const rand = Math.floor(Math.random() * 1000000).toString(36);
+    return `${ts}-${rand}`;
   }
 
   private remainingUnlockAttempts(): number {

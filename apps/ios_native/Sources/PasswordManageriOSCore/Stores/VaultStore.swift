@@ -59,6 +59,7 @@ final class VaultStore {
             hasMasterKey = true
             isUnlocked = true
             seedInitialCollectionsIfNeeded()
+            try markLocalChangesForSync()
             try saveSnapshot()
             statusMessage = "Vault initialized and encrypted locally."
             return true
@@ -103,6 +104,20 @@ final class VaultStore {
         activeVaultKey = nil
     }
 
+    func verifyMasterPassword(_ password: String) -> Bool {
+        guard let record = masterKeyRecord else {
+            statusMessage = "No vault has been initialized."
+            return false
+        }
+        do {
+            _ = try crypto.verify(password: password, record: record)
+            return true
+        } catch {
+            statusMessage = "Vault authentication failed."
+            return false
+        }
+    }
+
     func upsert(_ draft: EntryDraft, editing entry: VaultEntry?) {
         let now = Date()
         let payload = draft.payload
@@ -116,18 +131,22 @@ final class VaultStore {
             entries[index].label = draft.label
             entries[index].type = draft.type
             entries[index].payload = finalPayload
+            entries[index].customFields = draft.normalizedCustomFields
             entries[index].updatedAt = now
             entries[index].isDeleted = false
+            entries[index].deletedAt = nil
+            entries[index].markLocalEntryChange(deviceId: syncSettings.deviceId, updatedAt: now)
         } else {
-            entries.append(
-                VaultEntry(
-                    label: draft.label,
-                    type: draft.type,
-                    payload: finalPayload,
-                    createdAt: now,
-                    updatedAt: now
-                )
+            var newEntry = VaultEntry(
+                label: draft.label,
+                type: draft.type,
+                payload: finalPayload,
+                customFields: draft.normalizedCustomFields,
+                createdAt: now,
+                updatedAt: now
             )
+            newEntry.markLocalEntryChange(deviceId: syncSettings.deviceId, updatedAt: now)
+            entries.append(newEntry)
         }
         rebuildCollections()
         persistUnlockedSnapshot()
@@ -135,8 +154,11 @@ final class VaultStore {
 
     func delete(_ entry: VaultEntry) {
         guard let index = entries.firstIndex(where: { $0.id == entry.id }) else { return }
+        let now = Date()
         entries[index].isDeleted = true
-        entries[index].updatedAt = Date()
+        entries[index].deletedAt = now
+        entries[index].updatedAt = now
+        entries[index].markLocalEntryChange(deviceId: syncSettings.deviceId, updatedAt: now)
         rebuildCollections()
         persistUnlockedSnapshot()
     }
@@ -167,6 +189,7 @@ final class VaultStore {
             loadEnvelopeMetadata()
             try loadSnapshot(key: key)
             lastBackupStatus = "Restored backup: \(backupURL.lastPathComponent)"
+            try markLocalChangesForSync()
             try saveSnapshot()
             statusMessage = lastBackupStatus
         } catch {
@@ -204,6 +227,7 @@ final class VaultStore {
             syncStatus = snapshot.syncStatus
             lastBackupStatus = snapshot.lastBackupStatus
             rebuildCollections()
+            try markLocalChangesForSync()
             try saveSnapshot()
             statusMessage = "Imported \(entries.filter { !$0.isDeleted }.count) active entries."
         } catch {
@@ -211,17 +235,51 @@ final class VaultStore {
         }
     }
 
-    func exportEntry(_ entry: VaultEntry) {
+    func exportEntry(_ entry: VaultEntry, selectedFieldIDs: Set<String>? = nil) {
         guard isUnlocked else {
             statusMessage = "Unlock the vault before exporting."
             return
         }
         do {
-            let exportURL = try repository.saveEntryExport(entry)
+            let exportURL = try repository.saveEntryExport(entry, selectedFieldIDs: selectedFieldIDs)
             statusMessage = "Entry export saved: \(exportURL.lastPathComponent)"
         } catch {
             statusMessage = error.localizedDescription
         }
+    }
+
+    func addCategory(_ category: String) -> Bool {
+        let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            statusMessage = "Category is required."
+            return false
+        }
+        guard !categories.contains(where: { $0.caseInsensitiveCompare(normalized) == .orderedSame }) else {
+            statusMessage = "Category already exists."
+            return false
+        }
+        categories.append(normalized)
+        categories.sort()
+        persistUnlockedSnapshot()
+        statusMessage = "Category added."
+        return true
+    }
+
+    func addTag(_ tag: String) -> Bool {
+        let normalized = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            statusMessage = "Tag is required."
+            return false
+        }
+        guard !tags.contains(where: { $0.caseInsensitiveCompare(normalized) == .orderedSame }) else {
+            statusMessage = "Tag already exists."
+            return false
+        }
+        tags.append(normalized)
+        tags.sort()
+        persistUnlockedSnapshot()
+        statusMessage = "Tag added."
+        return true
     }
 
     func exportCategory(_ category: String) {
@@ -256,6 +314,9 @@ final class VaultStore {
             }
             let result = applyImportedEntries(importedEntries, strategy: strategy)
             rebuildCollections()
+            if result.created > 0 || result.updated > 0 {
+                try markLocalChangesForSync()
+            }
             try saveSnapshot()
             statusMessage = "Imported \(result.created) created, \(result.updated) updated, \(result.skipped) skipped."
         } catch {
@@ -267,7 +328,7 @@ final class VaultStore {
         guard let client = syncClientFactory.makeClient(settings: syncSettings) else {
             syncStatus = "Not configured"
             statusMessage = "Configure a sync provider before syncing."
-            persistUnlockedSnapshot()
+            persistUnlockedSnapshot(markLocalChange: false)
             return
         }
         Task {
@@ -296,13 +357,15 @@ final class VaultStore {
     }
 
     func updateSyncSettings(_ settings: SyncSettings) {
+        let hadLocalChanges = syncSettings.hasLocalChanges
         syncSettings = settings
+        syncSettings.hasLocalChanges = hadLocalChanges
         do {
-            try syncSettingsRepository?.save(settings)
+            try syncSettingsRepository?.save(syncSettings)
             let providerLabel = settings.providerType.title
             syncStatus = settings.providerType == .none ? "Not configured" : "Configured: \(providerLabel)"
             statusMessage = "Sync settings saved."
-            persistUnlockedSnapshot()
+            persistUnlockedSnapshot(markLocalChange: false)
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -358,8 +421,11 @@ final class VaultStore {
     }
 
     private func rebuildCollections() {
-        categories = Array(Set(entries.map(\.payload.category).filter { !$0.isEmpty })).sorted()
-        tags = Array(Set(entries.flatMap(\.payload.tags))).sorted()
+        let existingCategories = categories
+        let existingTags = tags
+        let activeEntries = entries.filter { !$0.isDeleted }
+        categories = Array(Set(existingCategories + activeEntries.map(\.payload.category).filter { !$0.isEmpty })).sorted()
+        tags = Array(Set(existingTags + activeEntries.flatMap(\.payload.tags))).sorted()
     }
 
     private func loadEnvelopeMetadata() {
@@ -434,10 +500,11 @@ final class VaultStore {
         totpSecret = result.snapshot.security.totpSecret
         lastBackupStatus = result.snapshot.lastBackupStatus
         syncSettings = result.settings
+        syncSettings.hasLocalChanges = false
         syncStatus = result.settings.lastSyncMessage ?? "Sync complete."
         statusMessage = syncStatus
         rebuildCollections()
-        try syncSettingsRepository?.save(result.settings)
+        try syncSettingsRepository?.save(syncSettings)
         try saveSnapshot()
     }
 
@@ -456,7 +523,7 @@ final class VaultStore {
         syncStatus = "Sync failed"
         statusMessage = message
         try? syncSettingsRepository?.save(failedSettings)
-        persistUnlockedSnapshot()
+        persistUnlockedSnapshot(markLocalChange: false)
     }
 
     private func applyImportedEntries(
@@ -489,14 +556,32 @@ final class VaultStore {
         return (created, updated, skipped)
     }
 
-    private func persistUnlockedSnapshot() {
+    private func persistUnlockedSnapshot(markLocalChange: Bool = true) {
         guard isUnlocked else { return }
         do {
+            if markLocalChange {
+                try markLocalChangesForSync()
+            }
             try saveSnapshot()
             statusMessage = "Vault saved at \(DateFormatter.shortDateTime.string(from: Date()))"
         } catch {
             statusMessage = error.localizedDescription
         }
+    }
+
+    private func markLocalChangesForSync() throws {
+        guard !syncSettings.hasLocalChanges else { return }
+        syncSettings.hasLocalChanges = true
+        try syncSettingsRepository?.save(syncSettings)
+    }
+}
+
+private extension VaultEntry {
+    mutating func markLocalEntryChange(deviceId: String, updatedAt: Date) {
+        let updater = deviceId.isEmpty ? (updatedBy.isEmpty ? "ios-native" : updatedBy) : deviceId
+        version[updater] = (version[updater] ?? 0) + 1
+        updatedBy = updater
+        self.updatedAt = updatedAt
     }
 }
 
@@ -506,6 +591,7 @@ struct EntryDraft: Equatable {
     var credential = CredentialPayload()
     var server = ServerPayload()
     var service = ServicePayload()
+    var customFields: [CustomField] = []
 
     var category: String {
         get { payload.category }
@@ -533,11 +619,24 @@ struct EntryDraft: Equatable {
         }
     }
 
+    var normalizedCustomFields: [CustomField] {
+        customFields
+            .map {
+                CustomField(
+                    id: $0.id,
+                    name: $0.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                    value: $0.value.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            }
+            .filter { !$0.name.isEmpty || !$0.value.isEmpty }
+    }
+
     init() {}
 
     init(entry: VaultEntry) {
         label = entry.label
         type = entry.type
+        customFields = entry.customFields
         switch entry.payload {
         case .credential(let payload):
             credential = payload

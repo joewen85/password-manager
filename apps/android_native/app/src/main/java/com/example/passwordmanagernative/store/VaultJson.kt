@@ -19,6 +19,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONObject.NULL
 import java.time.Instant
+import java.util.Locale
+import java.util.UUID
 
 object VaultJson {
     fun encodeEnvelope(envelope: VaultPersistenceEnvelope): String =
@@ -171,7 +173,7 @@ object VaultJson {
 
     private fun VaultEntry.toJson(): JSONObject =
         JSONObject()
-            .put("id", id)
+            .put("id", id.canonicalUuidString())
             .put("label", label)
             .put("type", type.name.lowercase())
             .put("payload", payload.toJson())
@@ -190,7 +192,7 @@ object VaultJson {
             else -> VaultEntryType.CREDENTIAL
         }
         return VaultEntry(
-            id = optString("id"),
+            id = optString("id").canonicalUuidString().ifBlank { UUID.randomUUID().toString() },
             label = optString("label"),
             type = type,
             payload = optJSONObject("payload").toVaultPayload(type),
@@ -328,13 +330,13 @@ object VaultJson {
 
     private fun CustomField.toJson(): JSONObject =
         JSONObject()
-            .put("id", id)
+            .put("id", id.canonicalUuidString())
             .put("name", name)
             .put("value", value)
 
     private fun JSONObject.toCustomField(): CustomField =
         CustomField(
-            id = optString("id").ifBlank { java.util.UUID.randomUUID().toString() },
+            id = optString("id").canonicalUuidString().ifBlank { UUID.randomUUID().toString() },
             name = optString("name"),
             value = optString("value"),
         )
@@ -464,7 +466,7 @@ object VaultJson {
             crypto = crypto,
         ) ?: JSONObject()
         return VaultEntry(
-            id = optString("id"),
+            id = optString("id").canonicalUuidString().ifBlank { UUID.randomUUID().toString() },
             label = metadata.optString("label", optString("id")),
             type = type,
             payload = payloadJson.toVaultPayload(type),
@@ -535,5 +537,12 @@ object VaultJson {
     private fun JSONObject?.optNullableString(name: String): String? {
         if (this == null || !has(name) || isNull(name)) return null
         return optString(name)
+    }
+
+    private fun String.canonicalUuidString(): String {
+        val trimmed = trim()
+        if (trimmed.isEmpty()) return trimmed
+        return runCatching { UUID.fromString(trimmed).toString() }
+            .getOrElse { trimmed.lowercase(Locale.ROOT) }
     }
 }

@@ -6,9 +6,12 @@ struct PasswordManagerMacOSApp: App {
     @State private var vaultStore = VaultStore()
     @State private var appPreferences = AppPreferences()
     @State private var lastUserActivityAt = Date()
+    @State private var lastAutoSyncAttemptAt: Date?
+    @State private var lastAutoSyncUnlockState = false
     @State private var eventMonitor: Any?
 
     private let idleLockTimer = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
+    private let autoSyncTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     init() {
         NSApplication.shared.setActivationPolicy(.regular)
@@ -30,6 +33,12 @@ struct PasswordManagerMacOSApp: App {
                 }
                 .onReceive(idleLockTimer) { now in
                     lockVaultIfIdle(now: now)
+                }
+                .onReceive(autoSyncTimer) { now in
+                    runAutoSyncIfNeeded(now: now)
+                }
+                .onChange(of: vaultStore.isUnlocked) { _, isUnlocked in
+                    syncOnUnlockIfNeeded(isUnlocked: isUnlocked)
                 }
         }
         .commands {
@@ -94,5 +103,40 @@ struct PasswordManagerMacOSApp: App {
 
         vaultStore.lock()
         markUserActivity()
+    }
+
+    @MainActor
+    private func syncOnUnlockIfNeeded(isUnlocked: Bool) {
+        if !isUnlocked {
+            lastAutoSyncUnlockState = false
+            return
+        }
+        let policy = autoSyncPolicy
+        guard policy.shouldSyncOnUnlock(hasTriggeredForCurrentUnlock: lastAutoSyncUnlockState) else {
+            return
+        }
+
+        lastAutoSyncUnlockState = true
+        lastAutoSyncAttemptAt = Date()
+        vaultStore.syncNow()
+    }
+
+    @MainActor
+    private func runAutoSyncIfNeeded(now: Date) {
+        guard autoSyncPolicy.shouldRunIntervalSync(now: now) else {
+            return
+        }
+
+        lastAutoSyncAttemptAt = now
+        vaultStore.syncNow()
+    }
+
+    private var autoSyncPolicy: AutoSyncSchedulePolicy {
+        AutoSyncSchedulePolicy(
+            settings: vaultStore.syncSettings,
+            isUnlocked: vaultStore.isUnlocked,
+            syncStatus: vaultStore.syncStatus,
+            lastAutoSyncAttemptAt: lastAutoSyncAttemptAt
+        )
     }
 }

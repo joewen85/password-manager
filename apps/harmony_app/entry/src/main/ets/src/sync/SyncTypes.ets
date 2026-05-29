@@ -42,6 +42,8 @@ export interface SyncSettings {
   lastSyncAt: number;
   lastSyncStatus: string;
   lastSyncMessage: string;
+  lastRemoteFingerprint: string;
+  hasLocalChanges: boolean;
   logs: SyncLogEntry[];
 }
 
@@ -66,6 +68,8 @@ export function defaultSyncSettings(): SyncSettings {
     lastSyncAt: 0,
     lastSyncStatus: '',
     lastSyncMessage: '',
+    lastRemoteFingerprint: '',
+    hasLocalChanges: false,
     logs: [],
   };
 }

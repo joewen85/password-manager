@@ -88,6 +88,8 @@ struct SyncSettings: Codable, Equatable, Sendable {
     var lastSyncAt: Date?
     var lastSyncStatus: String?
     var lastSyncMessage: String?
+    var lastRemoteFingerprint: String?
+    var hasLocalChanges: Bool
     var logs: [SyncLogEntry]
 
     private enum CodingKeys: String, CodingKey {
@@ -110,6 +112,8 @@ struct SyncSettings: Codable, Equatable, Sendable {
         case lastSyncAt
         case lastSyncStatus
         case lastSyncMessage
+        case lastRemoteFingerprint
+        case hasLocalChanges
         case logs
     }
 
@@ -134,6 +138,8 @@ struct SyncSettings: Codable, Equatable, Sendable {
             lastSyncAt: nil,
             lastSyncStatus: nil,
             lastSyncMessage: nil,
+            lastRemoteFingerprint: nil,
+            hasLocalChanges: false,
             logs: []
         )
     }
@@ -162,6 +168,8 @@ struct SyncSettings: Codable, Equatable, Sendable {
         lastSyncAt: Date?,
         lastSyncStatus: String?,
         lastSyncMessage: String?,
+        lastRemoteFingerprint: String?,
+        hasLocalChanges: Bool,
         logs: [SyncLogEntry]
     ) {
         self.providerType = providerType
@@ -183,6 +191,8 @@ struct SyncSettings: Codable, Equatable, Sendable {
         self.lastSyncAt = lastSyncAt
         self.lastSyncStatus = lastSyncStatus
         self.lastSyncMessage = lastSyncMessage
+        self.lastRemoteFingerprint = lastRemoteFingerprint
+        self.hasLocalChanges = hasLocalChanges
         self.logs = logs
     }
 
@@ -228,6 +238,8 @@ struct SyncSettings: Codable, Equatable, Sendable {
         lastSyncAt = try container.decodeIfPresent(Date.self, forKey: .lastSyncAt)
         lastSyncStatus = try container.decodeIfPresent(String.self, forKey: .lastSyncStatus)
         lastSyncMessage = try container.decodeIfPresent(String.self, forKey: .lastSyncMessage)
+        lastRemoteFingerprint = try container.decodeIfPresent(String.self, forKey: .lastRemoteFingerprint)
+        hasLocalChanges = try container.decodeIfPresent(Bool.self, forKey: .hasLocalChanges) ?? defaults.hasLocalChanges
         logs = try container.decodeIfPresent([SyncLogEntry].self, forKey: .logs) ?? defaults.logs
     }
 

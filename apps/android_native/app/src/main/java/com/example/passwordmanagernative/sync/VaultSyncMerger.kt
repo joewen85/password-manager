@@ -2,6 +2,7 @@ package com.example.passwordmanagernative.sync
 
 import com.example.passwordmanagernative.model.VaultEntry
 import java.time.Instant
+import java.util.Locale
 import java.util.UUID
 
 enum class VersionComparison {
@@ -40,7 +41,7 @@ class VaultSyncMerger(
         var deletes = 0
 
         fun addEntry(entry: VaultEntry) {
-            merged += entry
+            merged += entry.withCanonicalId()
             if (entry.isDeleted) {
                 deletes += 1
             }
@@ -54,8 +55,8 @@ class VaultSyncMerger(
             }
         }
 
-        val remoteById = remoteEntries.associateBy { it.id }.toMutableMap()
-        localEntries.associateBy { it.id }.forEach { (id, local) ->
+        val remoteById = entriesById(remoteEntries, ::effectiveVersion).toMutableMap()
+        entriesById(localEntries, ::effectiveVersion).forEach { (id, local) ->
             val remote = remoteById.remove(id)
             if (remote == null) {
                 addEntry(local)
@@ -114,6 +115,36 @@ class VaultSyncMerger(
             SyncConflictStrategy.KEEP_BOTH -> pickLatest(local, remote)
         }
 
+    private fun entriesById(
+        entries: List<VaultEntry>,
+        effectiveVersion: (VaultEntry) -> Map<String, Int>,
+    ): Map<String, VaultEntry> {
+        val entriesById = mutableMapOf<String, VaultEntry>()
+        entries.forEach { entry ->
+            val canonicalId = entry.id.canonicalUuidString()
+            val canonicalEntry = entry.withCanonicalId(canonicalId)
+            val existing = entriesById[canonicalId]
+            entriesById[canonicalId] = if (existing == null) {
+                canonicalEntry
+            } else {
+                pickDuplicate(existing, canonicalEntry, effectiveVersion)
+            }
+        }
+        return entriesById
+    }
+
+    private fun pickDuplicate(
+        existing: VaultEntry,
+        candidate: VaultEntry,
+        effectiveVersion: (VaultEntry) -> Map<String, Int>,
+    ): VaultEntry =
+        when (compareVersion(effectiveVersion(existing), effectiveVersion(candidate))) {
+            VersionComparison.EQUAL -> pickLatest(existing, candidate)
+            VersionComparison.LOCAL_DOMINATES -> existing
+            VersionComparison.REMOTE_DOMINATES -> candidate
+            VersionComparison.CONCURRENT -> pickLatest(existing, candidate)
+        }
+
     private fun conflictClone(source: VaultEntry, isRemote: Boolean): VaultEntry {
         val updatedBy = source.updatedBy.ifBlank { LEGACY_UPDATER }
         val baseVersion = if (source.version.isNotEmpty()) {
@@ -156,4 +187,14 @@ class VaultSyncMerger(
             }
         }
     }
+}
+
+private fun VaultEntry.withCanonicalId(id: String = this.id.canonicalUuidString()): VaultEntry =
+    if (this.id == id) this else copy(id = id)
+
+private fun String.canonicalUuidString(): String {
+    val trimmed = trim()
+    if (trimmed.isEmpty()) return trimmed
+    return runCatching { UUID.fromString(trimmed).toString() }
+        .getOrElse { trimmed.lowercase(Locale.ROOT) }
 }

@@ -1,6 +1,7 @@
 package com.example.passwordmanagernative.store
 
 import com.example.passwordmanagernative.model.CredentialPayload
+import com.example.passwordmanagernative.model.CustomField
 import com.example.passwordmanagernative.model.EncryptedPayloadRecord
 import com.example.passwordmanagernative.model.SecuritySettings
 import com.example.passwordmanagernative.model.ServerPayload
@@ -111,6 +112,38 @@ class VaultJsonTest {
             .getJSONObject("payload")
             .getJSONObject("service")
         assertFalse(serviceJson.getJSONArray("accounts").getJSONObject(0).has("id"))
+    }
+
+    @Test
+    fun snapshotCanonicalizesUuidIdentifiersToLowercase() {
+        val snapshot = VaultSnapshot(
+            entries = listOf(
+                VaultEntry(
+                    id = "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+                    label = "Credential",
+                    type = VaultEntryType.CREDENTIAL,
+                    payload = VaultPayload.Credential(CredentialPayload(username = "user")),
+                    customFields = listOf(
+                        CustomField(
+                            id = "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB",
+                            name = "Field",
+                            value = "Value",
+                        )
+                    ),
+                    updatedBy = "test",
+                )
+            ),
+            updatedAt = Instant.parse("2026-05-23T00:10:00Z"),
+        )
+
+        val encoded = VaultJson.encodeSnapshot(snapshot)
+        val entryJson = JSONObject(encoded).getJSONArray("entries").getJSONObject(0)
+        val decoded = VaultJson.decodeSnapshot(encoded).entries.single()
+
+        assertEquals("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", entryJson.getString("id"))
+        assertEquals("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", entryJson.getJSONArray("customFields").getJSONObject(0).getString("id"))
+        assertEquals("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", decoded.id)
+        assertEquals("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", decoded.customFields.single().id)
     }
 
     @Test

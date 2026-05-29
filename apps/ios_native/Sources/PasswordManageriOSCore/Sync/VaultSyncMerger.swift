@@ -56,8 +56,8 @@ struct VaultSyncMerger {
             return version
         }
 
-        var remoteById = Dictionary(uniqueKeysWithValues: remoteEntries.map { ($0.id, $0) })
-        let localById = Dictionary(uniqueKeysWithValues: localEntries.map { ($0.id, $0) })
+        var remoteById = entriesById(remoteEntries, effectiveVersion: effectiveVersion)
+        let localById = entriesById(localEntries, effectiveVersion: effectiveVersion)
 
         for (id, local) in localById {
             guard let remote = remoteById.removeValue(forKey: id) else {
@@ -141,6 +141,42 @@ struct VaultSyncMerger {
             remote
         case .keepBoth:
             pickLatest(local: local, remote: remote)
+        }
+    }
+
+    private func entriesById(
+        _ entries: [VaultEntry],
+        effectiveVersion: (VaultEntry) -> [String: Int]
+    ) -> [UUID: VaultEntry] {
+        var entriesById: [UUID: VaultEntry] = [:]
+        for entry in entries {
+            guard let existing = entriesById[entry.id] else {
+                entriesById[entry.id] = entry
+                continue
+            }
+            entriesById[entry.id] = pickDuplicate(
+                existing: existing,
+                candidate: entry,
+                effectiveVersion: effectiveVersion
+            )
+        }
+        return entriesById
+    }
+
+    private func pickDuplicate(
+        existing: VaultEntry,
+        candidate: VaultEntry,
+        effectiveVersion: (VaultEntry) -> [String: Int]
+    ) -> VaultEntry {
+        switch Self.compareVersion(local: effectiveVersion(existing), remote: effectiveVersion(candidate)) {
+        case .equal:
+            pickLatest(local: existing, remote: candidate)
+        case .localDominates:
+            existing
+        case .remoteDominates:
+            candidate
+        case .concurrent:
+            pickLatest(local: existing, remote: candidate)
         }
     }
 

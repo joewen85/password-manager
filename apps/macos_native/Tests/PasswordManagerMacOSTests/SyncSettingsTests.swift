@@ -30,6 +30,7 @@ struct SyncSettingsTests {
               "providerType": "futureProvider",
               "webdavUrl": "https://dav.example.com",
               "conflictStrategy": "futureStrategy",
+              "lastRemoteFingerprint": "etag:remote-v1",
               "logs": [
                 {
                   "timestamp": "2026-05-24T03:00:00Z",
@@ -47,6 +48,7 @@ struct SyncSettingsTests {
 
         #expect(settings.providerType == .none)
         #expect(settings.webdavUrl == "https://dav.example.com")
+        #expect(settings.lastRemoteFingerprint == "etag:remote-v1")
         #expect(settings.webdavPath == "/vault.json")
         #expect(settings.conflictStrategy == .remoteWins)
         #expect(settings.syncMasterKey)
@@ -99,6 +101,7 @@ struct SyncSettingsTests {
         settings.autoSyncIntervalMinutes = 1
         settings.autoSyncIntervalValue = 30
         settings.autoSyncIntervalUnit = .seconds
+        settings.lastRemoteFingerprint = "etag:remote-v1"
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
@@ -112,6 +115,7 @@ struct SyncSettingsTests {
         #expect(json["autoSyncIntervalMinutes"] as? Int == 1)
         #expect(json["autoSyncIntervalValue"] as? Int == 30)
         #expect(json["autoSyncIntervalUnit"] as? String == "seconds")
+        #expect(json["lastRemoteFingerprint"] as? String == "etag:remote-v1")
         #expect(json["conflictStrategy"] as? String == "remoteWins")
         #expect(json["syncMasterKey"] as? Bool == true)
     }

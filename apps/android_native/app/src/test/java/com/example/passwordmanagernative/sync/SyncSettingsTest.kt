@@ -38,6 +38,7 @@ class SyncSettingsTest {
                   "providerType": "futureProvider",
                   "webdavUrl": "https://dav.example.com",
                   "conflictStrategy": "futureStrategy",
+                  "lastRemoteFingerprint": "etag:remote-v1",
                   "logs": [
                     {
                       "timestamp": "2026-05-24T03:00:00Z",
@@ -52,6 +53,7 @@ class SyncSettingsTest {
 
         assertEquals(SyncProviderType.NONE, settings.providerType)
         assertEquals("https://dav.example.com", settings.webdavUrl)
+        assertEquals("etag:remote-v1", settings.lastRemoteFingerprint)
         assertEquals("/vault.json", settings.webdavPath)
         assertEquals(SyncSettingsConflictStrategy.REMOTE_WINS, settings.conflictStrategy)
         assertEquals(true, settings.syncMasterKey)
@@ -101,6 +103,7 @@ class SyncSettingsTest {
                 autoSyncIntervalMinutes = 1,
                 autoSyncIntervalValue = 30,
                 autoSyncIntervalUnit = SyncIntervalUnit.SECONDS,
+                lastRemoteFingerprint = "etag:remote-v1",
             )
             .toJson()
 
@@ -109,6 +112,7 @@ class SyncSettingsTest {
         assertEquals(1, json.getInt("autoSyncIntervalMinutes"))
         assertEquals(30, json.getInt("autoSyncIntervalValue"))
         assertEquals("seconds", json.getString("autoSyncIntervalUnit"))
+        assertEquals("etag:remote-v1", json.getString("lastRemoteFingerprint"))
         assertEquals("remoteWins", json.getString("conflictStrategy"))
         assertEquals(true, json.getBoolean("syncMasterKey"))
     }
