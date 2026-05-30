@@ -164,6 +164,8 @@ interface TagsCarrier {
 interface EntryPayloadCarrier extends CategoryCarrier, TagsCarrier {}
 
 interface EntryCarrier extends CategoryCarrier, TagsCarrier {
+  id?: string;
+  type?: VaultEntryType;
   payload?: EntryPayloadCarrier;
   customFields?: CustomField[];
   isDeleted?: boolean;
@@ -176,6 +178,11 @@ interface EntryCarrier extends CategoryCarrier, TagsCarrier {
 interface AccessKeyCarrier {
   accessKey?: string;
   accessToken?: string;
+}
+
+interface ServiceReferenceCarrier {
+  accountId?: string;
+  serverIds?: string[];
 }
 
 const MAX_UNLOCK_ATTEMPTS: number = 5;
@@ -495,7 +502,7 @@ export class VaultController {
 
           if (localSettings.hasLocalChanges && remoteRevision <= localSettings.lastSyncRevision) {
             const nextRevision = localSettings.lastSyncRevision + 1;
-            const uploadPayload = deepCopyRuntimePayload(this.snapshot);
+            const uploadPayload = sanitizeRuntimePayload(this.snapshot);
             uploadPayload.syncSettings = cloneSyncSettings(localSettings);
             uploadPayload.syncSettings.hasLocalChanges = false;
             uploadPayload.syncSettings.lastRemoteFingerprint = '';
@@ -564,7 +571,7 @@ export class VaultController {
       }
 
       mergedPayload.syncSettings = cloneSyncSettings(localSettings);
-      const uploadPayload = deepCopyRuntimePayload(mergedPayload);
+      const uploadPayload = sanitizeRuntimePayload(mergedPayload);
       uploadPayload.syncSettings.hasLocalChanges = false;
       uploadPayload.syncSettings.lastRemoteFingerprint = '';
       const nextRevision =
@@ -718,8 +725,8 @@ export class VaultController {
         name: input.name,
         connectionAddress: input.connectionAddress,
         connectionPort: input.connectionPort,
-        accountId: input.accountId,
-        serverIds: [...input.serverIds],
+        accountId: canonicalIdString(input.accountId),
+        serverIds: normalizeReferenceIds(input.serverIds),
         accounts: [...input.accounts],
         notes: input.notes,
         tags,
@@ -798,8 +805,8 @@ export class VaultController {
       name: input.name,
       connectionAddress: input.connectionAddress,
       connectionPort: input.connectionPort,
-      accountId: input.accountId,
-      serverIds: [...input.serverIds],
+      accountId: canonicalIdString(input.accountId),
+      serverIds: normalizeReferenceIds(input.serverIds),
       accounts: [...input.accounts],
       notes: input.notes,
       tags,
@@ -815,8 +822,9 @@ export class VaultController {
 
   async deleteEntry(entryId: string): Promise<void> {
     this.ensureUnlocked();
+    const targetId = canonicalIdString(entryId);
     const target = this.snapshot.entries.find(
-      (entry: VaultEntry) => entry.id === entryId,
+      (entry: VaultEntry) => canonicalIdString(entry.id) === targetId,
     );
     if (target === undefined) {
       return;
@@ -935,23 +943,25 @@ export class VaultController {
 
   exportSnapshot(): string {
     this.ensureUnlocked();
+    const snapshot = sanitizeRuntimePayload(this.snapshot);
     const payload: ExportSnapshotRecord = {
       version: VaultController.SCHEMA_VERSION,
       exportedAt: new Date().toISOString(),
-      tags: this.snapshot.tags,
-      categories: this.snapshot.categories,
-      entries: this.snapshot.entries,
+      tags: snapshot.tags,
+      categories: snapshot.categories,
+      entries: snapshot.entries,
       masterKeyRecord: this.masterKeyRecord,
-      security: this.snapshot.security,
-      syncSettings: this.snapshot.syncSettings,
+      security: snapshot.security,
+      syncSettings: snapshot.syncSettings,
     };
     return JSON.stringify(payload, null, 2);
   }
 
   exportEntryData(entryId: string, selectedFieldIds: string[] | null = null): string {
     this.ensureUnlocked();
+    const targetId = canonicalIdString(entryId);
     const entry = this.snapshot.entries.find(
-      (value: VaultEntry) => value.id === entryId && !value.isDeleted,
+      (value: VaultEntry) => canonicalIdString(value.id) === targetId && !value.isDeleted,
     );
     if (entry === undefined) {
       throw new Error('条目不存在或已删除');
@@ -1074,41 +1084,43 @@ export class VaultController {
   }
 
   private buildExportItem(entry: VaultEntry): ExportItemRecord {
+    const normalized = normalizeRuntimeEntry(entry);
     return {
-      id: entry.id,
-      label: entry.label,
-      type: entry.type,
-      category: this.entryCategory(entry),
-      tags: [...entry.tags],
-      customFields: normalizeCustomFields(entry.customFields),
-      createdAt: new Date(entry.createdAt).toISOString(),
-      updatedAt: new Date(entry.updatedAt).toISOString(),
-      payload: JSON.parse(JSON.stringify(entry.payload)) as object,
+      id: normalized.id,
+      label: normalized.label,
+      type: normalized.type,
+      category: this.entryCategory(normalized),
+      tags: [...normalized.tags],
+      customFields: normalizeCustomFields(normalized.customFields),
+      createdAt: new Date(normalized.createdAt).toISOString(),
+      updatedAt: new Date(normalized.updatedAt).toISOString(),
+      payload: JSON.parse(JSON.stringify(normalized.payload)) as object,
     };
   }
 
   private buildSelectedExportItem(entry: VaultEntry, selectedFieldIds: string[]): object {
+    const normalized = normalizeRuntimeEntry(entry);
     const selected = new Set<string>(selectedFieldIds);
     const item = JSON.parse('{}') as SelectedExportItemRecord;
-    item.id = entry.id;
-    item.type = entry.type;
+    item.id = normalized.id;
+    item.type = normalized.type;
     if (selected.has('label')) {
-      item.label = entry.label;
+      item.label = normalized.label;
     }
     if (selected.has('category')) {
-      item.category = this.entryCategory(entry);
+      item.category = this.entryCategory(normalized);
     }
     if (selected.has('tags')) {
-      item.tags = [...entry.tags];
+      item.tags = [...normalized.tags];
     }
     if (selected.has('createdAt')) {
-      item.createdAt = new Date(entry.createdAt).toISOString();
+      item.createdAt = new Date(normalized.createdAt).toISOString();
     }
     if (selected.has('updatedAt')) {
-      item.updatedAt = new Date(entry.updatedAt).toISOString();
+      item.updatedAt = new Date(normalized.updatedAt).toISOString();
     }
 
-    const payload = JSON.parse(JSON.stringify(entry.payload)) as Record<string, Object>;
+    const payload = JSON.parse(JSON.stringify(normalized.payload)) as Record<string, Object>;
     const selectedPayload = JSON.parse('{}') as Record<string, Object>;
     Object.keys(payload).forEach((key: string) => {
       if (selected.has(`payload.${key}`)) {
@@ -1119,7 +1131,7 @@ export class VaultController {
       item.payload = selectedPayload;
     }
 
-    const customFields = normalizeCustomFields(entry.customFields)
+    const customFields = normalizeCustomFields(normalized.customFields)
       .filter((field: CustomField) => selected.has(`custom.${field.id}`));
     if (customFields.length > 0) {
       item.customFields = customFields;
@@ -1142,7 +1154,7 @@ export class VaultController {
             ? 'exactDuplicate'
             : 'conflict';
       if (existing !== undefined && item.id.length > 0) {
-        previewIdMap.set(item.id, existing.id);
+        previewIdMap.set(canonicalIdString(item.id), canonicalIdString(existing.id));
       }
       planItems.push({ item, disposition, existing });
     };
@@ -1199,21 +1211,21 @@ export class VaultController {
         const createdId = await this.createImportedItem(current.item, idMap);
         createdCount += 1;
         if (current.item.id.length > 0) {
-          idMap.set(current.item.id, createdId);
+          idMap.set(canonicalIdString(current.item.id), canonicalIdString(createdId));
         }
         continue;
       }
       if (current.disposition === 'exactDuplicate') {
         skippedCount += 1;
         if (current.existing !== undefined && current.item.id.length > 0) {
-          idMap.set(current.item.id, current.existing.id);
+          idMap.set(canonicalIdString(current.item.id), canonicalIdString(current.existing.id));
         }
         continue;
       }
       if (strategy === ImportConflictStrategy.SKIP) {
         skippedCount += 1;
         if (current.existing !== undefined && current.item.id.length > 0) {
-          idMap.set(current.item.id, current.existing.id);
+          idMap.set(canonicalIdString(current.item.id), canonicalIdString(current.existing.id));
         }
         continue;
       }
@@ -1221,14 +1233,14 @@ export class VaultController {
         await this.updateImportedItem(current.existing, current.item, idMap);
         updatedCount += 1;
         if (current.item.id.length > 0) {
-          idMap.set(current.item.id, current.existing.id);
+          idMap.set(canonicalIdString(current.item.id), canonicalIdString(current.existing.id));
         }
         continue;
       }
       const createdId = await this.createImportedItem(current.item, idMap);
       createdCount += 1;
       if (current.item.id.length > 0) {
-        idMap.set(current.item.id, createdId);
+        idMap.set(canonicalIdString(current.item.id), canonicalIdString(createdId));
       }
     }
     return {
@@ -1246,16 +1258,28 @@ export class VaultController {
       if (single.scope !== 'item' || single.item === undefined) {
         throw new Error('不是单条条目导出 JSON');
       }
-      return [single.item];
+      return [normalizeExportItem(single.item)];
     }
     const category = parsed as ImportCategoryRecord;
     if (category.scope !== 'category' || category.items === undefined) {
       throw new Error('不是分类导出 JSON');
     }
-    return category.items;
+    return category.items.map((item: ExportItemRecord) => normalizeExportItem(item));
   }
 
   private findImportTarget(item: ExportItemRecord): VaultEntry | undefined {
+    const incomingId = canonicalIdString(item.id);
+    if (incomingId.length > 0) {
+      const byId = this.snapshot.entries.find(
+        (entry: VaultEntry) =>
+          !entry.isDeleted &&
+          entry.type === item.type &&
+          canonicalIdString(entry.id) === incomingId,
+      );
+      if (byId !== undefined) {
+        return byId;
+      }
+    }
     const label = item.label.trim().toLowerCase();
     const category = item.category.trim().toLowerCase();
     let fallback: VaultEntry | undefined = undefined;
@@ -1337,9 +1361,9 @@ export class VaultController {
         name: payload.name ?? '',
         connectionAddress: payload.connectionAddress ?? '',
         connectionPort: payload.connectionPort ?? '',
-        accountId: idMap.get(payload.accountId ?? '') ?? (payload.accountId ?? ''),
+        accountId: mappedReferenceId(idMap, payload.accountId),
         serverIds: (payload.serverIds ?? []).map(
-          (entryId: string) => idMap.get(entryId) ?? entryId,
+          (entryId: string) => mappedReferenceId(idMap, entryId),
         ),
         accounts: payload.accounts ?? [],
         notes: payload.notes ?? '',
@@ -1418,16 +1442,18 @@ export class VaultController {
       return JSON.parse(JSON.stringify(item.payload)) as object;
     }
     const payload = JSON.parse(JSON.stringify(item.payload)) as CreateServiceInput;
-    payload.accountId = idMap.get(payload.accountId ?? '') ?? (payload.accountId ?? '');
+    payload.accountId = mappedReferenceId(idMap, payload.accountId);
     payload.serverIds = (payload.serverIds ?? []).map(
-      (entryId: string) => idMap.get(entryId) ?? entryId,
+      (entryId: string) => mappedReferenceId(idMap, entryId),
     );
     return payload as object;
   }
 
   private requireVisibleEntry(entryId: string, type: VaultEntryType): VaultEntry {
+    const targetId = canonicalIdString(entryId);
     const target = this.snapshot.entries.find(
-      (entry: VaultEntry) => entry.id === entryId && !entry.isDeleted && entry.type === type,
+      (entry: VaultEntry) =>
+        canonicalIdString(entry.id) === targetId && !entry.isDeleted && entry.type === type,
     );
     if (target === undefined) {
       throw new Error('条目不存在或类型不匹配');
@@ -1450,6 +1476,7 @@ export class VaultController {
     if (markLocalChange) {
       this.snapshot.syncSettings.hasLocalChanges = true;
     }
+    this.snapshot = sanitizeRuntimePayload(this.snapshot);
     this.snapshot.updatedAt = Date.now();
 
     const encryptedVault = await this.crypto.encryptString(
@@ -1564,8 +1591,9 @@ export class VaultController {
     if (sessionKey === null) {
       throw new Error('Session key is missing');
     }
+    const normalizedPayload = sanitizeRuntimePayload(payload);
     const encryptedVault = await this.crypto.encryptString(
-      JSON.stringify(payload),
+      JSON.stringify(normalizedPayload),
       sessionKey,
     );
     const syncEnvelope: SyncEnvelope = {
@@ -1585,10 +1613,10 @@ export class VaultController {
     strategy: ConflictStrategy,
   ): VaultRuntimePayload {
     const localMap = new Map<string, VaultEntry>();
-    local.entries.forEach((entry: VaultEntry) => localMap.set(entry.id, deepCopyEntry(entry)));
+    local.entries.forEach((entry: VaultEntry) => putCanonicalEntry(localMap, entry));
 
     const remoteMap = new Map<string, VaultEntry>();
-    remote.entries.forEach((entry: VaultEntry) => remoteMap.set(entry.id, deepCopyEntry(entry)));
+    remote.entries.forEach((entry: VaultEntry) => putCanonicalEntry(remoteMap, entry));
 
     const allIds = new Set<string>();
     localMap.forEach((_value, key) => allIds.add(key));
@@ -1719,9 +1747,10 @@ function sanitizeRuntimePayload(
   const runtimePayload = input as VaultRuntimePayload;
   const maybeSettings = hasSyncSettings(input) ? runtimePayload.syncSettings : undefined;
   const maybeSecurity = input.security;
-  const normalizedEntries = (input.entries ?? []).map((entry: VaultEntry) =>
-    normalizeRuntimeEntry(entry),
-  );
+  const normalizedEntryMap = new Map<string, VaultEntry>();
+  (input.entries ?? []).forEach((entry: VaultEntry) => putCanonicalEntry(normalizedEntryMap, entry));
+  const normalizedEntries: VaultEntry[] = [];
+  normalizedEntryMap.forEach((entry: VaultEntry) => normalizedEntries.push(entry));
   const tagUnion = new Set<string>();
   const categoryUnion = new Set<string>();
   normalizeTags(input.tags ?? []).forEach((tag: string) => tagUnion.add(tag));
@@ -1752,6 +1781,10 @@ function normalizeRuntimeEntry(entry: VaultEntry): VaultEntry {
   const carrier = normalized as EntryCarrier;
   const payload: EntryPayloadCarrier =
     carrier.payload ?? createEmptyEntryPayloadCarrier();
+  carrier.id = canonicalIdString(carrier.id ?? '');
+  if (carrier.id.length === 0) {
+    carrier.id = nextId();
+  }
   const mergedTags = normalizeTags([
     ...readStringArray(carrier.tags),
     ...readStringArray(carrier.metadataTags),
@@ -1769,6 +1802,7 @@ function normalizeRuntimeEntry(entry: VaultEntry): VaultEntry {
   payload.category = resolvedCategory;
   carrier.customFields = normalizeCustomFields(carrier.customFields);
   carrier.payload = payload;
+  normalizeServiceReferences(carrier);
   carrier.label = readString(carrier.label);
   if (typeof carrier.isDeleted !== 'boolean') {
     carrier.isDeleted = false;
@@ -1808,6 +1842,53 @@ function createEmptyEntryPayloadCarrier(): EntryPayloadCarrier {
 
 function readString(value: string | undefined): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function canonicalIdString(value: string | undefined): string {
+  return readString(value).toLowerCase();
+}
+
+function normalizeReferenceIds(values: string[] | undefined): string[] {
+  if (values === undefined) {
+    return [];
+  }
+  const normalized: string[] = [];
+  values.forEach((value: string) => {
+    const id = canonicalIdString(value);
+    if (id.length > 0) {
+      normalized.push(id);
+    }
+  });
+  return normalized;
+}
+
+function mappedReferenceId(idMap: Map<string, string>, value: string | undefined): string {
+  const id = canonicalIdString(value);
+  if (id.length === 0) {
+    return '';
+  }
+  return idMap.get(id) ?? id;
+}
+
+function normalizeServiceReferences(carrier: EntryCarrier): void {
+  if (carrier.type !== VaultEntryType.SERVICE) {
+    return;
+  }
+  const payload = carrier.payload as ServiceReferenceCarrier;
+  payload.accountId = canonicalIdString(payload.accountId);
+  payload.serverIds = normalizeReferenceIds(payload.serverIds);
+}
+
+function normalizeExportItem(item: ExportItemRecord): ExportItemRecord {
+  const normalized = JSON.parse(JSON.stringify(item)) as ExportItemRecord;
+  normalized.id = canonicalIdString(normalized.id);
+  normalized.customFields = normalizeCustomFields(normalized.customFields);
+  if (normalized.type === VaultEntryType.SERVICE) {
+    const payload = normalized.payload as ServiceReferenceCarrier;
+    payload.accountId = canonicalIdString(payload.accountId);
+    payload.serverIds = normalizeReferenceIds(payload.serverIds);
+  }
+  return normalized;
 }
 
 function pickFirstNonEmpty(values: string[]): string {
@@ -2102,8 +2183,9 @@ function normalizeCustomFields(fields: CustomField[] | undefined): CustomField[]
     if (name.length === 0 && value.trim().length === 0) {
       return;
     }
+    const id = canonicalIdString(field.id);
     const normalized: CustomField = {
-      id: readString(field.id).length > 0 ? readString(field.id) : nextId(),
+      id: id.length > 0 ? id : nextId(),
       name,
       value,
     };
@@ -2116,6 +2198,25 @@ function nextId(): string {
   const ts = Date.now().toString(36);
   const rand = Math.floor(Math.random() * 1_000_000_000).toString(36);
   return `${ts}-${rand}`;
+}
+
+function putCanonicalEntry(entries: Map<string, VaultEntry>, entry: VaultEntry): void {
+  const normalized = normalizeRuntimeEntry(entry);
+  const existing = entries.get(normalized.id);
+  entries.set(
+    normalized.id,
+    existing === undefined ? normalized : pickCanonicalDuplicate(existing, normalized),
+  );
+}
+
+function pickCanonicalDuplicate(existing: VaultEntry, candidate: VaultEntry): VaultEntry {
+  if (isSameEntry(existing, candidate)) {
+    return existing.updatedAt >= candidate.updatedAt ? existing : candidate;
+  }
+  if (existing.isDeleted !== candidate.isDeleted) {
+    return existing.updatedAt >= candidate.updatedAt ? existing : candidate;
+  }
+  return existing.updatedAt >= candidate.updatedAt ? existing : candidate;
 }
 
 function deepCopyEntry(entry: VaultEntry): VaultEntry {

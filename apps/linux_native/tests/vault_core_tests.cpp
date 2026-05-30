@@ -47,6 +47,29 @@ int main() {
     auto merged = pm::mergeEntries({local}, {remote}, "localWins");
     assert(merged.stats.conflicts == 1);
     assert(merged.entries.size() == 2);
+    assert(merged.entries[1].label.find("Remote") != std::string::npos);
+
+    pm::VaultEntry androidEntry = entry;
+    androidEntry.id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    androidEntry.label = "Android";
+    androidEntry.version = {{"android", 2}, {"macos", 1}};
+    androidEntry.updatedBy = "android";
+    pm::VaultEntry swiftEntry = entry;
+    swiftEntry.id = "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA";
+    swiftEntry.label = "Swift";
+    swiftEntry.version = {{"android", 1}, {"macos", 1}};
+    swiftEntry.updatedBy = "macos";
+    auto canonicalMerged = pm::mergeEntries({androidEntry}, {swiftEntry}, "localWins");
+    assert(canonicalMerged.stats.conflicts == 0);
+    assert(canonicalMerged.entries.size() == 1);
+    assert(canonicalMerged.entries[0].id == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    assert(canonicalMerged.entries[0].label == "Android");
+
+    pm::VaultSnapshot uppercaseSnapshot;
+    uppercaseSnapshot.entries.push_back(swiftEntry);
+    const auto serialized = pm::serializeSnapshotJson(uppercaseSnapshot);
+    assert(serialized.find("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA") == std::string::npos);
+    assert(serialized.find("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa") != std::string::npos);
 
     std::cout << "linux-native core tests passed\n";
     return 0;

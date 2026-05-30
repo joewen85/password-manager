@@ -1,6 +1,7 @@
 #include "vault_core.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <iomanip>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -45,6 +46,27 @@ std::string escapeJson(const std::string& value) {
     return out.str();
 }
 
+std::string trimCopy(const std::string& value) {
+    const auto first = value.find_first_not_of(" \t\n\r\f\v");
+    if (first == std::string::npos) return "";
+    const auto last = value.find_last_not_of(" \t\n\r\f\v");
+    return value.substr(first, last - first + 1);
+}
+
+std::string canonicalIdString(const std::string& value) {
+    std::string normalized = trimCopy(value);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return normalized;
+}
+
+VaultEntry canonicalEntryId(const VaultEntry& entry) {
+    VaultEntry copy = entry;
+    copy.id = canonicalIdString(entry.id);
+    return copy;
+}
+
 std::vector<std::uint8_t> decodeBase32(const std::string& secret) {
     const std::string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
     std::string bits;
@@ -71,6 +93,13 @@ std::map<std::string, int> effectiveVersion(const VaultEntry& entry) {
 
 const VaultEntry& pickLatest(const VaultEntry& local, const VaultEntry& remote) {
     return local.id >= remote.id ? local : remote;
+}
+
+VaultEntry pickDuplicateEntry(const VaultEntry& existing, const VaultEntry& candidate) {
+    auto comparison = compareVersion(effectiveVersion(existing), effectiveVersion(candidate));
+    if (comparison == "localDominates") return existing;
+    if (comparison == "remoteDominates") return candidate;
+    return pickLatest(existing, candidate);
 }
 
 VaultEntry conflictCopy(const VaultEntry& entry) {
@@ -212,7 +241,7 @@ std::string serializeSnapshotJson(const VaultSnapshot& snapshot) {
     for (std::size_t index = 0; index < snapshot.entries.size(); ++index) {
         const auto& entry = snapshot.entries[index];
         if (index > 0) out << ",";
-        out << "{\"id\":\"" << escapeJson(entry.id) << "\",\"label\":\"" << escapeJson(entry.label)
+        out << "{\"id\":\"" << escapeJson(canonicalIdString(entry.id)) << "\",\"label\":\"" << escapeJson(entry.label)
             << "\",\"type\":\"" << escapeJson(entry.type) << "\",\"username\":\"" << escapeJson(entry.username)
             << "\",\"secret\":\"" << escapeJson(entry.secret) << "\",\"category\":\"" << escapeJson(entry.category)
             << "\",\"isDeleted\":" << (entry.isDeleted ? "true" : "false") << "}";
@@ -298,24 +327,31 @@ std::string compareVersion(const std::map<std::string, int>& local, const std::m
 SyncMergeResult mergeEntries(const std::vector<VaultEntry>& local, const std::vector<VaultEntry>& remote, const std::string& strategy) {
     std::vector<VaultEntry> merged;
     std::map<std::string, VaultEntry> remoteById;
-    for (const auto& entry : remote) remoteById[entry.id] = entry;
+    for (const auto& entry : remote) {
+        auto canonical = canonicalEntryId(entry);
+        auto found = remoteById.find(canonical.id);
+        remoteById[canonical.id] = found == remoteById.end()
+            ? canonical
+            : pickDuplicateEntry(found->second, canonical);
+    }
     int conflicts = 0;
     for (const auto& localEntry : local) {
-        auto found = remoteById.find(localEntry.id);
+        auto canonicalLocal = canonicalEntryId(localEntry);
+        auto found = remoteById.find(canonicalLocal.id);
         if (found == remoteById.end()) {
-            merged.push_back(localEntry);
+            merged.push_back(canonicalLocal);
             continue;
         }
         const auto remoteEntry = found->second;
         remoteById.erase(found);
-        auto comparison = compareVersion(effectiveVersion(localEntry), effectiveVersion(remoteEntry));
-        if (comparison == "localDominates") merged.push_back(localEntry);
+        auto comparison = compareVersion(effectiveVersion(canonicalLocal), effectiveVersion(remoteEntry));
+        if (comparison == "localDominates") merged.push_back(canonicalLocal);
         else if (comparison == "remoteDominates") merged.push_back(remoteEntry);
-        else if (comparison == "equal") merged.push_back(pickLatest(localEntry, remoteEntry));
+        else if (comparison == "equal") merged.push_back(pickLatest(canonicalLocal, remoteEntry));
         else {
             ++conflicts;
-            const VaultEntry& primary = strategy == "remoteWins" ? remoteEntry : localEntry;
-            const VaultEntry& secondary = primary.id == localEntry.id && primary.label == localEntry.label ? remoteEntry : localEntry;
+            const VaultEntry& primary = strategy == "remoteWins" ? remoteEntry : canonicalLocal;
+            const VaultEntry& secondary = strategy == "remoteWins" ? canonicalLocal : remoteEntry;
             merged.push_back(primary);
             merged.push_back(conflictCopy(secondary));
         }
