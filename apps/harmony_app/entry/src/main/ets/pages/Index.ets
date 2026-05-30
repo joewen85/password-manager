@@ -29,7 +29,18 @@ import {
 } from '../src/sync/SyncTypes';
 
 type DraftType = 'credential' | 'server' | 'service';
+type ActivePanel = 'home' | 'settings' | 'category' | 'tag';
 const MAX_UNLOCK_ATTEMPTS: number = 5;
+const UI_BACKGROUND: string = '#F4F6F8';
+const UI_SURFACE: string = '#FFFFFF';
+const UI_SURFACE_ALT: string = '#F8FAFC';
+const UI_TEXT: string = '#181F2A';
+const UI_MUTED: string = '#636F80';
+const UI_STROKE: string = '#DAE1EA';
+const UI_ACCENT: string = '#245DC4';
+const UI_SELECTED: string = '#E8F0FF';
+const UI_DANGER: string = '#B42318';
+const UI_DANGER_SURFACE: string = '#FFF1F0';
 
 interface SearchTerm {
   field: string;
@@ -69,6 +80,9 @@ struct Index {
   @State private ready: boolean = false;
   @State private hasMasterKey: boolean = false;
   @State private unlocked: boolean = false;
+  @State private activePanel: ActivePanel = 'home';
+  @State private actionPanelVisible: boolean = false;
+  @State private entryEditorVisible: boolean = false;
 
   @State private password: string = '';
   @State private confirmPassword: string = '';
@@ -189,7 +203,7 @@ struct Index {
     .width('100%')
     .height('100%')
     .padding(16)
-    .backgroundColor('#F4F6F0')
+    .backgroundColor(UI_BACKGROUND)
     .onClick(() => {
       this.recordUserActivity();
     });
@@ -201,7 +215,7 @@ struct Index {
       .width('100%')
       .padding({ left: 12, right: 12, top: 10, bottom: 10 })
       .margin({ bottom: 12 })
-      .backgroundColor('#1F4E46')
+      .backgroundColor(UI_ACCENT)
       .fontColor('#FFFFFF')
       .fontSize(13)
       .borderRadius(12);
@@ -285,15 +299,33 @@ struct Index {
 
   @Builder
   private VaultView() {
-    Column({ space: 12 }) {
+    Column({ space: 10 }) {
       this.HeaderSection();
-      this.SecuritySection();
-      this.SyncSection();
-      this.FilterSection();
-      this.NewEntrySection();
-      this.CategorySection();
-      this.TagSection();
-      this.EntryListSection();
+      if (this.actionPanelVisible) {
+        this.ActionPanel();
+      }
+      if (this.activePanel === 'settings') {
+        this.SettingsPage();
+      } else if (this.activePanel === 'category') {
+        Scroll() {
+          this.CategorySection();
+        }
+        .layoutWeight(1)
+        .width('100%');
+      } else if (this.activePanel === 'tag') {
+        Scroll() {
+          this.TagSection();
+        }
+        .layoutWeight(1)
+        .width('100%');
+      } else {
+        this.StatusSummary();
+        if (this.entryEditorVisible) {
+          this.NewEntrySection();
+        }
+        this.FilterSection();
+        this.EntryListSection();
+      }
     }
     .width('100%')
     .height('100%');
@@ -301,281 +333,520 @@ struct Index {
 
   @Builder
   private HeaderSection() {
-    Row() {
-      Text('密码管理器（鸿蒙版MVP）').fontSize(22).fontWeight(FontWeight.Bold);
+    Row({ space: 4 }) {
+      Column({ space: 4 }) {
+        Text('密码管理器')
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_TEXT);
+        Text('鸿蒙原生密码库')
+          .fontSize(11)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_ACCENT)
+          .padding({ left: 9, right: 9, top: 4, bottom: 4 })
+          .backgroundColor(UI_SURFACE_ALT)
+          .borderRadius(999);
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start);
       Blank();
-      Button('导入条目')
-        .type(ButtonType.Normal)
-        .margin({ right: 8 })
-        .onClick(() => {
-          this.onImportEntry();
-        });
-      Button('导出数据')
-        .type(ButtonType.Normal)
-        .margin({ right: 8 })
-        .onClick(() => {
-          this.onExportVault();
-        });
-      Button(this.syncBusy ? '同步中...' : '立即同步')
-        .type(ButtonType.Normal)
-        .margin({ right: 8 })
-        .enabled(!this.syncBusy)
-        .onClick(() => {
+      this.ToolbarButton('+', true, () => {
+        this.beginCreateEntry();
+      });
+      this.ToolbarButton(this.syncBusy ? '...' : '同步', false, () => {
+        if (!this.syncBusy) {
           this.onSyncNow();
-        });
-      Button('锁定')
-        .type(ButtonType.Normal)
-        .onClick(() => {
-          this.lockVault();
-        });
+        }
+      });
+      this.ToolbarButton('更多', false, () => {
+        this.actionPanelVisible = !this.actionPanelVisible;
+      });
+      this.ToolbarButton('锁定', false, () => {
+        this.lockVault();
+      });
     }
+    .width('100%')
+    .padding({ left: 2, right: 2, top: 2, bottom: 2 });
+  }
+
+  @Builder
+  private ToolbarButton(label: string, accent: boolean, action: () => void) {
+    Text(label)
+      .fontSize(label.length > 2 ? 12 : 18)
+      .fontWeight(FontWeight.Bold)
+      .fontColor(accent ? UI_ACCENT : UI_TEXT)
+      .height(44)
+      .constraintSize({ minWidth: 44 })
+      .padding({ left: 10, right: 10 })
+      .textAlign(TextAlign.Center)
+      .backgroundColor(UI_SURFACE)
+      .border({ width: 1, color: UI_STROKE })
+      .borderRadius(14)
+      .onClick(action);
+  }
+
+  @Builder
+  private ActionPanel() {
+    Column({ space: 10 }) {
+      Row() {
+        Text('快捷操作')
+          .fontSize(14)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_TEXT);
+        Blank();
+        Text('关闭')
+          .fontSize(12)
+          .fontColor(UI_MUTED)
+          .onClick(() => {
+            this.actionPanelVisible = false;
+          });
+      }
+      Flex({ wrap: FlexWrap.Wrap }) {
+        this.ActionChip('新建条目', true, () => {
+          this.beginCreateEntry();
+          this.actionPanelVisible = false;
+        });
+        this.ActionChip('设置', false, () => {
+          this.activePanel = 'settings';
+          this.entryEditorVisible = false;
+          this.actionPanelVisible = false;
+        });
+        this.ActionChip('分类管理', false, () => {
+          this.activePanel = 'category';
+          this.entryEditorVisible = false;
+          this.actionPanelVisible = false;
+        });
+        this.ActionChip('标签管理', false, () => {
+          this.activePanel = 'tag';
+          this.entryEditorVisible = false;
+          this.actionPanelVisible = false;
+        });
+        this.ActionChip('导入条目', false, () => {
+          this.onImportEntry();
+          this.actionPanelVisible = false;
+        });
+        this.ActionChip('导出数据', false, () => {
+          this.onExportVault();
+          this.actionPanelVisible = false;
+        });
+      }
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(UI_SURFACE)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(18);
+  }
+
+  @Builder
+  private ActionChip(label: string, primary: boolean, action: () => void) {
+    Text(label)
+      .fontSize(13)
+      .fontWeight(FontWeight.Bold)
+      .fontColor(primary ? '#FFFFFF' : UI_TEXT)
+      .height(40)
+      .padding({ left: 14, right: 14 })
+      .margin({ right: 8, bottom: 8 })
+      .textAlign(TextAlign.Center)
+      .backgroundColor(primary ? UI_ACCENT : UI_SURFACE_ALT)
+      .border({ width: 1, color: primary ? UI_ACCENT : UI_STROKE })
+      .borderRadius(12)
+      .onClick(action);
+  }
+
+  @Builder
+  private StatusSummary() {
+    Row() {
+      Text(`条目 ${this.entries.length} · 分类 ${this.categories.length} · 同步 ${this.syncStatus}`)
+        .fontSize(11)
+        .fontColor(UI_MUTED)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1);
+    }
+    .width('100%')
+    .height(40)
+    .padding({ left: 12, right: 12 })
+    .backgroundColor(UI_SURFACE_ALT)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(14);
+  }
+
+  @Builder
+  private SettingsPage() {
+    Scroll() {
+      Column({ space: 12 }) {
+        Row() {
+          Text('设置')
+            .fontSize(22)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(UI_TEXT);
+          Blank();
+          Text('返回')
+            .fontSize(13)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(UI_ACCENT)
+            .onClick(() => {
+              this.activePanel = 'home';
+            });
+        }
+
+        this.SecuritySection();
+        this.SyncSection();
+        this.DeviceSection();
+      }
+      .width('100%')
+      .padding({ bottom: 18 });
+    }
+    .layoutWeight(1)
     .width('100%');
   }
 
   @Builder
+  private SectionTitle(title: string) {
+    Text(title)
+      .fontSize(13)
+      .fontWeight(FontWeight.Bold)
+      .fontColor(UI_ACCENT);
+  }
+
+  @Builder
+  private SettingToggleRow(label: string, enabled: boolean, action: () => void) {
+    Row() {
+      Text(label)
+        .fontSize(15)
+        .fontColor(UI_TEXT)
+        .layoutWeight(1);
+      Text(enabled ? '已开启' : '已关闭')
+        .fontSize(13)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(enabled ? '#FFFFFF' : UI_TEXT)
+        .height(38)
+        .padding({ left: 14, right: 14 })
+        .textAlign(TextAlign.Center)
+        .backgroundColor(enabled ? UI_ACCENT : UI_SURFACE_ALT)
+        .border({ width: 1, color: enabled ? UI_ACCENT : UI_STROKE })
+        .borderRadius(12)
+        .onClick(action);
+    }
+    .width('100%')
+    .padding({ top: 4, bottom: 4 });
+  }
+
+  @Builder
+  private ChoiceChip(label: string, selected: boolean, action: () => void) {
+    Text(label)
+      .fontSize(13)
+      .fontWeight(FontWeight.Bold)
+      .fontColor(selected ? '#FFFFFF' : UI_TEXT)
+      .height(38)
+      .padding({ left: 14, right: 14 })
+      .margin({ right: 8, bottom: 8 })
+      .textAlign(TextAlign.Center)
+      .backgroundColor(selected ? UI_ACCENT : UI_SURFACE_ALT)
+      .border({ width: 1, color: selected ? UI_ACCENT : UI_STROKE })
+      .borderRadius(12)
+      .onClick(action);
+  }
+
+  @Builder
   private SecuritySection() {
-    Column({ space: 8 }) {
-      Text('安全设置').fontSize(18).fontWeight(FontWeight.Medium);
+    Column({ space: 10 }) {
+      this.SectionTitle('安全');
+      this.SettingToggleRow('解锁时要求动态验证码', this.securityRequireTotp, () => {
+        this.securityRequireTotp = !this.securityRequireTotp;
+      });
 
-      Row({ space: 8 }) {
-        Button('关闭2FA')
-          .onClick(() => this.securityRequireTotp = false)
-          .backgroundColor(this.securityRequireTotp ? '#CED8D9' : '#2F7F79');
-        Button('开启2FA')
-          .onClick(() => this.securityRequireTotp = true)
-          .backgroundColor(this.securityRequireTotp ? '#2F7F79' : '#CED8D9');
-      }
-
-      TextInput({ placeholder: 'TOTP Secret (Base32)', text: $$this.securityTotpSecret })
+      TextInput({ placeholder: 'TOTP Shared Secret', text: $$this.securityTotpSecret })
+        .type(InputType.Password)
         .width('100%')
-        .height(42)
-        .backgroundColor('#FFFFFF')
-        .borderRadius(10)
-        .padding({ left: 10, right: 10 });
+        .height(48)
+        .backgroundColor(UI_SURFACE_ALT)
+        .border({ width: 1, color: UI_STROKE })
+        .borderRadius(12)
+        .padding({ left: 14, right: 14 });
 
-      Row({ space: 8 }) {
-        Text('生物识别').fontSize(12).fontColor('#6F7A7C');
-        Button(this.biometricUnlockRequested ? '已开启' : '已关闭')
-          .enabled(this.biometricUnlockAvailable || this.biometricUnlockRequested)
-          .onClick(() => {
-            this.biometricUnlockRequested = !this.biometricUnlockRequested;
-            if (!this.biometricUnlockRequested) {
-              this.securityBiometricMasterPassword = '';
-            }
-          })
-          .backgroundColor(this.biometricUnlockRequested ? '#2F7F79' : '#CED8D9');
-      }
+      this.SettingToggleRow('启用生物识别解锁', this.biometricUnlockRequested, () => {
+        if (!this.biometricUnlockAvailable && !this.biometricUnlockRequested) {
+          this.toast('此设备没有可用的强生物识别硬件或尚未录入');
+          return;
+        }
+        this.biometricUnlockRequested = !this.biometricUnlockRequested;
+        if (!this.biometricUnlockRequested) {
+          this.securityBiometricMasterPassword = '';
+        }
+      });
+
       if (!this.biometricUnlockAvailable) {
         Text('此设备没有可用的强生物识别硬件或尚未录入。')
           .fontSize(12)
-          .fontColor('#9A4D4D');
+          .fontColor(UI_DANGER);
       }
       if (this.biometricUnlockRequested && !this.biometricUnlockEnabled) {
         TextInput({ placeholder: '输入主密码以启用生物识别', text: $$this.securityBiometricMasterPassword })
           .type(InputType.Password)
           .width('100%')
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
-        Text('在本设备上使用指纹或面容识别代替输入主密码。')
-          .fontSize(12)
-          .fontColor('#5A6668');
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
       }
 
-      TextInput({ placeholder: '闲置自动锁定(分钟，0为关闭)', text: $$this.securityIdleAutoLockMinutes })
+      Text('闲置自动锁定')
+        .fontSize(12)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_MUTED);
+      TextInput({ placeholder: '分钟，0 为关闭', text: $$this.securityIdleAutoLockMinutes })
         .type(InputType.Number)
         .width('100%')
-        .height(42)
-        .backgroundColor('#FFFFFF')
-        .borderRadius(10)
-        .padding({ left: 10, right: 10 });
-      Text('输入 0 表示关闭；取值范围 0-1440，开启后 App 闲置达到该分钟数会自动锁定。')
+        .height(48)
+        .backgroundColor(UI_SURFACE_ALT)
+        .border({ width: 1, color: UI_STROKE })
+        .borderRadius(12)
+        .padding({ left: 14, right: 14 });
+      Text('输入 0 表示关闭；取值范围 0-1440。')
         .fontSize(12)
-        .fontColor('#5A6668');
+        .fontColor(UI_MUTED);
 
       Text(this.securityRequireTotp ? '解锁时将强制校验动态验证码。' : '当前未启用2FA。')
         .fontSize(12)
-        .fontColor('#5A6668');
+        .fontColor(UI_MUTED);
 
-      Button('保存安全设置')
-        .type(ButtonType.Capsule)
-        .width('100%')
-        .onClick(() => {
-          this.onSaveSecuritySettings();
-        });
+      this.PrimaryTextButton('保存安全设置', () => {
+        this.onSaveSecuritySettings();
+      });
     }
     .width('100%')
-    .padding(12)
-    .backgroundColor('#EAF0EE')
-    .borderRadius(16);
+    .padding(16)
+    .backgroundColor(UI_SURFACE)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(18);
   }
 
   @Builder
   private SyncSection() {
-    Column({ space: 8 }) {
+    Column({ space: 10 }) {
       Row() {
-        Text('同步设置').fontSize(18).fontWeight(FontWeight.Medium);
+        this.SectionTitle('同步');
         Blank();
-        Text(`修订 ${this.syncRevision}`).fontSize(12).fontColor('#6F7A7C');
+        Text(`修订 ${this.syncRevision}`)
+          .fontSize(12)
+          .fontColor(UI_MUTED);
       }
 
+      Text('提供商')
+        .fontSize(12)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_MUTED);
       Flex({ wrap: FlexWrap.Wrap }) {
-        Button('关闭')
-          .onClick(() => this.syncProviderType = SyncProviderType.NONE)
-          .margin({ right: 8, bottom: 8 })
-          .backgroundColor(this.syncProviderType === SyncProviderType.NONE ? '#0F4C5C' : '#CED8D9');
-        Button('WebDAV')
-          .onClick(() => this.syncProviderType = SyncProviderType.WEBDAV)
-          .margin({ right: 8, bottom: 8 })
-          .backgroundColor(
-            this.syncProviderType === SyncProviderType.WEBDAV ? '#0F4C5C' : '#CED8D9',
-          );
-        Button('S3链接')
-          .onClick(() => this.syncProviderType = SyncProviderType.S3_PRESIGNED)
-          .margin({ right: 8, bottom: 8 })
-          .backgroundColor(this.syncProviderType === SyncProviderType.S3_PRESIGNED ? '#0F4C5C' : '#CED8D9');
-        Button('NAS WebDAV')
-          .onClick(() => this.syncProviderType = SyncProviderType.NAS_WEBDAV)
-          .margin({ right: 8, bottom: 8 })
-          .backgroundColor(this.syncProviderType === SyncProviderType.NAS_WEBDAV ? '#0F4C5C' : '#CED8D9');
+        this.ChoiceChip('关闭', this.syncProviderType === SyncProviderType.NONE, () => {
+          this.syncProviderType = SyncProviderType.NONE;
+        });
+        this.ChoiceChip('WebDAV', this.syncProviderType === SyncProviderType.WEBDAV, () => {
+          this.syncProviderType = SyncProviderType.WEBDAV;
+        });
+        this.ChoiceChip('S3链接', this.syncProviderType === SyncProviderType.S3_PRESIGNED, () => {
+          this.syncProviderType = SyncProviderType.S3_PRESIGNED;
+        });
+        this.ChoiceChip('NAS WebDAV', this.syncProviderType === SyncProviderType.NAS_WEBDAV, () => {
+          this.syncProviderType = SyncProviderType.NAS_WEBDAV;
+        });
       }
 
       if (
         this.syncProviderType === SyncProviderType.WEBDAV ||
         this.syncProviderType === SyncProviderType.NAS_WEBDAV
       ) {
-        TextInput({ placeholder: 'WebDAV 地址', text: $$this.syncWebdavUrl })
+        this.SectionTitle('WebDAV 设置');
+        TextInput({ placeholder: 'WebDAV URL', text: $$this.syncWebdavUrl })
           .width('100%')
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
-        TextInput({ placeholder: 'WebDAV 路径(/vault.json)', text: $$this.syncWebdavPath })
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
+        TextInput({ placeholder: '路径，例如 /vault.json', text: $$this.syncWebdavPath })
           .width('100%')
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
-        TextInput({ placeholder: '用户名(可选)', text: $$this.syncWebdavUsername })
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
+        TextInput({ placeholder: '用户名，可选', text: $$this.syncWebdavUsername })
           .width('100%')
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
-        TextInput({ placeholder: '密码(可选)', text: $$this.syncWebdavPassword })
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
+        TextInput({ placeholder: '密码，可选', text: $$this.syncWebdavPassword })
           .type(InputType.Password)
           .width('100%')
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
       }
 
       if (this.syncProviderType === SyncProviderType.S3_PRESIGNED) {
+        this.SectionTitle('预签名 URL 设置');
         TextInput({ placeholder: '下载 URL', text: $$this.syncPresignedDownloadUrl })
           .width('100%')
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
         TextInput({ placeholder: '上传 URL', text: $$this.syncPresignedUploadUrl })
           .type(InputType.Password)
           .width('100%')
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
       }
 
+      this.SettingToggleRow('自动同步', this.syncAutoEnabled, () => {
+        this.syncAutoEnabled = !this.syncAutoEnabled;
+      });
       Row({ space: 8 }) {
-        Text('自动同步').fontSize(12).fontColor('#6F7A7C');
-        Button(this.syncAutoEnabled ? '已开启' : '已关闭')
-          .onClick(() => this.syncAutoEnabled = !this.syncAutoEnabled)
-          .backgroundColor(this.syncAutoEnabled ? '#2F7F79' : '#CED8D9');
-        Button(this.syncAutoOnUnlock ? '解锁后同步' : '解锁后不同步')
-          .onClick(() => this.syncAutoOnUnlock = !this.syncAutoOnUnlock)
-          .backgroundColor(this.syncAutoOnUnlock ? '#2F7F79' : '#CED8D9');
+        Text('同步间隔')
+          .fontSize(12)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_MUTED)
+          .width(72);
+        TextInput({ placeholder: '数值', text: $$this.syncIntervalValue })
+          .type(InputType.Number)
+          .layoutWeight(1)
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
+      }
+      Flex({ wrap: FlexWrap.Wrap }) {
+        this.ChoiceChip('秒', this.syncIntervalUnit === SyncIntervalUnit.SECONDS, () => {
+          this.syncIntervalUnit = SyncIntervalUnit.SECONDS;
+        });
+        this.ChoiceChip('分钟', this.syncIntervalUnit === SyncIntervalUnit.MINUTES, () => {
+          this.syncIntervalUnit = SyncIntervalUnit.MINUTES;
+        });
       }
 
-      Row({ space: 8 }) {
-        Text('同步主密钥元数据').fontSize(12).fontColor('#6F7A7C');
-        Button(this.syncMasterKey ? '已开启' : '已关闭')
-          .onClick(() => this.syncMasterKey = !this.syncMasterKey)
-          .backgroundColor(this.syncMasterKey ? '#2F7F79' : '#CED8D9');
-      }
+      this.SettingToggleRow('解锁后同步', this.syncAutoOnUnlock, () => {
+        this.syncAutoOnUnlock = !this.syncAutoOnUnlock;
+      });
+      this.SettingToggleRow('同步主密钥元数据', this.syncMasterKey, () => {
+        this.syncMasterKey = !this.syncMasterKey;
+      });
       Text('开启后同步包会携带主密钥元数据，便于新设备通过同一主密码解密同步数据。')
         .fontSize(12)
-        .fontColor('#5A6668');
+        .fontColor(UI_MUTED);
 
-      Row({ space: 8 }) {
-        Text('同步间隔').fontSize(12).fontColor('#6F7A7C');
-        Button('秒')
-          .onClick(() => this.syncIntervalUnit = SyncIntervalUnit.SECONDS)
-          .backgroundColor(this.syncIntervalUnit === SyncIntervalUnit.SECONDS ? '#2F7F79' : '#CED8D9');
-        Button('分钟')
-          .onClick(() => this.syncIntervalUnit = SyncIntervalUnit.MINUTES)
-          .backgroundColor(this.syncIntervalUnit === SyncIntervalUnit.MINUTES ? '#2F7F79' : '#CED8D9');
-      }
-      TextInput({ placeholder: '间隔数值', text: $$this.syncIntervalValue })
-        .type(InputType.Number)
-        .width('100%')
-        .height(42)
-        .backgroundColor('#FFFFFF')
-        .borderRadius(10)
-        .padding({ left: 10, right: 10 });
-
-      Row({ space: 8 }) {
-        Text('冲突策略').fontSize(12).fontColor('#6F7A7C');
-        Button('远端优先')
-          .onClick(() => this.syncConflictStrategy = ConflictStrategy.REMOTE_WINS)
-          .backgroundColor(this.syncConflictStrategy === ConflictStrategy.REMOTE_WINS ? '#2F7F79' : '#CED8D9');
-        Button('本地优先')
-          .onClick(() => this.syncConflictStrategy = ConflictStrategy.LOCAL_WINS)
-          .backgroundColor(this.syncConflictStrategy === ConflictStrategy.LOCAL_WINS ? '#2F7F79' : '#CED8D9');
-        Button('保留冲突')
-          .onClick(() => this.syncConflictStrategy = ConflictStrategy.KEEP_BOTH)
-          .backgroundColor(this.syncConflictStrategy === ConflictStrategy.KEEP_BOTH ? '#2F7F79' : '#CED8D9');
+      Text('冲突策略')
+        .fontSize(12)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_MUTED);
+      Flex({ wrap: FlexWrap.Wrap }) {
+        this.ChoiceChip('远端优先', this.syncConflictStrategy === ConflictStrategy.REMOTE_WINS, () => {
+          this.syncConflictStrategy = ConflictStrategy.REMOTE_WINS;
+        });
+        this.ChoiceChip('本地优先', this.syncConflictStrategy === ConflictStrategy.LOCAL_WINS, () => {
+          this.syncConflictStrategy = ConflictStrategy.LOCAL_WINS;
+        });
+        this.ChoiceChip('保留冲突', this.syncConflictStrategy === ConflictStrategy.KEEP_BOTH, () => {
+          this.syncConflictStrategy = ConflictStrategy.KEEP_BOTH;
+        });
       }
 
       Row({ space: 8 }) {
-        Button('保存同步设置')
-          .type(ButtonType.Capsule)
-          .layoutWeight(1)
-          .onClick(() => {
+        Column() {
+          this.SecondaryTextButton('立即同步', () => {
+            if (!this.syncBusy) {
+              this.onSyncNow();
+            }
+          });
+        }
+        .layoutWeight(1)
+        Column() {
+          this.PrimaryTextButton('保存同步设置', () => {
             this.onSaveSyncSettings();
           });
-        Button(this.syncBusy ? '同步中...' : '立即同步')
-          .type(ButtonType.Capsule)
-          .layoutWeight(1)
-          .onClick(() => {
-            if (this.syncBusy) {
-              return;
-            }
-            this.onSyncNow();
-          });
+        }
+        .layoutWeight(1)
       }
 
-      Text(this.syncStatus).fontSize(12).fontColor('#5A6668');
-      Text(`设备 ${this.syncDeviceId.length > 0 ? this.syncDeviceId : '-'}`)
-        .fontSize(11)
-        .fontColor('#6F7A7C');
-      Text(`当前修订 ${this.syncRevision}`)
-        .fontSize(11)
-        .fontColor('#6F7A7C');
+      Text(this.syncStatus)
+        .fontSize(12)
+        .fontColor(UI_MUTED);
 
       if (this.syncLogs.length > 0) {
-        Column({ space: 4 }) {
+        Column({ space: 6 }) {
           ForEach(this.syncLogs, (line: string) => {
-            Text(line).fontSize(11).fontColor('#6F7A7C').maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis });
+            Text(line)
+              .fontSize(11)
+              .fontColor(UI_MUTED)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis });
           }, (line: string, index: number) => `${line}-${index}`);
         }
       }
     }
     .width('100%')
-    .padding(12)
-    .backgroundColor('#EAF0EE')
-    .borderRadius(16);
+    .padding(16)
+    .backgroundColor(UI_SURFACE)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(18);
+  }
+
+  @Builder
+  private DeviceSection() {
+    Column({ space: 6 }) {
+      this.SectionTitle('设备');
+      Text(`设备 ${this.syncDeviceId.length > 0 ? this.syncDeviceId : '-'}`)
+        .fontSize(13)
+        .fontColor(UI_MUTED);
+      Text(`修订 ${this.syncRevision}`)
+        .fontSize(13)
+        .fontColor(UI_MUTED);
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(UI_SURFACE)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(18);
+  }
+
+  @Builder
+  private PrimaryTextButton(label: string, action: () => void) {
+    Text(label)
+      .fontSize(14)
+      .fontWeight(FontWeight.Bold)
+      .fontColor('#FFFFFF')
+      .height(44)
+      .width('100%')
+      .textAlign(TextAlign.Center)
+      .backgroundColor(UI_ACCENT)
+      .borderRadius(12)
+      .onClick(action);
+  }
+
+  @Builder
+  private SecondaryTextButton(label: string, action: () => void) {
+    Text(label)
+      .fontSize(14)
+      .fontWeight(FontWeight.Bold)
+      .fontColor(UI_TEXT)
+      .height(44)
+      .width('100%')
+      .textAlign(TextAlign.Center)
+      .backgroundColor(UI_SURFACE_ALT)
+      .border({ width: 1, color: UI_STROKE })
+      .borderRadius(12)
+      .onClick(action);
   }
 
   @Builder
@@ -596,21 +867,26 @@ struct Index {
 
       Row({ space: 8 }) {
         TextInput({
-          placeholder: '字段搜索按当前分类，tag:/# 标签全局',
+          placeholder: '搜索密码库，tag:/# 标签全局',
           text: $$this.searchQuery,
           controller: this.searchInputController
         })
           .layoutWeight(1)
-          .height(44)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(12)
-          .padding({ left: 12, right: 12 });
-        Button('?')
-          .width(44)
-          .height(44)
-          .backgroundColor('#FFFFFF')
-          .fontColor('#1F4E46')
-          .borderRadius(12)
+          .height(46)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(14)
+          .padding({ left: 14, right: 14 });
+        Text('?')
+          .width(46)
+          .height(46)
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_MUTED)
+          .textAlign(TextAlign.Center)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(14)
           .onClick(() => {
             this.showSearchHelp();
           });
@@ -631,41 +907,56 @@ struct Index {
       }
     }
     .width('100%')
-    .padding(12)
-    .backgroundColor('#EAF0EE')
-    .borderRadius(16);
+    .padding(14)
+    .backgroundColor(UI_SURFACE)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(18);
   }
 
   @Builder
   private NewEntrySection() {
-    Column({ space: 8 }) {
+    Column({ space: 10 }) {
       Row() {
         Text(this.editingEntryId.length > 0 ? '编辑条目' : '新建条目')
           .fontSize(18)
-          .fontWeight(FontWeight.Medium);
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_TEXT);
         Blank();
-        if (this.editingEntryId.length > 0) {
-          Button('取消编辑')
-            .height(30)
-            .onClick(() => {
-              this.clearEntryDraft();
-            });
-        }
+        Text('关闭')
+          .fontSize(12)
+          .fontColor(UI_MUTED)
+          .onClick(() => {
+            this.clearEntryDraft();
+            this.entryEditorVisible = false;
+          });
       }
-      Text('条目类型').fontSize(12).fontColor('#5A6668');
+      Text('条目类型').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
 
-      Row({ space: 8 }) {
-        Button('账号').enabled(this.editingEntryId.length === 0).onClick(() => this.draftType = 'credential').backgroundColor(this.draftType === 'credential' ? '#2F7F79' : '#CED8D9');
-        Button('服务器').enabled(this.editingEntryId.length === 0).onClick(() => this.draftType = 'server').backgroundColor(this.draftType === 'server' ? '#2F7F79' : '#CED8D9');
-        Button('服务').enabled(this.editingEntryId.length === 0).onClick(() => this.draftType = 'service').backgroundColor(this.draftType === 'service' ? '#2F7F79' : '#CED8D9');
+      Flex({ wrap: FlexWrap.Wrap }) {
+        this.ChoiceChip('账号', this.draftType === 'credential', () => {
+          if (this.editingEntryId.length === 0) {
+            this.draftType = 'credential';
+          }
+        });
+        this.ChoiceChip('服务器', this.draftType === 'server', () => {
+          if (this.editingEntryId.length === 0) {
+            this.draftType = 'server';
+          }
+        });
+        this.ChoiceChip('服务', this.draftType === 'service', () => {
+          if (this.editingEntryId.length === 0) {
+            this.draftType = 'service';
+          }
+        });
       }
 
       TextInput({ placeholder: '标题（必填）', text: $$this.draftLabel })
         .width('100%')
-        .height(42)
-        .backgroundColor('#FFFFFF')
-        .borderRadius(10)
-        .padding({ left: 10, right: 10 });
+        .height(48)
+        .backgroundColor(UI_SURFACE_ALT)
+        .border({ width: 1, color: UI_STROKE })
+        .borderRadius(12)
+        .padding({ left: 14, right: 14 });
 
       this.EntryCategorySelect();
       this.EntryTagMultiSelect();
@@ -673,89 +964,118 @@ struct Index {
       if (this.draftType === 'credential') {
         TextInput({ placeholder: '用户名', text: $$this.draftCredentialUsername })
           .width('100%')
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
         TextInput({ placeholder: '密码', text: $$this.draftCredentialPassword })
           .type(InputType.Password)
           .width('100%')
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
       }
 
       if (this.draftType === 'server') {
         TextInput({ placeholder: '服务器名称', text: $$this.draftServerName })
           .width('100%')
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
         TextInput({ placeholder: 'IP地址', text: $$this.draftServerIp })
           .width('100%')
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
         TextInput({ placeholder: '端口', text: $$this.draftServerPort })
           .width('100%')
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
       }
 
       if (this.draftType === 'service') {
         TextInput({ placeholder: '服务名称', text: $$this.draftServiceName })
           .width('100%')
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
         TextInput({ placeholder: '连接地址', text: $$this.draftServiceAddress })
           .width('100%')
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
         TextInput({ placeholder: '端口', text: $$this.draftServicePort })
           .width('100%')
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
       }
 
       this.CustomFieldsEditor();
 
-      Button(this.editingEntryId.length > 0 ? '保存修改' : '保存条目')
-        .type(ButtonType.Capsule)
-        .width('100%')
-        .onClick(() => {
-          this.onSaveEntry();
-        });
+      this.PrimaryTextButton(this.editingEntryId.length > 0 ? '保存修改' : '保存条目', () => {
+        this.onSaveEntry();
+      });
     }
     .width('100%')
-    .padding(12)
-    .backgroundColor('#EAF0EE')
-    .borderRadius(16);
+    .padding(16)
+    .backgroundColor(UI_SURFACE)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(18);
   }
 
   @Builder
   private TagSection() {
-    Column({ space: 8 }) {
-      Text('标签管理').fontSize(18).fontWeight(FontWeight.Medium);
+    Column({ space: 10 }) {
+      Row() {
+        Text('标签管理')
+          .fontSize(22)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_TEXT);
+        Blank();
+        Text('返回')
+          .fontSize(13)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_ACCENT)
+          .onClick(() => {
+            this.activePanel = 'home';
+          });
+      }
 
       Row({ space: 8 }) {
         TextInput({ placeholder: '新增标签', text: $$this.tagDraft })
           .layoutWeight(1)
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
-        Button('添加').onClick(() => this.onAddTag());
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
+        Text('添加')
+          .fontSize(13)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#FFFFFF')
+          .height(48)
+          .padding({ left: 16, right: 16 })
+          .textAlign(TextAlign.Center)
+          .backgroundColor(UI_ACCENT)
+          .borderRadius(12)
+          .onClick(() => this.onAddTag());
       }
 
       if (this.tags.length > 0) {
@@ -773,41 +1093,79 @@ struct Index {
             }
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
             .margin({ right: 6, bottom: 6 })
-            .backgroundColor('#FFFFFF')
+            .backgroundColor(UI_SURFACE_ALT)
+            .border({ width: 1, color: UI_STROKE })
             .borderRadius(999)
             .onClick(() => {});
           }, (tag: string) => tag);
         }
+      } else {
+        Text('暂无标签')
+          .fontSize(13)
+          .fontColor(UI_MUTED);
       }
     }
     .width('100%')
-    .padding(12)
-    .backgroundColor('#EAF0EE')
-    .borderRadius(16);
+    .padding(16)
+    .backgroundColor(UI_SURFACE)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(18);
   }
 
   @Builder
   private CategorySection() {
-    Column({ space: 8 }) {
+    Column({ space: 10 }) {
       Row() {
-        Text('分类管理').fontSize(18).fontWeight(FontWeight.Medium);
+        Text('分类管理')
+          .fontSize(22)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_TEXT);
         Blank();
-        Button('导入分类')
-          .type(ButtonType.Normal)
+        Text('导入')
+          .fontSize(13)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_ACCENT)
+          .margin({ right: 16 })
           .onClick(() => {
             this.onImportCategory();
+          });
+        Text('返回')
+          .fontSize(13)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_ACCENT)
+          .onClick(() => {
+            this.activePanel = 'home';
           });
       }
 
       Row({ space: 8 }) {
         TextInput({ placeholder: '新增分类', text: $$this.categoryDraft })
           .layoutWeight(1)
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
-        Button('添加').onClick(() => this.onAddCategory());
-        Button(this.categoryRenameSource.length > 0 ? '保存重命名' : '重命名')
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
+        Text('添加')
+          .fontSize(13)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#FFFFFF')
+          .height(48)
+          .padding({ left: 16, right: 16 })
+          .textAlign(TextAlign.Center)
+          .backgroundColor(UI_ACCENT)
+          .borderRadius(12)
+          .onClick(() => this.onAddCategory());
+        Text(this.categoryRenameSource.length > 0 ? '保存' : '重命名')
+          .fontSize(13)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_TEXT)
+          .height(48)
+          .padding({ left: 14, right: 14 })
+          .textAlign(TextAlign.Center)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
           .onClick(() => this.onRenameCategory());
       }
 
@@ -815,10 +1173,10 @@ struct Index {
         Row({ space: 8 }) {
           Text(`当前重命名: ${this.categoryRenameSource}`)
             .fontSize(12)
-            .fontColor('#5A6668');
+            .fontColor(UI_MUTED);
           Text('取消')
             .fontSize(12)
-            .fontColor('#2F7F79')
+            .fontColor(UI_ACCENT)
             .onClick(() => {
               this.categoryRenameSource = '';
               this.categoryDraft = '';
@@ -847,7 +1205,8 @@ struct Index {
             }
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
             .margin({ right: 6, bottom: 6 })
-            .backgroundColor(this.categoryRenameSource === category ? '#BEE6D6' : '#FFFFFF')
+            .backgroundColor(this.categoryRenameSource === category ? UI_SELECTED : UI_SURFACE_ALT)
+            .border({ width: 1, color: this.categoryRenameSource === category ? UI_ACCENT : UI_STROKE })
             .borderRadius(999)
             .onClick(() => {
               this.categoryRenameSource = category;
@@ -855,112 +1214,142 @@ struct Index {
             });
           }, (category: string) => category);
         }
+      } else {
+        Text('暂无分类')
+          .fontSize(13)
+          .fontColor(UI_MUTED);
       }
     }
     .width('100%')
-    .padding(12)
-    .backgroundColor('#EAF0EE')
-    .borderRadius(16);
+    .padding(16)
+    .backgroundColor(UI_SURFACE)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(18);
   }
 
   @Builder
   private EntryListSection() {
-    Column({ space: 8 }) {
+    Column({ space: 10 }) {
       Row() {
-        Text('条目列表').fontSize(18).fontWeight(FontWeight.Medium);
+        Text('条目列表')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_TEXT);
         Blank();
-        Text(`共 ${this.filteredEntries().length} 条`).fontSize(12).fontColor('#687275');
+        Text(`共 ${this.filteredEntries().length} 条`)
+          .fontSize(12)
+          .fontColor(UI_MUTED);
       }
 
       if (this.hasActiveFilters()) {
         this.ActiveFilterSummary(this.filteredEntries().length);
       }
 
-      List({ space: 8 }) {
-        ForEach(this.filteredEntries(), (entry: VaultEntry) => {
-          ListItem() {
-            Column({ space: 6 }) {
-              Row() {
-                Text(entry.label)
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Medium)
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .fontColor(this.entryTitleMatched(entry) ? '#0F4C5C' : '#1F2B2D');
-                Blank();
-                Text(this.typeLabel(entry.type)).fontSize(12).fontColor('#2F7F79');
+      if (this.filteredEntries().length === 0) {
+        Column({ space: 10 }) {
+          Text('暂无条目')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(UI_TEXT);
+          Text('点右上角 + 创建第一个条目。')
+            .fontSize(13)
+            .fontColor(UI_MUTED);
+          this.PrimaryTextButton('新建条目', () => {
+            this.beginCreateEntry();
+          });
+        }
+        .width('100%')
+        .padding({ top: 44, bottom: 44, left: 18, right: 18 })
+        .alignItems(HorizontalAlign.Center);
+      } else {
+        List({ space: 8 }) {
+          ForEach(this.filteredEntries(), (entry: VaultEntry) => {
+            ListItem() {
+              Column({ space: 7 }) {
+                Row() {
+                  Text(entry.label)
+                    .fontSize(16)
+                    .fontWeight(FontWeight.Bold)
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .fontColor(this.entryTitleMatched(entry) ? UI_ACCENT : UI_TEXT);
+                  Blank();
+                  Text(this.typeLabel(entry.type))
+                    .fontSize(11)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor(UI_ACCENT)
+                    .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                    .backgroundColor(UI_SELECTED)
+                    .borderRadius(999);
+                }
+
+                Text(this.entrySummary(entry))
+                  .fontSize(13)
+                  .fontColor(this.entrySummaryMatched(entry) ? UI_ACCENT : UI_MUTED)
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis });
+                Text(`${this.entryCategory(entry) || '未分类'}${entry.tags.length > 0 ? '  ' + entry.tags.map((tag: string) => '#' + tag).join(', ') : ''}`)
+                  .fontSize(12)
+                  .fontColor(this.entryCategoryMatched(entry) ? UI_ACCENT : UI_MUTED)
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis });
+
+                if (this.entryMatchLabels(entry).length > 0) {
+                  this.EntryMatchPills(entry);
+                }
+
+                Row() {
+                  Text(new Date(entry.updatedAt).toLocaleString())
+                    .fontSize(11)
+                    .fontColor(UI_MUTED);
+                  Blank();
+                  Text('导出')
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor(UI_ACCENT)
+                    .margin({ right: 14 })
+                    .onClick(() => {
+                      this.toggleExportPanel(entry);
+                    });
+                  Text('编辑')
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor(UI_ACCENT)
+                    .margin({ right: 14 })
+                    .onClick(() => {
+                      this.startEditEntry(entry);
+                    });
+                  Text('删除')
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor(UI_DANGER)
+                    .onClick(() => {
+                      this.onDeleteEntry(entry.id);
+                    });
+                }
+
+                if (this.exportEntryId === entry.id) {
+                  this.EntryExportPanel(entry);
+                }
               }
-
-              Text(this.entrySummary(entry))
-                .fontSize(12)
-                .fontColor(this.entrySummaryMatched(entry) ? '#0F4C5C' : '#5C6769')
-                .maxLines(2)
-                .textOverflow({ overflow: TextOverflow.Ellipsis });
-              Text(`分类: ${this.entryCategory(entry) || '-'}`)
-                .fontSize(11)
-                .fontColor(this.entryCategoryMatched(entry) ? '#0F4C5C' : '#6D787A')
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis });
-
-              if (entry.tags.length > 0) {
-                this.EntryTagPills(entry);
-              } else {
-                Text('标签: -').fontSize(11).fontColor('#6D787A');
-              }
-
-              this.EntryOverview(entry);
-
-              if (this.entryMatchLabels(entry).length > 0) {
-                this.EntryMatchPills(entry);
-              }
-
-              Row() {
-                Text(new Date(entry.updatedAt).toLocaleString()).fontSize(11).fontColor('#7A8587');
-                Blank();
-                Button('导出')
-                  .type(ButtonType.Normal)
-                  .margin({ right: 8 })
-                  .backgroundColor('#D7EAF3')
-                  .fontColor('#1F4E6B')
-                  .onClick(() => {
-                    this.toggleExportPanel(entry);
-                  });
-                Button('编辑')
-                  .type(ButtonType.Normal)
-                  .margin({ right: 8 })
-                  .backgroundColor('#DDE9E4')
-                  .fontColor('#1F4E46')
-                  .onClick(() => {
-                    this.startEditEntry(entry);
-                  });
-                Button('删除')
-                  .type(ButtonType.Normal)
-                  .backgroundColor('#F3D7D7')
-                  .fontColor('#8A2A2A')
-                  .onClick(() => {
-                    this.onDeleteEntry(entry.id);
-                  });
-              }
-
-              if (this.exportEntryId === entry.id) {
-                this.EntryExportPanel(entry);
-              }
+              .width('100%')
+              .padding(14)
+              .backgroundColor(UI_SURFACE_ALT)
+              .border({ width: 1, color: UI_STROKE })
+              .borderRadius(14);
             }
-            .width('100%')
-            .padding(12)
-            .backgroundColor('#FFFFFF')
-            .borderRadius(12);
-          }
-        }, (entry: VaultEntry) => entry.id);
+          }, (entry: VaultEntry) => entry.id);
+        }
+        .layoutWeight(1)
+        .width('100%');
       }
-      .layoutWeight(1)
-      .width('100%');
     }
     .layoutWeight(1)
     .width('100%')
-    .padding(12)
-    .backgroundColor('#EAF0EE')
-    .borderRadius(16);
+    .padding(14)
+    .backgroundColor(UI_SURFACE)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(18);
   }
 
   @Builder
@@ -971,8 +1360,8 @@ struct Index {
           .fontSize(11)
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
           .margin({ right: 6, bottom: 4 })
-          .backgroundColor(this.tagMatched(tag) ? '#BEE6D6' : '#EEF3F1')
-          .fontColor(this.tagMatched(tag) ? '#0F4C5C' : '#5E6A6C')
+          .backgroundColor(this.tagMatched(tag) ? UI_SELECTED : UI_SURFACE_ALT)
+          .fontColor(this.tagMatched(tag) ? UI_ACCENT : UI_MUTED)
           .borderRadius(999);
       }, (tag: string, index: number) => `${tag}-${index}`);
     }
@@ -1004,7 +1393,7 @@ struct Index {
   @Builder
   private EntryExportPanel(entry: VaultEntry) {
     Column({ space: 8 }) {
-      Text('选择导出字段').fontSize(12).fontWeight(FontWeight.Medium).fontColor('#1F2B2D');
+      Text('选择导出字段').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_TEXT);
       Flex({ wrap: FlexWrap.Wrap }) {
         ForEach(this.exportFieldOptions(entry), (option: ExportFieldOption) => {
           this.FilterPill(option.label, this.exportSelectedFieldIds.includes(option.id), () => {
@@ -1013,29 +1402,27 @@ struct Index {
         }, (option: ExportFieldOption) => option.id);
       }
       Row({ space: 8 }) {
-        Button('导出全部')
-          .type(ButtonType.Normal)
-          .layoutWeight(1)
-          .backgroundColor('#D7EAF3')
-          .fontColor('#1F4E6B')
-          .onClick(() => {
+        Column() {
+          this.SecondaryTextButton('导出全部', () => {
             this.onExportEntryAll(entry);
           });
-        Button('导出所选')
-          .type(ButtonType.Normal)
-          .layoutWeight(1)
-          .enabled(this.exportSelectedFieldIds.length > 0)
-          .backgroundColor(this.exportSelectedFieldIds.length > 0 ? '#2F7F79' : '#CED8D9')
-          .fontColor('#FFFFFF')
-          .onClick(() => {
-            this.onExportEntrySelected(entry);
+        }
+        .layoutWeight(1)
+        Column() {
+          this.PrimaryTextButton('导出所选', () => {
+            if (this.exportSelectedFieldIds.length > 0) {
+              this.onExportEntrySelected(entry);
+            }
           });
+        }
+        .layoutWeight(1)
       }
     }
     .width('100%')
-    .padding(10)
-    .backgroundColor('#F6F8F6')
-    .borderRadius(10);
+    .padding(12)
+    .backgroundColor(UI_SURFACE)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(12);
   }
 
   @Builder
@@ -1046,7 +1433,7 @@ struct Index {
           .fontSize(11)
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
           .margin({ right: 6, bottom: 4 })
-          .backgroundColor('#0F4C5C')
+          .backgroundColor(UI_ACCENT)
           .fontColor('#FFFFFF')
           .borderRadius(999);
       }, (label: string, index: number) => `${label}-${index}`);
@@ -1061,8 +1448,9 @@ struct Index {
           .fontSize(11)
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
           .margin({ right: 6, bottom: 4 })
-          .backgroundColor(label.startsWith('结果:') ? '#BEE6D6' : '#FFFFFF')
-          .fontColor(label.startsWith('结果:') ? '#0F4C5C' : '#5E6A6C')
+          .backgroundColor(label.startsWith('结果:') ? UI_SELECTED : UI_SURFACE_ALT)
+          .fontColor(label.startsWith('结果:') ? UI_ACCENT : UI_MUTED)
+          .border({ width: 1, color: label.startsWith('结果:') ? UI_ACCENT : UI_STROKE })
           .borderRadius(999);
       }, (label: string, index: number) => `${label}-${index}`);
     }
@@ -1257,6 +1645,8 @@ struct Index {
     }
 
     this.clearEntryDraft();
+    this.entryEditorVisible = false;
+    this.activePanel = 'home';
     this.refreshData();
     this.toast('已保存');
   }
@@ -1564,16 +1954,16 @@ struct Index {
   @Builder
   private EntryCategorySelect() {
     Column({ space: 6 }) {
-      Text('分类').fontSize(12).fontColor('#5A6668');
+      Text('分类').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
       if (this.draftCategory.length > 0) {
         Row({ space: 6 }) {
           Text(`已选: ${this.draftCategory}`)
             .fontSize(12)
-            .fontColor('#0F4C5C')
+            .fontColor(UI_ACCENT)
             .layoutWeight(1);
-          Button('清除')
+          Text('清除')
             .fontSize(12)
-            .height(28)
+            .fontColor(UI_MUTED)
             .onClick(() => {
               this.draftCategory = '';
               this.draftCategorySearch = '';
@@ -1583,16 +1973,25 @@ struct Index {
       Row({ space: 8 }) {
         TextInput({ placeholder: '搜索分类', text: $$this.draftCategorySearch })
           .layoutWeight(1)
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
-        Button('+')
-          .width(42)
-          .height(42)
-          .enabled(this.canCreateDraftCategory())
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
+        Text('+')
+          .width(48)
+          .height(48)
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.canCreateDraftCategory() ? '#FFFFFF' : UI_MUTED)
+          .textAlign(TextAlign.Center)
+          .backgroundColor(this.canCreateDraftCategory() ? UI_ACCENT : UI_SURFACE_ALT)
+          .border({ width: 1, color: this.canCreateDraftCategory() ? UI_ACCENT : UI_STROKE })
+          .borderRadius(12)
           .onClick(() => {
-            this.createDraftCategoryFromSearch();
+            if (this.canCreateDraftCategory()) {
+              this.createDraftCategoryFromSearch();
+            }
           });
       }
       if (this.filteredDraftCategories().length > 0) {
@@ -1606,7 +2005,7 @@ struct Index {
       } else {
         Text('没有匹配分类，可点 + 创建')
           .fontSize(12)
-          .fontColor('#5A6668');
+          .fontColor(UI_MUTED);
       }
     }
   }
@@ -1614,7 +2013,7 @@ struct Index {
   @Builder
   private EntryTagMultiSelect() {
     Column({ space: 6 }) {
-      Text('标签').fontSize(12).fontColor('#5A6668');
+      Text('标签').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
       if (this.draftSelectedTags.length > 0) {
         Flex({ wrap: FlexWrap.Wrap }) {
           ForEach(this.draftSelectedTags, (tag: string) => {
@@ -1626,21 +2025,30 @@ struct Index {
       } else {
         Text('未选择标签')
           .fontSize(12)
-          .fontColor('#5A6668');
+          .fontColor(UI_MUTED);
       }
       Row({ space: 8 }) {
         TextInput({ placeholder: '搜索标签', text: $$this.draftTagSearch })
           .layoutWeight(1)
-          .height(42)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(10)
-          .padding({ left: 10, right: 10 });
-        Button('+')
-          .width(42)
-          .height(42)
-          .enabled(this.canCreateDraftTag())
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
+        Text('+')
+          .width(48)
+          .height(48)
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.canCreateDraftTag() ? '#FFFFFF' : UI_MUTED)
+          .textAlign(TextAlign.Center)
+          .backgroundColor(this.canCreateDraftTag() ? UI_ACCENT : UI_SURFACE_ALT)
+          .border({ width: 1, color: this.canCreateDraftTag() ? UI_ACCENT : UI_STROKE })
+          .borderRadius(12)
           .onClick(() => {
-            this.createDraftTagFromSearch();
+            if (this.canCreateDraftTag()) {
+              this.createDraftTagFromSearch();
+            }
           });
       }
       if (this.filteredDraftTags().length > 0) {
@@ -1658,7 +2066,7 @@ struct Index {
       } else {
         Text('没有匹配标签，可点 + 创建')
           .fontSize(12)
-          .fontColor('#5A6668');
+          .fontColor(UI_MUTED);
       }
     }
   }
@@ -1667,11 +2075,18 @@ struct Index {
   private CustomFieldsEditor() {
     Column({ space: 6 }) {
       Row() {
-        Text('自定义字段').fontSize(12).fontColor('#5A6668');
+        Text('自定义字段').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
         Blank();
-        Button('+')
+        Text('+')
           .width(42)
-          .height(32)
+          .height(34)
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_ACCENT)
+          .textAlign(TextAlign.Center)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(10)
           .onClick(() => {
             this.addDraftCustomField();
           });
@@ -1679,31 +2094,39 @@ struct Index {
       if (this.draftCustomFields.length === 0) {
         Text('未添加自定义字段')
           .fontSize(12)
-          .fontColor('#5A6668');
+          .fontColor(UI_MUTED);
       }
       ForEach(this.draftCustomFields, (field: CustomField) => {
         Row({ space: 8 }) {
           TextInput({ placeholder: '字段名称', text: field.name })
             .layoutWeight(1)
-            .height(42)
-            .backgroundColor('#FFFFFF')
-            .borderRadius(10)
-            .padding({ left: 10, right: 10 })
+            .height(48)
+            .backgroundColor(UI_SURFACE_ALT)
+            .border({ width: 1, color: UI_STROKE })
+            .borderRadius(12)
+            .padding({ left: 14, right: 14 })
             .onChange((value: string) => {
               this.updateDraftCustomFieldName(field.id, value);
             });
           TextInput({ placeholder: '字段值', text: field.value })
             .layoutWeight(1)
-            .height(42)
-            .backgroundColor('#FFFFFF')
-            .borderRadius(10)
-            .padding({ left: 10, right: 10 })
+            .height(48)
+            .backgroundColor(UI_SURFACE_ALT)
+            .border({ width: 1, color: UI_STROKE })
+            .borderRadius(12)
+            .padding({ left: 14, right: 14 })
             .onChange((value: string) => {
               this.updateDraftCustomFieldValue(field.id, value);
             });
-          Button('x')
+          Text('x')
             .width(36)
             .height(36)
+            .fontSize(13)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(UI_DANGER)
+            .textAlign(TextAlign.Center)
+            .backgroundColor(UI_DANGER_SURFACE)
+            .borderRadius(10)
             .onClick(() => {
               this.removeDraftCustomField(field.id);
             });
@@ -1788,7 +2211,7 @@ struct Index {
         message,
         buttons: [
           { text: '取消', color: '#666666' },
-          { text: '继续', color: '#0F4C5C', primary: true },
+          { text: '继续', color: UI_ACCENT, primary: true },
         ],
       });
       if (confirmation.index !== 1) {
@@ -1800,8 +2223,8 @@ struct Index {
       const action = await prompt.showActionMenu({
         title: '冲突处理策略',
         buttons: [
-          { text: '保留副本', color: '#0F4C5C' },
-          { text: '覆盖现有', color: '#0F4C5C' },
+          { text: '保留副本', color: UI_ACCENT },
+          { text: '覆盖现有', color: UI_ACCENT },
           { text: '跳过冲突', color: '#666666' },
         ],
       });
@@ -1854,7 +2277,7 @@ struct Index {
         title: '搜索用法',
         message: '普通关键词按当前分类匹配；tag:xxx 或 #xxx 可跨分类全局匹配标签；多个词按 AND 过滤。\n\n字段前缀：title:xxx / label:xxx 标题，service:xxx 服务名称，appid:xxx 应用ID，server:xxx 服务器名称，ip:xxx 服务器IP。\n\n示例：tag:prod tag:cn，title:aws tag:prod ip:10.0。',
         buttons: [
-          { text: '知道了', color: '#0F4C5C', primary: true },
+          { text: '知道了', color: UI_ACCENT, primary: true },
         ],
       });
     } catch (error) {
@@ -2019,8 +2442,18 @@ struct Index {
     this.draftServicePort = '';
   }
 
+  private beginCreateEntry(): void {
+    this.clearEntryDraft();
+    this.activePanel = 'home';
+    this.entryEditorVisible = true;
+    this.actionPanelVisible = false;
+  }
+
   private startEditEntry(entry: VaultEntry): void {
     this.clearEntryDraft();
+    this.activePanel = 'home';
+    this.entryEditorVisible = true;
+    this.actionPanelVisible = false;
     this.editingEntryId = entry.id;
     this.exportEntryId = '';
     this.draftLabel = entry.label;
@@ -2195,6 +2628,10 @@ struct Index {
     this.syncStatus = '未同步';
     this.syncLogs = [];
     this.biometricAutoPrompted = false;
+    this.activePanel = 'home';
+    this.actionPanelVisible = false;
+    this.entryEditorVisible = false;
+    this.clearEntryDraft();
     this.refreshUnlockGuardState();
     this.stopAutoSyncTimer();
     this.stopIdleLockTimer();
@@ -2520,9 +2957,12 @@ struct Index {
   private FilterPill(label: string, selected: boolean, action: () => void) {
     Text(label)
       .fontSize(13)
-      .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-      .margin({ right: 6, bottom: 6 })
-      .backgroundColor(selected ? '#BEE6D6' : '#FFFFFF')
+      .fontWeight(FontWeight.Bold)
+      .fontColor(selected ? '#FFFFFF' : UI_TEXT)
+      .padding({ left: 14, right: 14, top: 7, bottom: 7 })
+      .margin({ right: 8, bottom: 8 })
+      .backgroundColor(selected ? UI_ACCENT : UI_SURFACE_ALT)
+      .border({ width: 1, color: selected ? UI_ACCENT : UI_STROKE })
       .borderRadius(999)
       .onClick(action);
   }
