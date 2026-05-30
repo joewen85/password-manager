@@ -418,6 +418,19 @@ export class VaultController {
     return true;
   }
 
+  async verifyMasterPassword(password: string): Promise<boolean> {
+    const record = this.masterKeyRecord;
+    if (record === null) {
+      return false;
+    }
+    const verifier = await this.crypto.deriveVerifier(
+      password,
+      record.saltBase64,
+      record.iterations,
+    );
+    return verifier === record.verifierBase64;
+  }
+
   lock(): void {
     this.unlocked = false;
     this.sessionKeyToken = null;
@@ -2002,7 +2015,7 @@ function cloneSyncSettings(settings: SyncSettings): SyncSettings {
 
 function normalizeIntervalValue(value: number | undefined, fallback: number): number {
   const candidate = typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-  return Math.max(Math.floor(candidate), 1);
+  return Math.min(Math.max(Math.floor(candidate), 1), 1440);
 }
 
 function normalizeIntervalMinutes(
@@ -2013,11 +2026,11 @@ function normalizeIntervalMinutes(
   const candidate = typeof minutes === 'number' && Number.isFinite(minutes)
     ? minutes
     : intervalValueToMinutes(value, unit ?? SyncIntervalUnit.MINUTES);
-  return Math.max(Math.floor(candidate), 1);
+  return Math.min(Math.max(Math.floor(candidate), 1), 1440);
 }
 
 function intervalValueToMinutes(value: number, unit: SyncIntervalUnit): number {
-  const safeValue = Math.max(Math.floor(value), 1);
+  const safeValue = Math.min(Math.max(Math.floor(value), 1), 1440);
   if (unit === SyncIntervalUnit.SECONDS) {
     return Math.max(Math.ceil(safeValue / 60), 1);
   }
@@ -2062,7 +2075,7 @@ function normalizeIdleAutoLockMinutes(value: number | undefined): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return 0;
   }
-  return Math.max(Math.floor(value), 0);
+  return Math.min(Math.max(Math.floor(value), 0), 1440);
 }
 
 function defaultUnlockGuardState(): UnlockGuardState {

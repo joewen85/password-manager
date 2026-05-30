@@ -91,14 +91,17 @@ struct Index {
   @State private syncPresignedUploadUrl: string = '';
   @State private syncAutoEnabled: boolean = false;
   @State private syncAutoOnUnlock: boolean = true;
+  @State private syncMasterKey: boolean = true;
   @State private syncIntervalValue: string = '30';
   @State private syncIntervalUnit: SyncIntervalUnit = SyncIntervalUnit.MINUTES;
+  @State private syncDeviceId: string = '';
   @State private syncStatus: string = '未同步';
   @State private syncRevision: number = 0;
   @State private syncLogs: string[] = [];
   @State private securityRequireTotp: boolean = false;
   @State private securityTotpSecret: string = '';
   @State private securityIdleAutoLockMinutes: string = '0';
+  @State private securityBiometricMasterPassword: string = '';
   @State private toastMessage: string = '';
   @State private toastVersion: number = 0;
 
@@ -313,6 +316,13 @@ struct Index {
         .onClick(() => {
           this.onExportVault();
         });
+      Button(this.syncBusy ? '同步中...' : '立即同步')
+        .type(ButtonType.Normal)
+        .margin({ right: 8 })
+        .enabled(!this.syncBusy)
+        .onClick(() => {
+          this.onSyncNow();
+        });
       Button('锁定')
         .type(ButtonType.Normal)
         .onClick(() => {
@@ -343,21 +353,34 @@ struct Index {
         .borderRadius(10)
         .padding({ left: 10, right: 10 });
 
-      Button('保存安全设置')
-        .type(ButtonType.Capsule)
-        .width('100%')
-        .onClick(() => {
-          this.onSaveSecuritySettings();
-        });
-
       Row({ space: 8 }) {
         Text('生物识别').fontSize(12).fontColor('#6F7A7C');
         Button(this.biometricUnlockRequested ? '已开启' : '已关闭')
-          .enabled(this.biometricUnlockAvailable)
+          .enabled(this.biometricUnlockAvailable || this.biometricUnlockRequested)
           .onClick(() => {
             this.biometricUnlockRequested = !this.biometricUnlockRequested;
+            if (!this.biometricUnlockRequested) {
+              this.securityBiometricMasterPassword = '';
+            }
           })
           .backgroundColor(this.biometricUnlockRequested ? '#2F7F79' : '#CED8D9');
+      }
+      if (!this.biometricUnlockAvailable) {
+        Text('此设备没有可用的强生物识别硬件或尚未录入。')
+          .fontSize(12)
+          .fontColor('#9A4D4D');
+      }
+      if (this.biometricUnlockRequested && !this.biometricUnlockEnabled) {
+        TextInput({ placeholder: '输入主密码以启用生物识别', text: $$this.securityBiometricMasterPassword })
+          .type(InputType.Password)
+          .width('100%')
+          .height(42)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(10)
+          .padding({ left: 10, right: 10 });
+        Text('在本设备上使用指纹或面容识别代替输入主密码。')
+          .fontSize(12)
+          .fontColor('#5A6668');
       }
 
       TextInput({ placeholder: '闲置自动锁定(分钟，0为关闭)', text: $$this.securityIdleAutoLockMinutes })
@@ -367,10 +390,20 @@ struct Index {
         .backgroundColor('#FFFFFF')
         .borderRadius(10)
         .padding({ left: 10, right: 10 });
+      Text('输入 0 表示关闭；取值范围 0-1440，开启后 App 闲置达到该分钟数会自动锁定。')
+        .fontSize(12)
+        .fontColor('#5A6668');
 
       Text(this.securityRequireTotp ? '解锁时将强制校验动态验证码。' : '当前未启用2FA。')
         .fontSize(12)
         .fontColor('#5A6668');
+
+      Button('保存安全设置')
+        .type(ButtonType.Capsule)
+        .width('100%')
+        .onClick(() => {
+          this.onSaveSecuritySettings();
+        });
     }
     .width('100%')
     .padding(12)
@@ -387,21 +420,25 @@ struct Index {
         Text(`修订 ${this.syncRevision}`).fontSize(12).fontColor('#6F7A7C');
       }
 
-      Row({ space: 8 }) {
+      Flex({ wrap: FlexWrap.Wrap }) {
         Button('关闭')
           .onClick(() => this.syncProviderType = SyncProviderType.NONE)
+          .margin({ right: 8, bottom: 8 })
           .backgroundColor(this.syncProviderType === SyncProviderType.NONE ? '#0F4C5C' : '#CED8D9');
         Button('WebDAV')
           .onClick(() => this.syncProviderType = SyncProviderType.WEBDAV)
+          .margin({ right: 8, bottom: 8 })
           .backgroundColor(
-            this.syncProviderType === SyncProviderType.WEBDAV ||
-            this.syncProviderType === SyncProviderType.NAS_WEBDAV
-              ? '#0F4C5C'
-              : '#CED8D9',
+            this.syncProviderType === SyncProviderType.WEBDAV ? '#0F4C5C' : '#CED8D9',
           );
         Button('S3链接')
           .onClick(() => this.syncProviderType = SyncProviderType.S3_PRESIGNED)
+          .margin({ right: 8, bottom: 8 })
           .backgroundColor(this.syncProviderType === SyncProviderType.S3_PRESIGNED ? '#0F4C5C' : '#CED8D9');
+        Button('NAS WebDAV')
+          .onClick(() => this.syncProviderType = SyncProviderType.NAS_WEBDAV)
+          .margin({ right: 8, bottom: 8 })
+          .backgroundColor(this.syncProviderType === SyncProviderType.NAS_WEBDAV ? '#0F4C5C' : '#CED8D9');
       }
 
       if (
@@ -443,6 +480,7 @@ struct Index {
           .borderRadius(10)
           .padding({ left: 10, right: 10 });
         TextInput({ placeholder: '上传 URL', text: $$this.syncPresignedUploadUrl })
+          .type(InputType.Password)
           .width('100%')
           .height(42)
           .backgroundColor('#FFFFFF')
@@ -459,6 +497,16 @@ struct Index {
           .onClick(() => this.syncAutoOnUnlock = !this.syncAutoOnUnlock)
           .backgroundColor(this.syncAutoOnUnlock ? '#2F7F79' : '#CED8D9');
       }
+
+      Row({ space: 8 }) {
+        Text('同步主密钥元数据').fontSize(12).fontColor('#6F7A7C');
+        Button(this.syncMasterKey ? '已开启' : '已关闭')
+          .onClick(() => this.syncMasterKey = !this.syncMasterKey)
+          .backgroundColor(this.syncMasterKey ? '#2F7F79' : '#CED8D9');
+      }
+      Text('开启后同步包会携带主密钥元数据，便于新设备通过同一主密码解密同步数据。')
+        .fontSize(12)
+        .fontColor('#5A6668');
 
       Row({ space: 8 }) {
         Text('同步间隔').fontSize(12).fontColor('#6F7A7C');
@@ -509,6 +557,12 @@ struct Index {
       }
 
       Text(this.syncStatus).fontSize(12).fontColor('#5A6668');
+      Text(`设备 ${this.syncDeviceId.length > 0 ? this.syncDeviceId : '-'}`)
+        .fontSize(11)
+        .fontColor('#6F7A7C');
+      Text(`当前修订 ${this.syncRevision}`)
+        .fontSize(11)
+        .fontColor('#6F7A7C');
 
       if (this.syncLogs.length > 0) {
         Column({ space: 4 }) {
@@ -1362,6 +1416,7 @@ struct Index {
   private async onSaveSyncSettings(): Promise<void> {
     try {
       const current = this.controller().getSyncSettings();
+      const intervalValue = clampInteger(Number(this.syncIntervalValue) || 0, 1, 1440);
       const updated: SyncSettings = {
         providerType: this.syncProviderType,
         webdavUrl: this.syncWebdavUrl.trim(),
@@ -1372,13 +1427,13 @@ struct Index {
         presignedUploadUrl: this.syncPresignedUploadUrl.trim(),
         autoSyncEnabled: this.syncAutoEnabled,
         autoSyncIntervalMinutes: this.syncIntervalUnit === SyncIntervalUnit.SECONDS
-          ? Math.max(Math.ceil(Math.max(Number(this.syncIntervalValue) || 0, 1) / 60), 1)
-          : Math.max(Math.floor(Number(this.syncIntervalValue) || 0), 1),
-        autoSyncIntervalValue: Math.max(Math.floor(Number(this.syncIntervalValue) || 0), 1),
+          ? Math.max(Math.ceil(intervalValue / 60), 1)
+          : intervalValue,
+        autoSyncIntervalValue: intervalValue,
         autoSyncIntervalUnit: this.syncIntervalUnit,
         autoSyncOnUnlock: this.syncAutoOnUnlock,
         conflictStrategy: this.syncConflictStrategy,
-        syncMasterKey: current.syncMasterKey,
+        syncMasterKey: this.syncMasterKey,
         deviceId: current.deviceId,
         lastSyncRevision: current.lastSyncRevision,
         lastSyncAt: current.lastSyncAt,
@@ -1455,19 +1510,41 @@ struct Index {
         this.toast('开启2FA时必须填写 TOTP Secret');
         return;
       }
+      const store = this.biometricCredentialStore;
+      const requestedBiometric = this.biometricUnlockRequested === true;
+      if (requestedBiometric) {
+        if (store === null || !this.biometricUnlockAvailable) {
+          this.toast('此设备没有可用的强生物识别硬件或尚未录入');
+          return;
+        }
+        if (!this.biometricUnlockEnabled) {
+          const password = this.securityBiometricMasterPassword.trim();
+          if (password.length === 0) {
+            this.toast('启用生物识别前请输入主密码');
+            return;
+          }
+          const verified = await this.controller().verifyMasterPassword(password);
+          if (!verified) {
+            this.toast('主密码错误，无法启用生物识别');
+            return;
+          }
+          await store.savePassword(password);
+          this.securityBiometricMasterPassword = '';
+        }
+      }
       const settings: SecuritySettings = {
         requireTotp: this.securityRequireTotp,
         totpSecret: this.securityRequireTotp ? secret : '',
-        biometricUnlockEnabled: this.biometricUnlockRequested,
-        idleAutoLockMinutes: Math.max(Math.floor(Number(this.securityIdleAutoLockMinutes) || 0), 0),
+        biometricUnlockEnabled: requestedBiometric,
+        idleAutoLockMinutes: clampInteger(Number(this.securityIdleAutoLockMinutes) || 0, 0, 1440),
       };
       await this.controller().updateSecuritySettings(settings);
-      if (!this.biometricUnlockRequested) {
-        const store = this.biometricCredentialStore;
+      if (!requestedBiometric) {
         if (store !== null) {
           await store.clear();
         }
         this.biometricFailureCount = 0;
+        this.securityBiometricMasterPassword = '';
       }
       this.refreshSecurityState();
       await this.refreshBiometricState();
@@ -1797,8 +1874,10 @@ struct Index {
     this.syncPresignedUploadUrl = settings.presignedUploadUrl;
     this.syncAutoEnabled = settings.autoSyncEnabled;
     this.syncAutoOnUnlock = settings.autoSyncOnUnlock;
+    this.syncMasterKey = settings.syncMasterKey;
     this.syncIntervalValue = String(settings.autoSyncIntervalValue ?? settings.autoSyncIntervalMinutes ?? 30);
     this.syncIntervalUnit = settings.autoSyncIntervalUnit ?? SyncIntervalUnit.MINUTES;
+    this.syncDeviceId = settings.deviceId;
     this.syncRevision = settings.lastSyncRevision;
     this.syncBusy = this.controller().isSyncing();
     if (settings.lastSyncStatus.trim().length === 0) {
@@ -1820,6 +1899,9 @@ struct Index {
     this.securityTotpSecret = settings.totpSecret;
     this.biometricUnlockRequested = settings.biometricUnlockEnabled === true;
     this.securityIdleAutoLockMinutes = String(settings.idleAutoLockMinutes ?? 0);
+    if (this.biometricUnlockEnabled) {
+      this.securityBiometricMasterPassword = '';
+    }
   }
 
   private refreshUnlockGuardState(): void {
@@ -2518,4 +2600,11 @@ struct Index {
       this.refreshSyncState();
     }, 2500);
   }
+}
+
+function clampInteger(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+  return Math.min(Math.max(Math.floor(value), min), max);
 }
