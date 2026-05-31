@@ -321,10 +321,15 @@ struct Index {
       } else {
         this.StatusSummary();
         if (this.entryEditorVisible) {
-          this.NewEntrySection();
+          Scroll() {
+            this.NewEntrySection();
+          }
+          .layoutWeight(1)
+          .width('100%');
+        } else {
+          this.FilterSection();
+          this.EntryListSection();
         }
-        this.FilterSection();
-        this.EntryListSection();
       }
     }
     .width('100%')
@@ -358,6 +363,11 @@ struct Index {
           this.onSyncNow();
         }
       });
+      this.ToolbarButton('设置', false, () => {
+        this.activePanel = 'settings';
+        this.entryEditorVisible = false;
+        this.actionPanelVisible = false;
+      });
       this.ToolbarButton('更多', false, () => {
         this.actionPanelVisible = !this.actionPanelVisible;
       });
@@ -372,12 +382,12 @@ struct Index {
   @Builder
   private ToolbarButton(label: string, accent: boolean, action: () => void) {
     Text(label)
-      .fontSize(label.length > 2 ? 12 : 18)
+      .fontSize(label.length > 2 ? 11 : (label.length > 1 ? 12 : 18))
       .fontWeight(FontWeight.Bold)
       .fontColor(accent ? UI_ACCENT : UI_TEXT)
       .height(44)
-      .constraintSize({ minWidth: 44 })
-      .padding({ left: 10, right: 10 })
+      .constraintSize({ minWidth: 40 })
+      .padding({ left: label.length > 1 ? 8 : 10, right: label.length > 1 ? 8 : 10 })
       .textAlign(TextAlign.Center)
       .backgroundColor(UI_SURFACE)
       .border({ width: 1, color: UI_STROKE })
@@ -394,18 +404,11 @@ struct Index {
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_TEXT);
         Blank();
-        Text('关闭')
-          .fontSize(12)
-          .fontColor(UI_MUTED)
-          .onClick(() => {
-            this.actionPanelVisible = false;
-          });
-      }
-      Flex({ wrap: FlexWrap.Wrap }) {
-        this.ActionChip('新建条目', true, () => {
-          this.beginCreateEntry();
+        this.SmallGhostButton('关闭', () => {
           this.actionPanelVisible = false;
         });
+      }
+      Flex({ wrap: FlexWrap.Wrap }) {
         this.ActionChip('设置', false, () => {
           this.activePanel = 'settings';
           this.entryEditorVisible = false;
@@ -455,6 +458,21 @@ struct Index {
   }
 
   @Builder
+  private SmallGhostButton(label: string, action: () => void) {
+    Text(label)
+      .fontSize(12)
+      .fontWeight(FontWeight.Bold)
+      .fontColor(UI_TEXT)
+      .height(34)
+      .padding({ left: 12, right: 12 })
+      .textAlign(TextAlign.Center)
+      .backgroundColor(UI_SURFACE_ALT)
+      .border({ width: 1, color: UI_STROKE })
+      .borderRadius(999)
+      .onClick(action);
+  }
+
+  @Builder
   private StatusSummary() {
     Row() {
       Text(`条目 ${this.entries.length} · 分类 ${this.categories.length} · 同步 ${this.syncStatus}`)
@@ -482,13 +500,9 @@ struct Index {
             .fontWeight(FontWeight.Bold)
             .fontColor(UI_TEXT);
           Blank();
-          Text('返回')
-            .fontSize(13)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(UI_ACCENT)
-            .onClick(() => {
-              this.activePanel = 'home';
-            });
+          this.SmallGhostButton('返回', () => {
+            this.activePanel = 'home';
+          });
         }
 
         this.SecuritySection();
@@ -547,6 +561,26 @@ struct Index {
       .border({ width: 1, color: selected ? UI_ACCENT : UI_STROKE })
       .borderRadius(12)
       .onClick(action);
+  }
+
+  @Builder
+  private EntryTypeChip(label: string, type: DraftType) {
+    Text(label)
+      .fontSize(13)
+      .fontWeight(FontWeight.Bold)
+      .fontColor(this.draftType === type ? '#FFFFFF' : UI_TEXT)
+      .height(38)
+      .padding({ left: 14, right: 14 })
+      .margin({ right: 8, bottom: 8 })
+      .textAlign(TextAlign.Center)
+      .backgroundColor(this.draftType === type ? UI_ACCENT : UI_SURFACE_ALT)
+      .border({ width: 1, color: this.draftType === type ? UI_ACCENT : UI_STROKE })
+      .borderRadius(12)
+      .onClick(() => {
+        if (this.editingEntryId.length === 0) {
+          this.draftType = type;
+        }
+      });
   }
 
   @Builder
@@ -922,32 +956,17 @@ struct Index {
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_TEXT);
         Blank();
-        Text('关闭')
-          .fontSize(12)
-          .fontColor(UI_MUTED)
-          .onClick(() => {
-            this.clearEntryDraft();
-            this.entryEditorVisible = false;
-          });
+        this.SmallGhostButton('关闭', () => {
+          this.clearEntryDraft();
+          this.entryEditorVisible = false;
+        });
       }
       Text('条目类型').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
 
       Flex({ wrap: FlexWrap.Wrap }) {
-        this.ChoiceChip('账号', this.draftType === 'credential', () => {
-          if (this.editingEntryId.length === 0) {
-            this.draftType = 'credential';
-          }
-        });
-        this.ChoiceChip('服务器', this.draftType === 'server', () => {
-          if (this.editingEntryId.length === 0) {
-            this.draftType = 'server';
-          }
-        });
-        this.ChoiceChip('服务', this.draftType === 'service', () => {
-          if (this.editingEntryId.length === 0) {
-            this.draftType = 'service';
-          }
-        });
+        this.EntryTypeChip('账号', 'credential');
+        this.EntryTypeChip('服务器', 'server');
+        this.EntryTypeChip('服务', 'service');
       }
 
       TextInput({ placeholder: '标题（必填）', text: $$this.draftLabel })
@@ -1049,13 +1068,9 @@ struct Index {
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_TEXT);
         Blank();
-        Text('返回')
-          .fontSize(13)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(UI_ACCENT)
-          .onClick(() => {
-            this.activePanel = 'home';
-          });
+        this.SmallGhostButton('返回', () => {
+          this.activePanel = 'home';
+        });
       }
 
       Row({ space: 8 }) {
@@ -1083,10 +1098,15 @@ struct Index {
           ForEach(this.tags, (tag: string) => {
             Row({ space: 4 }) {
               Text(tag).fontSize(13);
-              Button('x')
+              Text('删除')
                 .fontSize(11)
-                .width(22)
-                .height(22)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(UI_DANGER)
+                .height(24)
+                .padding({ left: 8, right: 8 })
+                .textAlign(TextAlign.Center)
+                .backgroundColor(UI_DANGER_SURFACE)
+                .borderRadius(999)
                 .onClick(() => {
                   this.onDeleteTag(tag);
                 });
@@ -1129,13 +1149,9 @@ struct Index {
           .onClick(() => {
             this.onImportCategory();
           });
-        Text('返回')
-          .fontSize(13)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(UI_ACCENT)
-          .onClick(() => {
-            this.activePanel = 'home';
-          });
+        this.SmallGhostButton('返回', () => {
+          this.activePanel = 'home';
+        });
       }
 
       Row({ space: 8 }) {
@@ -1195,10 +1211,15 @@ struct Index {
                 .onClick(() => {
                   this.onExportCategory(category);
                 });
-              Button('x')
+              Text('删除')
                 .fontSize(11)
-                .width(22)
-                .height(22)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(UI_DANGER)
+                .height(24)
+                .padding({ left: 8, right: 8 })
+                .textAlign(TextAlign.Center)
+                .backgroundColor(UI_DANGER_SURFACE)
+                .borderRadius(999)
                 .onClick(() => {
                   this.onDeleteCategory(category);
                 });
@@ -2118,15 +2139,15 @@ struct Index {
             .onChange((value: string) => {
               this.updateDraftCustomFieldValue(field.id, value);
             });
-          Text('x')
-            .width(36)
+          Text('删除')
             .height(36)
+            .padding({ left: 10, right: 10 })
             .fontSize(13)
             .fontWeight(FontWeight.Bold)
             .fontColor(UI_DANGER)
             .textAlign(TextAlign.Center)
             .backgroundColor(UI_DANGER_SURFACE)
-            .borderRadius(10)
+            .borderRadius(999)
             .onClick(() => {
               this.removeDraftCustomField(field.id);
             });
