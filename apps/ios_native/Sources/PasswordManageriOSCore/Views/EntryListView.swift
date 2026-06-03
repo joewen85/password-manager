@@ -4,6 +4,8 @@ struct EntryListView: View {
     var entries: [VaultEntry]
     @Binding var selection: VaultEntry.ID?
 
+    @State private var scrollPosition: VaultEntry.ID?
+
     var body: some View {
         List(entries, selection: $selection) { entry in
             HStack(spacing: 10) {
@@ -22,12 +24,29 @@ struct EntryListView: View {
                 }
             }
             .tag(entry.id)
+            .id(entry.id)
+        }
+        .scrollPosition(id: $scrollPosition)
+        .onChange(of: entryIDs) { _, nextIDs in
+            guard let scrollPosition, !nextIDs.contains(scrollPosition) else { return }
+            self.scrollPosition = fallbackScrollPosition(in: nextIDs)
         }
         .overlay {
             if entries.isEmpty {
                 ContentUnavailableView("No Entries", systemImage: "key.slash")
             }
         }
+    }
+
+    private var entryIDs: [VaultEntry.ID] {
+        entries.map(\.id)
+    }
+
+    private func fallbackScrollPosition(in ids: [VaultEntry.ID]) -> VaultEntry.ID? {
+        if let selection, ids.contains(selection) {
+            return selection
+        }
+        return ids.first
     }
 }
 

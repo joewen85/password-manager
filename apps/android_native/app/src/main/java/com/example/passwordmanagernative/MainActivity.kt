@@ -85,6 +85,7 @@ class MainActivity : FragmentActivity() {
     private lateinit var appPreferences: SharedPreferences
     private lateinit var searchField: EditText
     private var entriesContainer: LinearLayout? = null
+    private var entriesScrollView: ScrollView? = null
     private var detailPane: LinearLayout? = null
     private var selectedEntry: VaultEntry? = null
     private var selectedType: VaultEntryType? = null
@@ -394,7 +395,8 @@ class MainActivity : FragmentActivity() {
             .setAllowedAuthenticators(BIOMETRIC_STRONG)
             .build()
 
-    private fun showHome() {
+    private fun showHome(preserveEntryScroll: Boolean = false) {
+        val entryScrollAnchor = if (preserveEntryScroll) captureEntryScrollAnchor() else null
         val foldInfo = currentFoldInfo()
         val expandedLayout = isExpandedLayout(foldInfo)
         val tabletopLayout = foldInfo?.isHorizontalSeparating == true
@@ -441,6 +443,7 @@ class MainActivity : FragmentActivity() {
         ))
         setContentViewWithSystemBars(page)
         refreshEntries()
+        restoreEntryScrollAnchor(entryScrollAnchor)
         if (expandedLayout) {
             renderDetailPane(selectedEntry)
         }
@@ -520,10 +523,11 @@ class MainActivity : FragmentActivity() {
             entriesContainer = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
             }
-            addView(ScrollView(this@MainActivity).apply {
+            entriesScrollView = ScrollView(this@MainActivity).apply {
                 isFillViewport = true
                 addView(entriesContainer)
-            }, LinearLayout.LayoutParams(
+            }
+            addView(entriesScrollView, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 0,
                 1f
@@ -678,6 +682,7 @@ class MainActivity : FragmentActivity() {
     private fun entryRow(entry: VaultEntry): LinearLayout {
         val selected = selectedEntry?.id == entry.id
         return LinearLayout(this).apply {
+            tag = entry.id
             orientation = LinearLayout.VERTICAL
             isClickable = true
             isFocusable = true
@@ -1741,7 +1746,7 @@ class MainActivity : FragmentActivity() {
                 store.statusMessage ?: store.syncStatus
             }
             if (store.isUnlocked) {
-                showHome()
+                showHome(preserveEntryScroll = true)
             } else {
                 showUnlock()
             }
@@ -1935,6 +1940,36 @@ class MainActivity : FragmentActivity() {
         selectedCategory = null
         selectedTag = null
         searchQuery = ""
+    }
+
+    private fun captureEntryScrollAnchor(): EntryScrollAnchor? {
+        val scrollView = entriesScrollView ?: return null
+        val container = entriesContainer ?: return EntryScrollAnchor(null, scrollView.scrollY)
+        val scrollY = scrollView.scrollY
+        for (index in 0 until container.childCount) {
+            val child = container.getChildAt(index)
+            if (child.bottom >= scrollY) {
+                return EntryScrollAnchor(
+                    entryId = child.tag as? String,
+                    offsetFromTop = scrollY - child.top,
+                )
+            }
+        }
+        return EntryScrollAnchor(null, scrollY)
+    }
+
+    private fun restoreEntryScrollAnchor(anchor: EntryScrollAnchor?) {
+        if (anchor == null) return
+        val scrollView = entriesScrollView ?: return
+        val container = entriesContainer
+        scrollView.post {
+            val anchoredTop = anchor.entryId?.let { entryId ->
+                container?.findChildByEntryId(entryId)?.top
+            }
+            val targetY = (anchoredTop?.plus(anchor.offsetFromTop) ?: anchor.offsetFromTop)
+                .coerceAtLeast(0)
+            scrollView.scrollTo(0, targetY)
+        }
     }
 
     private fun setContentViewWithSystemBars(root: View) {
@@ -2530,6 +2565,11 @@ class MainActivity : FragmentActivity() {
         val message: String,
     )
 
+    private data class EntryScrollAnchor(
+        val entryId: String?,
+        val offsetFromTop: Int,
+    )
+
     private enum class TaxonomyKind {
         CATEGORY,
         TAG
@@ -2715,6 +2755,16 @@ private fun servicePayload(inputs: List<EditText>): ServicePayload =
 
 private fun List<EditText>.valueAt(index: Int): String =
     getOrNull(index)?.text?.toString().orEmpty()
+
+private fun LinearLayout.findChildByEntryId(entryId: String): View? {
+    for (index in 0 until childCount) {
+        val child = getChildAt(index)
+        if (child.tag == entryId) {
+            return child
+        }
+    }
+    return null
+}
 
 private fun VaultEntry.detailPairs(activity: MainActivity): List<Pair<String, String>> =
     when (val currentPayload = payload) {

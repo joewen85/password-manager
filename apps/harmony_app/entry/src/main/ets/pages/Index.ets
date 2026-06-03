@@ -90,6 +90,7 @@ struct Index {
   private biometricCredentialStore: BiometricCredentialStore | null = null;
   private hostContext: Context | null = null;
   private searchInputController: TextInputController = new TextInputController();
+  private entryListScroller: Scroller = new Scroller();
   private autoSyncTimerId: number = -1;
   private idleLockTimerId: number = -1;
   private lastActivityAt: number = Date.now();
@@ -140,6 +141,7 @@ struct Index {
   @State private searchQuery: string = '';
   @State private selectedCategory: string = '';
   @State private selectedTag: string = '';
+  @State private entryListFirstVisibleIndex: number = 0;
 
   @State private entries: VaultEntry[] = [];
   @State private tags: string[] = [];
@@ -1301,7 +1303,7 @@ struct Index {
         .padding({ top: 44, bottom: 44, left: 18, right: 18 })
         .alignItems(HorizontalAlign.Center);
       } else {
-        List({ space: 8 }) {
+        List({ space: 8, scroller: this.entryListScroller }) {
           ForEach(this.filteredEntries(), (entry: VaultEntry) => {
             ListItem() {
               Column({ space: 7 }) {
@@ -1380,7 +1382,10 @@ struct Index {
           }, (entry: VaultEntry) => entry.id);
         }
         .layoutWeight(1)
-        .width('100%');
+        .width('100%')
+        .onScrollIndex((firstIndex: number) => {
+          this.entryListFirstVisibleIndex = firstIndex;
+        });
       }
     }
     .layoutWeight(1)
@@ -1888,7 +1893,7 @@ struct Index {
     } catch (error) {
       this.toast(`同步失败: ${error}`);
     } finally {
-      this.refreshData();
+      this.refreshData(true);
       this.refreshSyncState();
       this.syncBusy = false;
     }
@@ -1925,7 +1930,7 @@ struct Index {
     } catch (error) {
       console.error(`Scheduled auto sync failed: ${error}`);
     } finally {
-      this.refreshData();
+      this.refreshData(true);
       this.refreshSyncState();
       this.syncBusy = false;
       this.configureAutoSyncTimer();
@@ -1984,10 +1989,44 @@ struct Index {
     }
   }
 
-  private refreshData(): void {
+  private refreshData(preserveEntryScroll: boolean = false): void {
+    const anchorEntryId = preserveEntryScroll ? this.currentEntryListAnchorId() : '';
     this.entries = this.controller().getEntries();
     this.tags = this.controller().getTags();
     this.categories = this.controller().getCategories();
+    if (preserveEntryScroll) {
+      setTimeout(() => {
+        this.restoreEntryListAnchor(anchorEntryId);
+      }, 0);
+    }
+  }
+
+  private currentEntryListAnchorId(): string {
+    const visible = this.filteredEntries();
+    if (visible.length === 0) {
+      return '';
+    }
+    const index = Math.min(Math.max(this.entryListFirstVisibleIndex, 0), visible.length - 1);
+    return visible[index].id;
+  }
+
+  private restoreEntryListAnchor(anchorEntryId: string): void {
+    if (this.activePanel !== 'home' || this.entryEditorVisible) {
+      return;
+    }
+    const visible = this.filteredEntries();
+    if (visible.length === 0) {
+      this.entryListFirstVisibleIndex = 0;
+      return;
+    }
+    let targetIndex = anchorEntryId.length > 0
+      ? visible.findIndex((entry: VaultEntry) => entry.id === anchorEntryId)
+      : -1;
+    if (targetIndex < 0) {
+      targetIndex = Math.min(Math.max(this.entryListFirstVisibleIndex, 0), visible.length - 1);
+    }
+    this.entryListFirstVisibleIndex = targetIndex;
+    this.entryListScroller.scrollToIndex(targetIndex);
   }
 
   @Builder
