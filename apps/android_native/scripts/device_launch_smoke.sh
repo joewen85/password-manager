@@ -8,7 +8,8 @@ cd "$APP_ROOT"
 
 ADB="${ADB:-${ANDROID_HOME:-$HOME/Library/Android/sdk}/platform-tools/adb}"
 SERIAL="${ANDROID_SERIAL:-}"
-PACKAGE_NAME="${PACKAGE_NAME:-com.example.passwordmanagernative}"
+PACKAGE_NAME="${PACKAGE_NAME:-life.devops.passwordmanager}"
+ACTIVITY_NAME="${ACTIVITY_NAME:-com.example.passwordmanagernative.MainActivity}"
 ARTIFACT_DIR="${ARTIFACT_DIR:-$APP_ROOT/build/device-smoke}"
 UI_XML="$ARTIFACT_DIR/ui.xml"
 SCREENSHOT="$ARTIFACT_DIR/launch.png"
@@ -39,7 +40,7 @@ echo "Running Android device launch smoke on $SERIAL..."
 ./gradlew :app:installDebug
 
 ACTIVITY="$("$ADB" -s "$SERIAL" shell cmd package resolve-activity --brief "$PACKAGE_NAME" | tail -n 1 | tr -d '\r')"
-if [[ "$ACTIVITY" != "$PACKAGE_NAME/.MainActivity" ]]; then
+if [[ "$ACTIVITY" != "$PACKAGE_NAME/$ACTIVITY_NAME" ]]; then
   echo "Unexpected launcher activity: $ACTIVITY" >&2
   exit 1
 fi
@@ -50,7 +51,7 @@ if [[ "$RESET_APP_DATA" == "true" ]]; then
 fi
 "$ADB" -s "$SERIAL" shell am force-stop com.android.vending >/dev/null 2>&1 || true
 "$ADB" -s "$SERIAL" shell am force-stop "$PACKAGE_NAME"
-"$ADB" -s "$SERIAL" shell am start -W -n "$PACKAGE_NAME/.MainActivity" >/dev/null
+"$ADB" -s "$SERIAL" shell am start -W -n "$PACKAGE_NAME/$ACTIVITY_NAME" >/dev/null
 sleep 3
 
 PID="$("$ADB" -s "$SERIAL" shell pidof -s "$PACKAGE_NAME" | tr -d '\r' || true)"

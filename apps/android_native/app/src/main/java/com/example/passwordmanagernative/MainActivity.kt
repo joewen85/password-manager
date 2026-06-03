@@ -66,6 +66,7 @@ import com.example.passwordmanagernative.sync.SyncProviderType
 import com.example.passwordmanagernative.sync.SyncSettingsConflictStrategy
 import com.example.passwordmanagernative.sync.toIntervalMinutes
 import com.example.passwordmanagernative.ui.WindowLayoutPolicy
+import life.devops.passwordmanager.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job

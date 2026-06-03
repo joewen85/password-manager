@@ -8,7 +8,7 @@ cd "$APP_ROOT"
 
 ADB="${ADB:-${ANDROID_HOME:-$HOME/Library/Android/sdk}/platform-tools/adb}"
 SERIAL="${ANDROID_SERIAL:-}"
-PACKAGE_NAME="${PACKAGE_NAME:-com.example.passwordmanagernative}"
+PACKAGE_NAME="${PACKAGE_NAME:-life.devops.passwordmanager}"
 ARTIFACT_DIR="${ARTIFACT_DIR:-$APP_ROOT/build/device-layout-smoke}"
 MASTER_PASSWORD="${MASTER_PASSWORD:-SmokePass123}"
 
