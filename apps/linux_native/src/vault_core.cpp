@@ -31,6 +31,113 @@ bool constantTimeEqual(const std::vector<std::uint8_t>& left, const std::vector<
     return diff == 0;
 }
 
+struct SearchTerm {
+    std::string field;
+    std::string value;
+};
+
+std::string lowerCopy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+std::string compactSearchKey(const std::string& value) {
+    std::string key;
+    for (char raw : value) {
+        unsigned char ch = static_cast<unsigned char>(raw);
+        if (std::isalnum(ch)) key.push_back(static_cast<char>(std::tolower(ch)));
+    }
+    return key;
+}
+
+std::string canonicalSearchField(const std::string& raw) {
+    const auto key = compactSearchKey(raw);
+    if (key == "title" || key == "label" || key == "name") return "label";
+    if (key == "type" || key == "kind") return "type";
+    if (key == "category" || key == "cat") return "category";
+    if (key == "tag" || key == "tags") return "tag";
+    if (key == "user" || key == "username" || key == "login") return "username";
+    if (key == "password" || key == "pass" || key == "pwd" || key == "secret") return "secret";
+    if (key == "note" || key == "notes") return "notes";
+    if (key == "ip" || key == "ipaddress") return "ip";
+    if (key == "address" || key == "addr" || key == "host" || key == "url") return "address";
+    if (key == "app" || key == "appid" || key == "application") return "app";
+    if (key == "server" || key == "servers" || key == "srv") return "server";
+    if (key == "service" || key == "svc") return "service";
+    if (key == "port") return "port";
+    return key;
+}
+
+std::vector<SearchTerm> parseSearchTerms(const std::string& query) {
+    std::vector<SearchTerm> terms;
+    std::string token;
+    auto flush = [&]() {
+        if (token.empty()) return;
+        if (token.size() > 1 && token[0] == '#') {
+            terms.push_back({"tag", lowerCopy(token.substr(1))});
+            token.clear();
+            return;
+        }
+        const auto split = token.find(':');
+        if (split != std::string::npos && split > 0 && split + 1 < token.size()) {
+            const auto rawField = lowerCopy(token.substr(0, split));
+            if (rawField == "http" || rawField == "https") {
+                terms.push_back({"", lowerCopy(token)});
+            } else {
+                terms.push_back({canonicalSearchField(token.substr(0, split)), lowerCopy(token.substr(split + 1))});
+            }
+        } else {
+            terms.push_back({"", lowerCopy(token)});
+        }
+        token.clear();
+    };
+    for (char ch : query) {
+        if (std::isspace(static_cast<unsigned char>(ch)) || ch == ',') {
+            flush();
+        } else {
+            token.push_back(ch);
+        }
+    }
+    flush();
+    return terms;
+}
+
+bool containsValue(const std::vector<std::string>& values, const std::string& needle) {
+    for (const auto& value : values) {
+        if (lowerCopy(value).find(needle) != std::string::npos) return true;
+    }
+    return false;
+}
+
+bool notesContainKeyValue(const VaultEntry& entry, const std::string& field, const std::string& value) {
+    const auto notes = lowerCopy(entry.notes);
+    return notes.find(field + ":" + value) != std::string::npos ||
+        notes.find(field + "=" + value) != std::string::npos;
+}
+
+std::vector<std::string> searchValuesFor(const VaultEntry& entry, const std::string& field) {
+    if (field.empty()) {
+        std::vector<std::string> values{entry.label, entry.type, entry.username, entry.category, entry.notes};
+        values.insert(values.end(), entry.tags.begin(), entry.tags.end());
+        return values;
+    }
+    if (field == "label") return {entry.label};
+    if (field == "type") return {entry.type};
+    if (field == "category") return {entry.category};
+    if (field == "tag") return entry.tags;
+    if (field == "username") return {entry.username};
+    if (field == "secret") return {entry.secret};
+    if (field == "notes") return {entry.notes};
+    return {};
+}
+
+bool matchesSearchTerm(const VaultEntry& entry, const SearchTerm& term) {
+    if (containsValue(searchValuesFor(entry, term.field), term.value)) return true;
+    return !term.field.empty() && notesContainKeyValue(entry, term.field, term.value);
+}
+
 std::string escapeJson(const std::string& value) {
     std::ostringstream out;
     for (char ch : value) {
@@ -261,12 +368,19 @@ VaultEntry makeEntry(const std::string& label, const std::string& type, const st
 }
 
 std::vector<VaultEntry> filterEntries(const std::vector<VaultEntry>& entries, const std::string& query, const std::string& type) {
+    const auto terms = parseSearchTerms(query);
     std::vector<VaultEntry> result;
     for (const auto& entry : entries) {
         if (entry.isDeleted) continue;
         if (type != "all" && entry.type != type) continue;
-        std::string haystack = entry.label + " " + entry.type + " " + entry.category;
-        if (query.empty() || haystack.find(query) != std::string::npos) result.push_back(entry);
+        bool matches = true;
+        for (const auto& term : terms) {
+            if (!matchesSearchTerm(entry, term)) {
+                matches = false;
+                break;
+            }
+        }
+        if (terms.empty() || matches) result.push_back(entry);
     }
     return result;
 }

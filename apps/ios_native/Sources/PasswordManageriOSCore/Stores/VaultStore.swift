@@ -382,7 +382,7 @@ final class VaultStore {
     }
 
     func filteredEntries(searchText: String, filter: VaultFilter) -> [VaultEntry] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let query = VaultSearchQuery.parse(searchText)
         return entries
             .filter { !$0.isDeleted }
             .filter { entry in
@@ -398,7 +398,7 @@ final class VaultStore {
                 }
             }
             .filter { entry in
-                query.isEmpty || entry.searchIndex.localizedCaseInsensitiveContains(query)
+                query.isEmpty || entry.matchesSearchQuery(query)
             }
             .sorted { $0.updatedAt > $1.updatedAt }
     }

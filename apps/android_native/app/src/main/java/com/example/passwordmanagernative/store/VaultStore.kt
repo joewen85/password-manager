@@ -156,7 +156,7 @@ class VaultStore(
         category: String? = null,
         tag: String? = null,
     ): List<VaultEntry> {
-        val normalizedQuery = query.trim().lowercase()
+        val searchTerms = parseVaultSearchTerms(query)
         return entries
             .asSequence()
             .filter { !it.isDeleted }
@@ -164,16 +164,7 @@ class VaultStore(
             .filter { category == null || it.payload.category == category }
             .filter { tag == null || it.payload.tags.contains(tag) }
             .filter {
-                normalizedQuery.isEmpty() ||
-                    buildString {
-                        append(it.label)
-                        append(' ')
-                        append(it.type.name)
-                        append(' ')
-                        append(it.payload.category)
-                        append(' ')
-                        append(it.payload.tags.joinToString(" "))
-                    }.lowercase().contains(normalizedQuery)
+                searchTerms.isEmpty() || it.matchesSearchTerms(searchTerms)
             }
             .sortedByDescending { it.updatedAt }
             .toList()

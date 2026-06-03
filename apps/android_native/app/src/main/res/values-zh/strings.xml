@@ -27,7 +27,7 @@
     <string name="backup">备份</string>
     <string name="backups">备份</string>
     <string name="search_vault">搜索密码库</string>
-    <string name="search_vault_scoped">字段搜索按当前分类，tag/# 标签搜索…</string>
+    <string name="search_vault_scoped">搜索，如 ip:1.2.3.4 name:xxx…</string>
     <string name="search_categories">搜索分类</string>
     <string name="search_tags">搜索标签</string>
     <string name="new_entry_short">新建</string>
@@ -51,7 +51,7 @@
     <string name="all_categories">全部分类</string>
     <string name="more_count">...+%1$d</string>
     <string name="search_syntax_title">搜索语法</string>
-    <string name="search_syntax_body">使用 tag:bb 匹配标签，#bb 是标签简写，category:work 匹配分类，普通文字搜索字段。</string>
+    <string name="search_syntax_body">使用 name:xxx、ip:1.2.3.4、category:work、tag:bb 或 #bb。自定义字段支持 key:value，如 owner:sre。普通文字搜索可见字段。</string>
     <string name="export">导出</string>
     <string name="import_label">导入</string>
     <string name="more_actions">更多操作</string>

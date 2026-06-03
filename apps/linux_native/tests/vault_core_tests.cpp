@@ -30,6 +30,14 @@ int main() {
 
     auto active = pm::filterEntries(snapshot.entries, "Production", "all");
     assert(active.size() == 1);
+    entry.notes = "ip:1.2.3.4 owner:sre-team https://ops.example.com";
+    snapshot.entries[0] = entry;
+    assert(pm::filterEntries(snapshot.entries, "name:Production", "all").size() == 1);
+    assert(pm::filterEntries(snapshot.entries, "ip:1.2.3.4", "all").size() == 1);
+    assert(pm::filterEntries(snapshot.entries, "owner:sre-team", "all").size() == 1);
+    assert(pm::filterEntries(snapshot.entries, "https://ops.example.com", "all").size() == 1);
+    assert(pm::filterEntries(snapshot.entries, "tag:mail ip:1.2.3.4", "all").size() == 1);
+    assert(pm::filterEntries(snapshot.entries, "ip:9.9.9.9", "all").empty());
     assert(pm::rebuildCategories(snapshot.entries).front() == "Work");
     assert(pm::rebuildTags(snapshot.entries).size() == 2);
 

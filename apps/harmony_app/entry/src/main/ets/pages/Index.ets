@@ -53,6 +53,24 @@ interface SearchPayload {
   name?: string;
   appId?: string;
   ipAddress?: string;
+  port?: string;
+  username?: string;
+  password?: string;
+  token?: string;
+  accessKey?: string;
+  secretKey?: string;
+  notes?: string;
+  connectionAddress?: string;
+  connectionPort?: string;
+  accountId?: string;
+  serverIds?: string[];
+  accounts?: SearchServiceAccount[];
+}
+
+interface SearchServiceAccount {
+  username?: string;
+  password?: string;
+  note?: string;
 }
 
 interface EntryCategoryCarrier {
@@ -901,7 +919,7 @@ struct Index {
 
       Row({ space: 8 }) {
         TextInput({
-          placeholder: '搜索密码库，tag:/# 标签全局',
+          placeholder: '搜索密码库，如 ip:1.2.3.4 name:xxx',
           text: $$this.searchQuery,
           controller: this.searchInputController
         })
@@ -2296,7 +2314,7 @@ struct Index {
       const prompt = this.uiPromptAction();
       await prompt.showDialog({
         title: '搜索用法',
-        message: '普通关键词按当前分类匹配；tag:xxx 或 #xxx 可跨分类全局匹配标签；多个词按 AND 过滤。\n\n字段前缀：title:xxx / label:xxx 标题，service:xxx 服务名称，appid:xxx 应用ID，server:xxx 服务器名称，ip:xxx 服务器IP。\n\n示例：tag:prod tag:cn，title:aws tag:prod ip:10.0。',
+        message: '普通关键词按当前分类匹配；tag:xxx 或 #xxx 可跨分类全局匹配标签；多个词按 AND 过滤。\n\n字段前缀：name:xxx 名称/标题，category:xxx 分类，tag:xxx 标签，app:xxx 应用ID，server:xxx 服务器，ip:xxx 服务器IP或服务地址。也支持自定义字段 key:value，如 owner:sre。\n\n示例：tag:prod ip:10.0，name:aws owner:sre。',
         buttons: [
           { text: '知道了', color: UI_ACCENT, primary: true },
         ],
@@ -2792,39 +2810,80 @@ struct Index {
       }
       const splitIndex = part.indexOf(':');
       if (splitIndex > 0 && splitIndex < part.length - 1) {
-        const prefix = part.substring(0, splitIndex).toLowerCase();
+        const rawPrefix = part.substring(0, splitIndex).trim().toLowerCase();
+        if (rawPrefix === 'http' || rawPrefix === 'https') {
+          terms.push({ field: 'any', value: part.toLowerCase() });
+          return;
+        }
+        const prefix = this.normalizeSearchField(rawPrefix);
         const value = part.substring(splitIndex + 1).trim().toLowerCase();
-        if (value.length === 0) {
+        if (prefix.length === 0 || value.length === 0) {
           return;
         }
-        if (prefix === 'title' || prefix === 'name' || prefix === 'label') {
-          terms.push({ field: 'title', value: value });
-          return;
-        }
-        if (prefix === 'service' || prefix === 'svc') {
-          terms.push({ field: 'service', value: value });
-          return;
-        }
-        if (prefix === 'app' || prefix === 'appid') {
-          terms.push({ field: 'app', value: value });
-          return;
-        }
-        if (prefix === 'server' || prefix === 'srv') {
-          terms.push({ field: 'server', value: value });
-          return;
-        }
-        if (prefix === 'ip') {
-          terms.push({ field: 'ip', value: value });
-          return;
-        }
-        if (prefix === 'tag' || prefix === 'tags') {
-          terms.push({ field: 'tag', value: value });
-          return;
-        }
+        terms.push({ field: prefix, value: value });
+        return;
       }
       terms.push({ field: 'any', value: part.toLowerCase() });
     });
     return terms;
+  }
+
+  private normalizeSearchField(raw: string): string {
+    const key = raw.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (key === 'title' || key === 'label') {
+      return 'label';
+    }
+    if (key === 'name') {
+      return 'name';
+    }
+    if (key === 'type' || key === 'kind') {
+      return 'type';
+    }
+    if (key === 'category' || key === 'cat') {
+      return 'category';
+    }
+    if (key === 'tag' || key === 'tags') {
+      return 'tag';
+    }
+    if (key === 'user' || key === 'username' || key === 'login') {
+      return 'username';
+    }
+    if (key === 'ip' || key === 'ipaddress') {
+      return 'ip';
+    }
+    if (key === 'address' || key === 'addr' || key === 'host' ||
+        key === 'url' || key === 'connection' || key === 'connectionaddress') {
+      return 'address';
+    }
+    if (key === 'app' || key === 'appid' || key === 'application') {
+      return 'app';
+    }
+    if (key === 'account' || key === 'accountid') {
+      return 'account';
+    }
+    if (key === 'server' || key === 'servers' || key === 'serverid' ||
+        key === 'serverids' || key === 'srv') {
+      return 'server';
+    }
+    if (key === 'service' || key === 'svc') {
+      return 'service';
+    }
+    if (key === 'note' || key === 'notes') {
+      return 'notes';
+    }
+    if (key === 'password' || key === 'pass' || key === 'pwd') {
+      return 'password';
+    }
+    if (key === 'access' || key === 'accesskey' || key === 'ak') {
+      return 'accesskey';
+    }
+    if (key === 'secret' || key === 'secretkey' || key === 'sk') {
+      return 'secret';
+    }
+    if (key === 'field' || key === 'custom') {
+      return 'custom';
+    }
+    return key;
   }
 
   private usesGlobalTagSearch(terms: SearchTerm[]): boolean {
@@ -2849,11 +2908,14 @@ struct Index {
   }
 
   private entryTitleMatched(entry: VaultEntry): boolean {
-    return this.textContainsTerms(entry.label, ['any', 'title', 'service', 'server', 'app', 'ip']);
+    return this.textContainsTerms(entry.label, ['any', 'label', 'name', 'service', 'server', 'app', 'ip']);
   }
 
   private entrySummaryMatched(entry: VaultEntry): boolean {
-    return this.textContainsTerms(this.entrySummary(entry), ['any', 'service', 'server', 'app', 'ip']);
+    return this.textContainsTerms(this.entrySummary(entry), [
+      'any', 'name', 'service', 'server', 'app', 'ip', 'address', 'port',
+      'username', 'account', 'notes'
+    ]);
   }
 
   private entryCategoryMatched(entry: VaultEntry): boolean {
@@ -2865,7 +2927,7 @@ struct Index {
         category.toLowerCase() === this.selectedCategory.trim().toLowerCase()) {
       return true;
     }
-    return this.textContainsTerms(category, ['any', 'title']);
+    return this.textContainsTerms(category, ['any', 'category']);
   }
 
   private tagMatched(tag: string): boolean {
@@ -2898,37 +2960,189 @@ struct Index {
     entry: VaultEntry,
     terms: SearchTerm[],
   ): boolean {
-    const labelLower = entry.label.toLowerCase();
-    const categoryLower = this.entryCategory(entry).toLowerCase();
-    const payload = entry.payload as SearchPayload;
-    const payloadName = (payload.name ?? '').toLowerCase();
-    const appId = (payload.appId ?? '').toLowerCase();
-    const ipAddress = (payload.ipAddress ?? '').toLowerCase();
-    const anyParts: string[] = [labelLower, categoryLower, appId, payloadName, ipAddress];
-    entry.tags.forEach((tag: string) => anyParts.push(tag.toLowerCase()));
-    const anyLower = anyParts.join('\n');
     return terms.every((term: SearchTerm) => {
-      if (term.field === 'title') {
-        return labelLower.includes(term.value);
+      return this.entrySearchValues(entry, term.field)
+        .some((value: string) => value.toLowerCase().includes(term.value));
+    });
+  }
+
+  private entrySearchValues(entry: VaultEntry, field: string): string[] {
+    const payload = entry.payload as SearchPayload;
+    if (field === 'any') {
+      const values: string[] = [entry.label, `${entry.type}`, this.entryCategory(entry)];
+      entry.tags.forEach((tag: string) => values.push(tag));
+      this.addSearchValue(values, payload.name);
+      this.addSearchValue(values, payload.username);
+      this.addSearchValue(values, payload.appId);
+      this.addSearchValue(values, payload.ipAddress);
+      this.addSearchValue(values, payload.port);
+      this.addSearchValue(values, payload.notes);
+      this.addSearchValue(values, payload.connectionAddress);
+      this.addSearchValue(values, payload.connectionPort);
+      this.addSearchValue(values, payload.accountId);
+      this.addSearchArray(values, payload.serverIds);
+      this.addSearchAccounts(values, payload.accounts, false);
+      entry.customFields.forEach((customField: CustomField) => {
+        values.push(customField.name);
+        values.push(customField.value);
+      });
+      return values;
+    }
+    if (field === 'label') {
+      return [entry.label];
+    }
+    if (field === 'name') {
+      const values: string[] = [entry.label];
+      this.addSearchValue(values, payload.name);
+      return values.concat(this.customFieldValues(entry, 'name'));
+    }
+    if (field === 'type') {
+      return [`${entry.type}`];
+    }
+    if (field === 'category') {
+      return [this.entryCategory(entry)];
+    }
+    if (field === 'tag') {
+      return entry.tags;
+    }
+    if (field === 'username') {
+      const values: string[] = [];
+      this.addSearchValue(values, payload.username);
+      this.addSearchAccounts(values, payload.accounts, false, true);
+      return values.concat(this.customFieldValues(entry, 'username'));
+    }
+    if (field === 'ip') {
+      const values: string[] = [];
+      this.addSearchValue(values, payload.ipAddress);
+      this.addSearchValue(values, payload.connectionAddress);
+      return values.concat(this.customFieldValues(entry, 'ip'));
+    }
+    if (field === 'port') {
+      const values: string[] = [];
+      this.addSearchValue(values, payload.port);
+      this.addSearchValue(values, payload.connectionPort);
+      return values.concat(this.customFieldValues(entry, 'port'));
+    }
+    if (field === 'address') {
+      const values: string[] = [];
+      this.addSearchValue(values, payload.ipAddress);
+      this.addSearchValue(values, payload.connectionAddress);
+      return values.concat(this.customFieldValues(entry, 'address'));
+    }
+    if (field === 'app') {
+      const values: string[] = [];
+      this.addSearchValue(values, payload.appId);
+      return values.concat(this.customFieldValues(entry, 'app'));
+    }
+    if (field === 'account') {
+      const values: string[] = [];
+      this.addSearchValue(values, payload.accountId);
+      this.addSearchAccounts(values, payload.accounts, false);
+      return values.concat(this.customFieldValues(entry, 'account'));
+    }
+    if (field === 'server') {
+      const values: string[] = [];
+      if (entry.type === VaultEntryType.SERVER) {
+        values.push(entry.label);
       }
-      if (term.field === 'service') {
-        return entry.type === VaultEntryType.SERVICE &&
-          (labelLower.includes(term.value) || payloadName.includes(term.value));
+      this.addSearchValue(values, payload.name);
+      this.addSearchValue(values, payload.ipAddress);
+      this.addSearchArray(values, payload.serverIds);
+      return values.concat(this.customFieldValues(entry, 'server'));
+    }
+    if (field === 'service') {
+      const values: string[] = [];
+      if (entry.type === VaultEntryType.SERVICE) {
+        values.push(entry.label);
       }
-      if (term.field === 'app') {
-        return appId.includes(term.value);
+      this.addSearchValue(values, payload.name);
+      this.addSearchValue(values, payload.connectionAddress);
+      return values.concat(this.customFieldValues(entry, 'service'));
+    }
+    if (field === 'notes') {
+      const values: string[] = [];
+      this.addSearchValue(values, payload.notes);
+      this.addSearchAccounts(values, payload.accounts, false, false, true);
+      return values.concat(this.customFieldValues(entry, 'notes'));
+    }
+    if (field === 'password') {
+      const values: string[] = [];
+      this.addSearchValue(values, payload.password);
+      this.addSearchAccounts(values, payload.accounts, true);
+      return values.concat(this.customFieldValues(entry, 'password'));
+    }
+    if (field === 'token') {
+      const values: string[] = [];
+      this.addSearchValue(values, payload.token);
+      return values.concat(this.customFieldValues(entry, 'token'));
+    }
+    if (field === 'accesskey') {
+      const values: string[] = [];
+      this.addSearchValue(values, payload.accessKey);
+      return values.concat(this.customFieldValues(entry, 'accesskey'));
+    }
+    if (field === 'secret') {
+      const values: string[] = [];
+      this.addSearchValue(values, payload.secretKey);
+      return values.concat(this.customFieldValues(entry, 'secret'));
+    }
+    if (field === 'custom') {
+      const values: string[] = [];
+      entry.customFields.forEach((customField: CustomField) => {
+        values.push(customField.name);
+        values.push(customField.value);
+      });
+      return values;
+    }
+    return this.customFieldValues(entry, field);
+  }
+
+  private customFieldValues(entry: VaultEntry, field: string): string[] {
+    const key = this.normalizeSearchField(field);
+    const values: string[] = [];
+    entry.customFields.forEach((customField: CustomField) => {
+      const customKey = this.normalizeSearchField(customField.name);
+      if (customKey.length > 0 &&
+          (customKey === key || customKey.includes(key) || key.includes(customKey))) {
+        values.push(customField.name);
+        values.push(customField.value);
       }
-      if (term.field === 'server') {
-        return (entry.type === VaultEntryType.SERVER && labelLower.includes(term.value)) ||
-          payloadName.includes(term.value);
+    });
+    return values;
+  }
+
+  private addSearchValue(values: string[], value: string | undefined): void {
+    if (typeof value === 'string' && value.length > 0) {
+      values.push(value);
+    }
+  }
+
+  private addSearchArray(values: string[], items: string[] | undefined): void {
+    if (items !== undefined) {
+      items.forEach((item: string) => this.addSearchValue(values, item));
+    }
+  }
+
+  private addSearchAccounts(
+    values: string[],
+    accounts: SearchServiceAccount[] | undefined,
+    includePasswords: boolean,
+    includeUsernames: boolean = true,
+    includeNotes: boolean = true,
+  ): void {
+    if (accounts === undefined) {
+      return;
+    }
+    accounts.forEach((account: SearchServiceAccount) => {
+      if (includeUsernames) {
+        this.addSearchValue(values, account.username);
       }
-      if (term.field === 'ip') {
-        return ipAddress.includes(term.value);
+      if (includeNotes) {
+        this.addSearchValue(values, account.note);
       }
-      if (term.field === 'tag') {
-        return entry.tags.some((entryTag: string) => entryTag.toLowerCase().includes(term.value));
+      if (includePasswords) {
+        this.addSearchValue(values, account.password);
       }
-      return anyLower.includes(term.value);
     });
   }
 

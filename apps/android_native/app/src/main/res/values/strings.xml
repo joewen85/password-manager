@@ -27,7 +27,7 @@
     <string name="backup">Backup</string>
     <string name="backups">Backups</string>
     <string name="search_vault">Search vault</string>
-    <string name="search_vault_scoped">Search fields in current category, tag/# search...</string>
+    <string name="search_vault_scoped">Search, e.g. ip:1.2.3.4 name:xxx...</string>
     <string name="search_categories">Search categories</string>
     <string name="search_tags">Search tags</string>
     <string name="new_entry_short">New</string>
@@ -51,7 +51,7 @@
     <string name="all_categories">All categories</string>
     <string name="more_count">...+%1$d</string>
     <string name="search_syntax_title">Search syntax</string>
-    <string name="search_syntax_body">Use tag:bb to match a tag, #bb as shorthand, category:work to match a category, or plain text to search fields.</string>
+    <string name="search_syntax_body">Use name:xxx, ip:1.2.3.4, category:work, tag:bb, or #bb. Custom fields support key:value, for example owner:sre. Plain text searches all visible fields.</string>
     <string name="export">Export</string>
     <string name="import_label">Import</string>
     <string name="more_actions">More actions</string>
