@@ -20,7 +20,7 @@ struct PasswordManagerMacOSApp: App {
     var body: some Scene {
         WindowGroup(L10n.t("Password Manager"), id: "main") {
             ContentView(store: vaultStore)
-                .frame(minWidth: 1080, minHeight: 680)
+                .frame(minWidth: 720, idealWidth: 1080, minHeight: 480, idealHeight: 680)
                 .environment(\.locale, appPreferences.locale)
                 .preferredColorScheme(appPreferences.colorScheme)
                 .onAppear {
