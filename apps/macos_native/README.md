@@ -157,6 +157,17 @@ swift build -c release
 ./scripts/package_release.sh
 ```
 
+打包脚本默认生成 `0.1.0 (1)`，其中 marketing version 会写入
+`CFBundleShortVersionString`，build number 会写入 `CFBundleVersion`。版本号和构建号均要求为 1 到 3 段数字，例如 `1`、`1.0` 或 `1.0.0`。可用以下任一方式指定：
+
+```bash
+./scripts/package_release.sh 1.0.0 100
+./scripts/package_release.sh --version 1.0.0 --build-number 100
+MARKETING_VERSION=1.0.0 BUILD_NUMBER=100 ./scripts/package_release.sh
+```
+
+脚本会先复制 `ReleaseSupport/Info.plist` 作为模板，再写入实际的 app name、bundle id、icon name、marketing version 和 build number，因此发布包内的 bundle metadata 以本次打包参数为准。
+
 本地发布候选验证可运行：
 
 ```bash
@@ -185,15 +196,19 @@ dist/release/Password Manager.zip
 9. 如设置 `EXPECTED_TEAM_ID` 或 `EXPECTED_SIGNING_CERT_SHA256`，校验签名 TeamIdentifier 和 leaf signing certificate SHA-256 指纹。
 10. 生成 notarization 可用的 zip 结构。
 
-可通过环境变量覆盖发布 metadata 和签名身份：
+可通过环境变量覆盖更多发布 metadata 和签名身份：
 
 ```bash
+APP_NAME="Password Manager" \
 BUNDLE_ID=life.dev-ops.passwordmanager \
 MARKETING_VERSION=1.0.0 \
 BUILD_NUMBER=100 \
+ICON_NAME=AppIcon \
 SIGN_IDENTITY="Developer ID Application: Example Team (TEAMID)" \
 ./scripts/package_release.sh
 ```
+
+默认 `SIGN_IDENTITY=-` 会生成 ad-hoc 签名包，不携带 entitlements 文件并关闭 secure timestamp，仅用于本机验证。提供 `Developer ID Application: ...` identity 后，脚本会使用 `ReleaseSupport/PasswordManagerMacOS.entitlements`、启用 Hardened Runtime 和 secure timestamp，使产物满足 notarization 的前置签名要求。若需要改用其他 entitlements 文件，可通过 `ENTITLEMENTS=/path/to/file.plist` 覆盖。
 
 Developer ID 发布前建议把签名证书固定到预期 Team ID 和证书指纹：
 
@@ -467,6 +482,22 @@ This directory also includes a local `.app` packaging script:
 ./scripts/package_release.sh
 ```
 
+The packaging script defaults to `0.1.0 (1)`: the marketing version is written to
+`CFBundleShortVersionString`, and the build number is written to `CFBundleVersion`.
+Both values must be one to three dot-separated integer segments, such as `1`,
+`1.0`, or `1.0.0`. Set them with any of these forms:
+
+```bash
+./scripts/package_release.sh 1.0.0 100
+./scripts/package_release.sh --version 1.0.0 --build-number 100
+MARKETING_VERSION=1.0.0 BUILD_NUMBER=100 ./scripts/package_release.sh
+```
+
+The script copies `ReleaseSupport/Info.plist` as the template, then writes the
+actual app name, bundle id, icon name, marketing version, and build number into
+the packaged app. The bundle metadata in the release artifact therefore comes
+from the packaging arguments for that run.
+
 Run the local release-candidate smoke gate with:
 
 ```bash
@@ -495,15 +526,25 @@ The script:
 9. Verifies the signing TeamIdentifier and leaf signing certificate SHA-256 fingerprint when `EXPECTED_TEAM_ID` or `EXPECTED_SIGNING_CERT_SHA256` is set.
 10. Creates a zip with the structure expected by notarization.
 
-Release metadata and signing identity can be overridden with environment variables:
+More release metadata and signing identity can be overridden with environment variables:
 
 ```bash
+APP_NAME="Password Manager" \
 BUNDLE_ID=life.dev-ops.passwordmanager \
 MARKETING_VERSION=1.0.0 \
 BUILD_NUMBER=100 \
+ICON_NAME=AppIcon \
 SIGN_IDENTITY="Developer ID Application: Example Team (TEAMID)" \
 ./scripts/package_release.sh
 ```
+
+By default, `SIGN_IDENTITY=-` creates an ad-hoc signed package without an
+entitlements file and disables secure timestamping; this is only for local
+validation. When a `Developer ID Application: ...` identity is provided, the
+script uses `ReleaseSupport/PasswordManagerMacOS.entitlements`, enables Hardened
+Runtime, and requests secure timestamping so the artifact meets the signing
+prerequisites for notarization. Use `ENTITLEMENTS=/path/to/file.plist` to point
+the package at a different entitlements file.
 
 For Developer ID releases, pin the signing certificate to the expected Team ID and certificate fingerprint:
 
