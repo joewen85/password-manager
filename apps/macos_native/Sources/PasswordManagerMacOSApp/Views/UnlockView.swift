@@ -9,7 +9,6 @@ struct UnlockView: View {
     @State private var errorMessage: String?
     @State private var isAuthenticatingWithBiometrics = false
     @State private var biometricFailureCount = 0
-    @State private var hasAutoPromptedBiometrics = false
     @State private var isPasswordFallbackRequired = false
 
     private let biometricCredentialStore = MacBiometricCredentialStore()
@@ -63,13 +62,12 @@ struct UnlockView: View {
                biometricCredentialStore.hasSavedCredential(),
                biometricCredentialStore.canAuthenticate() {
                 Button(L10n.t("Unlock with Touch ID")) {
-                    unlockWithBiometrics(isAutomatic: false)
+                    unlockWithBiometrics()
                 }
                 .disabled(isAuthenticatingWithBiometrics || isPasswordFallbackRequired)
             }
         }
         .padding(40)
-        .onAppear(perform: autoPromptBiometricsIfNeeded)
         .onChange(of: store.isUnlocked) { _, _ in
             resetBiometricPromptState()
         }
@@ -97,19 +95,7 @@ struct UnlockView: View {
             biometricCredentialStore.canAuthenticate()
     }
 
-    private func autoPromptBiometricsIfNeeded() {
-        guard canUseBiometrics,
-              !store.isUnlocked,
-              !hasAutoPromptedBiometrics,
-              !isPasswordFallbackRequired else {
-            return
-        }
-
-        hasAutoPromptedBiometrics = true
-        unlockWithBiometrics(isAutomatic: true)
-    }
-
-    private func unlockWithBiometrics(isAutomatic: Bool) {
+    private func unlockWithBiometrics() {
         guard canUseBiometrics,
               !isAuthenticatingWithBiometrics,
               !isPasswordFallbackRequired else {
@@ -142,12 +128,7 @@ struct UnlockView: View {
             } catch {
                 await MainActor.run {
                     isAuthenticatingWithBiometrics = false
-                    let shouldRetry = recordBiometricFailure(error)
-                    if isAutomatic, shouldRetry {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                            unlockWithBiometrics(isAutomatic: true)
-                        }
-                    }
+                    recordBiometricFailure(error)
                 }
             }
         }
@@ -155,28 +136,30 @@ struct UnlockView: View {
 
     @discardableResult
     private func recordBiometricFailure(_ error: Error) -> Bool {
-        guard isRetryableBiometricFailure(error) else {
-            isPasswordFallbackRequired = true
-            errorMessage = L10n.status(error.localizedDescription)
-            return false
+        if let laError = error as? LAError {
+            switch laError.code {
+            case .authenticationFailed:
+                biometricFailureCount += 1
+                if biometricFailureCount >= maxBiometricFailures {
+                    isPasswordFallbackRequired = true
+                    errorMessage = L10n.t("Touch ID failed 3 times. Enter the master password to unlock.")
+                    return false
+                }
+                errorMessage = L10n.status(error.localizedDescription)
+                return true
+            case .appCancel, .systemCancel, .userCancel, .userFallback:
+                errorMessage = nil
+                return false
+            default:
+                isPasswordFallbackRequired = true
+                errorMessage = L10n.status(error.localizedDescription)
+                return false
+            }
         }
 
-        biometricFailureCount += 1
-        if biometricFailureCount >= maxBiometricFailures {
-            isPasswordFallbackRequired = true
-            errorMessage = L10n.t("Touch ID failed 3 times. Enter the master password to unlock.")
-            return false
-        } else {
-            errorMessage = L10n.status(error.localizedDescription)
-            return true
-        }
-    }
-
-    private func isRetryableBiometricFailure(_ error: Error) -> Bool {
-        guard let laError = error as? LAError else {
-            return false
-        }
-        return laError.code == .authenticationFailed
+        isPasswordFallbackRequired = true
+        errorMessage = L10n.status(error.localizedDescription)
+        return false
     }
 
     private func resetBiometricPromptState() {
@@ -184,7 +167,6 @@ struct UnlockView: View {
             return
         }
         biometricFailureCount = 0
-        hasAutoPromptedBiometrics = false
         isPasswordFallbackRequired = false
     }
 }
