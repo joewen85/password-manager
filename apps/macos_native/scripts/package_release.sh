@@ -6,7 +6,7 @@ APP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 PRODUCT_NAME="PasswordManagerMacOS"
 APP_NAME="${APP_NAME:-Password Manager}"
-BUNDLE_ID="${BUNDLE_ID:-com.example.passwordmanager.native.macos}"
+BUNDLE_ID="${BUNDLE_ID:-life.dev-ops.passwordmanager}"
 MARKETING_VERSION="${MARKETING_VERSION:-0.1.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
@@ -27,6 +27,110 @@ RESOURCE_BUNDLE_NAME="${PRODUCT_NAME}_PasswordManagerMacOSApp.bundle"
 RESOURCE_BUNDLE_SOURCE="$APP_ROOT/.build/release/$RESOURCE_BUNDLE_NAME"
 RESOURCE_BUNDLE_DEST="$CONTENTS_DIR/Resources/$RESOURCE_BUNDLE_NAME"
 CODESIGN_TIMESTAMP_FLAGS=()
+
+usage() {
+  cat <<EOF
+Usage:
+  $(basename "$0") [MARKETING_VERSION] [BUILD_NUMBER]
+  $(basename "$0") --version <MARKETING_VERSION> --build-number <BUILD_NUMBER>
+
+Options:
+  --version, --marketing-version <value>  Set CFBundleShortVersionString, for example 1.0.0.
+  --build-number, --build <value>         Set CFBundleVersion, for example 100.
+  -h, --help                             Show this help.
+
+Environment variables remain supported:
+  MARKETING_VERSION=1.0.0 BUILD_NUMBER=100 $(basename "$0")
+EOF
+}
+
+require_option_value() {
+  local option="$1"
+  local value="${2:-}"
+
+  if [[ -z "$value" || "$value" == --* ]]; then
+    echo "Missing value for $option." >&2
+    usage >&2
+    exit 2
+  fi
+}
+
+parse_args() {
+  local positional=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --version|--marketing-version)
+        require_option_value "$1" "${2:-}"
+        MARKETING_VERSION="$2"
+        shift 2
+        ;;
+      --version=*|--marketing-version=*)
+        MARKETING_VERSION="${1#*=}"
+        shift
+        ;;
+      --build-number|--build)
+        require_option_value "$1" "${2:-}"
+        BUILD_NUMBER="$2"
+        shift 2
+        ;;
+      --build-number=*|--build=*)
+        BUILD_NUMBER="${1#*=}"
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      --)
+        shift
+        while [[ $# -gt 0 ]]; do
+          positional+=("$1")
+          shift
+        done
+        ;;
+      -*)
+        echo "Unknown option: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+      *)
+        positional+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  if [[ ${#positional[@]} -gt 2 ]]; then
+    echo "Too many positional arguments." >&2
+    usage >&2
+    exit 2
+  fi
+
+  if [[ ${#positional[@]} -ge 1 ]]; then
+    MARKETING_VERSION="${positional[0]}"
+  fi
+  if [[ ${#positional[@]} -ge 2 ]]; then
+    BUILD_NUMBER="${positional[1]}"
+  fi
+}
+
+validate_versions() {
+  if [[ ! "$MARKETING_VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+    echo "Invalid MARKETING_VERSION: $MARKETING_VERSION" >&2
+    echo "Use one to three dot-separated integers, for example 1.0.0." >&2
+    exit 2
+  fi
+
+  if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+    echo "Invalid BUILD_NUMBER: $BUILD_NUMBER" >&2
+    echo "Use one to three dot-separated integers, for example 100." >&2
+    exit 2
+  fi
+}
+
+parse_args "$@"
+validate_versions
 
 if [[ "$SIGN_IDENTITY" == "-" ]]; then
   CODESIGN_TIMESTAMP_FLAGS+=(--timestamp=none)
@@ -149,3 +253,4 @@ fi
 
 echo "Packaged app: $APP_BUNDLE"
 echo "Archive: $DERIVED_APP_DIR/$APP_NAME.zip"
+echo "Version: $MARKETING_VERSION ($BUILD_NUMBER)"

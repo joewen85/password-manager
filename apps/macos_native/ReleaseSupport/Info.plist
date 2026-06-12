@@ -9,7 +9,7 @@
 	<key>CFBundleExecutable</key>
 	<string>PasswordManagerMacOS</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.example.passwordmanager.native.macos</string>
+	<string>life.dev-ops.passwordmanager</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleInfoDictionaryVersion</key>

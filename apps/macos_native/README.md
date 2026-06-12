@@ -188,7 +188,7 @@ dist/release/Password Manager.zip
 可通过环境变量覆盖发布 metadata 和签名身份：
 
 ```bash
-BUNDLE_ID=com.example.passwordmanager \
+BUNDLE_ID=life.dev-ops.passwordmanager \
 MARKETING_VERSION=1.0.0 \
 BUILD_NUMBER=100 \
 SIGN_IDENTITY="Developer ID Application: Example Team (TEAMID)" \
@@ -498,7 +498,7 @@ The script:
 Release metadata and signing identity can be overridden with environment variables:
 
 ```bash
-BUNDLE_ID=com.example.passwordmanager \
+BUNDLE_ID=life.dev-ops.passwordmanager \
 MARKETING_VERSION=1.0.0 \
 BUILD_NUMBER=100 \
 SIGN_IDENTITY="Developer ID Application: Example Team (TEAMID)" \
