@@ -109,12 +109,6 @@ struct SidebarView: View {
                     Label(L10n.t("Create"), systemImage: "plus")
                 }
             }
-            ToolbarSpacer(.fixed)
-            ToolbarItem {
-                Button(action: { store.lock() }) {
-                    Label(L10n.t("Lock"), systemImage: "lock")
-                }
-            }
         }
     }
 

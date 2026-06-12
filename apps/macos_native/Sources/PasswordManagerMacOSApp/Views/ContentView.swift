@@ -71,6 +71,18 @@ struct ContentView: View {
             }
             .searchable(text: $searchText, prompt: "Search vault")
             .searchToolbarBehavior(.automatic)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        store.lock()
+                    } label: {
+                        Label(L10n.t("Lock"), systemImage: "lock.fill")
+                    }
+                    .labelStyle(.iconOnly)
+                    .help(L10n.t("Lock Vault"))
+                    .accessibilityLabel(L10n.t("Lock Vault"))
+                }
+            }
             .sheet(item: $editorSession, onDismiss: {
                 editorSession = nil
             }) { session in
