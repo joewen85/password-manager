@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Bindable var store: VaultStore
+    @Binding var shouldAutoPromptBiometricsOnLaunch: Bool
     @State private var selection: VaultEntry.ID?
     @State private var filter: VaultFilter = .all
     @State private var searchText = ""
@@ -503,7 +504,10 @@ struct ContentView: View {
                 validateNavigationState()
             }
         } else {
-            UnlockView(store: store)
+            UnlockView(
+                store: store,
+                shouldAutoPromptBiometricsOnLaunch: $shouldAutoPromptBiometricsOnLaunch
+            )
         }
     }
 

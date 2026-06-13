@@ -8,6 +8,7 @@ struct PasswordManagerMacOSApp: App {
     @State private var lastUserActivityAt = Date()
     @State private var lastAutoSyncAttemptAt: Date?
     @State private var lastAutoSyncUnlockState = false
+    @State private var shouldAutoPromptBiometricsOnLaunch = true
     @State private var eventMonitor: Any?
 
     private let idleLockTimer = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
@@ -19,7 +20,10 @@ struct PasswordManagerMacOSApp: App {
 
     var body: some Scene {
         WindowGroup(L10n.t("Password Manager"), id: "main") {
-            ContentView(store: vaultStore)
+            ContentView(
+                store: vaultStore,
+                shouldAutoPromptBiometricsOnLaunch: $shouldAutoPromptBiometricsOnLaunch
+            )
                 .frame(minWidth: 720, idealWidth: 1080, minHeight: 480, idealHeight: 680)
                 .environment(\.locale, appPreferences.locale)
                 .preferredColorScheme(appPreferences.colorScheme)

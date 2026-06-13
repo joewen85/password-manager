@@ -3,6 +3,7 @@ import SwiftUI
 
 struct UnlockView: View {
     @Bindable var store: VaultStore
+    @Binding var shouldAutoPromptBiometricsOnLaunch: Bool
     @State private var password = ""
     @State private var confirmation = ""
     @State private var totpCode = ""
@@ -68,6 +69,7 @@ struct UnlockView: View {
             }
         }
         .padding(40)
+        .onAppear(perform: autoPromptBiometricsOnLaunchIfNeeded)
         .onChange(of: store.isUnlocked) { _, _ in
             resetBiometricPromptState()
         }
@@ -93,6 +95,19 @@ struct UnlockView: View {
         store.hasMasterKey &&
             biometricCredentialStore.hasSavedCredential() &&
             biometricCredentialStore.canAuthenticate()
+    }
+
+    private func autoPromptBiometricsOnLaunchIfNeeded() {
+        guard shouldAutoPromptBiometricsOnLaunch else { return }
+        shouldAutoPromptBiometricsOnLaunch = false
+
+        guard canUseBiometrics,
+              !store.isUnlocked,
+              !isPasswordFallbackRequired else {
+            return
+        }
+
+        unlockWithBiometrics()
     }
 
     private func unlockWithBiometrics() {
