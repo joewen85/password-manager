@@ -3,9 +3,6 @@ import SwiftUI
 struct SidebarView: View {
     var store: VaultStore
     @Binding var filter: VaultFilter
-    var addEntry: () -> Void
-    var createCategory: () -> Void
-    var createTag: () -> Void
     var showTaxonomyManager: () -> Void
     var showSyncCenter: () -> Void
     var showBackups: () -> Void
@@ -79,35 +76,11 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .toolbar {
-            ToolbarItemGroup {
-                Button {
-                    store.syncNow()
-                } label: {
-                    Label(L10n.t("Run Sync Now"), systemImage: "arrow.triangle.2.circlepath")
-                }
-                .help(L10n.t("Run Sync Now"))
-                .disabled(store.syncSettings.providerType == .none)
-
+            ToolbarItem {
                 Button(action: showBackups) {
                     Label(L10n.t("Backups"), systemImage: "externaldrive.badge.timemachine")
                 }
                 .help(L10n.t("Backups"))
-            }
-            ToolbarSpacer(.fixed)
-            ToolbarItem {
-                Menu {
-                    Button(action: addEntry) {
-                        Label(L10n.t("Add Entry"), systemImage: "plus")
-                    }
-                    Button(action: createCategory) {
-                        Label(L10n.t("Create Category"), systemImage: "folder.badge.plus")
-                    }
-                    Button(action: createTag) {
-                        Label(L10n.t("Create Tag"), systemImage: "tag")
-                    }
-                } label: {
-                    Label(L10n.t("Create"), systemImage: "plus")
-                }
             }
         }
     }

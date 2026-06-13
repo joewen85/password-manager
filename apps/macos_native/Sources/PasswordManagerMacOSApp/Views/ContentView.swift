@@ -44,9 +44,6 @@ struct ContentView: View {
                 SidebarView(
                     store: store,
                     filter: $filter,
-                    addEntry: beginAddingEntry,
-                    createCategory: { beginCreatingTaxonomy(.category) },
-                    createTag: { beginCreatingTaxonomy(.tag) },
                     showTaxonomyManager: { isPresentingTaxonomyManager = true },
                     showSyncCenter: { isPresentingSyncCenter = true },
                     showBackups: { isPresentingBackups = true },
@@ -72,6 +69,35 @@ struct ContentView: View {
             .searchable(text: $searchText, prompt: "Search vault")
             .searchToolbarBehavior(.automatic)
             .toolbar {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button {
+                        store.syncNow()
+                    } label: {
+                        Label(L10n.t("Run Sync Now"), systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .help(L10n.t("Run Sync Now"))
+                    .disabled(store.syncSettings.providerType == .none)
+
+                    Menu {
+                        Button(action: beginAddingEntry) {
+                            Label(L10n.t("Add Entry"), systemImage: "plus")
+                        }
+                        Button {
+                            beginCreatingTaxonomy(.category)
+                        } label: {
+                            Label(L10n.t("Create Category"), systemImage: "folder.badge.plus")
+                        }
+                        Button {
+                            beginCreatingTaxonomy(.tag)
+                        } label: {
+                            Label(L10n.t("Create Tag"), systemImage: "tag")
+                        }
+                    } label: {
+                        Label(L10n.t("Create"), systemImage: "plus")
+                    }
+                    .help(L10n.t("Create"))
+                }
+
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         store.lock()
