@@ -2,47 +2,86 @@ import SwiftUI
 
 struct EntryListView: View {
     var entries: [VaultEntry]
+    @Binding var searchText: String
+    var searchFocusRequest: Int
     @Binding var selection: VaultEntry.ID?
     var addEntry: () -> Void
 
     @State private var scrollPosition: VaultEntry.ID?
+    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
-        List(entries, selection: $selection) { entry in
-            HStack(spacing: 10) {
-                Image(systemName: "folder")
-                    .foregroundStyle(.secondary)
-                    .frame(width: 18)
+        VStack(spacing: 0) {
+            searchBar
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(entry.label)
-                        .lineLimit(1)
+            Divider()
 
-                    Text(entry.subtitle)
-                        .font(.caption)
+            List(entries, selection: $selection) { entry in
+                HStack(spacing: 10) {
+                    Image(systemName: "folder")
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .frame(width: 18)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(entry.label)
+                            .lineLimit(1)
+
+                        Text(entry.subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                .tag(entry.id)
+                .id(entry.id)
+            }
+            .scrollPosition(id: $scrollPosition)
+            .onChange(of: entryIDs) { _, nextIDs in
+                guard let scrollPosition, !nextIDs.contains(scrollPosition) else { return }
+                self.scrollPosition = fallbackScrollPosition(in: nextIDs)
+            }
+            .overlay {
+                if entries.isEmpty {
+                    ContentUnavailableView {
+                        Label(L10n.t("No Entries"), systemImage: "key.slash")
+                    } description: {
+                        Text(L10n.t("Create an entry and assign a custom category."))
+                    } actions: {
+                        Button(L10n.t("New Entry"), action: addEntry)
+                            .buttonStyle(.borderedProminent)
+                    }
                 }
             }
-            .tag(entry.id)
-            .id(entry.id)
         }
-        .scrollPosition(id: $scrollPosition)
-        .onChange(of: entryIDs) { _, nextIDs in
-            guard let scrollPosition, !nextIDs.contains(scrollPosition) else { return }
-            self.scrollPosition = fallbackScrollPosition(in: nextIDs)
-        }
-        .overlay {
-            if entries.isEmpty {
-                ContentUnavailableView {
-                    Label("No Entries", systemImage: "key.slash")
-                } description: {
-                    Text("Create an entry and assign a custom category.")
-                } actions: {
-                    Button("New Entry", action: addEntry)
-                        .buttonStyle(.borderedProminent)
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+
+            TextField(L10n.t("Search vault"), text: $searchText)
+                .textFieldStyle(.plain)
+                .submitLabel(.search)
+                .focused($isSearchFocused)
+
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Label(L10n.t("Clear Search"), systemImage: "xmark.circle.fill")
                 }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help(L10n.t("Clear Search"))
+                .accessibilityLabel(L10n.t("Clear Search"))
             }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .onChange(of: searchFocusRequest) { _, _ in
+            isSearchFocused = true
         }
     }
 

@@ -20,6 +20,7 @@
 "Create" = "新建";
 "Lock" = "锁定";
 "Search vault" = "搜索密码库";
+"Clear Search" = "清除搜索";
 "Credential" = "账号";
 "Server" = "服务器";
 "Service" = "服务";
