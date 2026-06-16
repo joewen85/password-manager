@@ -3,12 +3,10 @@ import SwiftUI
 struct EntryListView: View {
     var entries: [VaultEntry]
     @Binding var searchText: String
-    var searchFocusRequest: Int
     @Binding var selection: VaultEntry.ID?
     var addEntry: () -> Void
 
     @State private var scrollPosition: VaultEntry.ID?
-    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -63,7 +61,6 @@ struct EntryListView: View {
             TextField(L10n.t("Search vault"), text: $searchText)
                 .textFieldStyle(.plain)
                 .submitLabel(.search)
-                .focused($isSearchFocused)
 
             if !searchText.isEmpty {
                 Button {
@@ -80,9 +77,6 @@ struct EntryListView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .onChange(of: searchFocusRequest) { _, _ in
-            isSearchFocused = true
-        }
     }
 
     private var entryIDs: [VaultEntry.ID] {

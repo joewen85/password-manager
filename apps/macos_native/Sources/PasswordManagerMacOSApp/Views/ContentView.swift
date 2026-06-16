@@ -7,7 +7,6 @@ struct ContentView: View {
     @State private var selection: VaultEntry.ID?
     @State private var filter: VaultFilter = .all
     @State private var searchText = ""
-    @State private var searchFocusRequest = 0
     @State private var isPresentingImport = false
     @State private var isPresentingScopedImport = false
     @State private var isPresentingBackups = false
@@ -58,7 +57,6 @@ struct ContentView: View {
                 EntryListView(
                     entries: visibleEntries,
                     searchText: $searchText,
-                    searchFocusRequest: searchFocusRequest,
                     selection: $selection,
                     addEntry: beginAddingEntry
                 )
@@ -72,15 +70,6 @@ struct ContentView: View {
             }
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
-                    Button {
-                        searchFocusRequest += 1
-                    } label: {
-                        Label(L10n.t("Search vault"), systemImage: "magnifyingglass")
-                    }
-                    .labelStyle(.iconOnly)
-                    .help(L10n.t("Search vault"))
-                    .accessibilityLabel(L10n.t("Search vault"))
-
                     Button {
                         store.syncNow()
                     } label: {
