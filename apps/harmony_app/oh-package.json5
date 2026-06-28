@@ -1,6 +1,9 @@
 {
   "modelVersion": "5.0.0",
   "description": "HarmonyOS password manager app",
-  "dependencies": {},
+  "dependencies": {
+    "@aliyun/oss": "2.0.0-beta.1",
+    "@tencentcloud/cos": "1.2.3"
+  },
   "devDependencies": {}
 }

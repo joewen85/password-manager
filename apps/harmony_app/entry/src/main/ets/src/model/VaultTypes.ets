@@ -7,6 +7,7 @@ export enum VaultEntryType {
 export interface CredentialPayload {
   username: string;
   password: string;
+  accounts: ServiceAccount[];
   token: string;
   appId: string;
   accessKey: string;
@@ -22,11 +23,13 @@ export interface ServerPayload {
   port: string;
   username: string;
   password: string;
+  accounts: ServiceAccount[];
   basicConfig: string;
   operatingSystem: string;
   location: string;
   notes: string;
   tags: string[];
+  accountId?: string;
   category: string;
 }
 
@@ -56,6 +59,22 @@ export interface CustomField {
   value: string;
 }
 
+export interface FieldTemplate {
+  id: string;
+  name: string;
+}
+
+export interface CategoryTemplate {
+  category: string;
+  fields: FieldTemplate[];
+}
+
+export enum CategoryTypePreset {
+  SERVER = 'server',
+  SERVICE = 'service',
+  ACCOUNT = 'account'
+}
+
 export interface VaultEntry {
   id: string;
   label: string;
@@ -80,6 +99,7 @@ export interface VaultSnapshot {
   masterKeyRecord: MasterKeyRecord | null;
   tags: string[];
   categories: string[];
+  categoryTemplates: CategoryTemplate[];
   entries: VaultEntry[];
   updatedAt: number;
 }
@@ -94,6 +114,7 @@ export interface EncryptedPayloadRecord {
 export interface VaultPayloadRecord {
   tags: string[];
   categories: string[];
+  categoryTemplates?: CategoryTemplate[];
   entries: VaultEntry[];
   security?: SecuritySettings;
   updatedAt: number;
@@ -123,6 +144,7 @@ export interface CreateCredentialInput {
   label: string;
   username: string;
   password: string;
+  accounts?: ServiceAccount[];
   token: string;
   appId: string;
   accessKey: string;
@@ -140,6 +162,7 @@ export interface CreateServerInput {
   port: string;
   username: string;
   password: string;
+  accounts?: ServiceAccount[];
   basicConfig: string;
   operatingSystem: string;
   location: string;

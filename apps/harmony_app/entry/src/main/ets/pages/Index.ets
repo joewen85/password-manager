@@ -2,6 +2,8 @@ import { Context } from '@kit.AbilityKit';
 import picker from '@ohos.file.picker';
 import fs from '@ohos.file.fs';
 import {
+  CategoryTemplate,
+  CategoryTypePreset,
   CreateCredentialInput,
   CreateServerInput,
   CreateServiceInput,
@@ -9,6 +11,7 @@ import {
   CustomField,
   SecuritySettings,
   ServerPayload,
+  ServiceAccount,
   ServicePayload,
   VaultEntry,
   VaultEntryType
@@ -30,6 +33,7 @@ import {
 
 type DraftType = 'credential' | 'server' | 'service';
 type ActivePanel = 'home' | 'settings' | 'category' | 'tag';
+type CategoryPresetDraft = CategoryTypePreset | '';
 const MAX_UNLOCK_ATTEMPTS: number = 5;
 const UI_BACKGROUND: string = '#F4F6F8';
 const UI_SURFACE: string = '#FFFFFF';
@@ -83,6 +87,13 @@ interface ExportFieldOption {
   label: string;
 }
 
+interface DraftAccount {
+  id: string;
+  username: string;
+  password: string;
+  note: string;
+}
+
 @Entry
 @Component
 struct Index {
@@ -122,6 +133,13 @@ struct Index {
   @State private syncWebdavPath: string = '/vault.json';
   @State private syncPresignedDownloadUrl: string = '';
   @State private syncPresignedUploadUrl: string = '';
+  @State private syncObjectStorageAccessKeyId: string = '';
+  @State private syncObjectStorageSecretAccessKey: string = '';
+  @State private syncObjectStorageBucket: string = '';
+  @State private syncObjectStorageEndpoint: string = '';
+  @State private syncObjectStorageAppId: string = '';
+  @State private syncObjectStorageCustomUrl: string = '';
+  @State private syncObjectStorageObjectKey: string = 'vault.sync.json';
   @State private syncAutoEnabled: boolean = false;
   @State private syncAutoOnUnlock: boolean = true;
   @State private syncMasterKey: boolean = true;
@@ -146,10 +164,12 @@ struct Index {
   @State private entries: VaultEntry[] = [];
   @State private tags: string[] = [];
   @State private categories: string[] = [];
+  @State private categoryTemplates: CategoryTemplate[] = [];
 
   @State private tagDraft: string = '';
   @State private categoryDraft: string = '';
   @State private categoryRenameSource: string = '';
+  @State private categoryDraftPreset: CategoryPresetDraft = '';
 
   @State private draftType: DraftType = 'credential';
   @State private draftLabel: string = '';
@@ -158,6 +178,7 @@ struct Index {
   @State private draftTagSearch: string = '';
   @State private draftSelectedTags: string[] = [];
   @State private draftCustomFields: CustomField[] = [];
+  @State private draftAccounts: DraftAccount[] = [];
   @State private editingEntryId: string = '';
   @State private exportEntryId: string = '';
   @State private exportSelectedFieldIds: string[] = [];
@@ -179,11 +200,11 @@ struct Index {
       const hostContext = this.getUIContext().getHostContext() as Context;
       this.hostContext = hostContext;
       const persistentStore = await PreferencesVaultStore.create(hostContext);
-      this.vaultController = new VaultController(persistentStore, crypto);
+      this.vaultController = new VaultController(persistentStore, crypto, hostContext);
       this.biometricCredentialStore = await BiometricCredentialStore.create(hostContext);
     } catch (error) {
       console.error(`Preferences store unavailable, fallback to memory: ${error}`);
-      this.vaultController = new VaultController(new InMemoryVaultStore(), crypto);
+      this.vaultController = new VaultController(new InMemoryVaultStore(), crypto, this.hostContext);
       this.biometricCredentialStore = null;
     }
     await this.controller().initialize();
@@ -706,6 +727,12 @@ struct Index {
         this.ChoiceChip('NAS WebDAV', this.syncProviderType === SyncProviderType.NAS_WEBDAV, () => {
           this.syncProviderType = SyncProviderType.NAS_WEBDAV;
         });
+        this.ChoiceChip('腾讯云 COS', this.syncProviderType === SyncProviderType.TENCENT_COS, () => {
+          this.syncProviderType = SyncProviderType.TENCENT_COS;
+        });
+        this.ChoiceChip('阿里云 OSS', this.syncProviderType === SyncProviderType.ALIYUN_OSS, () => {
+          this.syncProviderType = SyncProviderType.ALIYUN_OSS;
+        });
       }
 
       if (
@@ -755,6 +782,66 @@ struct Index {
           .padding({ left: 14, right: 14 });
         TextInput({ placeholder: '上传 URL', text: $$this.syncPresignedUploadUrl })
           .type(InputType.Password)
+          .width('100%')
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
+      }
+
+      if (
+        this.syncProviderType === SyncProviderType.TENCENT_COS ||
+        this.syncProviderType === SyncProviderType.ALIYUN_OSS
+      ) {
+        this.SectionTitle(this.syncProviderType === SyncProviderType.TENCENT_COS ? '腾讯云 COS 设置' : '阿里云 OSS 设置');
+        TextInput({ placeholder: 'Access Key / SecretId（必填）', text: $$this.syncObjectStorageAccessKeyId })
+          .type(InputType.Password)
+          .width('100%')
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
+        TextInput({ placeholder: 'Secret Key（必填）', text: $$this.syncObjectStorageSecretAccessKey })
+          .type(InputType.Password)
+          .width('100%')
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
+        TextInput({ placeholder: 'Bucket（必填）', text: $$this.syncObjectStorageBucket })
+          .width('100%')
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
+        TextInput({ placeholder: this.syncProviderType === SyncProviderType.TENCENT_COS ? 'Endpoint，例如 cos.ap-shanghai.myqcloud.com' : 'Endpoint，例如 oss-cn-hangzhou.aliyuncs.com', text: $$this.syncObjectStorageEndpoint })
+          .width('100%')
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
+        if (this.syncProviderType === SyncProviderType.TENCENT_COS) {
+          TextInput({ placeholder: 'AppID，可选；未包含在 bucket 时自动追加', text: $$this.syncObjectStorageAppId })
+            .width('100%')
+            .height(48)
+            .backgroundColor(UI_SURFACE_ALT)
+            .border({ width: 1, color: UI_STROKE })
+            .borderRadius(12)
+            .padding({ left: 14, right: 14 });
+        }
+        TextInput({ placeholder: '自定义 URL，可选；填写后优先生效', text: $$this.syncObjectStorageCustomUrl })
+          .width('100%')
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
+        TextInput({ placeholder: '对象 Key，例如 vault.sync.json', text: $$this.syncObjectStorageObjectKey })
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
@@ -1016,6 +1103,7 @@ struct Index {
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
+        this.AccountsEditor('账号列表');
       }
 
       if (this.draftType === 'server') {
@@ -1040,6 +1128,7 @@ struct Index {
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
+        this.AccountsEditor('服务器账号');
       }
 
       if (this.draftType === 'service') {
@@ -1064,6 +1153,7 @@ struct Index {
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
+        this.AccountsEditor('服务账号');
       }
 
       this.CustomFieldsEditor();
@@ -1205,6 +1295,24 @@ struct Index {
           .onClick(() => this.onRenameCategory());
       }
 
+      if (this.categoryRenameSource.length === 0) {
+        Text('新分类类型')
+          .fontSize(12)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_MUTED);
+        Flex({ wrap: FlexWrap.Wrap }) {
+          this.ChoiceChip('服务器', this.categoryDraftPreset === CategoryTypePreset.SERVER, () => {
+            this.categoryDraftPreset = this.categoryDraftPreset === CategoryTypePreset.SERVER ? '' : CategoryTypePreset.SERVER;
+          });
+          this.ChoiceChip('服务', this.categoryDraftPreset === CategoryTypePreset.SERVICE, () => {
+            this.categoryDraftPreset = this.categoryDraftPreset === CategoryTypePreset.SERVICE ? '' : CategoryTypePreset.SERVICE;
+          });
+          this.ChoiceChip('账号', this.categoryDraftPreset === CategoryTypePreset.ACCOUNT, () => {
+            this.categoryDraftPreset = this.categoryDraftPreset === CategoryTypePreset.ACCOUNT ? '' : CategoryTypePreset.ACCOUNT;
+          });
+        }
+      }
+
       if (this.categoryRenameSource.length > 0) {
         Row({ space: 8 }) {
           Text(`当前重命名: ${this.categoryRenameSource}`)
@@ -1216,8 +1324,32 @@ struct Index {
             .onClick(() => {
               this.categoryRenameSource = '';
               this.categoryDraft = '';
+              this.categoryDraftPreset = '';
             });
         }
+      }
+
+      if (this.categoryRenameSource.length > 0) {
+        Text('类型标签')
+          .fontSize(12)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_MUTED);
+        Flex({ wrap: FlexWrap.Wrap }) {
+          this.ChoiceChip('服务器', this.categoryPresetSelected(this.categoryRenameSource, CategoryTypePreset.SERVER), () => {
+            this.onApplyCategoryPreset(this.categoryRenameSource, CategoryTypePreset.SERVER);
+          });
+          this.ChoiceChip('服务', this.categoryPresetSelected(this.categoryRenameSource, CategoryTypePreset.SERVICE), () => {
+            this.onApplyCategoryPreset(this.categoryRenameSource, CategoryTypePreset.SERVICE);
+          });
+          this.ChoiceChip('账号', this.categoryPresetSelected(this.categoryRenameSource, CategoryTypePreset.ACCOUNT), () => {
+            this.onApplyCategoryPreset(this.categoryRenameSource, CategoryTypePreset.ACCOUNT);
+          });
+        }
+        Text(`字段: ${this.templateFieldNames(this.categoryRenameSource).join(', ')}`)
+          .fontSize(12)
+          .fontColor(UI_MUTED)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis });
       }
 
       if (this.categories.length > 0) {
@@ -1252,6 +1384,7 @@ struct Index {
             .onClick(() => {
               this.categoryRenameSource = category;
               this.categoryDraft = category;
+              this.categoryDraftPreset = '';
             });
           }, (category: string) => category);
         }
@@ -1622,12 +1755,14 @@ struct Index {
     const tags = [...this.draftSelectedTags];
     const category = this.draftCategory.trim();
     const customFields = this.normalizedDraftCustomFields();
+    const accounts = this.normalizedDraftAccounts();
 
     if (this.draftType === 'credential') {
       const input: CreateCredentialInput = {
         label: label,
         username: this.draftCredentialUsername.trim(),
         password: this.draftCredentialPassword,
+        accounts: accounts,
         token: '',
         appId: '',
         accessKey: '',
@@ -1652,6 +1787,7 @@ struct Index {
         port: this.draftServerPort.trim(),
         username: '',
         password: '',
+        accounts: accounts,
         basicConfig: '',
         operatingSystem: '',
         location: '',
@@ -1675,7 +1811,7 @@ struct Index {
         connectionPort: this.draftServicePort.trim(),
         accountId: '',
         serverIds: [],
-        accounts: [],
+        accounts: accounts,
         notes: '',
         tags: tags,
         category: category,
@@ -1797,9 +1933,28 @@ struct Index {
       return;
     }
     await this.controller().addCategory(category);
+    if (this.categoryDraftPreset === CategoryTypePreset.SERVER) {
+      await this.controller().applyCategoryPreset(category, CategoryTypePreset.SERVER);
+    } else if (this.categoryDraftPreset === CategoryTypePreset.SERVICE) {
+      await this.controller().applyCategoryPreset(category, CategoryTypePreset.SERVICE);
+    } else if (this.categoryDraftPreset === CategoryTypePreset.ACCOUNT) {
+      await this.controller().applyCategoryPreset(category, CategoryTypePreset.ACCOUNT);
+    }
     this.categoryDraft = '';
+    this.categoryDraftPreset = '';
     this.categoryRenameSource = '';
     this.refreshData();
+  }
+
+  private async onApplyCategoryPreset(category: string, preset: CategoryTypePreset): Promise<void> {
+    const clean = category.trim();
+    if (clean.length === 0) {
+      this.toast('请先选择分类');
+      return;
+    }
+    await this.controller().applyCategoryPreset(clean, preset);
+    this.refreshData();
+    this.toast('分类类型字段已更新');
   }
 
   private async onRenameCategory(): Promise<void> {
@@ -1822,6 +1977,7 @@ struct Index {
     }
     this.categoryRenameSource = '';
     this.categoryDraft = '';
+    this.categoryDraftPreset = '';
     this.refreshData();
   }
 
@@ -1844,11 +2000,58 @@ struct Index {
     if (this.categoryRenameSource === category) {
       this.categoryRenameSource = '';
     }
+    this.categoryDraftPreset = '';
     this.refreshData();
+  }
+
+  private categoryPresetSelected(category: string, preset: CategoryTypePreset): boolean {
+    const names = this.templateFieldNames(category);
+    if (preset === CategoryTypePreset.SERVER) {
+      return ['IP地址', '端口', '关联账号'].every((name: string) => names.includes(name));
+    }
+    if (preset === CategoryTypePreset.SERVICE) {
+      return ['服务入口', '关联账号', '关联服务器'].every((name: string) => names.includes(name));
+    }
+    return ['入口'].every((name: string) => names.includes(name));
+  }
+
+  private templateFieldNames(category: string): string[] {
+    const template = this.categoryTemplate(category);
+    if (template === null) {
+      return ['名称', '备注'];
+    }
+    const names = template.fields
+      .map((field) => field.name.trim())
+      .filter((name: string) => name.length > 0);
+    return names.length > 0 ? names : ['名称', '备注'];
+  }
+
+  private categoryTemplate(category: string): CategoryTemplate | null {
+    const clean = category.trim().toLowerCase();
+    if (clean.length === 0) {
+      return null;
+    }
+    const found = this.categoryTemplates.find(
+      (template: CategoryTemplate) => template.category.trim().toLowerCase() === clean,
+    );
+    return found === undefined ? null : found;
   }
 
   private async onSaveSyncSettings(): Promise<void> {
     try {
+      if (
+        this.syncProviderType === SyncProviderType.TENCENT_COS ||
+        this.syncProviderType === SyncProviderType.ALIYUN_OSS
+      ) {
+        if (
+          this.syncObjectStorageAccessKeyId.trim().length === 0 ||
+          this.syncObjectStorageSecretAccessKey.trim().length === 0 ||
+          this.syncObjectStorageBucket.trim().length === 0
+        ) {
+          this.toast('对象存储同步必须填写 AK、SK 和 Bucket');
+          return;
+        }
+      }
       const current = this.controller().getSyncSettings();
       const intervalValue = clampInteger(Number(this.syncIntervalValue) || 0, 1, 1440);
       const updated: SyncSettings = {
@@ -1859,6 +2062,15 @@ struct Index {
         webdavPath: this.syncWebdavPath.trim(),
         presignedDownloadUrl: this.syncPresignedDownloadUrl.trim(),
         presignedUploadUrl: this.syncPresignedUploadUrl.trim(),
+        objectStorageAccessKeyId: this.syncObjectStorageAccessKeyId.trim(),
+        objectStorageSecretAccessKey: this.syncObjectStorageSecretAccessKey,
+        objectStorageBucket: this.syncObjectStorageBucket.trim(),
+        objectStorageEndpoint: this.syncObjectStorageEndpoint.trim(),
+        objectStorageAppId: this.syncObjectStorageAppId.trim(),
+        objectStorageCustomUrl: this.syncObjectStorageCustomUrl.trim(),
+        objectStorageObjectKey: this.syncObjectStorageObjectKey.trim().length > 0
+          ? this.syncObjectStorageObjectKey.trim()
+          : 'vault.sync.json',
         autoSyncEnabled: this.syncAutoEnabled,
         autoSyncIntervalMinutes: this.syncIntervalUnit === SyncIntervalUnit.SECONDS
           ? Math.max(Math.ceil(intervalValue / 60), 1)
@@ -1994,6 +2206,7 @@ struct Index {
     this.entries = this.controller().getEntries();
     this.tags = this.controller().getTags();
     this.categories = this.controller().getCategories();
+    this.categoryTemplates = this.controller().getCategoryTemplates();
     if (preserveEntryScroll) {
       setTimeout(() => {
         this.restoreEntryListAnchor(anchorEntryId);
@@ -2213,6 +2426,89 @@ struct Index {
     }
   }
 
+  @Builder
+  private AccountsEditor(title: string) {
+    Column({ space: 6 }) {
+      Row() {
+        Text(title).fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
+        Blank();
+        Text('+')
+          .width(42)
+          .height(34)
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_ACCENT)
+          .textAlign(TextAlign.Center)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(10)
+          .onClick(() => {
+            this.addDraftAccount();
+          });
+      }
+      if (this.draftAccounts.length === 0) {
+        Text('未添加账号')
+          .fontSize(12)
+          .fontColor(UI_MUTED);
+      }
+      ForEach(this.draftAccounts, (account: DraftAccount) => {
+        Column({ space: 8 }) {
+          Row({ space: 8 }) {
+            TextInput({ placeholder: '账号', text: account.username })
+              .layoutWeight(1)
+              .height(48)
+              .backgroundColor(UI_SURFACE_ALT)
+              .border({ width: 1, color: UI_STROKE })
+              .borderRadius(12)
+              .padding({ left: 14, right: 14 })
+              .onChange((value: string) => {
+                this.updateDraftAccountUsername(account.id, value);
+              });
+            TextInput({ placeholder: '密码', text: account.password })
+              .type(InputType.Password)
+              .layoutWeight(1)
+              .height(48)
+              .backgroundColor(UI_SURFACE_ALT)
+              .border({ width: 1, color: UI_STROKE })
+              .borderRadius(12)
+              .padding({ left: 14, right: 14 })
+              .onChange((value: string) => {
+                this.updateDraftAccountPassword(account.id, value);
+              });
+          }
+          Row({ space: 8 }) {
+            TextInput({ placeholder: '备注', text: account.note })
+              .layoutWeight(1)
+              .height(48)
+              .backgroundColor(UI_SURFACE_ALT)
+              .border({ width: 1, color: UI_STROKE })
+              .borderRadius(12)
+              .padding({ left: 14, right: 14 })
+              .onChange((value: string) => {
+                this.updateDraftAccountNote(account.id, value);
+              });
+            Text('删除')
+              .height(36)
+              .padding({ left: 10, right: 10 })
+              .fontSize(13)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(UI_DANGER)
+              .textAlign(TextAlign.Center)
+              .backgroundColor(UI_DANGER_SURFACE)
+              .borderRadius(999)
+              .onClick(() => {
+                this.removeDraftAccount(account.id);
+              });
+          }
+        }
+        .padding(10)
+        .backgroundColor(UI_SURFACE_ALT)
+        .border({ width: 1, color: UI_STROKE })
+        .borderRadius(12);
+      }, (account: DraftAccount) => account.id);
+    }
+  }
+
   private async saveJsonExportFile(prefix: string, name: string, contents: string): Promise<string> {
     if (this.hostContext === null) {
       throw new Error('Host context unavailable');
@@ -2373,6 +2669,13 @@ struct Index {
     this.syncWebdavPath = settings.webdavPath;
     this.syncPresignedDownloadUrl = settings.presignedDownloadUrl;
     this.syncPresignedUploadUrl = settings.presignedUploadUrl;
+    this.syncObjectStorageAccessKeyId = settings.objectStorageAccessKeyId;
+    this.syncObjectStorageSecretAccessKey = settings.objectStorageSecretAccessKey;
+    this.syncObjectStorageBucket = settings.objectStorageBucket;
+    this.syncObjectStorageEndpoint = settings.objectStorageEndpoint;
+    this.syncObjectStorageAppId = settings.objectStorageAppId;
+    this.syncObjectStorageCustomUrl = settings.objectStorageCustomUrl;
+    this.syncObjectStorageObjectKey = settings.objectStorageObjectKey;
     this.syncAutoEnabled = settings.autoSyncEnabled;
     this.syncAutoOnUnlock = settings.autoSyncOnUnlock;
     this.syncMasterKey = settings.syncMasterKey;
@@ -2464,6 +2767,7 @@ struct Index {
   private selectDraftCategory(category: string): void {
     this.draftCategory = category;
     this.draftCategorySearch = '';
+    this.applyCategoryTemplateToDraft(category);
   }
 
   private filteredDraftTags(): string[] {
@@ -2502,6 +2806,40 @@ struct Index {
     this.draftSelectedTags = [...this.draftSelectedTags, tag].sort((left: string, right: string) => left.localeCompare(right));
   }
 
+  private applyCategoryTemplateToDraft(category: string): void {
+    if (this.editingEntryId.length > 0) {
+      return;
+    }
+    const template = this.categoryTemplate(category);
+    if (template === null) {
+      return;
+    }
+    const existing = new Set<string>();
+    this.draftCustomFields.forEach((field: CustomField) => {
+      const key = field.name.trim().toLowerCase();
+      if (key.length > 0) {
+        existing.add(key);
+      }
+    });
+    const additions: CustomField[] = [];
+    template.fields.forEach((field) => {
+      const name = field.name.trim();
+      const key = name.toLowerCase();
+      if (name.length === 0 || key === '名称' || key === '备注' || existing.has(key)) {
+        return;
+      }
+      existing.add(key);
+      additions.push({
+        id: field.id.length > 0 ? field.id : this.nextUiId(),
+        name,
+        value: '',
+      });
+    });
+    if (additions.length > 0) {
+      this.draftCustomFields = [...this.draftCustomFields, ...additions];
+    }
+  }
+
   private clearEntryDraft(): void {
     this.draftLabel = '';
     this.draftCategory = '';
@@ -2509,6 +2847,7 @@ struct Index {
     this.draftTagSearch = '';
     this.draftSelectedTags = [];
     this.draftCustomFields = [];
+    this.draftAccounts = [];
     this.editingEntryId = '';
     this.draftCredentialUsername = '';
     this.draftCredentialPassword = '';
@@ -2544,6 +2883,7 @@ struct Index {
       this.draftType = 'credential';
       this.draftCredentialUsername = payload.username ?? '';
       this.draftCredentialPassword = payload.password ?? '';
+      this.draftAccounts = this.copyAccounts(payload.accounts);
       return;
     }
     if (entry.type === VaultEntryType.SERVER) {
@@ -2552,6 +2892,7 @@ struct Index {
       this.draftServerName = payload.name ?? '';
       this.draftServerIp = payload.ipAddress ?? '';
       this.draftServerPort = payload.port ?? '';
+      this.draftAccounts = this.copyAccounts(payload.accounts);
       return;
     }
     const payload = entry.payload as ServicePayload;
@@ -2559,6 +2900,7 @@ struct Index {
     this.draftServiceName = payload.name ?? '';
     this.draftServiceAddress = payload.connectionAddress ?? '';
     this.draftServicePort = payload.connectionPort ?? '';
+    this.draftAccounts = this.copyAccounts(payload.accounts);
   }
 
   private addDraftCustomField(): void {
@@ -2600,6 +2942,62 @@ struct Index {
     this.draftCustomFields = this.draftCustomFields.filter((field: CustomField) => field.id !== id);
   }
 
+  private addDraftAccount(): void {
+    const account: DraftAccount = {
+      id: this.nextUiId(),
+      username: '',
+      password: '',
+      note: '',
+    };
+    this.draftAccounts = [...this.draftAccounts, account];
+  }
+
+  private updateDraftAccountUsername(id: string, value: string): void {
+    this.draftAccounts = this.draftAccounts.map((account: DraftAccount) => {
+      if (account.id !== id) {
+        return account;
+      }
+      return {
+        id: account.id,
+        username: value,
+        password: account.password,
+        note: account.note,
+      };
+    });
+  }
+
+  private updateDraftAccountPassword(id: string, value: string): void {
+    this.draftAccounts = this.draftAccounts.map((account: DraftAccount) => {
+      if (account.id !== id) {
+        return account;
+      }
+      return {
+        id: account.id,
+        username: account.username,
+        password: value,
+        note: account.note,
+      };
+    });
+  }
+
+  private updateDraftAccountNote(id: string, value: string): void {
+    this.draftAccounts = this.draftAccounts.map((account: DraftAccount) => {
+      if (account.id !== id) {
+        return account;
+      }
+      return {
+        id: account.id,
+        username: account.username,
+        password: account.password,
+        note: value,
+      };
+    });
+  }
+
+  private removeDraftAccount(id: string): void {
+    this.draftAccounts = this.draftAccounts.filter((account: DraftAccount) => account.id !== id);
+  }
+
   private normalizedDraftCustomFields(): CustomField[] {
     return this.draftCustomFields
       .map((field: CustomField) => {
@@ -2619,6 +3017,37 @@ struct Index {
         id: field.id.length > 0 ? field.id : this.nextUiId(),
         name: field.name,
         value: field.value,
+      };
+      return copy;
+    });
+  }
+
+  private normalizedDraftAccounts(): ServiceAccount[] {
+    return this.draftAccounts
+      .map((account: DraftAccount) => {
+        const normalized: ServiceAccount = {
+          username: account.username.trim(),
+          password: account.password,
+          note: account.note,
+        };
+        return normalized;
+      })
+      .filter((account: ServiceAccount) =>
+        account.username.length > 0 ||
+        account.password.trim().length > 0 ||
+        account.note.trim().length > 0);
+  }
+
+  private copyAccounts(accounts: ServiceAccount[] | undefined): DraftAccount[] {
+    if (accounts === undefined) {
+      return [];
+    }
+    return accounts.map((account: ServiceAccount) => {
+      const copy: DraftAccount = {
+        id: this.nextUiId(),
+        username: account.username ?? '',
+        password: account.password ?? '',
+        note: account.note ?? '',
       };
       return copy;
     });
@@ -2665,6 +3094,7 @@ struct Index {
       return [
         { id: 'payload.username', label: '用户名' },
         { id: 'payload.password', label: '密码' },
+        { id: 'payload.accounts', label: '账号列表' },
         { id: 'payload.token', label: 'Token' },
         { id: 'payload.appId', label: 'App ID' },
         { id: 'payload.accessKey', label: 'Access Key' },
@@ -2679,6 +3109,7 @@ struct Index {
         { id: 'payload.port', label: '端口' },
         { id: 'payload.username', label: '用户名' },
         { id: 'payload.password', label: '密码' },
+        { id: 'payload.accounts', label: '账号列表' },
         { id: 'payload.basicConfig', label: '基础配置' },
         { id: 'payload.operatingSystem', label: '操作系统' },
         { id: 'payload.location', label: '位置' },
@@ -3273,14 +3704,17 @@ struct Index {
   private entrySummary(entry: VaultEntry): string {
     if (entry.type === VaultEntryType.CREDENTIAL) {
       const payload = entry.payload as CredentialPayload;
-      return `用户名: ${payload.username || '-'} `;
+      const accountCount = payload.accounts === undefined ? 0 : payload.accounts.length;
+      return `用户名: ${payload.username || '-'} 账号: ${accountCount}`;
     }
     if (entry.type === VaultEntryType.SERVER) {
       const payload = entry.payload as ServerPayload;
-      return `IP: ${payload.ipAddress || '-'} 端口: ${payload.port || '-'}`;
+      const accountCount = payload.accounts === undefined ? 0 : payload.accounts.length;
+      return `IP: ${payload.ipAddress || '-'} 端口: ${payload.port || '-'} 账号: ${accountCount}`;
     }
     const payload = entry.payload as ServicePayload;
-    return `地址: ${payload.connectionAddress || '-'} 端口: ${payload.connectionPort || '-'}`;
+    const accountCount = payload.accounts === undefined ? 0 : payload.accounts.length;
+    return `地址: ${payload.connectionAddress || '-'} 端口: ${payload.connectionPort || '-'} 账号: ${accountCount}`;
   }
 
   private toast(message: string): void {

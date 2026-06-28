@@ -1,11 +1,16 @@
+import { Context } from '@kit.AbilityKit';
 import {
+  CategoryTemplate,
+  CategoryTypePreset,
   CreateCredentialInput,
   CreateServerInput,
   CreateServiceInput,
   CustomField,
   EncryptedPayloadRecord,
+  FieldTemplate,
   MasterKeyRecord,
   SecuritySettings,
+  ServiceAccount,
   UnlockGuardState,
   VaultEntry,
   VaultEntryType,
@@ -23,6 +28,7 @@ import {
   SyncSettings,
 } from '../sync/SyncTypes';
 import {
+  ObjectStorageSyncClient,
   PresignedUrlSyncClient,
   RemoteSyncClient,
   WebDavSyncClient,
@@ -30,6 +36,7 @@ import {
 import { VaultStore } from '../storage/VaultStore';
 
 interface VaultRuntimePayload extends VaultPayloadRecord {
+  categoryTemplates: CategoryTemplate[];
   security: SecuritySettings;
   syncSettings: SyncSettings;
 }
@@ -48,6 +55,7 @@ interface ExportSnapshotRecord {
   exportedAt: string;
   tags: string[];
   categories: string[];
+  categoryTemplates: CategoryTemplate[];
   entries: VaultEntry[];
   masterKeyRecord: MasterKeyRecord | null;
   security: SecuritySettings;
@@ -180,6 +188,10 @@ interface AccessKeyCarrier {
   accessToken?: string;
 }
 
+interface AccountCarrier {
+  accounts?: ServiceAccount[];
+}
+
 interface ServiceReferenceCarrier {
   accountId?: string;
   serverIds?: string[];
@@ -194,6 +206,7 @@ export class VaultController {
 
   private readonly store: VaultStore;
   private readonly crypto: VaultCryptoService;
+  private readonly syncContext: Context | null;
   private readonly totp: TotpService;
   private snapshot: VaultRuntimePayload = createEmptyPayload();
   private masterKeyRecord: MasterKeyRecord | null = null;
@@ -204,9 +217,10 @@ export class VaultController {
   private syncInProgress: boolean = false;
   private lastAutoSyncAttemptAt: number = 0;
 
-  constructor(store: VaultStore, crypto: VaultCryptoService) {
+  constructor(store: VaultStore, crypto: VaultCryptoService, syncContext: Context | null = null) {
     this.store = store;
     this.crypto = crypto;
+    this.syncContext = syncContext;
     this.totp = new TotpService();
   }
 
@@ -253,6 +267,12 @@ export class VaultController {
 
   getCategories(): string[] {
     return [...this.snapshot.categories];
+  }
+
+  getCategoryTemplates(): CategoryTemplate[] {
+    return this.snapshot.categoryTemplates.map((template: CategoryTemplate) =>
+      cloneCategoryTemplate(template)
+    );
   }
 
   getEntries(): VaultEntry[] {
@@ -673,6 +693,7 @@ export class VaultController {
       payload: {
         username: input.username,
         password: input.password,
+        accounts: normalizeServiceAccounts(input.accounts),
         token: input.token,
         appId: input.appId,
         accessKey: input.accessKey,
@@ -707,6 +728,7 @@ export class VaultController {
         port: input.port,
         username: input.username,
         password: input.password,
+        accounts: normalizeServiceAccounts(input.accounts),
         basicConfig: input.basicConfig,
         operatingSystem: input.operatingSystem,
         location: input.location,
@@ -740,7 +762,7 @@ export class VaultController {
         connectionPort: input.connectionPort,
         accountId: canonicalIdString(input.accountId),
         serverIds: normalizeReferenceIds(input.serverIds),
-        accounts: [...input.accounts],
+        accounts: normalizeServiceAccounts(input.accounts),
         notes: input.notes,
         tags,
         category: input.category.trim(),
@@ -765,6 +787,7 @@ export class VaultController {
     target.payload = {
       username: input.username,
       password: input.password,
+      accounts: normalizeServiceAccounts(input.accounts),
       token: input.token,
       appId: input.appId,
       accessKey: input.accessKey,
@@ -793,6 +816,7 @@ export class VaultController {
       port: input.port,
       username: input.username,
       password: input.password,
+      accounts: normalizeServiceAccounts(input.accounts),
       basicConfig: input.basicConfig,
       operatingSystem: input.operatingSystem,
       location: input.location,
@@ -820,7 +844,7 @@ export class VaultController {
       connectionPort: input.connectionPort,
       accountId: canonicalIdString(input.accountId),
       serverIds: normalizeReferenceIds(input.serverIds),
-      accounts: [...input.accounts],
+      accounts: normalizeServiceAccounts(input.accounts),
       notes: input.notes,
       tags,
       category: input.category.trim(),
@@ -868,6 +892,18 @@ export class VaultController {
     }
     this.snapshot.categories.push(clean);
     this.snapshot.categories.sort((a: string, b: string) => a.localeCompare(b));
+    this.upsertCategoryTemplate(clean, defaultCategoryFields());
+    await this.persist();
+  }
+
+  async applyCategoryPreset(category: string, preset: CategoryTypePreset): Promise<void> {
+    this.ensureUnlocked();
+    const clean = category.trim();
+    if (clean.length === 0) {
+      return;
+    }
+    this.mergeCategories([clean]);
+    this.upsertCategoryTemplate(clean, fieldsForPreset(preset));
     await this.persist();
   }
 
@@ -921,6 +957,15 @@ export class VaultController {
       entryCategory === from ? to : entryCategory,
     );
     this.snapshot.categories = normalizeTags(this.snapshot.categories);
+    this.snapshot.categoryTemplates = this.snapshot.categoryTemplates.map((template: CategoryTemplate) => {
+      if (template.category !== from) {
+        return template;
+      }
+      return normalizeCategoryTemplate({
+        category: to,
+        fields: template.fields,
+      });
+    });
     this.snapshot.entries.forEach((entry: VaultEntry) => {
       if (entry.isDeleted) {
         return;
@@ -940,6 +985,9 @@ export class VaultController {
     const clean = category.trim();
     this.snapshot.categories = this.snapshot.categories.filter(
       (entryCategory: string) => entryCategory !== clean,
+    );
+    this.snapshot.categoryTemplates = this.snapshot.categoryTemplates.filter(
+      (template: CategoryTemplate) => template.category !== clean,
     );
     this.snapshot.entries.forEach((entry: VaultEntry) => {
       if (entry.isDeleted) {
@@ -962,6 +1010,7 @@ export class VaultController {
       exportedAt: new Date().toISOString(),
       tags: snapshot.tags,
       categories: snapshot.categories,
+      categoryTemplates: snapshot.categoryTemplates,
       entries: snapshot.entries,
       masterKeyRecord: this.masterKeyRecord,
       security: snapshot.security,
@@ -1071,6 +1120,29 @@ export class VaultController {
     const mergedCategories = setToArray(union);
     mergedCategories.sort((a: string, b: string) => a.localeCompare(b));
     this.snapshot.categories = mergedCategories;
+  }
+
+  private upsertCategoryTemplate(category: string, fields: FieldTemplate[]): void {
+    const template = normalizeCategoryTemplate({
+      category,
+      fields: fields.map((field: FieldTemplate) => {
+        const templateField: FieldTemplate = {
+          id: field.id,
+          name: field.name,
+        };
+        return templateField;
+      }),
+    });
+    const existingIndex = this.snapshot.categoryTemplates.findIndex(
+      (entry: CategoryTemplate) => entry.category.toLowerCase() === template.category.toLowerCase(),
+    );
+    if (existingIndex >= 0) {
+      this.snapshot.categoryTemplates[existingIndex] = template;
+    } else {
+      this.snapshot.categoryTemplates.push(template);
+    }
+    this.snapshot.categoryTemplates.sort((a: CategoryTemplate, b: CategoryTemplate) =>
+      a.category.localeCompare(b.category));
   }
 
   private entryCategory(entry: VaultEntry): string {
@@ -1337,6 +1409,7 @@ export class VaultController {
         label: item.label,
         username: payload.username ?? '',
         password: payload.password ?? '',
+        accounts: normalizeServiceAccounts(payload.accounts),
         token: payload.token ?? '',
         appId: payload.appId ?? '',
         accessKey: resolveAccessKey(payload as AccessKeyCarrier),
@@ -1357,6 +1430,7 @@ export class VaultController {
         port: payload.port ?? '',
         username: payload.username ?? '',
         password: payload.password ?? '',
+        accounts: normalizeServiceAccounts(payload.accounts),
         basicConfig: payload.basicConfig ?? '',
         operatingSystem: payload.operatingSystem ?? '',
         location: payload.location ?? '',
@@ -1378,7 +1452,7 @@ export class VaultController {
         serverIds: (payload.serverIds ?? []).map(
           (entryId: string) => mappedReferenceId(idMap, entryId),
         ),
-        accounts: payload.accounts ?? [],
+        accounts: normalizeServiceAccounts(payload.accounts),
         notes: payload.notes ?? '',
         tags: payload.tags ?? [],
         category: payload.category ?? item.category ?? '',
@@ -1401,6 +1475,7 @@ export class VaultController {
         label: item.label,
         username: payload.username ?? '',
         password: payload.password ?? '',
+        accounts: normalizeServiceAccounts(payload.accounts),
         token: payload.token ?? '',
         appId: payload.appId ?? '',
         accessKey: resolveAccessKey(payload as AccessKeyCarrier),
@@ -1421,6 +1496,7 @@ export class VaultController {
         port: payload.port ?? '',
         username: payload.username ?? '',
         password: payload.password ?? '',
+        accounts: normalizeServiceAccounts(payload.accounts),
         basicConfig: payload.basicConfig ?? '',
         operatingSystem: payload.operatingSystem ?? '',
         location: payload.location ?? '',
@@ -1439,7 +1515,7 @@ export class VaultController {
       connectionPort: payload.connectionPort ?? '',
       accountId: payload.accountId ?? '',
       serverIds: payload.serverIds ?? [],
-      accounts: payload.accounts ?? [],
+      accounts: normalizeServiceAccounts(payload.accounts),
       notes: payload.notes ?? '',
       tags: payload.tags ?? [],
       category: payload.category ?? item.category ?? '',
@@ -1589,6 +1665,26 @@ export class VaultController {
           settings.presignedDownloadUrl,
           settings.presignedUploadUrl,
         );
+      case SyncProviderType.TENCENT_COS:
+      case SyncProviderType.ALIYUN_OSS:
+        if (
+          settings.objectStorageAccessKeyId.trim().length === 0 ||
+          settings.objectStorageSecretAccessKey.trim().length === 0 ||
+          settings.objectStorageBucket.trim().length === 0
+        ) {
+          return null;
+        }
+        return new ObjectStorageSyncClient(
+          this.syncContext,
+          settings.providerType,
+          settings.objectStorageAccessKeyId,
+          settings.objectStorageSecretAccessKey,
+          settings.objectStorageBucket,
+          settings.objectStorageEndpoint,
+          settings.objectStorageAppId,
+          settings.objectStorageCustomUrl,
+          settings.objectStorageObjectKey,
+        );
       default:
         return null;
     }
@@ -1691,6 +1787,9 @@ export class VaultController {
     const categories = new Set<string>();
     const baseTags = local.syncSettings.hasLocalChanges ? local.tags : remote.tags;
     const baseCategories = local.syncSettings.hasLocalChanges ? local.categories : remote.categories;
+    const baseTemplates = local.syncSettings.hasLocalChanges
+      ? local.categoryTemplates
+      : remote.categoryTemplates;
     baseTags.forEach((tag: string) => tags.add(tag));
     baseCategories.forEach((category: string) => categories.add(category));
     mergedEntries.filter((entry: VaultEntry) => !entry.isDeleted).forEach((entry: VaultEntry) => {
@@ -1704,6 +1803,12 @@ export class VaultController {
     return {
       tags: normalizeTags(setToArray(tags)),
       categories: normalizeTags(setToArray(categories)),
+      categoryTemplates: mergeCategoryTemplates(
+        baseTemplates,
+        local.categoryTemplates,
+        remote.categoryTemplates,
+        setToArray(categories),
+      ),
       entries: mergedEntries,
       security: pickMergedSecurity(local, remote, strategy),
       updatedAt: Math.max(local.updatedAt, remote.updatedAt, Date.now()),
@@ -1747,6 +1852,7 @@ function createEmptyPayload(): VaultRuntimePayload {
   return {
     tags: [],
     categories: [],
+    categoryTemplates: [],
     entries: [],
     security: defaultSecuritySettings(),
     updatedAt: Date.now(),
@@ -1777,9 +1883,11 @@ function sanitizeRuntimePayload(
       categoryUnion.add(category);
     }
   });
+  const templates = normalizeCategoryTemplates(input.categoryTemplates, setToArray(categoryUnion));
   return {
     tags: normalizeTags(setToArray(tagUnion)),
     categories: normalizeTags(setToArray(categoryUnion)),
+    categoryTemplates: templates,
     entries: normalizedEntries,
     security: normalizeSecuritySettings(maybeSecurity),
     updatedAt: typeof input.updatedAt === 'number' ? input.updatedAt : Date.now(),
@@ -1815,6 +1923,7 @@ function normalizeRuntimeEntry(entry: VaultEntry): VaultEntry {
   payload.category = resolvedCategory;
   carrier.customFields = normalizeCustomFields(carrier.customFields);
   carrier.payload = payload;
+  normalizeEntryAccounts(carrier);
   normalizeServiceReferences(carrier);
   carrier.label = readString(carrier.label);
   if (typeof carrier.isDeleted !== 'boolean') {
@@ -1892,6 +2001,18 @@ function normalizeServiceReferences(carrier: EntryCarrier): void {
   payload.serverIds = normalizeReferenceIds(payload.serverIds);
 }
 
+function normalizeEntryAccounts(carrier: EntryCarrier): void {
+  if (
+    carrier.type !== VaultEntryType.CREDENTIAL &&
+    carrier.type !== VaultEntryType.SERVER &&
+    carrier.type !== VaultEntryType.SERVICE
+  ) {
+    return;
+  }
+  const payload = carrier.payload as AccountCarrier;
+  payload.accounts = normalizeServiceAccounts(payload.accounts);
+}
+
 function normalizeExportItem(item: ExportItemRecord): ExportItemRecord {
   const normalized = JSON.parse(JSON.stringify(item)) as ExportItemRecord;
   normalized.id = canonicalIdString(normalized.id);
@@ -1936,6 +2057,9 @@ function normalizeSyncSettings(settings: SyncSettings): SyncSettings {
   const normalized = cloneSyncSettings(settings);
   if (normalized.webdavPath.trim().length === 0) {
     normalized.webdavPath = '/vault.json';
+  }
+  if (normalized.objectStorageObjectKey.trim().length === 0) {
+    normalized.objectStorageObjectKey = 'vault.sync.json';
   }
   normalized.autoSyncIntervalUnit = normalized.autoSyncIntervalUnit ?? SyncIntervalUnit.MINUTES;
   normalized.autoSyncIntervalValue = normalizeIntervalValue(
@@ -1988,6 +2112,13 @@ function cloneSyncSettings(settings: SyncSettings): SyncSettings {
     webdavPath: settings.webdavPath,
     presignedDownloadUrl: settings.presignedDownloadUrl,
     presignedUploadUrl: settings.presignedUploadUrl,
+    objectStorageAccessKeyId: settings.objectStorageAccessKeyId ?? '',
+    objectStorageSecretAccessKey: settings.objectStorageSecretAccessKey ?? '',
+    objectStorageBucket: settings.objectStorageBucket ?? '',
+    objectStorageEndpoint: settings.objectStorageEndpoint ?? '',
+    objectStorageAppId: settings.objectStorageAppId ?? '',
+    objectStorageCustomUrl: settings.objectStorageCustomUrl ?? '',
+    objectStorageObjectKey: settings.objectStorageObjectKey ?? 'vault.sync.json',
     autoSyncEnabled: settings.autoSyncEnabled,
     autoSyncIntervalMinutes: settings.autoSyncIntervalMinutes,
     autoSyncIntervalValue: settings.autoSyncIntervalValue,
@@ -2059,6 +2190,155 @@ function normalizeSecuritySettings(
     totpSecret: secret,
     biometricUnlockEnabled: input.biometricUnlockEnabled === true,
     idleAutoLockMinutes: normalizeIdleAutoLockMinutes(input.idleAutoLockMinutes),
+  };
+}
+
+function defaultCategoryFields(): FieldTemplate[] {
+  return [
+    createFieldTemplate('名称'),
+    createFieldTemplate('备注'),
+  ];
+}
+
+function fieldsForPreset(preset: CategoryTypePreset): FieldTemplate[] {
+  let names: string[] = [];
+  if (preset === CategoryTypePreset.SERVER) {
+    names = ['IP地址', '端口', '关联账号'];
+  } else if (preset === CategoryTypePreset.SERVICE) {
+    names = ['服务入口', '关联账号', '关联服务器'];
+  } else {
+    names = ['入口'];
+  }
+  const fields = defaultCategoryFields();
+  names.forEach((name: string) => fields.push(createFieldTemplate(name)));
+  return normalizeFieldTemplates(fields);
+}
+
+function createFieldTemplate(name: string): FieldTemplate {
+  return {
+    id: stableFieldId(name),
+    name,
+  };
+}
+
+function stableFieldId(name: string): string {
+  const clean = name.trim().toLowerCase();
+  let output = '';
+  for (let index = 0; index < clean.length; index++) {
+    const char = clean.charAt(index);
+    const keep =
+      (char >= 'a' && char <= 'z') ||
+      (char >= '0' && char <= '9') ||
+      (char >= '\u4e00' && char <= '\u9fa5');
+    output += keep ? char : '-';
+  }
+  output = output.replace(/-+/g, '-');
+  while (output.startsWith('-')) {
+    output = output.substring(1);
+  }
+  while (output.endsWith('-')) {
+    output = output.substring(0, output.length - 1);
+  }
+  return `template-${output.length > 0 ? output : nextId()}`;
+}
+
+function normalizeCategoryTemplates(
+  templates: CategoryTemplate[] | undefined,
+  categories: string[],
+): CategoryTemplate[] {
+  const map = new Map<string, CategoryTemplate>();
+  (templates ?? []).forEach((template: CategoryTemplate) => {
+    const normalized = normalizeCategoryTemplate(template);
+    if (normalized.category.length > 0) {
+      map.set(normalized.category.toLowerCase(), normalized);
+    }
+  });
+  categories.forEach((category: string) => {
+    const clean = category.trim();
+    if (clean.length === 0) {
+      return;
+    }
+    const key = clean.toLowerCase();
+    if (!map.has(key)) {
+      map.set(key, normalizeCategoryTemplate({ category: clean, fields: defaultCategoryFields() }));
+    }
+  });
+  const output: CategoryTemplate[] = [];
+  map.forEach((template: CategoryTemplate) => output.push(template));
+  output.sort((a: CategoryTemplate, b: CategoryTemplate) => a.category.localeCompare(b.category));
+  return output;
+}
+
+function normalizeCategoryTemplate(template: CategoryTemplate): CategoryTemplate {
+  const category = readString(template.category);
+  return {
+    category,
+    fields: normalizeFieldTemplates(template.fields),
+  };
+}
+
+function normalizeFieldTemplates(fields: FieldTemplate[] | undefined): FieldTemplate[] {
+  const source = fields === undefined || fields.length === 0 ? defaultCategoryFields() : fields;
+  const seen = new Set<string>();
+  const output: FieldTemplate[] = [];
+  source.forEach((field: FieldTemplate) => {
+    const name = readString(field.name);
+    if (name.length === 0) {
+      return;
+    }
+    const key = name.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    output.push({
+      id: readString(field.id).length > 0 ? readString(field.id) : stableFieldId(name),
+      name,
+    });
+  });
+  return output.length > 0 ? output : defaultCategoryFields();
+}
+
+function mergeCategoryTemplates(
+  base: CategoryTemplate[],
+  local: CategoryTemplate[],
+  remote: CategoryTemplate[],
+  categories: string[],
+): CategoryTemplate[] {
+  const merged = new Map<string, CategoryTemplate>();
+  base.forEach((template: CategoryTemplate) => {
+    const normalized = normalizeCategoryTemplate(template);
+    if (normalized.category.length > 0) {
+      merged.set(normalized.category.toLowerCase(), normalized);
+    }
+  });
+  local.forEach((template: CategoryTemplate) => {
+    const normalized = normalizeCategoryTemplate(template);
+    if (normalized.category.length > 0 && !merged.has(normalized.category.toLowerCase())) {
+      merged.set(normalized.category.toLowerCase(), normalized);
+    }
+  });
+  remote.forEach((template: CategoryTemplate) => {
+    const normalized = normalizeCategoryTemplate(template);
+    if (normalized.category.length > 0 && !merged.has(normalized.category.toLowerCase())) {
+      merged.set(normalized.category.toLowerCase(), normalized);
+    }
+  });
+  const output: CategoryTemplate[] = [];
+  merged.forEach((template: CategoryTemplate) => output.push(template));
+  return normalizeCategoryTemplates(output, categories);
+}
+
+function cloneCategoryTemplate(template: CategoryTemplate): CategoryTemplate {
+  return {
+    category: template.category,
+    fields: template.fields.map((field: FieldTemplate) => {
+      const copy: FieldTemplate = {
+        id: field.id,
+        name: field.name,
+      };
+      return copy;
+    }),
   };
 }
 
@@ -2203,6 +2483,27 @@ function normalizeCustomFields(fields: CustomField[] | undefined): CustomField[]
       value,
     };
     result.push(normalized);
+  });
+  return result;
+}
+
+function normalizeServiceAccounts(accounts: ServiceAccount[] | undefined): ServiceAccount[] {
+  if (accounts === undefined) {
+    return [];
+  }
+  const result: ServiceAccount[] = [];
+  accounts.forEach((account: ServiceAccount) => {
+    const username = readString(account.username);
+    const password = typeof account.password === 'string' ? account.password : '';
+    const note = typeof account.note === 'string' ? account.note : '';
+    if (username.length === 0 && password.trim().length === 0 && note.trim().length === 0) {
+      return;
+    }
+    result.push({
+      username,
+      password,
+      note,
+    });
   });
   return result;
 }

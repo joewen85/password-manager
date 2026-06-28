@@ -2,7 +2,9 @@ export enum SyncProviderType {
   NONE = 'none',
   WEBDAV = 'webdav',
   NAS_WEBDAV = 'nasWebdav',
-  S3_PRESIGNED = 's3Presigned'
+  S3_PRESIGNED = 's3Presigned',
+  TENCENT_COS = 'tencentCos',
+  ALIYUN_OSS = 'aliyunOss'
 }
 
 export enum ConflictStrategy {
@@ -30,6 +32,13 @@ export interface SyncSettings {
   webdavPath: string;
   presignedDownloadUrl: string;
   presignedUploadUrl: string;
+  objectStorageAccessKeyId: string;
+  objectStorageSecretAccessKey: string;
+  objectStorageBucket: string;
+  objectStorageEndpoint: string;
+  objectStorageAppId: string;
+  objectStorageCustomUrl: string;
+  objectStorageObjectKey: string;
   autoSyncEnabled: boolean;
   autoSyncIntervalMinutes: number;
   autoSyncIntervalValue: number;
@@ -56,6 +65,13 @@ export function defaultSyncSettings(): SyncSettings {
     webdavPath: '/vault.json',
     presignedDownloadUrl: '',
     presignedUploadUrl: '',
+    objectStorageAccessKeyId: '',
+    objectStorageSecretAccessKey: '',
+    objectStorageBucket: '',
+    objectStorageEndpoint: '',
+    objectStorageAppId: '',
+    objectStorageCustomUrl: '',
+    objectStorageObjectKey: 'vault.sync.json',
     autoSyncEnabled: false,
     autoSyncIntervalMinutes: 30,
     autoSyncIntervalValue: 30,
