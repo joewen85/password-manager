@@ -192,12 +192,15 @@ class RemoteSyncClientTest {
         assertEquals(RemoteSyncResult(payload = """{"revision":1}""", statusCode = 200), download)
         assertEquals(RemoteSyncResult(payload = null, statusCode = 200), upload)
         assertEquals(listOf("HEAD", "GET", "PUT"), transport.requests.map { it.method })
-        transport.requests.forEach { request ->
+        val authorizations = listOf(
+            "q-sign-algorithm=sha1&q-ak=secret-id&q-sign-time=1782604800;1782605700&q-key-time=1782604800;1782605700&q-header-list=host&q-url-param-list=&q-signature=b797746e14ead8964f5c58772b52c5cf19fe6ee5",
+            "q-sign-algorithm=sha1&q-ak=secret-id&q-sign-time=1782604800;1782605700&q-key-time=1782604800;1782605700&q-header-list=host&q-url-param-list=&q-signature=668ab7b2ff3ba610a2fb3b3265e61c7b0e6a1801",
+            "q-sign-algorithm=sha1&q-ak=secret-id&q-sign-time=1782604800;1782605700&q-key-time=1782604800;1782605700&q-header-list=content-type;host&q-url-param-list=&q-signature=f85327653a71ea3b2797970202102a9d522d8a2f",
+        )
+        transport.requests.forEachIndexed { index, request ->
             assertEquals("https://vault-1250000000.cos.ap-shanghai.myqcloud.com/sync/vault.json", request.url.toString())
-            val authorization = assertNotNull(request.headers["Authorization"])
-            assertTrue(authorization.contains("q-sign-algorithm=sha1"))
-            assertTrue(authorization.contains("q-ak=secret-id"))
-            assertTrue(authorization.contains("q-signature="))
+            assertEquals("vault-1250000000.cos.ap-shanghai.myqcloud.com", request.headers["Host"])
+            assertEquals(authorizations[index], request.headers["Authorization"])
         }
         assertEquals("application/json", transport.requests.last().headers["Content-Type"])
     }

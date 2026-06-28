@@ -450,19 +450,30 @@ struct ObjectStorageSyncClient: RemoteSyncClient {
         let encodedPath = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath ?? url.path
         let path = encodedPath.isEmpty ? "/" : encodedPath
         let host = url.host?.lowercased() ?? ""
+        var signedHeaders = [("host", host)]
+        if let contentType = request.value(forHTTPHeaderField: "Content-Type"), !contentType.isEmpty {
+            signedHeaders.append(("content-type", contentType))
+        }
+        signedHeaders.sort { $0.0 < $1.0 }
+        let headerString = signedHeaders
+            .map { "\($0.0)=\($0.1.tencentCosPercentEncoded)" }
+            .joined(separator: "&")
+        let headerList = signedHeaders
+            .map(\.0)
+            .joined(separator: ";")
         let httpString = [
             method.lowercased(),
             path,
             url.query?.lowercased() ?? "",
-            "host=\(host)\n",
-            ""
+            headerString
         ].joined(separator: "\n")
+            + "\n"
         let stringToSign = [
             "sha1",
             keyTime,
-            httpString.sha1Hex,
-            ""
+            httpString.sha1Hex
         ].joined(separator: "\n")
+            + "\n"
         let signKey = hmacSHA1Hex(key: configuration.secretKey, message: keyTime)
         let signature = hmacSHA1Hex(key: signKey, message: stringToSign)
         let authorization = [
@@ -470,7 +481,7 @@ struct ObjectStorageSyncClient: RemoteSyncClient {
             "q-ak=\(configuration.accessKey)",
             "q-sign-time=\(keyTime)",
             "q-key-time=\(keyTime)",
-            "q-header-list=host",
+            "q-header-list=\(headerList)",
             "q-url-param-list=",
             "q-signature=\(signature)"
         ].joined(separator: "&")
@@ -586,6 +597,14 @@ private extension String {
     var sha256Hex: String {
         SHA256.hash(data: Data(utf8)).map { String(format: "%02x", $0) }.joined()
     }
+
+    var tencentCosPercentEncoded: String {
+        addingPercentEncoding(withAllowedCharacters: .tencentCosAllowed) ?? self
+    }
+}
+
+private extension CharacterSet {
+    static let tencentCosAllowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~")
 }
 
 private extension URL {

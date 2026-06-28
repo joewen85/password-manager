@@ -331,7 +331,10 @@ struct TencentCosSyncClient: RemoteSyncClient {
             if payload != nil {
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             }
-            request.setValue(authorization(method: method, url: url), forHTTPHeaderField: "Authorization")
+            if let host = url.host?.lowercased() {
+                request.setValue(host, forHTTPHeaderField: "Host")
+            }
+            request.setValue(authorization(method: method, url: url, request: request), forHTTPHeaderField: "Authorization")
             let (data, response) = try await transport.perform(request)
             return ObjectStorageResponse(data: data, response: response)
         } catch let error as URLError where error.code == .timedOut {
@@ -352,23 +355,35 @@ struct TencentCosSyncClient: RemoteSyncClient {
         return try ObjectStorageURLBuilder.url(base: endpoint, objectKey: objectKey, hostPrefix: hostBucket)
     }
 
-    private func authorization(method: String, url: URL) -> String {
+    private func authorization(method: String, url: URL, request: URLRequest) -> String {
         let start = Int(now().timeIntervalSince1970)
         let end = start + 600
         let keyTime = "\(start);\(end)"
+        let host = url.host?.lowercased() ?? ""
+        var signedHeaders = [("host", host)]
+        if let contentType = request.value(forHTTPHeaderField: "Content-Type"), !contentType.isEmpty {
+            signedHeaders.append(("content-type", contentType))
+        }
+        signedHeaders.sort { $0.0 < $1.0 }
+        let headerString = signedHeaders
+            .map { "\($0.0)=\($0.1.tencentCosPercentEncoded)" }
+            .joined(separator: "&")
+        let headerList = signedHeaders
+            .map(\.0)
+            .joined(separator: ";")
         let httpString = [
             method.lowercased(),
             url.objectStorageCanonicalPath,
             "",
-            "",
-            ""
+            headerString
         ].joined(separator: "\n")
+            + "\n"
         let stringToSign = [
             "sha1",
             keyTime,
             Insecure.SHA1.hash(data: Data(httpString.utf8)).hexString,
-            ""
         ].joined(separator: "\n")
+            + "\n"
         let signKey = HMAC<Insecure.SHA1>.authenticationCode(
             for: Data(keyTime.utf8),
             using: SymmetricKey(data: Data(sk.utf8))
@@ -377,7 +392,7 @@ struct TencentCosSyncClient: RemoteSyncClient {
             for: Data(stringToSign.utf8),
             using: SymmetricKey(data: Data(signKey.utf8))
         ).hexString
-        return "q-sign-algorithm=sha1&q-ak=\(ak)&q-sign-time=\(keyTime)&q-key-time=\(keyTime)&q-header-list=&q-url-param-list=&q-signature=\(signature)"
+        return "q-sign-algorithm=sha1&q-ak=\(ak)&q-sign-time=\(keyTime)&q-key-time=\(keyTime)&q-header-list=\(headerList)&q-url-param-list=&q-signature=\(signature)"
     }
 }
 
@@ -597,7 +612,8 @@ private extension String {
 
 private extension URL {
     var objectStorageCanonicalPath: String {
-        path.isEmpty ? "/" : path
+        let encodedPath = URLComponents(url: self, resolvingAgainstBaseURL: false)?.percentEncodedPath ?? path
+        return encodedPath.isEmpty ? "/" : encodedPath
     }
 
     var canonicalQuery: String {
@@ -628,6 +644,14 @@ private extension String {
     var sha256Hex: String {
         SHA256.hash(data: Data(utf8)).map { String(format: "%02x", $0) }.joined()
     }
+
+    var tencentCosPercentEncoded: String {
+        addingPercentEncoding(withAllowedCharacters: .tencentCosAllowed) ?? self
+    }
+}
+
+private extension CharacterSet {
+    static let tencentCosAllowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~")
 }
 
 private func hmacSHA256(key: Data, message: String) -> Data {

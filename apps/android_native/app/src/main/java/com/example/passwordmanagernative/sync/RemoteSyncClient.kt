@@ -412,8 +412,8 @@ class ObjectStorageSyncClient(
             sha1Hex(httpString),
             "",
         ).joinToString("\n")
-        val signKey = hmacSha1(secretAccessKey.toByteArray(StandardCharsets.UTF_8), signTime)
-        val signature = hmacSha1Hex(signKey, stringToSign)
+        val signKey = hmacSha1Hex(secretAccessKey.toByteArray(StandardCharsets.UTF_8), signTime)
+        val signature = hmacSha1Hex(signKey.toByteArray(StandardCharsets.UTF_8), stringToSign)
         val authorization = listOf(
             "q-sign-algorithm=sha1",
             "q-ak=${percentEncode(accessKeyId)}",

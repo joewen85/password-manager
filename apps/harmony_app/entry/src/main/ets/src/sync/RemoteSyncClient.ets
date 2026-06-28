@@ -586,8 +586,8 @@ export class ObjectStorageSyncClient implements RemoteSyncClient {
       await sha1Hex(httpString),
       '',
     ].join('\n');
-    const signKey = await hmacSha1(encodeUtf8(this.secretAccessKey), signTime);
-    const signature = await hmacSha1Hex(signKey, stringToSign);
+    const signKey = await hmacSha1Hex(encodeUtf8(this.secretAccessKey), signTime);
+    const signature = await hmacSha1Hex(encodeUtf8(signKey), stringToSign);
     const authorization = [
       'q-sign-algorithm=sha1',
       `q-ak=${percentEncode(this.accessKeyId)}`,

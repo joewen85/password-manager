@@ -173,6 +173,10 @@ struct RemoteSyncClientTests {
                     body: #"{"revision":1}"#
                 )),
                 .success(httpResult(
+                    url: URL(string: "https://bucket-1250000000.cos.ap-shanghai.myqcloud.com/folder/vault.json")!,
+                    statusCode: 200
+                )),
+                .success(httpResult(
                     url: URL(string: "https://bucket.oss-cn-hangzhou.aliyuncs.com/folder/vault.json")!,
                     statusCode: 201
                 ))
@@ -190,18 +194,23 @@ struct RemoteSyncClientTests {
         )
 
         let cosDownload = await cosClient.download()
+        let cosUpload = await cosClient.upload(#"{"revision":3}"#)
         let ossUpload = await ossClient.upload(#"{"revision":2}"#)
 
         #expect(cosDownload == RemoteSyncResult(payload: #"{"revision":1}"#, statusCode: 200))
+        #expect(cosUpload == RemoteSyncResult(payload: nil, statusCode: 200))
         #expect(ossUpload == RemoteSyncResult(payload: nil, statusCode: 201))
         #expect(transport.requests[0].url?.absoluteString == "https://bucket-1250000000.cos.ap-shanghai.myqcloud.com/folder/vault.json")
-        #expect(transport.requests[0].value(forHTTPHeaderField: "Authorization")?.contains("q-sign-algorithm=sha1") == true)
-        #expect(transport.requests[0].value(forHTTPHeaderField: "Authorization")?.contains("q-ak=cos-ak") == true)
-        #expect(transport.requests[1].url?.absoluteString == "https://bucket.oss-cn-hangzhou.aliyuncs.com/folder/vault.json")
-        #expect(transport.requests[1].value(forHTTPHeaderField: "x-oss-date") == "20260628T000000Z")
-        #expect(transport.requests[1].value(forHTTPHeaderField: "x-oss-content-sha256") != nil)
-        #expect(transport.requests[1].value(forHTTPHeaderField: "Authorization")?.hasPrefix("OSS4-HMAC-SHA256 Credential=oss-ak/20260628/cn-hangzhou/oss/aliyun_v4_request") == true)
+        #expect(transport.requests[0].value(forHTTPHeaderField: "Host") == "bucket-1250000000.cos.ap-shanghai.myqcloud.com")
+        #expect(transport.requests[0].value(forHTTPHeaderField: "Authorization") == "q-sign-algorithm=sha1&q-ak=cos-ak&q-sign-time=1782604800;1782605400&q-key-time=1782604800;1782605400&q-header-list=host&q-url-param-list=&q-signature=e29bd3057a8110fa1cbe17ee9e0943b747cb36ac")
+        #expect(transport.requests[1].url?.absoluteString == "https://bucket-1250000000.cos.ap-shanghai.myqcloud.com/folder/vault.json")
         #expect(transport.requests[1].value(forHTTPHeaderField: "Content-Type") == "application/json")
+        #expect(transport.requests[1].value(forHTTPHeaderField: "Authorization") == "q-sign-algorithm=sha1&q-ak=cos-ak&q-sign-time=1782604800;1782605400&q-key-time=1782604800;1782605400&q-header-list=content-type;host&q-url-param-list=&q-signature=1c582fa0b12f8941f8b0960a254d9f9e7c9cbcd4")
+        #expect(transport.requests[2].url?.absoluteString == "https://bucket.oss-cn-hangzhou.aliyuncs.com/folder/vault.json")
+        #expect(transport.requests[2].value(forHTTPHeaderField: "x-oss-date") == "20260628T000000Z")
+        #expect(transport.requests[2].value(forHTTPHeaderField: "x-oss-content-sha256") != nil)
+        #expect(transport.requests[2].value(forHTTPHeaderField: "Authorization")?.hasPrefix("OSS4-HMAC-SHA256 Credential=oss-ak/20260628/cn-hangzhou/oss/aliyun_v4_request") == true)
+        #expect(transport.requests[2].value(forHTTPHeaderField: "Content-Type") == "application/json")
     }
 }
 

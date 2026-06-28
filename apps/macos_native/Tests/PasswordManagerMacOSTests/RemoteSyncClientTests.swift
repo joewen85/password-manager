@@ -193,6 +193,51 @@ struct RemoteSyncClientTests {
         #expect(transport.requests[1].value(forHTTPHeaderField: "Content-Type") == "application/json")
         #expect(transport.requests[1].httpBody == Data(#"{"revision":2}"#.utf8))
     }
+
+    @Test("Object storage client builds Tencent COS signed requests")
+    func objectStorageClientBuildsTencentCOSSignedRequests() async {
+        let transport = FakeRemoteSyncTransport(
+            responses: [
+                .success(httpResult(
+                    url: URL(string: "https://vault-bucket-1250000000.cos.ap-shanghai.myqcloud.com/folder/vault.json")!,
+                    statusCode: 200,
+                    body: #"{"revision":1}"#
+                )),
+                .success(httpResult(
+                    url: URL(string: "https://vault-bucket-1250000000.cos.ap-shanghai.myqcloud.com/folder/vault.json")!,
+                    statusCode: 200
+                ))
+            ]
+        )
+        let client = ObjectStorageSyncClient(
+            configuration: ObjectStorageSyncClientConfiguration(
+                provider: .tencentCos,
+                accessKey: "cos-ak",
+                secretKey: "cos-sk",
+                bucket: "vault-bucket",
+                endpoint: "cos.ap-shanghai.myqcloud.com",
+                appId: "1250000000",
+                customUrl: "",
+                objectKey: "folder/vault.json"
+            ),
+            transport: transport,
+            now: { Date(timeIntervalSince1970: 1_782_604_800) }
+        )
+
+        let download = await client.download()
+        let upload = await client.upload(#"{"revision":2}"#)
+
+        #expect(download == RemoteSyncResult(payload: #"{"revision":1}"#, statusCode: 200))
+        #expect(upload == RemoteSyncResult(payload: nil, statusCode: 200))
+        #expect(transport.requests.count == 2)
+        #expect(transport.requests[0].httpMethod == "GET")
+        #expect(transport.requests[0].url?.absoluteString == "https://vault-bucket-1250000000.cos.ap-shanghai.myqcloud.com/folder/vault.json")
+        #expect(transport.requests[0].value(forHTTPHeaderField: "Host") == "vault-bucket-1250000000.cos.ap-shanghai.myqcloud.com")
+        #expect(transport.requests[0].value(forHTTPHeaderField: "Authorization") == "q-sign-algorithm=sha1&q-ak=cos-ak&q-sign-time=1782604800;1782605400&q-key-time=1782604800;1782605400&q-header-list=host&q-url-param-list=&q-signature=81836cc6f5ce26e016ca07dba7298d605dae0fba")
+        #expect(transport.requests[1].httpMethod == "PUT")
+        #expect(transport.requests[1].value(forHTTPHeaderField: "Content-Type") == "application/json")
+        #expect(transport.requests[1].value(forHTTPHeaderField: "Authorization") == "q-sign-algorithm=sha1&q-ak=cos-ak&q-sign-time=1782604800;1782605400&q-key-time=1782604800;1782605400&q-header-list=content-type;host&q-url-param-list=&q-signature=1e40b85fc5cd7fe3e1f8743f469f06e25f9028ae")
+    }
 }
 
 private func httpResult(
