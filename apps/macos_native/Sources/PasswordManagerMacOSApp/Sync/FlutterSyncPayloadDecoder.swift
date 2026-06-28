@@ -34,6 +34,7 @@ struct FlutterSyncPayloadDecoder: Sendable {
         let snapshot = VaultSnapshot(
             entries: entries.sorted { $0.updatedAt > $1.updatedAt },
             categories: (remoteMetadata?.categories ?? payloadCategories).removingDuplicateValues().sorted(),
+            categoryTemplates: (remoteMetadata?.categoryTemplates ?? []).sorted { $0.category < $1.category },
             tags: (remoteMetadata?.tags ?? payloadTags).removingDuplicateValues().sorted(),
             syncStatus: "Imported from Flutter sync",
             updatedAt: exportedAt
@@ -89,6 +90,7 @@ struct FlutterSyncPayloadDecoder: Sendable {
         }
         return FlutterVaultMetadata(
             categories: Self.stringArray(json["categories"]),
+            categoryTemplates: Self.categoryTemplates(json["categoryTemplates"]),
             tags: Self.stringArray(json["tags"])
         )
     }
@@ -193,6 +195,7 @@ struct FlutterSyncPayloadDecoder: Sendable {
             return .credential(CredentialPayload(
                 username: stringValue(json["username"]),
                 password: stringValue(json["password"]),
+                accounts: serviceAccounts(json["accounts"]),
                 token: stringValue(json["token"]),
                 appId: stringValue(json["appId"]),
                 accessKey: stringValue(json["accessKey"] ?? json["accessToken"]),
@@ -208,6 +211,7 @@ struct FlutterSyncPayloadDecoder: Sendable {
                 port: stringValue(json["port"]),
                 username: stringValue(json["username"]),
                 password: stringValue(json["password"]),
+                accounts: serviceAccounts(json["accounts"]),
                 basicConfig: stringValue(json["basicConfig"]),
                 operatingSystem: stringValue(json["operatingSystem"]),
                 location: stringValue(json["location"]),
@@ -258,6 +262,22 @@ struct FlutterSyncPayloadDecoder: Sendable {
                 password: stringValue($0["password"]),
                 note: stringValue($0["note"])
             )
+        }
+    }
+
+    private static func categoryTemplates(_ raw: Any?) -> [CategoryTemplate] {
+        guard let rawTemplates = raw as? [[String: Any]] else {
+            return []
+        }
+        return rawTemplates.compactMap { template in
+            let category = stringValue(template["category"]).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !category.isEmpty else { return nil }
+            let fields = (template["fields"] as? [[String: Any]] ?? []).compactMap { field -> FieldTemplate? in
+                let name = stringValue(field["name"]).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty else { return nil }
+                return FieldTemplate(id: optionalStringValue(field["id"]), name: name)
+            }
+            return CategoryTemplate(category: category, fields: fields)
         }
     }
 
@@ -324,6 +344,7 @@ struct FlutterSyncPayloadDecoder: Sendable {
 
     private struct FlutterVaultMetadata {
         var categories: [String]
+        var categoryTemplates: [CategoryTemplate]
         var tags: [String]
     }
 

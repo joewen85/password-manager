@@ -10,7 +10,9 @@ enum class SyncProviderType {
     NONE,
     WEBDAV,
     S3_PRESIGNED,
-    NAS_WEBDAV;
+    NAS_WEBDAV,
+    TENCENT_COS,
+    ALIYUN_OSS;
 
     val wireName: String
         get() = when (this) {
@@ -18,6 +20,8 @@ enum class SyncProviderType {
             WEBDAV -> "webdav"
             S3_PRESIGNED -> "s3Presigned"
             NAS_WEBDAV -> "nasWebdav"
+            TENCENT_COS -> "tencentCos"
+            ALIYUN_OSS -> "aliyunOss"
         }
 
     val title: String
@@ -26,6 +30,8 @@ enum class SyncProviderType {
             WEBDAV -> "WebDAV"
             S3_PRESIGNED -> "S3 Presigned URL"
             NAS_WEBDAV -> "NAS WebDAV"
+            TENCENT_COS -> "Tencent Cloud COS"
+            ALIYUN_OSS -> "Alibaba Cloud OSS"
         }
 
     companion object {
@@ -96,6 +102,13 @@ data class SyncSettings(
     val webdavPath: String,
     val presignedDownloadUrl: String,
     val presignedUploadUrl: String,
+    val objectStorageAccessKeyId: String,
+    val objectStorageSecretAccessKey: String,
+    val objectStorageBucket: String,
+    val objectStorageEndpoint: String,
+    val objectStorageAppId: String,
+    val objectStorageCustomUrl: String,
+    val objectStorageObjectKey: String,
     val autoSyncEnabled: Boolean,
     val autoSyncIntervalMinutes: Int,
     val autoSyncIntervalValue: Int,
@@ -117,6 +130,8 @@ data class SyncSettings(
             webdavPassword = webdavPassword,
             presignedDownloadUrl = presignedDownloadUrl,
             presignedUploadUrl = presignedUploadUrl,
+            objectStorageAccessKeyId = objectStorageAccessKeyId,
+            objectStorageSecretAccessKey = objectStorageSecretAccessKey,
         )
 
     fun redactedForPlaintextStorage(): SyncSettings =
@@ -127,6 +142,8 @@ data class SyncSettings(
             webdavPassword = secrets.webdavPassword,
             presignedDownloadUrl = secrets.presignedDownloadUrl,
             presignedUploadUrl = secrets.presignedUploadUrl,
+            objectStorageAccessKeyId = secrets.objectStorageAccessKeyId,
+            objectStorageSecretAccessKey = secrets.objectStorageSecretAccessKey,
         )
 
     fun toJson(): JSONObject =
@@ -138,6 +155,13 @@ data class SyncSettings(
             .put("webdavPath", webdavPath)
             .put("presignedDownloadUrl", presignedDownloadUrl)
             .put("presignedUploadUrl", presignedUploadUrl)
+            .put("objectStorageAccessKeyId", objectStorageAccessKeyId)
+            .put("objectStorageSecretAccessKey", objectStorageSecretAccessKey)
+            .put("objectStorageBucket", objectStorageBucket)
+            .put("objectStorageEndpoint", objectStorageEndpoint)
+            .put("objectStorageAppId", objectStorageAppId)
+            .put("objectStorageCustomUrl", objectStorageCustomUrl)
+            .put("objectStorageObjectKey", objectStorageObjectKey)
             .put("autoSyncEnabled", autoSyncEnabled)
             .put("autoSyncIntervalMinutes", autoSyncIntervalMinutes)
             .put("autoSyncIntervalValue", autoSyncIntervalValue)
@@ -174,6 +198,13 @@ data class SyncSettings(
                 webdavPath = "/vault.json",
                 presignedDownloadUrl = "",
                 presignedUploadUrl = "",
+                objectStorageAccessKeyId = "",
+                objectStorageSecretAccessKey = "",
+                objectStorageBucket = "",
+                objectStorageEndpoint = "",
+                objectStorageAppId = "",
+                objectStorageCustomUrl = "",
+                objectStorageObjectKey = "vault.sync.json",
                 autoSyncEnabled = false,
                 autoSyncIntervalMinutes = 30,
                 autoSyncIntervalValue = 30,
@@ -212,6 +243,13 @@ data class SyncSettings(
                 webdavPath = json.optString("webdavPath", defaults.webdavPath),
                 presignedDownloadUrl = json.optString("presignedDownloadUrl", defaults.presignedDownloadUrl),
                 presignedUploadUrl = json.optString("presignedUploadUrl", defaults.presignedUploadUrl),
+                objectStorageAccessKeyId = json.optString("objectStorageAccessKeyId", defaults.objectStorageAccessKeyId),
+                objectStorageSecretAccessKey = json.optString("objectStorageSecretAccessKey", defaults.objectStorageSecretAccessKey),
+                objectStorageBucket = json.optString("objectStorageBucket", defaults.objectStorageBucket),
+                objectStorageEndpoint = json.optString("objectStorageEndpoint", defaults.objectStorageEndpoint),
+                objectStorageAppId = json.optString("objectStorageAppId", defaults.objectStorageAppId),
+                objectStorageCustomUrl = json.optString("objectStorageCustomUrl", defaults.objectStorageCustomUrl),
+                objectStorageObjectKey = json.optString("objectStorageObjectKey", defaults.objectStorageObjectKey),
                 autoSyncEnabled = json.optBoolean("autoSyncEnabled", defaults.autoSyncEnabled),
                 autoSyncIntervalMinutes = intervalMinutes,
                 autoSyncIntervalValue = intervalValue,
@@ -245,11 +283,15 @@ data class SyncSecretBundle(
     val webdavPassword: String = "",
     val presignedDownloadUrl: String = "",
     val presignedUploadUrl: String = "",
+    val objectStorageAccessKeyId: String = "",
+    val objectStorageSecretAccessKey: String = "",
 ) {
     val isEmpty: Boolean
         get() = webdavPassword.isEmpty() &&
             presignedDownloadUrl.isEmpty() &&
-            presignedUploadUrl.isEmpty()
+            presignedUploadUrl.isEmpty() &&
+            objectStorageAccessKeyId.isEmpty() &&
+            objectStorageSecretAccessKey.isEmpty()
 
     companion object {
         val EMPTY = SyncSecretBundle()
@@ -284,6 +326,29 @@ class SyncClientFactory {
                     PresignedUrlSyncClient(
                         downloadUrl = settings.presignedDownloadUrl.trim(),
                         uploadUrl = settings.presignedUploadUrl.trim(),
+                        transport = transport,
+                    )
+                }
+            }
+            SyncProviderType.TENCENT_COS,
+            SyncProviderType.ALIYUN_OSS -> {
+                if (
+                    settings.objectStorageAccessKeyId.isBlank() ||
+                    settings.objectStorageSecretAccessKey.isBlank() ||
+                    settings.objectStorageBucket.isBlank() ||
+                    (settings.objectStorageEndpoint.isBlank() && settings.objectStorageCustomUrl.isBlank())
+                ) {
+                    null
+                } else {
+                    ObjectStorageSyncClient(
+                        providerType = settings.providerType,
+                        accessKeyId = settings.objectStorageAccessKeyId.trim(),
+                        secretAccessKey = settings.objectStorageSecretAccessKey.trim(),
+                        bucket = settings.objectStorageBucket.trim(),
+                        endpoint = settings.objectStorageEndpoint.trim(),
+                        appId = settings.objectStorageAppId.trim(),
+                        customUrl = settings.objectStorageCustomUrl.trim(),
+                        objectKey = settings.objectStorageObjectKey.trim().ifBlank { "vault.sync.json" },
                         transport = transport,
                     )
                 }

@@ -47,6 +47,8 @@ import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowLayoutInfo
 import androidx.window.layout.WindowInfoTracker
 import com.example.passwordmanagernative.model.CredentialPayload
+import com.example.passwordmanagernative.model.CategoryTemplate
+import com.example.passwordmanagernative.model.CategoryTypePreset
 import com.example.passwordmanagernative.model.CustomField
 import com.example.passwordmanagernative.model.EntryDraft
 import com.example.passwordmanagernative.model.ImportConflictStrategy
@@ -65,6 +67,7 @@ import com.example.passwordmanagernative.sync.SyncIntervalUnit
 import com.example.passwordmanagernative.sync.SyncProviderType
 import com.example.passwordmanagernative.sync.SyncSettingsConflictStrategy
 import com.example.passwordmanagernative.sync.toIntervalMinutes
+import com.example.passwordmanagernative.store.withTemplateDefaults
 import com.example.passwordmanagernative.ui.WindowLayoutPolicy
 import life.devops.passwordmanager.R
 import kotlinx.coroutines.CoroutineScope
@@ -1055,26 +1058,49 @@ class MainActivity : FragmentActivity() {
             type = VaultEntryType.CREDENTIAL,
             category = presetCategory,
             tags = listOf(presetTag).filter { it.isNotBlank() },
+            customFields = emptyList<CustomField>().withTemplateDefaults(store.categoryTemplate(presetCategory)),
         )
         val form = formRoot()
         val payloadFields = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val customFieldsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val label = input(text(R.string.label_field)).apply { setText(draft.label) }
+        var selectedEntryType = draft.type
         var selectedCategory = draft.category
+        val selectedTags = draft.tags.toMutableSet()
+        val customFields = draft.customFields.toMutableList()
+        lateinit var renderCustomFields: () -> Unit
         lateinit var categoryPicker: TextView
         categoryPicker = selectBoxText(categoryDisplayName(selectedCategory)) {
             showCategorySelectionDialog(selectedCategory) { selected ->
                 selectedCategory = selected
                 categoryPicker.text = categoryDisplayName(selectedCategory)
+                if (entry == null) {
+                    val nextFields = customFields.withTemplateDefaults(store.categoryTemplate(selectedCategory))
+                    if (nextFields != customFields) {
+                        customFields.clear()
+                        customFields += nextFields
+                        renderCustomFields()
+                    }
+                }
             }
         }
-        val selectedTags = draft.tags.toMutableSet()
-        val customFields = draft.customFields.toMutableList()
         val tagsSummary = TextView(this).apply {
             setTextColor(uiColor(R.color.ui_muted))
             textSize = 12f
         }
         lateinit var renderSelectedTags: () -> Unit
+        lateinit var rebuildPayloadFields: (VaultEntryType) -> Unit
+        val typeChipsContainer = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        fun renderTypeChips() {
+            typeChipsContainer.removeAllViews()
+            VaultEntryType.entries.forEach { type ->
+                typeChipsContainer.addView(filterChip(type.localizedTitle(this), selectedEntryType == type) {
+                    selectedEntryType = type
+                    renderTypeChips()
+                    rebuildPayloadFields(selectedEntryType)
+                }, wrapWrap(right = dp(8)))
+            }
+        }
         val tagsPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             isClickable = true
@@ -1115,6 +1141,14 @@ class MainActivity : FragmentActivity() {
             addView(label(text(R.string.category), 12f, uiColor(R.color.ui_muted), Typeface.BOLD))
             addView(categoryPicker, matchWrap(top = dp(4)))
         }
+        val typeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(label(text(R.string.entry_type), 12f, uiColor(R.color.ui_muted), Typeface.BOLD))
+            addView(HorizontalScrollView(this@MainActivity).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(typeChipsContainer)
+            }, matchWrap(top = dp(6)))
+        }
         val tagsRow = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(label(text(R.string.tags), 12f, uiColor(R.color.ui_muted), Typeface.BOLD))
@@ -1123,7 +1157,7 @@ class MainActivity : FragmentActivity() {
         tagsSummary.text = text(R.string.selected_tags)
         renderSelectedTags()
         val payloadInputs = mutableListOf<EditText>()
-        fun rebuildPayloadFields(selectedType: VaultEntryType) {
+        rebuildPayloadFields = { selectedType ->
             payloadFields.removeAllViews()
             payloadInputs.clear()
             payloadFieldSpecs(selectedType, draft, this).forEach { spec ->
@@ -1136,7 +1170,7 @@ class MainActivity : FragmentActivity() {
                 }.also { payloadFields.addView(it, matchWrap(top = dp(10))) }
             }
         }
-        fun renderCustomFields() {
+        renderCustomFields = {
             customFieldsContainer.removeAllViews()
             customFieldsContainer.addView(sectionTitle(text(R.string.custom_fields)), matchWrap(top = dp(14)))
             if (customFields.isEmpty()) {
@@ -1170,11 +1204,13 @@ class MainActivity : FragmentActivity() {
         }
         form.addView(formTitle(if (entry == null) text(R.string.new_entry) else text(R.string.edit_entry)))
         form.addView(label, matchWrap(top = dp(12)))
+        form.addView(typeRow, matchWrap(top = dp(10)))
         form.addView(categoryRow, matchWrap(top = dp(10)))
         form.addView(tagsRow, matchWrap(top = dp(10)))
         form.addView(payloadFields)
         form.addView(customFieldsContainer)
-        rebuildPayloadFields(draft.type)
+        renderTypeChips()
+        rebuildPayloadFields(selectedEntryType)
         renderCustomFields()
         val dialog = AlertDialog.Builder(this)
             .setView(ScrollView(this).apply { addView(form) })
@@ -1189,7 +1225,7 @@ class MainActivity : FragmentActivity() {
                 }
                 val savedDraft = EntryDraft(
                     label = label.text.toString(),
-                    type = draft.type,
+                    type = selectedEntryType,
                     category = selectedCategory,
                     tags = selectedTags.sorted(),
                     customFields = customFields
@@ -1318,8 +1354,36 @@ class MainActivity : FragmentActivity() {
             TaxonomyKind.CATEGORY -> text(R.string.category)
             TaxonomyKind.TAG -> text(R.string.tag)
         })
+        var selectedPreset: CategoryTypePreset? = null
+        val presetStrip = if (kind == TaxonomyKind.CATEGORY) {
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(label(text(R.string.category_type_templates), 12f, uiColor(R.color.ui_muted), Typeface.BOLD))
+                val chipsContainer = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                }
+                fun renderPresetChips() {
+                    chipsContainer.removeAllViews()
+                    CategoryTypePreset.entries.forEach { preset ->
+                        chipsContainer.addView(filterChip(preset.title, selectedPreset == preset) {
+                            selectedPreset = if (selectedPreset == preset) null else preset
+                            renderPresetChips()
+                        }, wrapWrap(right = dp(8)))
+                    }
+                }
+                addView(HorizontalScrollView(this@MainActivity).apply {
+                    isHorizontalScrollBarEnabled = false
+                    addView(chipsContainer)
+                }, matchWrap(top = dp(6)))
+                addView(label(text(R.string.category_type_templates_hint), 12f, uiColor(R.color.ui_muted)), matchWrap(top = dp(6)))
+                renderPresetChips()
+            }
+        } else {
+            null
+        }
         form.addView(formTitle(title))
         form.addView(label(description, 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(8)))
+        presetStrip?.let { form.addView(it, matchWrap(top = dp(12))) }
         form.addView(field, matchWrap(top = dp(14)))
         val dialog = AlertDialog.Builder(this)
             .setView(form)
@@ -1334,7 +1398,9 @@ class MainActivity : FragmentActivity() {
                     return@setOnClickListener
                 }
                 val saved = when (kind) {
-                    TaxonomyKind.CATEGORY -> store.addCategory(value)
+                    TaxonomyKind.CATEGORY -> selectedPreset?.let { preset ->
+                        store.addCategory(value, CategoryTemplate.fieldsForPreset(preset))
+                    } ?: store.addCategory(value)
                     TaxonomyKind.TAG -> store.addTag(value)
                 }
                 if (!saved) {
@@ -1580,6 +1646,19 @@ class MainActivity : FragmentActivity() {
         val presignedDownloadUrl = input(text(R.string.presigned_download_url)).apply { setText(settings.presignedDownloadUrl) }
         val presignedUploadUrl = input(text(R.string.presigned_upload_url), secret = true).apply { setText(settings.presignedUploadUrl) }
         val presignedSection = sectionTitle(text(R.string.presigned_url_settings))
+        val objectStorageAccessKeyId = input(text(R.string.object_storage_access_key_id), secret = true).apply {
+            setText(settings.objectStorageAccessKeyId)
+        }
+        val objectStorageSecretAccessKey = input(text(R.string.object_storage_secret_access_key), secret = true).apply {
+            setText(settings.objectStorageSecretAccessKey)
+        }
+        val objectStorageBucket = input(text(R.string.object_storage_bucket)).apply { setText(settings.objectStorageBucket) }
+        val objectStorageEndpoint = input(text(R.string.object_storage_endpoint)).apply { setText(settings.objectStorageEndpoint) }
+        val objectStorageAppId = input(text(R.string.object_storage_app_id)).apply { setText(settings.objectStorageAppId) }
+        val objectStorageCustomUrl = input(text(R.string.object_storage_custom_url)).apply { setText(settings.objectStorageCustomUrl) }
+        val objectStorageObjectKey = input(text(R.string.object_storage_object_key)).apply { setText(settings.objectStorageObjectKey) }
+        val objectStorageSection = sectionTitle(text(R.string.object_storage_settings))
+        val objectStorageHint = label(text(R.string.object_storage_settings_hint), 12f, uiColor(R.color.ui_muted))
         val autoSync = CheckBox(this).apply {
             text = text(R.string.auto_sync)
             isChecked = settings.autoSyncEnabled
@@ -1616,12 +1695,26 @@ class MainActivity : FragmentActivity() {
         }
         val webdavFields = listOf(webdavSection, webdavUrl, webdavPath, webdavUsername, webdavPassword)
         val presignedFields = listOf(presignedSection, presignedDownloadUrl, presignedUploadUrl)
+        val objectStorageFields = listOf(
+            objectStorageSection,
+            objectStorageHint,
+            objectStorageAccessKeyId,
+            objectStorageSecretAccessKey,
+            objectStorageBucket,
+            objectStorageEndpoint,
+            objectStorageAppId,
+            objectStorageCustomUrl,
+            objectStorageObjectKey,
+        )
         fun updateProviderFieldVisibility() {
             val selectedProvider = SyncProviderType.entries[provider.selectedItemPosition]
             val showWebdav = selectedProvider == SyncProviderType.WEBDAV || selectedProvider == SyncProviderType.NAS_WEBDAV
             val showPresigned = selectedProvider == SyncProviderType.S3_PRESIGNED
+            val showObjectStorage = selectedProvider == SyncProviderType.TENCENT_COS || selectedProvider == SyncProviderType.ALIYUN_OSS
             webdavFields.forEach { it.visibility = if (showWebdav) View.VISIBLE else View.GONE }
             presignedFields.forEach { it.visibility = if (showPresigned) View.VISIBLE else View.GONE }
+            objectStorageFields.forEach { it.visibility = if (showObjectStorage) View.VISIBLE else View.GONE }
+            objectStorageAppId.visibility = if (selectedProvider == SyncProviderType.TENCENT_COS) View.VISIBLE else View.GONE
         }
         provider.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onItemSelected(
@@ -1661,6 +1754,15 @@ class MainActivity : FragmentActivity() {
         form.addView(presignedSection, matchWrap(top = dp(12)))
         form.addView(presignedDownloadUrl, matchWrap(top = dp(8)))
         form.addView(presignedUploadUrl, matchWrap(top = dp(8)))
+        form.addView(objectStorageSection, matchWrap(top = dp(12)))
+        form.addView(objectStorageHint, matchWrap(top = dp(4)))
+        form.addView(objectStorageAccessKeyId, matchWrap(top = dp(8)))
+        form.addView(objectStorageSecretAccessKey, matchWrap(top = dp(8)))
+        form.addView(objectStorageBucket, matchWrap(top = dp(8)))
+        form.addView(objectStorageEndpoint, matchWrap(top = dp(8)))
+        form.addView(objectStorageAppId, matchWrap(top = dp(8)))
+        form.addView(objectStorageCustomUrl, matchWrap(top = dp(8)))
+        form.addView(objectStorageObjectKey, matchWrap(top = dp(8)))
         form.addView(autoSync, matchWrap(top = dp(10)))
         form.addView(label(text(R.string.auto_sync_interval), 12f, uiColor(R.color.ui_muted), Typeface.BOLD), matchWrap(top = dp(8)))
         form.addView(autoSyncInterval, matchWrap(top = dp(8)))
@@ -1704,15 +1806,32 @@ class MainActivity : FragmentActivity() {
                     .toIntOrNull()
                     ?.coerceIn(1, 1440)
                     ?: store.syncSettings.autoSyncIntervalValue
+                val selectedProviderType = SyncProviderType.entries[provider.selectedItemPosition]
+                if (
+                    (selectedProviderType == SyncProviderType.TENCENT_COS || selectedProviderType == SyncProviderType.ALIYUN_OSS) &&
+                    (objectStorageAccessKeyId.text.toString().isBlank() ||
+                        objectStorageSecretAccessKey.text.toString().isBlank() ||
+                        objectStorageBucket.text.toString().isBlank())
+                ) {
+                    toast(text(R.string.object_storage_required_fields))
+                    return@setOnClickListener
+                }
                 store.updateSyncSettings(
                     store.syncSettings.copy(
-                        providerType = SyncProviderType.entries[provider.selectedItemPosition],
+                        providerType = selectedProviderType,
                         webdavUrl = webdavUrl.text.toString(),
                         webdavPath = webdavPath.text.toString(),
                         webdavUsername = webdavUsername.text.toString(),
                         webdavPassword = webdavPassword.text.toString(),
                         presignedDownloadUrl = presignedDownloadUrl.text.toString(),
                         presignedUploadUrl = presignedUploadUrl.text.toString(),
+                        objectStorageAccessKeyId = objectStorageAccessKeyId.text.toString(),
+                        objectStorageSecretAccessKey = objectStorageSecretAccessKey.text.toString(),
+                        objectStorageBucket = objectStorageBucket.text.toString(),
+                        objectStorageEndpoint = objectStorageEndpoint.text.toString(),
+                        objectStorageAppId = objectStorageAppId.text.toString(),
+                        objectStorageCustomUrl = objectStorageCustomUrl.text.toString(),
+                        objectStorageObjectKey = objectStorageObjectKey.text.toString().ifBlank { "vault.sync.json" },
                         autoSyncEnabled = autoSync.isChecked,
                         autoSyncIntervalMinutes = selectedIntervalValue.toIntervalMinutes(selectedIntervalUnit),
                         autoSyncIntervalValue = selectedIntervalValue,
@@ -2648,6 +2767,7 @@ private fun payloadFieldSpecs(type: VaultEntryType, draft: EntryDraft, activity:
         VaultEntryType.CREDENTIAL -> listOf(
             PayloadFieldSpec(activity.getString(R.string.username), draft.credential.username),
             PayloadFieldSpec(activity.getString(R.string.password), draft.credential.password, secret = true),
+            PayloadFieldSpec(activity.getString(R.string.service_accounts_format_hint), formatServiceAccounts(draft.credential.accounts), multiline = true),
             PayloadFieldSpec(activity.getString(R.string.token), draft.credential.token),
             PayloadFieldSpec(activity.getString(R.string.app_id), draft.credential.appId),
             PayloadFieldSpec(activity.getString(R.string.access_key), draft.credential.accessKey),
@@ -2660,6 +2780,7 @@ private fun payloadFieldSpecs(type: VaultEntryType, draft: EntryDraft, activity:
             PayloadFieldSpec(activity.getString(R.string.port), draft.server.port),
             PayloadFieldSpec(activity.getString(R.string.username), draft.server.username),
             PayloadFieldSpec(activity.getString(R.string.password), draft.server.password, secret = true),
+            PayloadFieldSpec(activity.getString(R.string.service_accounts_format_hint), formatServiceAccounts(draft.server.accounts), multiline = true),
             PayloadFieldSpec(activity.getString(R.string.basic_config), draft.server.basicConfig, multiline = true),
             PayloadFieldSpec(activity.getString(R.string.operating_system), draft.server.operatingSystem),
             PayloadFieldSpec(activity.getString(R.string.location), draft.server.location),
@@ -2686,6 +2807,7 @@ private fun VaultEntry.exportFields(activity: Activity): List<EntryExportField> 
         is VaultPayload.Credential -> fields += listOf(
             EntryExportField("credential.username", activity.getString(R.string.username)),
             EntryExportField("credential.password", activity.getString(R.string.password)),
+            EntryExportField("credential.accounts", activity.getString(R.string.service_accounts)),
             EntryExportField("credential.token", activity.getString(R.string.token)),
             EntryExportField("credential.appId", activity.getString(R.string.app_id)),
             EntryExportField("credential.accessKey", activity.getString(R.string.access_key)),
@@ -2698,6 +2820,7 @@ private fun VaultEntry.exportFields(activity: Activity): List<EntryExportField> 
             EntryExportField("server.port", activity.getString(R.string.port)),
             EntryExportField("server.username", activity.getString(R.string.username)),
             EntryExportField("server.password", activity.getString(R.string.password)),
+            EntryExportField("server.accounts", activity.getString(R.string.service_accounts)),
             EntryExportField("server.basicConfig", activity.getString(R.string.basic_config)),
             EntryExportField("server.operatingSystem", activity.getString(R.string.os)),
             EntryExportField("server.location", activity.getString(R.string.location)),
@@ -2723,11 +2846,12 @@ private fun credentialPayload(inputs: List<EditText>): CredentialPayload =
     CredentialPayload(
         username = inputs.valueAt(0),
         password = inputs.valueAt(1),
-        token = inputs.valueAt(2),
-        appId = inputs.valueAt(3),
-        accessKey = inputs.valueAt(4),
-        secretKey = inputs.valueAt(5),
-        notes = inputs.valueAt(6),
+        accounts = parseServiceAccounts(inputs.valueAt(2)),
+        token = inputs.valueAt(3),
+        appId = inputs.valueAt(4),
+        accessKey = inputs.valueAt(5),
+        secretKey = inputs.valueAt(6),
+        notes = inputs.valueAt(7),
     )
 
 private fun serverPayload(inputs: List<EditText>): ServerPayload =
@@ -2737,10 +2861,11 @@ private fun serverPayload(inputs: List<EditText>): ServerPayload =
         port = inputs.valueAt(2),
         username = inputs.valueAt(3),
         password = inputs.valueAt(4),
-        basicConfig = inputs.valueAt(5),
-        operatingSystem = inputs.valueAt(6),
-        location = inputs.valueAt(7),
-        notes = inputs.valueAt(8),
+        accounts = parseServiceAccounts(inputs.valueAt(5)),
+        basicConfig = inputs.valueAt(6),
+        operatingSystem = inputs.valueAt(7),
+        location = inputs.valueAt(8),
+        notes = inputs.valueAt(9),
     )
 
 private fun servicePayload(inputs: List<EditText>): ServicePayload =
@@ -2772,6 +2897,7 @@ private fun VaultEntry.detailPairs(activity: MainActivity): List<Pair<String, St
         is VaultPayload.Credential -> listOf(
             activity.getString(R.string.username) to currentPayload.value.username,
             activity.getString(R.string.password) to currentPayload.value.password,
+            activity.getString(R.string.service_accounts) to formatServiceAccountsForDisplay(currentPayload.value.accounts),
             activity.getString(R.string.token) to currentPayload.value.token,
             activity.getString(R.string.app_id) to currentPayload.value.appId,
             activity.getString(R.string.access_key) to currentPayload.value.accessKey,
@@ -2784,6 +2910,7 @@ private fun VaultEntry.detailPairs(activity: MainActivity): List<Pair<String, St
             activity.getString(R.string.port) to currentPayload.value.port,
             activity.getString(R.string.username) to currentPayload.value.username,
             activity.getString(R.string.password) to currentPayload.value.password,
+            activity.getString(R.string.service_accounts) to formatServiceAccountsForDisplay(currentPayload.value.accounts),
             activity.getString(R.string.basic_config) to currentPayload.value.basicConfig,
             activity.getString(R.string.os) to currentPayload.value.operatingSystem,
             activity.getString(R.string.location) to currentPayload.value.location,
@@ -2795,9 +2922,7 @@ private fun VaultEntry.detailPairs(activity: MainActivity): List<Pair<String, St
             activity.getString(R.string.connection_port) to currentPayload.value.connectionPort,
             activity.getString(R.string.account_id) to currentPayload.value.accountId.orEmpty(),
             activity.getString(R.string.server_ids) to currentPayload.value.serverIds.joinToString(", "),
-            activity.getString(R.string.service_accounts) to currentPayload.value.accounts.joinToString("\n") { account ->
-                "${account.username}: ${account.password}${if (account.note.isBlank()) "" else " - ${account.note}"}"
-            },
+            activity.getString(R.string.service_accounts) to formatServiceAccountsForDisplay(currentPayload.value.accounts),
             activity.getString(R.string.notes) to currentPayload.value.notes,
         )
     } + customFields.map { field ->
@@ -2830,6 +2955,17 @@ private fun SyncProviderType.localizedTitle(activity: Activity): String =
             SyncProviderType.WEBDAV -> R.string.sync_provider_webdav
             SyncProviderType.S3_PRESIGNED -> R.string.sync_provider_s3_presigned
             SyncProviderType.NAS_WEBDAV -> R.string.sync_provider_nas_webdav
+            SyncProviderType.TENCENT_COS -> R.string.sync_provider_tencent_cos
+            SyncProviderType.ALIYUN_OSS -> R.string.sync_provider_aliyun_oss
+        }
+    )
+
+private fun VaultEntryType.localizedTitle(activity: Activity): String =
+    activity.getString(
+        when (this) {
+            VaultEntryType.CREDENTIAL -> R.string.entry_type_account
+            VaultEntryType.SERVER -> R.string.entry_type_server
+            VaultEntryType.SERVICE -> R.string.entry_type_service
         }
     )
 
@@ -2853,6 +2989,11 @@ private fun SyncSettingsConflictStrategy.localizedTitle(activity: Activity): Str
 internal fun formatServiceAccounts(accounts: List<ServiceAccount>): String =
     accounts.joinToString("; ") { account ->
         listOf(account.username, account.password, account.note).joinToString(":")
+    }
+
+internal fun formatServiceAccountsForDisplay(accounts: List<ServiceAccount>): String =
+    accounts.joinToString("\n") { account ->
+        "${account.username}: ${account.password}${if (account.note.isBlank()) "" else " - ${account.note}"}"
     }
 
 internal fun parseServiceAccounts(raw: String): List<ServiceAccount> =

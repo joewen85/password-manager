@@ -147,6 +147,62 @@ struct RemoteSyncClientTests {
         #expect(download == RemoteSyncResult(payload: nil, statusCode: 400))
         #expect(upload == RemoteSyncResult(payload: nil, statusCode: 400))
     }
+
+    @Test("Object storage clients build signed requests")
+    func objectStorageClientsBuildSignedRequests() async {
+        var cosSettings = SyncSettings.defaults(deviceId: "device-1")
+        cosSettings.providerType = .tencentCos
+        cosSettings.ak = "cos-ak"
+        cosSettings.sk = "cos-sk"
+        cosSettings.bucket = "bucket"
+        cosSettings.appid = "1250000000"
+        cosSettings.endpoint = "cos.ap-shanghai.myqcloud.com"
+        cosSettings.objectKey = "folder/vault.json"
+        var ossSettings = SyncSettings.defaults(deviceId: "device-1")
+        ossSettings.providerType = .aliyunOss
+        ossSettings.ak = "oss-ak"
+        ossSettings.sk = "oss-sk"
+        ossSettings.bucket = "bucket"
+        ossSettings.endpoint = "oss-cn-hangzhou.aliyuncs.com"
+        ossSettings.objectKey = "folder/vault.json"
+        let transport = FakeRemoteSyncTransport(
+            responses: [
+                .success(httpResult(
+                    url: URL(string: "https://bucket-1250000000.cos.ap-shanghai.myqcloud.com/folder/vault.json")!,
+                    statusCode: 200,
+                    body: #"{"revision":1}"#
+                )),
+                .success(httpResult(
+                    url: URL(string: "https://bucket.oss-cn-hangzhou.aliyuncs.com/folder/vault.json")!,
+                    statusCode: 201
+                ))
+            ]
+        )
+        let cosClient = TencentCosSyncClient(
+            settings: cosSettings,
+            transport: transport,
+            now: { Date(timeIntervalSince1970: 1_782_604_800) }
+        )
+        let ossClient = AliyunOssSyncClient(
+            settings: ossSettings,
+            transport: transport,
+            now: { Date(timeIntervalSince1970: 1_782_604_800) }
+        )
+
+        let cosDownload = await cosClient.download()
+        let ossUpload = await ossClient.upload(#"{"revision":2}"#)
+
+        #expect(cosDownload == RemoteSyncResult(payload: #"{"revision":1}"#, statusCode: 200))
+        #expect(ossUpload == RemoteSyncResult(payload: nil, statusCode: 201))
+        #expect(transport.requests[0].url?.absoluteString == "https://bucket-1250000000.cos.ap-shanghai.myqcloud.com/folder/vault.json")
+        #expect(transport.requests[0].value(forHTTPHeaderField: "Authorization")?.contains("q-sign-algorithm=sha1") == true)
+        #expect(transport.requests[0].value(forHTTPHeaderField: "Authorization")?.contains("q-ak=cos-ak") == true)
+        #expect(transport.requests[1].url?.absoluteString == "https://bucket.oss-cn-hangzhou.aliyuncs.com/folder/vault.json")
+        #expect(transport.requests[1].value(forHTTPHeaderField: "x-oss-date") == "20260628T000000Z")
+        #expect(transport.requests[1].value(forHTTPHeaderField: "x-oss-content-sha256") != nil)
+        #expect(transport.requests[1].value(forHTTPHeaderField: "Authorization")?.hasPrefix("OSS4-HMAC-SHA256 Credential=oss-ak/20260628/cn-hangzhou/oss/aliyun_v4_request") == true)
+        #expect(transport.requests[1].value(forHTTPHeaderField: "Content-Type") == "application/json")
+    }
 }
 
 private func httpResult(

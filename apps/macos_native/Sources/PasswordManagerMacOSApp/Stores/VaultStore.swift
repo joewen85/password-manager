@@ -13,6 +13,7 @@ final class VaultStore {
     private(set) var hasMasterKey = false
     private(set) var entries: [VaultEntry] = []
     private(set) var categories: [String] = []
+    private(set) var categoryTemplates: [CategoryTemplate] = []
     private(set) var tags: [String] = []
     private(set) var syncStatus = "Not configured"
     private(set) var lastBackupStatus = "No backup has run"
@@ -203,7 +204,7 @@ final class VaultStore {
         persistUnlockedSnapshot()
     }
 
-    func addCategory(_ category: String) -> Bool {
+    func addCategory(_ category: String, preset: CategoryTypePreset? = nil) -> Bool {
         guard let normalized = validatedTaxonomyValue(
             category,
             existingValues: categories,
@@ -212,6 +213,7 @@ final class VaultStore {
             return false
         }
         manualCategories.insert(normalized)
+        upsertCategoryTemplate(category: normalized, fields: CategoryTemplate.fields(for: preset))
         rebuildCollections()
         persistUnlockedSnapshot()
         statusMessage = "Category added."
@@ -249,6 +251,7 @@ final class VaultStore {
 
         removeTaxonomyValue(oldNormalized, from: &manualCategories)
         manualCategories.insert(newNormalized)
+        renameCategoryTemplate(oldValue: oldNormalized, to: newNormalized)
         for index in entries.indices where entries[index].payload.category.caseInsensitiveEquals(oldNormalized) {
             let now = Date()
             entries[index].payload = entries[index].payload.replacingCategory(
@@ -272,6 +275,9 @@ final class VaultStore {
         }
 
         var changed = removeTaxonomyValue(normalized, from: &manualCategories)
+        if removeCategoryTemplate(normalized) {
+            changed = true
+        }
         for index in entries.indices where entries[index].payload.category.caseInsensitiveEquals(normalized) {
             let now = Date()
             changed = true
@@ -370,6 +376,7 @@ final class VaultStore {
 
         entries = []
         manualCategories = []
+        categoryTemplates = []
         manualTags = []
         categories = []
         tags = []
@@ -737,6 +744,7 @@ final class VaultStore {
               let encryptedVault = envelope.encryptedVault else {
             entries = []
             categories = []
+            categoryTemplates = []
             tags = []
             manualCategories = []
             manualTags = []
@@ -750,6 +758,7 @@ final class VaultStore {
         let snapshot = try repository.decodeSnapshot(decrypted)
         entries = snapshot.entries
         manualCategories = Set(normalizedTaxonomyValues(snapshot.categories))
+        categoryTemplates = normalizedCategoryTemplates(snapshot.categoryTemplates, categories: snapshot.categories)
         manualTags = Set(normalizedTaxonomyValues(snapshot.tags))
         requireTotp = snapshot.security.requireTotp
         totpSecret = snapshot.security.totpSecret
@@ -789,6 +798,7 @@ final class VaultStore {
         if let snapshot = result.snapshot {
             entries = snapshot.entries
             manualCategories = Set(normalizedTaxonomyValues(snapshot.categories))
+            categoryTemplates = normalizedCategoryTemplates(snapshot.categoryTemplates, categories: snapshot.categories)
             manualTags = Set(normalizedTaxonomyValues(snapshot.tags))
             requireTotp = snapshot.security.requireTotp
             totpSecret = snapshot.security.totpSecret
@@ -798,8 +808,10 @@ final class VaultStore {
         } else {
             entries = []
             categories = []
+            categoryTemplates = []
             tags = []
             manualCategories = []
+            categoryTemplates = []
             manualTags = []
             requireTotp = false
             totpSecret = ""
@@ -832,6 +844,7 @@ final class VaultStore {
         VaultSnapshot(
             entries: entries,
             categories: categories,
+            categoryTemplates: categoryTemplates,
             tags: tags,
             security: SecuritySettings(requireTotp: requireTotp, totpSecret: totpSecret),
             syncStatus: syncStatus,
@@ -843,6 +856,10 @@ final class VaultStore {
     private func applySyncResult(_ result: VaultSyncEngineResult) throws {
         entries = result.snapshot.entries
         manualCategories = Set(normalizedTaxonomyValues(result.snapshot.categories))
+        categoryTemplates = normalizedCategoryTemplates(
+            result.snapshot.categoryTemplates,
+            categories: result.snapshot.categories
+        )
         manualTags = Set(normalizedTaxonomyValues(result.snapshot.tags))
         requireTotp = result.snapshot.security.requireTotp
         totpSecret = result.snapshot.security.totpSecret
@@ -859,6 +876,7 @@ final class VaultStore {
     private func applyImportedSnapshot(_ snapshot: VaultSnapshot) throws {
         entries = snapshot.entries
         manualCategories = Set(normalizedTaxonomyValues(snapshot.categories))
+        categoryTemplates = normalizedCategoryTemplates(snapshot.categoryTemplates, categories: snapshot.categories)
         manualTags = Set(normalizedTaxonomyValues(snapshot.tags))
         requireTotp = snapshot.security.requireTotp
         totpSecret = snapshot.security.totpSecret
@@ -956,6 +974,44 @@ final class VaultStore {
 
     private func normalizedTaxonomyValues(_ values: some Sequence<String>) -> [String] {
         Array(Set(values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
+    }
+
+    private func normalizedCategoryTemplates(
+        _ templates: [CategoryTemplate],
+        categories: [String]
+    ) -> [CategoryTemplate] {
+        let normalizedCategories = normalizedTaxonomyValues(categories)
+        let templatesByCategory: [String: CategoryTemplate] = Dictionary(uniqueKeysWithValues: templates.compactMap { template -> (String, CategoryTemplate)? in
+            let category = template.category.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !category.isEmpty else { return nil }
+            return (category.lowercased(), CategoryTemplate(category: category, fields: template.fields))
+        })
+        return normalizedCategories.map { category in
+            templatesByCategory[category.lowercased()] ?? CategoryTemplate(category: category)
+        }
+    }
+
+    private func upsertCategoryTemplate(category: String, fields: [FieldTemplate]) {
+        if let index = categoryTemplates.firstIndex(where: { $0.category.caseInsensitiveEquals(category) }) {
+            categoryTemplates[index] = CategoryTemplate(category: category, fields: fields)
+        } else {
+            categoryTemplates.append(CategoryTemplate(category: category, fields: fields))
+        }
+    }
+
+    private func renameCategoryTemplate(oldValue: String, to newValue: String) {
+        if let index = categoryTemplates.firstIndex(where: { $0.category.caseInsensitiveEquals(oldValue) }) {
+            categoryTemplates[index].category = newValue
+        } else {
+            categoryTemplates.append(CategoryTemplate(category: newValue))
+        }
+    }
+
+    @discardableResult
+    private func removeCategoryTemplate(_ category: String) -> Bool {
+        let before = categoryTemplates.count
+        categoryTemplates.removeAll { $0.category.caseInsensitiveEquals(category) }
+        return categoryTemplates.count != before
     }
 
     @discardableResult
@@ -1071,6 +1127,15 @@ struct EntryDraft: Equatable {
             service = payload
             category = payload.category
             tags = payload.tags
+        }
+    }
+
+    mutating func applyTemplateFields(_ fields: [FieldTemplate]) {
+        for field in fields {
+            let name = field.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            guard !customFields.contains(where: { $0.name.caseInsensitiveEquals(name) }) else { continue }
+            customFields.append(CustomField(name: name))
         }
     }
 }

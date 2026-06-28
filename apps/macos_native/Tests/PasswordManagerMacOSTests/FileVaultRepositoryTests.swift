@@ -123,6 +123,13 @@ struct FileVaultRepositoryTests {
                     "credential": {
                       "username": "legacy@example.com",
                       "password": "secret",
+                      "accounts": [
+                        {
+                          "username": "secondary",
+                          "password": "secondary-secret",
+                          "note": "backup"
+                        }
+                      ],
                       "token": "",
                       "appId": "",
                       "accessKey": "",
@@ -137,6 +144,21 @@ struct FileVaultRepositoryTests {
                 }
               ],
               "categories": ["Legacy"],
+              "categoryTemplates": [
+                {
+                  "category": "Legacy",
+                  "fields": [
+                    {
+                      "id": "template-name",
+                      "name": "名称"
+                    },
+                    {
+                      "id": "template-note",
+                      "name": "备注"
+                    }
+                  ]
+                }
+              ],
               "tags": [],
               "updatedAt": "2026-05-26T15:30:00Z"
             }
@@ -147,6 +169,36 @@ struct FileVaultRepositoryTests {
 
         #expect(snapshot.entries.first?.label == "Legacy Entry")
         #expect(snapshot.entries.first?.customFields == [])
+        if case .credential(let credential) = snapshot.entries.first?.payload {
+            #expect(credential.accounts.first?.username == "secondary")
+            #expect(credential.accounts.first?.password == "secondary-secret")
+        } else {
+            Issue.record("Expected credential payload")
+        }
+        #expect(snapshot.categoryTemplates.first?.category == "Legacy")
+        #expect(snapshot.categoryTemplates.first?.fields.map(\.name) == ["名称", "备注"])
+    }
+
+    @Test("Snapshot decoding defaults category templates for legacy snapshots")
+    func snapshotDecodingDefaultsCategoryTemplatesForLegacySnapshots() throws {
+        let repository = FileVaultRepository(baseDirectory: FileManager.default.temporaryDirectory)
+        let data = Data(
+            """
+            {
+              "entries": [],
+              "categories": ["Legacy"],
+              "tags": [],
+              "updatedAt": "2026-05-26T15:30:00Z"
+            }
+            """.utf8
+        )
+
+        let snapshot = try repository.decodeSnapshot(data)
+
+        #expect(snapshot.categoryTemplates == [
+            CategoryTemplate(category: "Legacy")
+        ])
+        #expect(snapshot.categoryTemplates.first?.fields.map(\.name) == ["名称", "备注"])
     }
 
     @Test("Backup copies the encrypted vault envelope")

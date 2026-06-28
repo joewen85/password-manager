@@ -19,6 +19,7 @@ struct VaultStoreTaxonomyTests {
 
         #expect(store.addCategory(" Work "))
         #expect(store.categories == ["Work"])
+        #expect(store.categoryTemplates == [CategoryTemplate(category: "Work")])
         #expect(!store.addCategory("work"))
         #expect(store.statusMessage == "Category already exists.")
 
@@ -29,10 +30,12 @@ struct VaultStoreTaxonomyTests {
 
         #expect(store.renameCategory("work", to: "Personal"))
         #expect(store.categories == ["Personal"])
+        #expect(store.categoryTemplates.first?.category == "Personal")
         #expect(store.entries.first?.payload.category == "Personal")
 
         #expect(store.deleteCategory("personal"))
         #expect(store.categories == [])
+        #expect(store.categoryTemplates == [])
         #expect(store.entries.first?.payload.category == "")
         #expect(!store.deleteCategory("personal"))
         #expect(store.statusMessage == "Category not found.")
@@ -70,5 +73,30 @@ struct VaultStoreTaxonomyTests {
         #expect(store.entries.first?.payload.tags == [])
         #expect(!store.deleteTag("prod"))
         #expect(store.statusMessage == "Tag not found.")
+    }
+
+    @MainActor
+    @Test("Category presets create platform-compatible field templates")
+    func categoryPresetsCreatePlatformCompatibleFieldTemplates() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManagerMacOSCategoryPresetTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = VaultStore(
+            repository: FileVaultRepository(baseDirectory: directory),
+            syncSettingsRepository: nil
+        )
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+
+        #expect(store.addCategory("Infra", preset: .server))
+
+        let template = try #require(store.categoryTemplates.first)
+        #expect(template.category == "Infra")
+        #expect(template.fields.map(\.name) == ["名称", "备注", "IP地址", "端口", "关联账号"])
+
+        var draft = EntryDraft()
+        draft.applyTemplateFields(template.fields)
+
+        #expect(draft.customFields.map(\.name) == ["名称", "备注", "IP地址", "端口", "关联账号"])
     }
 }

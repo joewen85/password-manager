@@ -86,6 +86,7 @@ struct PayloadFieldsView: View {
             case .credential(let credential):
                 FieldRow("Username", credential.username)
                 SecretRow("Password", credential.password)
+                SecretRow("Accounts", credential.accounts.detailText)
                 FieldRow("Token", credential.token)
                 FieldRow("App ID", credential.appId)
                 FieldRow("Access Key", credential.accessKey)
@@ -97,6 +98,7 @@ struct PayloadFieldsView: View {
                 FieldRow("Port", server.port)
                 FieldRow("Username", server.username)
                 SecretRow("Password", server.password)
+                SecretRow("Accounts", server.accounts.detailText)
                 FieldRow("Config", server.basicConfig)
                 FieldRow("OS", server.operatingSystem)
                 FieldRow("Location", server.location)

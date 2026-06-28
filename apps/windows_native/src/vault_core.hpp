@@ -92,6 +92,9 @@ struct ObjectSyncRequest {
     std::string baseUrl;
     std::string objectUrl;
     bool requiresCredentials = false;
+    std::string method;
+    std::map<std::string, std::string> headers;
+    std::string body;
 };
 
 std::string randomId();
@@ -115,5 +118,11 @@ bool verifyTotp(const std::string& base32Secret, const std::string& code, std::u
 std::string compareVersion(const std::map<std::string, int>& local, const std::map<std::string, int>& remote);
 SyncMergeResult mergeEntries(const std::vector<VaultEntry>& local, const std::vector<VaultEntry>& remote, const std::string& strategy);
 ObjectSyncRequest buildObjectSyncRequest(const ObjectSyncConfig& config);
+ObjectSyncRequest buildObjectSyncSignedRequest(
+    const ObjectSyncConfig& config,
+    const std::string& method,
+    const std::string& body = "",
+    std::time_t now = std::time(nullptr)
+);
 
 } // namespace pm

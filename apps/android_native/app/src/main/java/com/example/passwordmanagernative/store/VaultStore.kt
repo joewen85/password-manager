@@ -1,7 +1,11 @@
 package com.example.passwordmanagernative.store
 
 import android.content.Context
+import com.example.passwordmanagernative.model.CategoryTemplate
+import com.example.passwordmanagernative.model.CategoryTypePreset
+import com.example.passwordmanagernative.model.CustomField
 import com.example.passwordmanagernative.model.EntryDraft
+import com.example.passwordmanagernative.model.FieldTemplate
 import com.example.passwordmanagernative.model.ImportConflictStrategy
 import com.example.passwordmanagernative.model.MasterKeyRecord
 import com.example.passwordmanagernative.model.ScopedExportScope
@@ -67,6 +71,7 @@ class VaultStore(
     private var activeVaultKey: ByteArray? = null
     private val entries = mutableListOf<VaultEntry>()
     private val manualCategories = mutableSetOf<String>()
+    private val categoryTemplates = mutableMapOf<String, CategoryTemplate>()
     private val manualTags = mutableSetOf<String>()
 
     init {
@@ -225,10 +230,19 @@ class VaultStore(
     fun categories(): List<String> =
         buildSet {
             addAll(manualCategories)
+            addAll(categoryTemplates.keys)
             addAll(entries.filterNot { it.isDeleted }.map { it.payload.category })
         }
             .filter { it.isNotBlank() }
             .sorted()
+
+    fun categoryTemplate(category: String): CategoryTemplate? {
+        val normalized = category.trim()
+        if (normalized.isBlank()) return null
+        return categoryTemplates.entries
+            .firstOrNull { it.key.equals(normalized, ignoreCase = true) }
+            ?.value
+    }
 
     fun tags(): List<String> =
         buildSet {
@@ -239,7 +253,45 @@ class VaultStore(
             .sorted()
 
     fun addCategory(category: String): Boolean =
-        addTaxonomyValue(category, manualCategories, "Category added.", "Category already exists.")
+        addCategory(category, CategoryTemplate.defaultCategoryFields())
+
+    fun addCategory(category: String, fields: List<FieldTemplate>): Boolean {
+        val normalized = category.trim()
+        if (normalized.isBlank()) {
+            statusMessage = "Value is required."
+            return false
+        }
+        if (categories().any { it.equals(normalized, ignoreCase = true) }) {
+            statusMessage = "Category already exists."
+            return false
+        }
+        manualCategories += normalized
+        categoryTemplates[normalized] = CategoryTemplate(
+            category = normalized,
+            fields = fields.ifEmpty { CategoryTemplate.defaultCategoryFields() },
+        )
+        persistUnlockedSnapshot()
+        statusMessage = "Category added."
+        return true
+    }
+
+    fun applyCategoryPreset(category: String, preset: CategoryTypePreset): Boolean {
+        val normalized = category.trim()
+        if (normalized.isBlank()) {
+            statusMessage = "Value is required."
+            return false
+        }
+        if (categories().none { it.equals(normalized, ignoreCase = true) }) {
+            manualCategories += normalized
+        }
+        categoryTemplates[normalized] = CategoryTemplate(
+            category = normalized,
+            fields = CategoryTemplate.fieldsForPreset(preset),
+        )
+        persistUnlockedSnapshot()
+        statusMessage = "Category template updated."
+        return true
+    }
 
     fun addTag(tag: String): Boolean =
         addTaxonomyValue(tag, manualTags, "Tag added.", "Tag already exists.")
@@ -257,6 +309,11 @@ class VaultStore(
         }
         manualCategories.removeAll { it.equals(oldNormalized, ignoreCase = true) }
         manualCategories += newNormalized
+        val oldTemplate = categoryTemplates.entries.firstOrNull { it.key.equals(oldNormalized, ignoreCase = true) }
+        if (oldTemplate != null) {
+            categoryTemplates.remove(oldTemplate.key)
+            categoryTemplates[newNormalized] = oldTemplate.value.copy(category = newNormalized)
+        }
         val now = Instant.now()
         entries.replaceAll { entry ->
             if (!entry.isDeleted && entry.payload.category.equals(oldNormalized, ignoreCase = true)) {
@@ -278,6 +335,11 @@ class VaultStore(
             return false
         }
         var changed = manualCategories.removeAll { it.equals(normalized, ignoreCase = true) }
+        val removedTemplate = categoryTemplates.entries.firstOrNull { it.key.equals(normalized, ignoreCase = true) }
+        if (removedTemplate != null) {
+            categoryTemplates.remove(removedTemplate.key)
+            changed = true
+        }
         val now = Instant.now()
         entries.replaceAll { entry ->
             if (!entry.isDeleted && entry.payload.category.equals(normalized, ignoreCase = true)) {
@@ -680,6 +742,7 @@ class VaultStore(
         }
         entries.clear()
         manualCategories.clear()
+        categoryTemplates.clear()
         manualTags.clear()
         requireTotp = false
         totpSecret = ""
@@ -745,6 +808,9 @@ class VaultStore(
         VaultSnapshot(
             entries = entries.toList(),
             categories = categories(),
+            categoryTemplates = categoryTemplates.values
+                .filter { it.category.isNotBlank() }
+                .sortedBy { it.category.lowercase() },
             tags = tags(),
             security = SecuritySettings(requireTotp = requireTotp, totpSecret = totpSecret),
             syncStatus = syncStatus,
@@ -821,6 +887,16 @@ class VaultStore(
         entries += snapshot.entries
         manualCategories.clear()
         manualCategories += snapshot.categories.map { it.trim() }.filter { it.isNotBlank() }
+        categoryTemplates.clear()
+        snapshot.categoryTemplates.forEach { template ->
+            val normalized = template.category.trim()
+            if (normalized.isNotBlank()) {
+                categoryTemplates[normalized] = template.copy(category = normalized)
+            }
+        }
+        manualCategories.forEach { category ->
+            categoryTemplates.putIfAbsent(category, CategoryTemplate(category = category))
+        }
         manualTags.clear()
         manualTags += snapshot.tags.map { it.trim() }.filter { it.isNotBlank() }
         requireTotp = snapshot.security.requireTotp
@@ -873,6 +949,16 @@ class VaultStore(
     }
 }
 
+fun List<CustomField>.withTemplateDefaults(template: CategoryTemplate?): List<CustomField> {
+    if (template == null) return this
+    val existingNames = map { it.name.trim().lowercase() }.toMutableSet()
+    val additions = template.fields
+        .filter { field -> field.name.trim().isNotEmpty() }
+        .filter { field -> existingNames.add(field.name.trim().lowercase()) }
+        .map { field -> CustomField(name = field.name.trim()) }
+    return this + additions
+}
+
 private data class ImportResult(
     val created: Int,
     val updated: Int,
@@ -917,6 +1003,7 @@ private fun VaultPayload.keepingExportFields(selectedFieldIds: Set<String>): Vau
             value = value.copy(
                 username = if ("credential.username" in selectedFieldIds) value.username else "",
                 password = if ("credential.password" in selectedFieldIds) value.password else "",
+                accounts = if ("credential.accounts" in selectedFieldIds) value.accounts else emptyList(),
                 token = if ("credential.token" in selectedFieldIds) value.token else "",
                 appId = if ("credential.appId" in selectedFieldIds) value.appId else "",
                 accessKey = if ("credential.accessKey" in selectedFieldIds) value.accessKey else "",
@@ -933,6 +1020,7 @@ private fun VaultPayload.keepingExportFields(selectedFieldIds: Set<String>): Vau
                 port = if ("server.port" in selectedFieldIds) value.port else "",
                 username = if ("server.username" in selectedFieldIds) value.username else "",
                 password = if ("server.password" in selectedFieldIds) value.password else "",
+                accounts = if ("server.accounts" in selectedFieldIds) value.accounts else emptyList(),
                 basicConfig = if ("server.basicConfig" in selectedFieldIds) value.basicConfig else "",
                 operatingSystem = if ("server.operatingSystem" in selectedFieldIds) value.operatingSystem else "",
                 location = if ("server.location" in selectedFieldIds) value.location else "",

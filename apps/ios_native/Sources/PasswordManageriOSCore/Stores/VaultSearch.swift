@@ -139,8 +139,10 @@ private extension VaultPayload {
         switch self {
         case .credential(let payload):
             var values = [payload.username, payload.appId, payload.notes]
+            values += payload.accounts.flatMap { [$0.username, $0.note] }
             if includeSecrets {
                 values += [payload.password, payload.token, payload.accessKey, payload.secretKey]
+                values += payload.accounts.map(\.password)
             }
             return values
         case .server(let payload):
@@ -155,7 +157,11 @@ private extension VaultPayload {
                 payload.notes,
                 payload.accountId ?? ""
             ]
-            if includeSecrets { values.append(payload.password) }
+            values += payload.accounts.flatMap { [$0.username, $0.note] }
+            if includeSecrets {
+                values.append(payload.password)
+                values += payload.accounts.map(\.password)
+            }
             return values
         case .service(let payload):
             var values = [
@@ -186,9 +192,9 @@ private extension VaultPayload {
     var usernameValues: [String] {
         switch self {
         case .credential(let payload):
-            [payload.username]
+            [payload.username] + payload.accounts.map(\.username)
         case .server(let payload):
-            [payload.username]
+            [payload.username] + payload.accounts.map(\.username)
         case .service(let payload):
             payload.accounts.map(\.username)
         }
@@ -238,10 +244,10 @@ private extension VaultPayload {
 
     var accountValues: [String] {
         switch self {
-        case .credential:
-            []
+        case .credential(let payload):
+            payload.accounts.flatMap { [$0.username, $0.note] }
         case .server(let payload):
-            [payload.accountId ?? ""]
+            [payload.accountId ?? ""] + payload.accounts.flatMap { [$0.username, $0.note] }
         case .service(let payload):
             [payload.accountId ?? ""] + payload.accounts.flatMap { [$0.username, $0.note] }
         }
@@ -270,9 +276,9 @@ private extension VaultPayload {
     var noteValues: [String] {
         switch self {
         case .credential(let payload):
-            [payload.notes]
+            [payload.notes] + payload.accounts.map(\.note)
         case .server(let payload):
-            [payload.notes]
+            [payload.notes] + payload.accounts.map(\.note)
         case .service(let payload):
             [payload.notes] + payload.accounts.map(\.note)
         }
@@ -281,9 +287,9 @@ private extension VaultPayload {
     var passwordValues: [String] {
         switch self {
         case .credential(let payload):
-            [payload.password]
+            [payload.password] + payload.accounts.map(\.password)
         case .server(let payload):
-            [payload.password]
+            [payload.password] + payload.accounts.map(\.password)
         case .service(let payload):
             payload.accounts.map(\.password)
         }

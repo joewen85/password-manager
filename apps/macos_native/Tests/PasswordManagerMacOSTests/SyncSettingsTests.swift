@@ -10,6 +10,7 @@ struct SyncSettingsTests {
 
         #expect(settings.providerType == .none)
         #expect(settings.webdavPath == "/vault.json")
+        #expect(settings.objectStorageObjectKey == "vault.sync.json")
         #expect(!settings.autoSyncEnabled)
         #expect(settings.autoSyncIntervalMinutes == 30)
         #expect(settings.autoSyncIntervalValue == 30)
@@ -29,6 +30,13 @@ struct SyncSettingsTests {
             {
               "providerType": "futureProvider",
               "webdavUrl": "https://dav.example.com",
+              "ak": "cos-ak",
+              "sk": "cos-sk",
+              "bucket": "vault-bucket",
+              "endpoint": "cos.ap-shanghai.myqcloud.com",
+              "appid": "1250000000",
+              "customUrl": "https://custom.example.com/root",
+              "objectKey": "vaults/device.json",
               "conflictStrategy": "futureStrategy",
               "lastRemoteFingerprint": "etag:remote-v1",
               "logs": [
@@ -48,6 +56,13 @@ struct SyncSettingsTests {
 
         #expect(settings.providerType == .none)
         #expect(settings.webdavUrl == "https://dav.example.com")
+        #expect(settings.objectStorageAccessKey == "cos-ak")
+        #expect(settings.objectStorageSecretKey == "cos-sk")
+        #expect(settings.objectStorageBucket == "vault-bucket")
+        #expect(settings.objectStorageEndpoint == "cos.ap-shanghai.myqcloud.com")
+        #expect(settings.objectStorageAppId == "1250000000")
+        #expect(settings.objectStorageCustomUrl == "https://custom.example.com/root")
+        #expect(settings.objectStorageObjectKey == "vaults/device.json")
         #expect(settings.lastRemoteFingerprint == "etag:remote-v1")
         #expect(settings.webdavPath == "/vault.json")
         #expect(settings.conflictStrategy == .remoteWins)
@@ -102,6 +117,14 @@ struct SyncSettingsTests {
         settings.autoSyncIntervalValue = 30
         settings.autoSyncIntervalUnit = .seconds
         settings.lastRemoteFingerprint = "etag:remote-v1"
+        settings.providerType = .tencentCos
+        settings.objectStorageAccessKey = "ak"
+        settings.objectStorageSecretKey = "sk"
+        settings.objectStorageBucket = "bucket"
+        settings.objectStorageEndpoint = "cos.ap-shanghai.myqcloud.com"
+        settings.objectStorageAppId = "1250000000"
+        settings.objectStorageCustomUrl = "https://custom.example.com"
+        settings.objectStorageObjectKey = "vault.json"
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
@@ -110,8 +133,15 @@ struct SyncSettingsTests {
         let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
         let json = try #require(object)
 
-        #expect(json["providerType"] as? String == "none")
+        #expect(json["providerType"] as? String == "tencentCos")
         #expect(json["webdavPath"] as? String == "/vault.json")
+        #expect(json["objectStorageAccessKey"] as? String == "ak")
+        #expect(json["objectStorageSecretKey"] as? String == "sk")
+        #expect(json["objectStorageBucket"] as? String == "bucket")
+        #expect(json["objectStorageEndpoint"] as? String == "cos.ap-shanghai.myqcloud.com")
+        #expect(json["objectStorageAppId"] as? String == "1250000000")
+        #expect(json["objectStorageCustomUrl"] as? String == "https://custom.example.com")
+        #expect(json["objectStorageObjectKey"] as? String == "vault.json")
         #expect(json["autoSyncIntervalMinutes"] as? Int == 1)
         #expect(json["autoSyncIntervalValue"] as? Int == 30)
         #expect(json["autoSyncIntervalUnit"] as? String == "seconds")
@@ -132,6 +162,11 @@ struct SyncSettingsTests {
                 .success(syncSettingsHTTPResult(
                     url: URL(string: "https://upload.example.com/vault")!,
                     statusCode: 201
+                )),
+                .success(syncSettingsHTTPResult(
+                    url: URL(string: "https://vault-bucket-1250000000.cos.ap-shanghai.myqcloud.com/vault.sync.json")!,
+                    statusCode: 200,
+                    body: "{}"
                 ))
             ]
         )
@@ -145,21 +180,34 @@ struct SyncSettingsTests {
         var presigned = SyncSettings.defaults(deviceId: "device-1")
         presigned.providerType = .s3Presigned
         presigned.presignedUploadUrl = "https://upload.example.com/vault"
+        var tencent = SyncSettings.defaults(deviceId: "device-1")
+        tencent.providerType = .tencentCos
+        tencent.objectStorageAccessKey = "cos-ak"
+        tencent.objectStorageSecretKey = "cos-sk"
+        tencent.objectStorageBucket = "vault-bucket"
+        tencent.objectStorageEndpoint = "cos.ap-shanghai.myqcloud.com"
+        tencent.objectStorageAppId = "1250000000"
 
         let missing = factory.makeClient(settings: .defaults(deviceId: "device-1"), transport: transport)
         let webdavClient = factory.makeClient(settings: webdav, transport: transport)
         let presignedClient = factory.makeClient(settings: presigned, transport: transport)
+        let tencentClient = factory.makeClient(settings: tencent, transport: transport)
 
         #expect(missing == nil)
         #expect(webdavClient != nil)
         #expect(presignedClient != nil)
+        #expect(tencentClient != nil)
         let webdavResult = await webdavClient?.download()
         let presignedResult = await presignedClient?.upload("{}")
+        let tencentResult = await tencentClient?.download()
         #expect(webdavResult == RemoteSyncResult(payload: "{}", statusCode: 200))
         #expect(presignedResult == RemoteSyncResult(payload: nil, statusCode: 201))
+        #expect(tencentResult == RemoteSyncResult(payload: "{}", statusCode: 200))
         #expect(transport.requests[0].url?.absoluteString == "https://dav.example.com/root/vault.json")
         #expect(transport.requests[0].value(forHTTPHeaderField: "Authorization") == "Basic YWxpY2U6c2VjcmV0")
         #expect(transport.requests[1].url?.absoluteString == "https://upload.example.com/vault")
+        #expect(transport.requests[2].url?.absoluteString == "https://vault-bucket-1250000000.cos.ap-shanghai.myqcloud.com/vault.sync.json")
+        #expect(transport.requests[2].value(forHTTPHeaderField: "Authorization")?.contains("q-ak=cos-ak") == true)
     }
 
     @Test("Repository stores sync secrets outside plaintext settings file")
@@ -177,6 +225,10 @@ struct SyncSettingsTests {
         settings.webdavPassword = "webdav-password"
         settings.presignedDownloadUrl = "https://download.example.com/vault"
         settings.presignedUploadUrl = "https://upload.example.com/vault"
+        settings.objectStorageAccessKey = "object-ak"
+        settings.objectStorageSecretKey = "object-sk"
+        settings.objectStorageBucket = "vault-bucket"
+        settings.objectStorageEndpoint = "oss-cn-hangzhou.aliyuncs.com"
 
         try repository.save(settings)
 
@@ -187,6 +239,10 @@ struct SyncSettingsTests {
         #expect(!rawFile.contains("webdav-password"))
         #expect(!rawFile.contains("https://download.example.com/vault"))
         #expect(!rawFile.contains("https://upload.example.com/vault"))
+        #expect(!rawFile.contains("object-ak"))
+        #expect(!rawFile.contains("object-sk"))
+        #expect(rawFile.contains("vault-bucket"))
+        #expect(rawFile.contains("oss-cn-hangzhou.aliyuncs.com"))
         #expect(try secretStore.load(deviceId: "device-1") == settings.syncSecrets)
 
         let loaded = try repository.load()

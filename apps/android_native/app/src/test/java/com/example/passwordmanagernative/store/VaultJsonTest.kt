@@ -1,6 +1,8 @@
 package com.example.passwordmanagernative.store
 
 import com.example.passwordmanagernative.model.CredentialPayload
+import com.example.passwordmanagernative.model.CategoryTemplate
+import com.example.passwordmanagernative.model.CategoryTypePreset
 import com.example.passwordmanagernative.model.CustomField
 import com.example.passwordmanagernative.model.EncryptedPayloadRecord
 import com.example.passwordmanagernative.model.SecuritySettings
@@ -32,6 +34,7 @@ class VaultJsonTest {
                         CredentialPayload(
                             username = "user",
                             password = "password",
+                            accounts = listOf(ServiceAccount("alt-user", "alt-password", "ssh")),
                             accessKey = "access",
                             secretKey = "secret",
                             tags = listOf("tag"),
@@ -51,6 +54,7 @@ class VaultJsonTest {
                             port = "22",
                             username = "root",
                             password = "server-password",
+                            accounts = listOf(ServiceAccount("deploy", "deploy-password", "ci")),
                             tags = listOf("server"),
                             accountId = "11111111-2222-3333-4444-555555555555",
                             category = "Infra",
@@ -87,6 +91,12 @@ class VaultJsonTest {
                 ),
             ),
             categories = listOf("Default", "Infra", "Services"),
+            categoryTemplates = listOf(
+                CategoryTemplate(
+                    category = "Infra",
+                    fields = CategoryTemplate.fieldsForPreset(CategoryTypePreset.SERVER),
+                )
+            ),
             tags = listOf("server", "service", "tag"),
             security = SecuritySettings(requireTotp = true, totpSecret = "JBSWY3DPEHPK3PXP"),
             syncStatus = "Idle",
@@ -99,6 +109,8 @@ class VaultJsonTest {
 
         assertEquals(4, decoded.entries.size)
         assertEquals(snapshot.categories, decoded.categories)
+        assertEquals("Infra", decoded.categoryTemplates.single().category)
+        assertEquals(listOf("名称", "备注", "IP地址", "端口", "关联账号"), decoded.categoryTemplates.single().fields.map { it.name })
         assertEquals(snapshot.tags, decoded.tags)
         assertEquals(snapshot.security, decoded.security)
         assertEquals("Idle", decoded.syncStatus)
@@ -106,12 +118,68 @@ class VaultJsonTest {
         assertEquals(Instant.parse("2026-05-23T00:00:00Z"), decoded.entries.last().deletedAt)
         val service = decoded.entries.first { it.type == VaultEntryType.SERVICE }.payload as VaultPayload.Service
         assertEquals("svc", service.value.accounts.first().username)
+        val credential = decoded.entries.first { it.type == VaultEntryType.CREDENTIAL }.payload as VaultPayload.Credential
+        assertEquals("alt-user", credential.value.accounts.first().username)
+        val server = decoded.entries.first { it.type == VaultEntryType.SERVER }.payload as VaultPayload.Server
+        assertEquals("deploy", server.value.accounts.first().username)
         val serviceJson = JSONObject(encoded)
             .getJSONArray("entries")
             .getJSONObject(2)
             .getJSONObject("payload")
             .getJSONObject("service")
         assertFalse(serviceJson.getJSONArray("accounts").getJSONObject(0).has("id"))
+    }
+
+    @Test
+    fun legacySnapshotsDecodeWithoutTemplatesOrAccounts() {
+        val raw = JSONObject()
+            .put(
+                "entries",
+                org.json.JSONArray(
+                    listOf(
+                        JSONObject()
+                            .put("id", "legacy-credential")
+                            .put("label", "Legacy Credential")
+                            .put("type", "credential")
+                            .put(
+                                "payload",
+                                JSONObject()
+                                    .put(
+                                        "credential",
+                                        JSONObject()
+                                            .put("username", "legacy")
+                                            .put("password", "password")
+                                            .put("category", "Legacy")
+                                    )
+                            ),
+                        JSONObject()
+                            .put("id", "legacy-server")
+                            .put("label", "Legacy Server")
+                            .put("type", "server")
+                            .put(
+                                "payload",
+                                JSONObject()
+                                    .put(
+                                        "server",
+                                        JSONObject()
+                                            .put("name", "legacy-server")
+                                            .put("ipAddress", "10.0.0.1")
+                                            .put("category", "Legacy")
+                                    )
+                            )
+                    )
+                )
+            )
+            .put("categories", org.json.JSONArray(listOf("Legacy")))
+            .toString()
+
+        val decoded = VaultJson.decodeSnapshot(raw)
+        val credential = decoded.entries.first { it.type == VaultEntryType.CREDENTIAL }.payload as VaultPayload.Credential
+        val server = decoded.entries.first { it.type == VaultEntryType.SERVER }.payload as VaultPayload.Server
+
+        assertEquals(emptyList(), decoded.categoryTemplates)
+        assertEquals(emptyList(), credential.value.accounts)
+        assertEquals(emptyList(), server.value.accounts)
     }
 
     @Test

@@ -129,6 +129,19 @@ struct SettingsView: View {
                 case .s3Presigned:
                     TextField(L10n.t("Presigned download URL"), text: $syncDraft.presignedDownloadUrl)
                     SecureField(L10n.t("Presigned upload URL"), text: $syncDraft.presignedUploadUrl)
+                case .tencentCos, .aliyunOss:
+                    SecureField("ak", text: $syncDraft.objectStorageAccessKey)
+                    SecureField("sk", text: $syncDraft.objectStorageSecretKey)
+                    TextField("bucket", text: $syncDraft.objectStorageBucket)
+                    TextField("endpoint", text: $syncDraft.objectStorageEndpoint)
+                    TextField("appid", text: $syncDraft.objectStorageAppId)
+                    TextField("customUrl", text: $syncDraft.objectStorageCustomUrl)
+                    TextField("objectKey", text: $syncDraft.objectStorageObjectKey)
+                    if objectStorageSettingsMissingRequiredFields {
+                        Text(L10n.t("ak, sk, bucket, and endpoint or customUrl are required."))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Toggle(L10n.t("Auto sync"), isOn: $syncDraft.autoSyncEnabled)
@@ -164,6 +177,7 @@ struct SettingsView: View {
                     )
                     store.updateSyncSettings(syncDraft)
                 }
+                .disabled(objectStorageSettingsMissingRequiredFields)
             }
 
             if !syncDraft.logs.isEmpty {
@@ -297,6 +311,19 @@ struct SettingsView: View {
 
     private func setBiometricState(_ enabled: Bool) {
         isBiometricUnlockEnabled = enabled
+    }
+
+    private var objectStorageSettingsMissingRequiredFields: Bool {
+        switch syncDraft.providerType {
+        case .tencentCos, .aliyunOss:
+            syncDraft.objectStorageAccessKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                syncDraft.objectStorageSecretKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                syncDraft.objectStorageBucket.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                (syncDraft.objectStorageEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                    syncDraft.objectStorageCustomUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        case .none, .webdav, .nasWebdav, .s3Presigned:
+            false
+        }
     }
 
     private func setBiometricUnlockEnabled(_ enabled: Bool) {

@@ -1,8 +1,10 @@
 package com.example.passwordmanagernative.store
 
 import com.example.passwordmanagernative.model.CredentialPayload
+import com.example.passwordmanagernative.model.CategoryTemplate
 import com.example.passwordmanagernative.model.CustomField
 import com.example.passwordmanagernative.model.EncryptedPayloadRecord
+import com.example.passwordmanagernative.model.FieldTemplate
 import com.example.passwordmanagernative.model.MasterKeyRecord
 import com.example.passwordmanagernative.model.SecuritySettings
 import com.example.passwordmanagernative.model.ServerPayload
@@ -47,6 +49,7 @@ object VaultJson {
         JSONObject()
             .put("entries", JSONArray(snapshot.entries.map { it.toJson() }))
             .put("categories", JSONArray(snapshot.categories))
+            .put("categoryTemplates", JSONArray(snapshot.categoryTemplates.map { it.toJson() }))
             .put("tags", JSONArray(snapshot.tags))
             .put("security", snapshot.security.toJson())
             .put("syncStatus", snapshot.syncStatus)
@@ -59,6 +62,7 @@ object VaultJson {
         return VaultSnapshot(
             entries = json.optJSONArray("entries").toVaultEntryList(),
             categories = json.optJSONArray("categories").toStringList(),
+            categoryTemplates = json.optJSONArray("categoryTemplates").toCategoryTemplateList(),
             tags = json.optJSONArray("tags").toStringList(),
             security = json.optJSONObject("security")?.toSecuritySettings() ?: SecuritySettings(),
             syncStatus = json.optString("syncStatus", "Not configured"),
@@ -232,6 +236,7 @@ object VaultJson {
         JSONObject()
             .put("username", username)
             .put("password", password)
+            .put("accounts", JSONArray(accounts.map { it.toJson() }))
             .put("token", token)
             .put("appId", appId)
             .put("accessKey", accessKey)
@@ -245,6 +250,7 @@ object VaultJson {
         return CredentialPayload(
             username = json.optString("username"),
             password = json.optString("password"),
+            accounts = json.optJSONArray("accounts").toServiceAccountList(),
             token = json.optString("token"),
             appId = json.optString("appId"),
             accessKey = json.optString("accessKey", json.optString("accessToken")),
@@ -262,6 +268,7 @@ object VaultJson {
             .put("port", port)
             .put("username", username)
             .put("password", password)
+            .put("accounts", JSONArray(accounts.map { it.toJson() }))
             .put("basicConfig", basicConfig)
             .put("operatingSystem", operatingSystem)
             .put("location", location)
@@ -278,6 +285,7 @@ object VaultJson {
             port = json.optString("port"),
             username = json.optString("username"),
             password = json.optString("password"),
+            accounts = json.optJSONArray("accounts").toServiceAccountList(),
             basicConfig = json.optString("basicConfig"),
             operatingSystem = json.optString("operatingSystem"),
             location = json.optString("location"),
@@ -341,6 +349,30 @@ object VaultJson {
             value = optString("value"),
         )
 
+    private fun FieldTemplate.toJson(): JSONObject =
+        JSONObject()
+            .put("id", id)
+            .put("name", name)
+
+    private fun JSONObject.toFieldTemplate(): FieldTemplate =
+        FieldTemplate(
+            id = optString("id").ifBlank { UUID.randomUUID().toString() },
+            name = optString("name"),
+        )
+
+    private fun CategoryTemplate.toJson(): JSONObject =
+        JSONObject()
+            .put("category", category)
+            .put("fields", JSONArray(fields.map { it.toJson() }))
+
+    private fun JSONObject.toCategoryTemplate(): CategoryTemplate =
+        CategoryTemplate(
+            category = optString("category"),
+            fields = optJSONArray("fields").toFieldTemplateList()
+                .filter { it.name.isNotBlank() }
+                .ifEmpty { CategoryTemplate.defaultCategoryFields() },
+        )
+
     private fun SecuritySettings.toJson(): JSONObject =
         JSONObject()
             .put("requireTotp", requireTotp)
@@ -375,6 +407,17 @@ object VaultJson {
     private fun JSONArray?.toCustomFieldList(): List<CustomField> {
         if (this == null) return emptyList()
         return (0 until length()).mapNotNull { index -> optJSONObject(index)?.toCustomField() }
+    }
+
+    private fun JSONArray?.toFieldTemplateList(): List<FieldTemplate> {
+        if (this == null) return emptyList()
+        return (0 until length()).mapNotNull { index -> optJSONObject(index)?.toFieldTemplate() }
+    }
+
+    private fun JSONArray?.toCategoryTemplateList(): List<CategoryTemplate> {
+        if (this == null) return emptyList()
+        return (0 until length()).mapNotNull { index -> optJSONObject(index)?.toCategoryTemplate() }
+            .filter { it.category.isNotBlank() }
     }
 
     private fun decodeFlutterEncryptedExport(
@@ -421,6 +464,7 @@ object VaultJson {
         return VaultSnapshot(
             entries = entries,
             categories = categories,
+            categoryTemplates = categories.map { CategoryTemplate(category = it) },
             tags = tags,
             security = SecuritySettings(),
             syncStatus = "Imported from Flutter export",

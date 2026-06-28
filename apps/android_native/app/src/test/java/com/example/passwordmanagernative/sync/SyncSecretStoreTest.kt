@@ -14,6 +14,8 @@ class SyncSecretStoreTest {
             webdavPassword = "webdav-password",
             presignedDownloadUrl = "https://download.example.com/vault",
             presignedUploadUrl = "https://upload.example.com/vault",
+            objectStorageAccessKeyId = "object-ak",
+            objectStorageSecretAccessKey = "object-sk",
         )
 
         val secrets = settings.syncSecrets
@@ -23,12 +25,18 @@ class SyncSecretStoreTest {
         assertEquals("webdav-password", secrets.webdavPassword)
         assertEquals("https://download.example.com/vault", secrets.presignedDownloadUrl)
         assertEquals("https://upload.example.com/vault", secrets.presignedUploadUrl)
+        assertEquals("object-ak", secrets.objectStorageAccessKeyId)
+        assertEquals("object-sk", secrets.objectStorageSecretAccessKey)
         assertTrue(redacted.webdavPassword.isEmpty())
         assertTrue(redacted.presignedDownloadUrl.isEmpty())
         assertTrue(redacted.presignedUploadUrl.isEmpty())
+        assertTrue(redacted.objectStorageAccessKeyId.isEmpty())
+        assertTrue(redacted.objectStorageSecretAccessKey.isEmpty())
         assertEquals(settings.webdavPassword, restored.webdavPassword)
         assertEquals(settings.presignedDownloadUrl, restored.presignedDownloadUrl)
         assertEquals(settings.presignedUploadUrl, restored.presignedUploadUrl)
+        assertEquals(settings.objectStorageAccessKeyId, restored.objectStorageAccessKeyId)
+        assertEquals(settings.objectStorageSecretAccessKey, restored.objectStorageSecretAccessKey)
     }
 
     @Test
@@ -39,6 +47,8 @@ class SyncSecretStoreTest {
             webdavPassword = "webdav-password",
             presignedDownloadUrl = "https://download.example.com/vault",
             presignedUploadUrl = "https://upload.example.com/vault",
+            objectStorageAccessKeyId = "object-ak",
+            objectStorageSecretAccessKey = "object-sk",
         )
 
         assertEquals(SyncSecretBundle.EMPTY, store.load(deviceId))
@@ -60,6 +70,8 @@ class SyncSecretStoreTest {
             webdavPassword = "webdav-password",
             presignedDownloadUrl = "https://download.example.com/vault",
             presignedUploadUrl = "https://upload.example.com/vault",
+            objectStorageAccessKeyId = "object-ak",
+            objectStorageSecretAccessKey = "object-sk",
         )
 
         store.save(secrets, "device-1")
@@ -70,6 +82,8 @@ class SyncSecretStoreTest {
         assertFalse(raw.contains("webdav-password"))
         assertFalse(raw.contains("https://download.example.com/vault"))
         assertFalse(raw.contains("https://upload.example.com/vault"))
+        assertFalse(raw.contains("object-ak"))
+        assertFalse(raw.contains("object-sk"))
         store.delete("device-1")
         assertEquals(SyncSecretBundle.EMPTY, store.load("device-1"))
     }
@@ -81,6 +95,8 @@ private class ReversingTestCipher : SyncSecretCipher {
             secrets.webdavPassword,
             secrets.presignedDownloadUrl,
             secrets.presignedUploadUrl,
+            secrets.objectStorageAccessKeyId,
+            secrets.objectStorageSecretAccessKey,
         ).joinToString(separator = "\n")
         return JSONObject()
             .put("ciphertext", joined.reversed())
@@ -93,6 +109,8 @@ private class ReversingTestCipher : SyncSecretCipher {
             webdavPassword = parts.getOrElse(0) { "" },
             presignedDownloadUrl = parts.getOrElse(1) { "" },
             presignedUploadUrl = parts.getOrElse(2) { "" },
+            objectStorageAccessKeyId = parts.getOrElse(3) { "" },
+            objectStorageSecretAccessKey = parts.getOrElse(4) { "" },
         )
     }
 }

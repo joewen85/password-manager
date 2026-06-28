@@ -147,6 +147,52 @@ struct RemoteSyncClientTests {
         #expect(download == RemoteSyncResult(payload: nil, statusCode: 400))
         #expect(upload == RemoteSyncResult(payload: nil, statusCode: 400))
     }
+
+    @Test("Object storage client builds Aliyun OSS signed requests")
+    func objectStorageClientBuildsAliyunOSSSignedRequests() async {
+        let transport = FakeRemoteSyncTransport(
+            responses: [
+                .success(httpResult(
+                    url: URL(string: "https://vault-bucket.oss-cn-hangzhou.aliyuncs.com/folder/vault.json")!,
+                    statusCode: 200,
+                    body: #"{"revision":1}"#
+                )),
+                .success(httpResult(
+                    url: URL(string: "https://vault-bucket.oss-cn-hangzhou.aliyuncs.com/folder/vault.json")!,
+                    statusCode: 201
+                ))
+            ]
+        )
+        let client = ObjectStorageSyncClient(
+            configuration: ObjectStorageSyncClientConfiguration(
+                provider: .aliyunOss,
+                accessKey: "oss-ak",
+                secretKey: "oss-sk",
+                bucket: "vault-bucket",
+                endpoint: "oss-cn-hangzhou.aliyuncs.com",
+                appId: "",
+                customUrl: "",
+                objectKey: "folder/vault.json"
+            ),
+            transport: transport,
+            now: { Date(timeIntervalSince1970: 1_782_604_800) }
+        )
+
+        let download = await client.download()
+        let upload = await client.upload(#"{"revision":2}"#)
+
+        #expect(download == RemoteSyncResult(payload: #"{"revision":1}"#, statusCode: 200))
+        #expect(upload == RemoteSyncResult(payload: nil, statusCode: 201))
+        #expect(transport.requests.count == 2)
+        #expect(transport.requests[0].httpMethod == "GET")
+        #expect(transport.requests[0].url?.absoluteString == "https://vault-bucket.oss-cn-hangzhou.aliyuncs.com/folder/vault.json")
+        #expect(transport.requests[0].value(forHTTPHeaderField: "x-oss-date") == "20260628T000000Z")
+        #expect(transport.requests[0].value(forHTTPHeaderField: "x-oss-content-sha256") != nil)
+        #expect(transport.requests[0].value(forHTTPHeaderField: "Authorization")?.hasPrefix("OSS4-HMAC-SHA256 Credential=oss-ak/20260628/cn-hangzhou/oss/aliyun_v4_request") == true)
+        #expect(transport.requests[1].httpMethod == "PUT")
+        #expect(transport.requests[1].value(forHTTPHeaderField: "Content-Type") == "application/json")
+        #expect(transport.requests[1].httpBody == Data(#"{"revision":2}"#.utf8))
+    }
 }
 
 private func httpResult(

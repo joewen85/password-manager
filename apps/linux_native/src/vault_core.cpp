@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <iomanip>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -10,6 +11,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <vector>
 
 namespace pm {
 namespace {
@@ -231,6 +233,12 @@ std::string trimLeadingSlash(std::string value) {
     return value;
 }
 
+std::string normalizeEndpointUrl(const std::string& value) {
+    const auto trimmed = trimCopy(value);
+    if (trimmed.rfind("http://", 0) == 0 || trimmed.rfind("https://", 0) == 0) return trimmed;
+    return "https://" + trimmed;
+}
+
 std::string joinUrlPath(const std::string& base, const std::string& path) {
     const auto trimmedBase = trimTrailingSlash(trimCopy(base));
     const auto trimmedPath = trimLeadingSlash(trimCopy(path));
@@ -258,9 +266,287 @@ std::string buildObjectSyncBaseUrl(const ObjectSyncConfig& config) {
     if (endpoint.empty()) throw std::runtime_error("Object sync endpoint or customUrl is required.");
 
     if (config.provider == ObjectSyncProvider::TencentCos || config.provider == ObjectSyncProvider::AliyunOss) {
-        return joinUrlPath(endpoint, config.bucket);
+        auto bucket = trimCopy(config.bucket);
+        const auto appId = trimCopy(config.appId);
+        const auto hasAppIdSuffix = bucket.size() >= appId.size() + 1 &&
+            bucket.compare(bucket.size() - appId.size() - 1, appId.size() + 1, "-" + appId) == 0;
+        if (config.provider == ObjectSyncProvider::TencentCos && !appId.empty() && !hasAppIdSuffix) {
+            bucket += "-" + appId;
+        }
+        auto normalizedEndpoint = trimTrailingSlash(normalizeEndpointUrl(endpoint));
+        const auto schemeEnd = normalizedEndpoint.find("://");
+        const auto hostStart = schemeEnd == std::string::npos ? 0 : schemeEnd + 3;
+        if (normalizedEndpoint.compare(hostStart, bucket.size() + 1, bucket + ".") == 0) {
+            return normalizedEndpoint;
+        }
+        return normalizedEndpoint.substr(0, hostStart) + bucket + "." + normalizedEndpoint.substr(hostStart);
     }
     return trimTrailingSlash(endpoint);
+}
+
+std::string upperCopy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::toupper(ch));
+    });
+    return value;
+}
+
+std::string hexEncode(const unsigned char* bytes, unsigned int length) {
+    std::ostringstream out;
+    for (unsigned int index = 0; index < length; ++index) {
+        out << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(bytes[index]);
+    }
+    return out.str();
+}
+
+std::string sha1Hex(const std::string& value) {
+    unsigned char digest[SHA_DIGEST_LENGTH]{};
+    SHA1(reinterpret_cast<const unsigned char*>(value.data()), value.size(), digest);
+    return hexEncode(digest, SHA_DIGEST_LENGTH);
+}
+
+std::string sha256Hex(const std::string& value) {
+    unsigned char digest[SHA256_DIGEST_LENGTH]{};
+    SHA256(reinterpret_cast<const unsigned char*>(value.data()), value.size(), digest);
+    return hexEncode(digest, SHA256_DIGEST_LENGTH);
+}
+
+std::vector<std::uint8_t> hmacBytes(const EVP_MD* digest, const std::vector<std::uint8_t>& key, const std::string& value) {
+    unsigned int length = 0;
+    unsigned char output[EVP_MAX_MD_SIZE]{};
+    HMAC(
+        digest,
+        key.data(),
+        static_cast<int>(key.size()),
+        reinterpret_cast<const unsigned char*>(value.data()),
+        value.size(),
+        output,
+        &length
+    );
+    return {output, output + length};
+}
+
+std::vector<std::uint8_t> hmacSha1Bytes(const std::vector<std::uint8_t>& key, const std::string& value) {
+    return hmacBytes(EVP_sha1(), key, value);
+}
+
+std::vector<std::uint8_t> hmacSha256Bytes(const std::vector<std::uint8_t>& key, const std::string& value) {
+    return hmacBytes(EVP_sha256(), key, value);
+}
+
+std::string hmacSha1Hex(const std::string& key, const std::string& value) {
+    const auto bytes = hmacSha1Bytes({key.begin(), key.end()}, value);
+    return hexEncode(bytes.data(), static_cast<unsigned int>(bytes.size()));
+}
+
+std::string hmacSha256Hex(const std::vector<std::uint8_t>& key, const std::string& value) {
+    const auto bytes = hmacSha256Bytes(key, value);
+    return hexEncode(bytes.data(), static_cast<unsigned int>(bytes.size()));
+}
+
+std::string percentEncode(const std::string& value) {
+    std::ostringstream out;
+    out << std::uppercase << std::hex;
+    for (unsigned char ch : value) {
+        if (std::isalnum(ch) || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+            out << static_cast<char>(ch);
+        } else {
+            out << '%' << std::setw(2) << std::setfill('0') << static_cast<int>(ch);
+        }
+    }
+    return out.str();
+}
+
+struct UrlParts {
+    std::string scheme;
+    std::string authority;
+    std::string host;
+    std::string path;
+    std::string query;
+};
+
+UrlParts parseUrl(const std::string& url) {
+    const auto schemeEnd = url.find("://");
+    if (schemeEnd == std::string::npos) throw std::runtime_error("Object sync URL must include a scheme.");
+    const auto authorityStart = schemeEnd + 3;
+    auto pathStart = url.find('/', authorityStart);
+    auto queryStart = url.find('?', authorityStart);
+    const auto authorityEnd = std::min(
+        pathStart == std::string::npos ? url.size() : pathStart,
+        queryStart == std::string::npos ? url.size() : queryStart
+    );
+    UrlParts parts;
+    parts.scheme = url.substr(0, schemeEnd);
+    parts.authority = url.substr(authorityStart, authorityEnd - authorityStart);
+    parts.host = lowerCopy(parts.authority.substr(0, parts.authority.find(':')));
+    if (pathStart != std::string::npos && (queryStart == std::string::npos || pathStart < queryStart)) {
+        parts.path = url.substr(pathStart, (queryStart == std::string::npos ? url.size() : queryStart) - pathStart);
+    } else {
+        parts.path = "/";
+    }
+    if (queryStart != std::string::npos) {
+        parts.query = url.substr(queryStart + 1);
+    }
+    if (parts.authority.empty() || parts.host.empty()) throw std::runtime_error("Object sync URL host is required.");
+    if (parts.path.empty()) parts.path = "/";
+    return parts;
+}
+
+std::map<std::string, std::string> parseQuery(const std::string& query) {
+    std::map<std::string, std::string> result;
+    std::size_t start = 0;
+    while (start < query.size()) {
+        const auto end = query.find('&', start);
+        const auto part = query.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        if (!part.empty()) {
+            const auto split = part.find('=');
+            const auto name = lowerCopy(split == std::string::npos ? part : part.substr(0, split));
+            const auto value = split == std::string::npos ? "" : part.substr(split + 1);
+            result[name] = value;
+        }
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return result;
+}
+
+std::string canonicalQuery(const std::string& query) {
+    std::ostringstream out;
+    bool first = true;
+    for (const auto& [name, value] : parseQuery(query)) {
+        if (!first) out << '&';
+        first = false;
+        out << percentEncode(name) << '=' << percentEncode(value);
+    }
+    return out.str();
+}
+
+std::string isoBasicTimestamp(std::time_t now) {
+    std::tm tm{};
+    gmtime_r(&now, &tm);
+    std::ostringstream out;
+    out << std::put_time(&tm, "%Y%m%dT%H%M%SZ");
+    return out.str();
+}
+
+std::string aliyunRegionFromUrl(const ObjectSyncConfig& config, const UrlParts& url) {
+    for (const auto& candidate : {config.endpoint, config.customUrl, url.host}) {
+        const auto lower = lowerCopy(candidate);
+        auto marker = lower.find("oss-");
+        if (marker == std::string::npos) marker = lower.find("oss.");
+        if (marker == std::string::npos) continue;
+        const auto regionStart = marker + 4;
+        const auto regionEnd = lower.find(".aliyuncs.com", regionStart);
+        if (regionEnd != std::string::npos && regionEnd > regionStart) {
+            return lower.substr(regionStart, regionEnd - regionStart);
+        }
+    }
+    throw std::runtime_error("Alibaba Cloud OSS endpoint must include a region for OSS V4 signing.");
+}
+
+std::vector<std::uint8_t> aliyunSigningKey(const std::string& secret, const std::string& date, const std::string& region) {
+    const std::string prefixedSecret = "aliyun_v4" + secret;
+    auto dateKey = hmacSha256Bytes({prefixedSecret.begin(), prefixedSecret.end()}, date);
+    const auto regionKey = hmacSha256Bytes(dateKey, region);
+    const auto serviceKey = hmacSha256Bytes(regionKey, "oss");
+    return hmacSha256Bytes(serviceKey, "aliyun_v4_request");
+}
+
+void applyTencentCosHeaders(ObjectSyncRequest& request, const ObjectSyncConfig& config, std::time_t now, const std::string& contentType) {
+    const auto url = parseUrl(request.objectUrl);
+    const auto signTime = std::to_string(now) + ";" + std::to_string(now + 900);
+    std::map<std::string, std::string> signedHeaders{{"host", lowerCopy(url.authority)}};
+    if (!contentType.empty()) signedHeaders["content-type"] = contentType;
+
+    std::ostringstream headerString;
+    bool firstHeader = true;
+    for (const auto& [name, value] : signedHeaders) {
+        if (!firstHeader) headerString << '&';
+        firstHeader = false;
+        headerString << percentEncode(name) << '=' << percentEncode(trimCopy(value));
+    }
+
+    std::ostringstream headerList;
+    bool firstName = true;
+    for (const auto& [name, _] : signedHeaders) {
+        if (!firstName) headerList << ';';
+        firstName = false;
+        headerList << name;
+    }
+
+    std::ostringstream urlParamString;
+    bool firstParam = true;
+    for (const auto& [name, value] : parseQuery(url.query)) {
+        if (!firstParam) urlParamString << '&';
+        firstParam = false;
+        urlParamString << percentEncode(name) << '=' << percentEncode(value);
+    }
+
+    std::ostringstream urlParamList;
+    firstParam = true;
+    for (const auto& [name, _] : parseQuery(url.query)) {
+        if (!firstParam) urlParamList << ';';
+        firstParam = false;
+        urlParamList << name;
+    }
+
+    const auto httpString = lowerCopy(request.method) + "\n" + url.path + "\n" + urlParamString.str() + "\n" + headerString.str() + "\n";
+    const auto stringToSign = "sha1\n" + signTime + "\n" + sha1Hex(httpString) + "\n";
+    const auto signKey = hmacSha1Hex(config.secretAccessKey, signTime);
+    const auto signature = hmacSha1Hex(signKey, stringToSign);
+    request.headers["Host"] = lowerCopy(url.authority);
+    if (!contentType.empty()) request.headers["Content-Type"] = contentType;
+    request.headers["Authorization"] =
+        "q-sign-algorithm=sha1&q-ak=" + percentEncode(config.accessKeyId) +
+        "&q-sign-time=" + signTime +
+        "&q-key-time=" + signTime +
+        "&q-header-list=" + headerList.str() +
+        "&q-url-param-list=" + urlParamList.str() +
+        "&q-signature=" + signature;
+}
+
+void applyAliyunOssHeaders(ObjectSyncRequest& request, const ObjectSyncConfig& config, std::time_t now, const std::string& contentType) {
+    const auto url = parseUrl(request.objectUrl);
+    const auto timestamp = isoBasicTimestamp(now);
+    const auto date = timestamp.substr(0, 8);
+    const auto region = aliyunRegionFromUrl(config, url);
+    const auto payloadHash = sha256Hex(request.body);
+    std::map<std::string, std::string> signedHeaders{
+        {"host", lowerCopy(url.authority)},
+        {"x-oss-content-sha256", payloadHash},
+        {"x-oss-date", timestamp},
+    };
+    if (!contentType.empty()) signedHeaders["content-type"] = contentType;
+
+    std::ostringstream canonicalHeaders;
+    std::ostringstream additionalHeaders;
+    bool first = true;
+    for (const auto& [name, value] : signedHeaders) {
+        canonicalHeaders << name << ':' << trimCopy(value) << "\n";
+        if (!first) additionalHeaders << ';';
+        first = false;
+        additionalHeaders << name;
+    }
+
+    const auto canonicalRequest = upperCopy(request.method) + "\n" +
+        url.path + "\n" +
+        canonicalQuery(url.query) + "\n" +
+        canonicalHeaders.str() + "\n" +
+        additionalHeaders.str() + "\n" +
+        payloadHash;
+    const auto scope = date + "/" + region + "/oss/aliyun_v4_request";
+    const auto stringToSign = "OSS4-HMAC-SHA256\n" + timestamp + "\n" + scope + "\n" + sha256Hex(canonicalRequest);
+    const auto signature = hmacSha256Hex(aliyunSigningKey(config.secretAccessKey, date, region), stringToSign);
+
+    request.headers["Host"] = lowerCopy(url.authority);
+    if (!contentType.empty()) request.headers["Content-Type"] = contentType;
+    request.headers["x-oss-content-sha256"] = payloadHash;
+    request.headers["x-oss-date"] = timestamp;
+    request.headers["Authorization"] =
+        "OSS4-HMAC-SHA256 Credential=" + percentEncode(config.accessKeyId) +
+        "/" + scope +
+        ",AdditionalHeaders=" + additionalHeaders.str() +
+        ",Signature=" + signature;
 }
 
 } // namespace
@@ -525,18 +811,47 @@ SyncMergeResult mergeEntries(const std::vector<VaultEntry>& local, const std::ve
 ObjectSyncRequest buildObjectSyncRequest(const ObjectSyncConfig& config) {
     const auto objectKey = defaultObjectKey(config.objectKey);
     if (config.provider == ObjectSyncProvider::None) {
-        return ObjectSyncRequest{config.provider, objectKey, "", "", false};
+        ObjectSyncRequest request;
+        request.provider = config.provider;
+        request.objectKey = objectKey;
+        return request;
     }
 
     requireObjectStoreCredentials(config);
     const auto baseUrl = buildObjectSyncBaseUrl(config);
-    return ObjectSyncRequest{
-        config.provider,
-        objectKey,
-        baseUrl,
-        joinUrlPath(baseUrl, objectKey),
-        requiresObjectStoreCredentials(config.provider),
-    };
+    ObjectSyncRequest request;
+    request.provider = config.provider;
+    request.objectKey = objectKey;
+    request.baseUrl = baseUrl;
+    request.objectUrl = joinUrlPath(baseUrl, objectKey);
+    request.requiresCredentials = requiresObjectStoreCredentials(config.provider);
+    return request;
+}
+
+ObjectSyncRequest buildObjectSyncSignedRequest(
+    const ObjectSyncConfig& config,
+    const std::string& method,
+    const std::string& body,
+    std::time_t now
+) {
+    auto request = buildObjectSyncRequest(config);
+    request.method = upperCopy(trimCopy(method).empty() ? "GET" : trimCopy(method));
+    request.body = body;
+    const std::string contentType = request.method == "PUT" ? "application/json" : "";
+    switch (config.provider) {
+        case ObjectSyncProvider::TencentCos:
+            applyTencentCosHeaders(request, config, now, contentType);
+            break;
+        case ObjectSyncProvider::AliyunOss:
+            applyAliyunOssHeaders(request, config, now, contentType);
+            break;
+        case ObjectSyncProvider::WebDav:
+        case ObjectSyncProvider::S3Presigned:
+        case ObjectSyncProvider::None:
+            if (!contentType.empty()) request.headers["Content-Type"] = contentType;
+            break;
+    }
+    return request;
 }
 
 } // namespace pm

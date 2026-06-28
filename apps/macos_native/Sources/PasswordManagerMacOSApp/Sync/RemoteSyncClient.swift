@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 struct RemoteSyncResult: Equatable, Sendable {
@@ -282,10 +283,341 @@ struct PresignedUrlSyncClient: RemoteSyncClient {
     }
 }
 
+enum ObjectStorageProvider: Sendable {
+    case tencentCos
+    case aliyunOss
+}
+
+struct ObjectStorageSyncClientConfiguration: Equatable, Sendable {
+    var provider: ObjectStorageProvider
+    var accessKey: String
+    var secretKey: String
+    var bucket: String
+    var endpoint: String
+    var appId: String
+    var customUrl: String
+    var objectKey: String
+
+    static func tencentCos(settings: SyncSettings) -> ObjectStorageSyncClientConfiguration? {
+        make(provider: .tencentCos, settings: settings)
+    }
+
+    static func aliyunOss(settings: SyncSettings) -> ObjectStorageSyncClientConfiguration? {
+        make(provider: .aliyunOss, settings: settings)
+    }
+
+    private static func make(
+        provider: ObjectStorageProvider,
+        settings: SyncSettings
+    ) -> ObjectStorageSyncClientConfiguration? {
+        let accessKey = settings.objectStorageAccessKey.trimmed
+        let secretKey = settings.objectStorageSecretKey.trimmed
+        let bucket = settings.objectStorageBucket.trimmed
+        let endpoint = settings.objectStorageEndpoint.trimmed
+        let customUrl = settings.objectStorageCustomUrl.trimmed
+        guard !accessKey.isEmpty,
+              !secretKey.isEmpty,
+              !bucket.isEmpty,
+              (!endpoint.isEmpty || !customUrl.isEmpty) else {
+            return nil
+        }
+        return ObjectStorageSyncClientConfiguration(
+            provider: provider,
+            accessKey: accessKey,
+            secretKey: secretKey,
+            bucket: bucket,
+            endpoint: endpoint,
+            appId: settings.objectStorageAppId.trimmed,
+            customUrl: customUrl,
+            objectKey: settings.objectStorageObjectKey.trimmed.isEmpty ? "vault.sync.json" : settings.objectStorageObjectKey.trimmed
+        )
+    }
+}
+
+struct ObjectStorageSyncClient: RemoteSyncClient {
+    var configuration: ObjectStorageSyncClientConfiguration
+
+    private let transport: RemoteSyncHTTPTransport
+    private let now: @Sendable () -> Date
+
+    init(
+        configuration: ObjectStorageSyncClientConfiguration,
+        transport: RemoteSyncHTTPTransport = URLSessionRemoteSyncTransport(),
+        now: @escaping @Sendable () -> Date = Date.init
+    ) {
+        self.configuration = configuration
+        self.transport = transport
+        self.now = now
+    }
+
+    func metadata() async -> RemoteSyncMetadata {
+        await perform(method: "HEAD", payload: nil).metadata
+    }
+
+    func download() async -> RemoteSyncResult {
+        await perform(method: "GET", payload: nil).result
+    }
+
+    func upload(_ payload: String) async -> RemoteSyncResult {
+        await perform(method: "PUT", payload: payload).result
+    }
+
+    private func perform(method: String, payload: String?) async -> (result: RemoteSyncResult, metadata: RemoteSyncMetadata) {
+        do {
+            let url = try buildURL()
+            var request = URLRequest(url: url)
+            request.httpMethod = method
+            if let payload {
+                request.httpBody = Data(payload.utf8)
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            }
+            try applyAuthorization(to: &request, method: method, url: url)
+            let (data, response) = try await transport.perform(request)
+            return (
+                Self.result(payloadData: data, statusCode: response.statusCode),
+                Self.metadata(from: response)
+            )
+        } catch let error as URLError where error.code == .timedOut {
+            return (
+                RemoteSyncResult(payload: nil, statusCode: 408),
+                RemoteSyncMetadata(statusCode: 408)
+            )
+        } catch {
+            return (
+                RemoteSyncResult(payload: nil, statusCode: 503),
+                RemoteSyncMetadata(statusCode: 503)
+            )
+        }
+    }
+
+    private func buildURL() throws -> URL {
+        let base: URL?
+        if !configuration.customUrl.isEmpty {
+            base = URL(string: configuration.customUrl)
+        } else {
+            let endpoint = configuration.endpoint
+            guard !endpoint.isEmpty else {
+                throw RemoteSyncClientError.invalidURL
+            }
+            let schemeEndpoint = endpoint.hasPrefix("http://") || endpoint.hasPrefix("https://")
+                ? endpoint
+                : "https://\(endpoint)"
+            guard let endpointURL = URL(string: schemeEndpoint),
+                  var components = URLComponents(url: endpointURL, resolvingAgainstBaseURL: false) else {
+                throw RemoteSyncClientError.invalidURL
+            }
+            let bucket = resolvedBucketName()
+            if let host = components.host, !host.hasPrefix("\(bucket).") {
+                components.host = "\(bucket).\(host)"
+            }
+            base = components.url
+        }
+        guard let base,
+              var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+            throw RemoteSyncClientError.invalidURL
+        }
+        let basePath = components.path.hasSuffix("/")
+            ? String(components.path.dropLast())
+            : components.path
+        components.path = "\(basePath)/\(configuration.objectKey.pathEncodedSegments)"
+        guard let url = components.url else {
+            throw RemoteSyncClientError.invalidURL
+        }
+        return url
+    }
+
+    private func resolvedBucketName() -> String {
+        guard configuration.provider == .tencentCos,
+              !configuration.appId.isEmpty,
+              !configuration.bucket.hasSuffix("-\(configuration.appId)") else {
+            return configuration.bucket
+        }
+        return "\(configuration.bucket)-\(configuration.appId)"
+    }
+
+    private func applyAuthorization(to request: inout URLRequest, method: String, url: URL) throws {
+        switch configuration.provider {
+        case .tencentCos:
+            applyTencentCosAuthorization(to: &request, method: method, url: url)
+        case .aliyunOss:
+            applyAliyunOssAuthorization(to: &request, method: method, url: url)
+        }
+    }
+
+    private func applyTencentCosAuthorization(to request: inout URLRequest, method: String, url: URL) {
+        let timestamp = Int(now().timeIntervalSince1970)
+        let keyTime = "\(timestamp);\(timestamp + 600)"
+        let encodedPath = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath ?? url.path
+        let path = encodedPath.isEmpty ? "/" : encodedPath
+        let host = url.host?.lowercased() ?? ""
+        let httpString = [
+            method.lowercased(),
+            path,
+            url.query?.lowercased() ?? "",
+            "host=\(host)\n",
+            ""
+        ].joined(separator: "\n")
+        let stringToSign = [
+            "sha1",
+            keyTime,
+            httpString.sha1Hex,
+            ""
+        ].joined(separator: "\n")
+        let signKey = hmacSHA1Hex(key: configuration.secretKey, message: keyTime)
+        let signature = hmacSHA1Hex(key: signKey, message: stringToSign)
+        let authorization = [
+            "q-sign-algorithm=sha1",
+            "q-ak=\(configuration.accessKey)",
+            "q-sign-time=\(keyTime)",
+            "q-key-time=\(keyTime)",
+            "q-header-list=host",
+            "q-url-param-list=",
+            "q-signature=\(signature)"
+        ].joined(separator: "&")
+        request.setValue(host, forHTTPHeaderField: "Host")
+        request.setValue(authorization, forHTTPHeaderField: "Authorization")
+    }
+
+    private func applyAliyunOssAuthorization(to request: inout URLRequest, method: String, url: URL) {
+        let payload = request.httpBody.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        let payloadHash = payload.sha256Hex
+        let timestamp = Self.ossV4DateFormatter.string(from: now())
+        request.setValue(timestamp, forHTTPHeaderField: "x-oss-date")
+        request.setValue(payloadHash, forHTTPHeaderField: "x-oss-content-sha256")
+        let host = url.host?.lowercased() ?? ""
+        let headers = [
+            "host": host,
+            "x-oss-content-sha256": payloadHash,
+            "x-oss-date": timestamp
+        ].sorted { $0.key < $1.key }
+        let canonicalHeaders = headers.map { "\($0.key):\($0.value)\n" }.joined()
+        let additionalHeaders = headers.map(\.key).joined(separator: ";")
+        let canonicalRequest = [
+            method.uppercased(),
+            url.path.isEmpty ? "/" : url.path,
+            url.canonicalQuery,
+            canonicalHeaders,
+            additionalHeaders,
+            payloadHash
+        ].joined(separator: "\n")
+        let region = Self.region(from: configuration.endpoint, customUrl: configuration.customUrl, host: host)
+        let date = String(timestamp.prefix(8))
+        let scope = "\(date)/\(region)/oss/aliyun_v4_request"
+        let stringToSign = [
+            "OSS4-HMAC-SHA256",
+            timestamp,
+            scope,
+            canonicalRequest.sha256Hex
+        ].joined(separator: "\n")
+        let signature = hmacSHA256Hex(key: Self.signingKey(secret: configuration.secretKey, date: date, region: region), message: stringToSign)
+        request.setValue("OSS4-HMAC-SHA256 Credential=\(configuration.accessKey)/\(scope),AdditionalHeaders=\(additionalHeaders),Signature=\(signature)", forHTTPHeaderField: "Authorization")
+    }
+
+    private static func result(payloadData: Data, statusCode: Int) -> RemoteSyncResult {
+        if statusCode == 404 || statusCode == 204 {
+            return RemoteSyncResult(payload: nil, statusCode: 404)
+        }
+        let payload = payloadData.isEmpty ? nil : String(data: payloadData, encoding: .utf8)
+        return RemoteSyncResult(payload: payload, statusCode: statusCode)
+    }
+
+    private static func metadata(from response: HTTPURLResponse) -> RemoteSyncMetadata {
+        if response.statusCode == 404 || response.statusCode == 204 {
+            return RemoteSyncMetadata(statusCode: 404)
+        }
+        return RemoteSyncMetadata(
+            statusCode: response.statusCode,
+            eTag: response.headerValue("ETag"),
+            lastModified: response.headerValue("Last-Modified"),
+            contentLength: response.headerValue("Content-Length").flatMap(Int64.init)
+        )
+    }
+
+    private static func region(from endpoint: String, customUrl: String, host: String) -> String {
+        for candidate in [endpoint, customUrl, host] {
+            if let range = candidate.range(of: #"oss[-.]([a-z0-9-]+)\.aliyuncs\.com"#, options: [.regularExpression, .caseInsensitive]) {
+                let matched = String(candidate[range])
+                let prefix = matched.hasPrefix("oss-") ? "oss-" : "oss."
+                return matched
+                    .dropFirst(prefix.count)
+                    .replacingOccurrences(of: ".aliyuncs.com", with: "")
+            }
+        }
+        return "cn-hangzhou"
+    }
+
+    private static func signingKey(secret: String, date: String, region: String) -> Data {
+        let dateKey = hmacSHA256(key: Data("aliyun_v4\(secret)".utf8), message: date)
+        let regionKey = hmacSHA256(key: dateKey, message: region)
+        let serviceKey = hmacSHA256(key: regionKey, message: "oss")
+        return hmacSHA256(key: serviceKey, message: "aliyun_v4_request")
+    }
+
+    private static let ossV4DateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
+        return formatter
+    }()
+}
+
 private extension String {
     var nonEmpty: String? {
         isEmpty ? nil : self
     }
+
+    var trimmed: String {
+        trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var pathEncodedSegments: String {
+        split(separator: "/", omittingEmptySubsequences: false)
+            .map { segment in
+                String(segment).addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? String(segment)
+            }
+            .joined(separator: "/")
+    }
+
+    var sha1Hex: String {
+        Insecure.SHA1.hash(data: Data(utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    var sha256Hex: String {
+        SHA256.hash(data: Data(utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+private extension URL {
+    var canonicalQuery: String {
+        guard let query else { return "" }
+        return query
+            .split(separator: "&")
+            .map { part -> (String, String) in
+                let pieces = part.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                return (String(pieces.first ?? ""), pieces.count > 1 ? String(pieces[1]) : "")
+            }
+            .sorted { $0.0 < $1.0 }
+            .map { "\($0.0)=\($0.1)" }
+            .joined(separator: "&")
+    }
+}
+
+private func hmacSHA1Hex(key: String, message: String) -> String {
+    let key = SymmetricKey(data: Data(key.utf8))
+    return HMAC<Insecure.SHA1>.authenticationCode(for: Data(message.utf8), using: key)
+        .map { String(format: "%02x", $0) }
+        .joined()
+}
+
+private func hmacSHA256(key: Data, message: String) -> Data {
+    Data(HMAC<SHA256>.authenticationCode(for: Data(message.utf8), using: SymmetricKey(data: key)))
+}
+
+private func hmacSHA256Hex(key: Data, message: String) -> String {
+    hmacSHA256(key: key, message: message)
+        .map { String(format: "%02x", $0) }
+        .joined()
 }
 
 private extension HTTPURLResponse {

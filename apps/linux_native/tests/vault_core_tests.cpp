@@ -113,9 +113,17 @@ int main() {
     cosConfig.appId = "1250000000";
     cosConfig.objectKey = "prod/vault.json";
     auto cosRequest = pm::buildObjectSyncRequest(cosConfig);
-    assert(cosRequest.baseUrl == "https://cos.ap-shanghai.myqcloud.com/vault-1250000000");
-    assert(cosRequest.objectUrl == "https://cos.ap-shanghai.myqcloud.com/vault-1250000000/prod/vault.json");
+    assert(cosRequest.baseUrl == "https://vault-1250000000.cos.ap-shanghai.myqcloud.com");
+    assert(cosRequest.objectUrl == "https://vault-1250000000.cos.ap-shanghai.myqcloud.com/prod/vault.json");
     assert(cosRequest.requiresCredentials);
+    cosConfig.bucket = "vault";
+    cosConfig.endpoint = "cos.ap-shanghai.myqcloud.com";
+    auto cosSigned = pm::buildObjectSyncSignedRequest(cosConfig, "GET", "", 1782604800);
+    assert(cosSigned.objectUrl == "https://vault-1250000000.cos.ap-shanghai.myqcloud.com/prod/vault.json");
+    assert(cosSigned.method == "GET");
+    assert(cosSigned.headers.at("Host") == "vault-1250000000.cos.ap-shanghai.myqcloud.com");
+    assert(cosSigned.headers.at("Authorization").find("q-sign-algorithm=sha1") != std::string::npos);
+    assert(cosSigned.headers.at("Authorization").find("q-ak=ak") != std::string::npos);
 
     pm::ObjectSyncConfig ossConfig;
     ossConfig.provider = pm::ObjectSyncProvider::AliyunOss;
@@ -127,6 +135,14 @@ int main() {
     assert(ossRequest.baseUrl == "https://vault.oss-cn-hangzhou.aliyuncs.com/base");
     assert(ossRequest.objectUrl == "https://vault.oss-cn-hangzhou.aliyuncs.com/base/vault.sync.json");
     assert(ossRequest.requiresCredentials);
+    auto ossSigned = pm::buildObjectSyncSignedRequest(ossConfig, "PUT", R"({"revision":2})", 1782604800);
+    assert(ossSigned.method == "PUT");
+    assert(ossSigned.body == R"({"revision":2})");
+    assert(ossSigned.headers.at("Host") == "vault.oss-cn-hangzhou.aliyuncs.com");
+    assert(ossSigned.headers.at("Content-Type") == "application/json");
+    assert(ossSigned.headers.at("x-oss-date") == "20260628T000000Z");
+    assert(!ossSigned.headers.at("x-oss-content-sha256").empty());
+    assert(ossSigned.headers.at("Authorization").find("OSS4-HMAC-SHA256 Credential=ak/20260628/cn-hangzhou/oss/aliyun_v4_request") == 0);
 
     bool missingCredentialsRejected = false;
     try {

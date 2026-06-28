@@ -12,6 +12,7 @@ enum class VaultEntryType(val title: String) {
 data class CredentialPayload(
     val username: String = "",
     val password: String = "",
+    val accounts: List<ServiceAccount> = emptyList(),
     val token: String = "",
     val appId: String = "",
     val accessKey: String = "",
@@ -27,6 +28,7 @@ data class ServerPayload(
     val port: String = "",
     val username: String = "",
     val password: String = "",
+    val accounts: List<ServiceAccount> = emptyList(),
     val basicConfig: String = "",
     val operatingSystem: String = "",
     val location: String = "",
@@ -44,6 +46,7 @@ data class SecuritySettings(
 data class VaultSnapshot(
     val entries: List<VaultEntry> = emptyList(),
     val categories: List<String> = emptyList(),
+    val categoryTemplates: List<CategoryTemplate> = emptyList(),
     val tags: List<String> = emptyList(),
     val security: SecuritySettings = SecuritySettings(),
     val syncStatus: String = "Not configured",
@@ -74,6 +77,45 @@ data class CustomField(
     val name: String = "",
     val value: String = "",
 )
+
+data class FieldTemplate(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+)
+
+data class CategoryTemplate(
+    val category: String,
+    val fields: List<FieldTemplate> = defaultCategoryFields(),
+) {
+    companion object {
+        fun defaultCategoryFields(): List<FieldTemplate> =
+            listOf(
+                FieldTemplate(stableFieldId("名称"), "名称"),
+                FieldTemplate(stableFieldId("备注"), "备注"),
+            )
+
+        fun fieldsForPreset(preset: CategoryTypePreset): List<FieldTemplate> =
+            (defaultCategoryFields() + preset.fields.map { fieldName ->
+                FieldTemplate(stableFieldId(fieldName), fieldName)
+            }).distinctBy { it.name.trim().lowercase() }
+
+        private fun stableFieldId(name: String): String =
+            "template-${name.trim().lowercase().replace(Regex("""[^a-z0-9\u4e00-\u9fa5]+"""), "-")}"
+                .trim('-')
+                .ifBlank { UUID.nameUUIDFromBytes(name.toByteArray()).toString() }
+    }
+}
+
+enum class CategoryTypePreset(val title: String, val fields: List<String>) {
+    SERVER("服务器", listOf("IP地址", "端口", "关联账号")),
+    SERVICE("服务", listOf("服务入口", "关联账号", "关联服务器")),
+    ACCOUNT("账号", listOf("入口"));
+
+    companion object {
+        fun fromTitle(value: String): CategoryTypePreset? =
+            entries.firstOrNull { it.title == value.trim() }
+    }
+}
 
 sealed interface VaultPayload {
     val category: String

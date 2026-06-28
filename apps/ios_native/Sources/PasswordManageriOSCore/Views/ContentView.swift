@@ -49,7 +49,7 @@ struct ContentView: View {
                     entry: editingEntry,
                     categories: store.categories,
                     tags: store.tags,
-                    onCreateCategory: store.addCategory,
+                    onCreateCategory: store.addCategory(_:preset:),
                     onCreateTag: store.addTag,
                     onSave: { draft in
                         store.upsert(draft, editing: editingEntry)

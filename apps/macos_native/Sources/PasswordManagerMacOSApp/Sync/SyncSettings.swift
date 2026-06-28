@@ -5,6 +5,8 @@ enum SyncProviderType: String, CaseIterable, Codable, Sendable {
     case webdav
     case s3Presigned
     case nasWebdav
+    case tencentCos
+    case aliyunOss
 
     var title: String {
         switch self {
@@ -16,6 +18,10 @@ enum SyncProviderType: String, CaseIterable, Codable, Sendable {
             "S3 Presigned URL"
         case .nasWebdav:
             "NAS WebDAV"
+        case .tencentCos:
+            "Tencent COS"
+        case .aliyunOss:
+            "Aliyun OSS"
         }
     }
 }
@@ -76,6 +82,13 @@ struct SyncSettings: Codable, Equatable, Sendable {
     var webdavPath: String
     var presignedDownloadUrl: String
     var presignedUploadUrl: String
+    var objectStorageAccessKey: String
+    var objectStorageSecretKey: String
+    var objectStorageBucket: String
+    var objectStorageEndpoint: String
+    var objectStorageAppId: String
+    var objectStorageCustomUrl: String
+    var objectStorageObjectKey: String
     var autoSyncEnabled: Bool
     var autoSyncIntervalMinutes: Int
     var autoSyncIntervalValue: Int
@@ -100,6 +113,23 @@ struct SyncSettings: Codable, Equatable, Sendable {
         case webdavPath
         case presignedDownloadUrl
         case presignedUploadUrl
+        case objectStorageAccessKey
+        case ak
+        case accessKey
+        case objectStorageSecretKey
+        case sk
+        case secretKey
+        case objectStorageBucket
+        case bucket
+        case objectStorageEndpoint
+        case endpoint
+        case objectStorageAppId
+        case appid
+        case appId
+        case objectStorageCustomUrl
+        case customUrl
+        case objectStorageObjectKey
+        case objectKey
         case autoSyncEnabled
         case autoSyncIntervalMinutes
         case autoSyncIntervalValue
@@ -126,6 +156,13 @@ struct SyncSettings: Codable, Equatable, Sendable {
             webdavPath: "/vault.json",
             presignedDownloadUrl: "",
             presignedUploadUrl: "",
+            objectStorageAccessKey: "",
+            objectStorageSecretKey: "",
+            objectStorageBucket: "",
+            objectStorageEndpoint: "",
+            objectStorageAppId: "",
+            objectStorageCustomUrl: "",
+            objectStorageObjectKey: "vault.sync.json",
             autoSyncEnabled: false,
             autoSyncIntervalMinutes: 30,
             autoSyncIntervalValue: 30,
@@ -156,6 +193,13 @@ struct SyncSettings: Codable, Equatable, Sendable {
         webdavPath: String,
         presignedDownloadUrl: String,
         presignedUploadUrl: String,
+        objectStorageAccessKey: String,
+        objectStorageSecretKey: String,
+        objectStorageBucket: String,
+        objectStorageEndpoint: String,
+        objectStorageAppId: String,
+        objectStorageCustomUrl: String,
+        objectStorageObjectKey: String,
         autoSyncEnabled: Bool,
         autoSyncIntervalMinutes: Int,
         autoSyncIntervalValue: Int,
@@ -179,6 +223,13 @@ struct SyncSettings: Codable, Equatable, Sendable {
         self.webdavPath = webdavPath
         self.presignedDownloadUrl = presignedDownloadUrl
         self.presignedUploadUrl = presignedUploadUrl
+        self.objectStorageAccessKey = objectStorageAccessKey
+        self.objectStorageSecretKey = objectStorageSecretKey
+        self.objectStorageBucket = objectStorageBucket
+        self.objectStorageEndpoint = objectStorageEndpoint
+        self.objectStorageAppId = objectStorageAppId
+        self.objectStorageCustomUrl = objectStorageCustomUrl
+        self.objectStorageObjectKey = objectStorageObjectKey
         self.autoSyncEnabled = autoSyncEnabled
         self.autoSyncIntervalMinutes = autoSyncIntervalMinutes
         self.autoSyncIntervalValue = autoSyncIntervalValue
@@ -211,6 +262,41 @@ struct SyncSettings: Codable, Equatable, Sendable {
         webdavPath = try container.decodeIfPresent(String.self, forKey: .webdavPath) ?? defaults.webdavPath
         presignedDownloadUrl = try container.decodeIfPresent(String.self, forKey: .presignedDownloadUrl) ?? defaults.presignedDownloadUrl
         presignedUploadUrl = try container.decodeIfPresent(String.self, forKey: .presignedUploadUrl) ?? defaults.presignedUploadUrl
+        objectStorageAccessKey = try Self.decodeFirstPresentString(
+            from: container,
+            keys: [.objectStorageAccessKey, .ak, .accessKey],
+            defaultValue: defaults.objectStorageAccessKey
+        )
+        objectStorageSecretKey = try Self.decodeFirstPresentString(
+            from: container,
+            keys: [.objectStorageSecretKey, .sk, .secretKey],
+            defaultValue: defaults.objectStorageSecretKey
+        )
+        objectStorageBucket = try Self.decodeFirstPresentString(
+            from: container,
+            keys: [.objectStorageBucket, .bucket],
+            defaultValue: defaults.objectStorageBucket
+        )
+        objectStorageEndpoint = try Self.decodeFirstPresentString(
+            from: container,
+            keys: [.objectStorageEndpoint, .endpoint],
+            defaultValue: defaults.objectStorageEndpoint
+        )
+        objectStorageAppId = try Self.decodeFirstPresentString(
+            from: container,
+            keys: [.objectStorageAppId, .appid, .appId],
+            defaultValue: defaults.objectStorageAppId
+        )
+        objectStorageCustomUrl = try Self.decodeFirstPresentString(
+            from: container,
+            keys: [.objectStorageCustomUrl, .customUrl],
+            defaultValue: defaults.objectStorageCustomUrl
+        )
+        objectStorageObjectKey = try Self.decodeFirstPresentString(
+            from: container,
+            keys: [.objectStorageObjectKey, .objectKey],
+            defaultValue: defaults.objectStorageObjectKey
+        )
         autoSyncEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoSyncEnabled) ?? defaults.autoSyncEnabled
         autoSyncIntervalUnit = Self.decodeEnum(
             SyncIntervalUnit.self,
@@ -243,6 +329,39 @@ struct SyncSettings: Codable, Equatable, Sendable {
         logs = try container.decodeIfPresent([SyncLogEntry].self, forKey: .logs) ?? defaults.logs
     }
 
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(providerType, forKey: .providerType)
+        try container.encode(webdavUrl, forKey: .webdavUrl)
+        try container.encode(webdavUsername, forKey: .webdavUsername)
+        try container.encode(webdavPassword, forKey: .webdavPassword)
+        try container.encode(webdavPath, forKey: .webdavPath)
+        try container.encode(presignedDownloadUrl, forKey: .presignedDownloadUrl)
+        try container.encode(presignedUploadUrl, forKey: .presignedUploadUrl)
+        try container.encode(objectStorageAccessKey, forKey: .objectStorageAccessKey)
+        try container.encode(objectStorageSecretKey, forKey: .objectStorageSecretKey)
+        try container.encode(objectStorageBucket, forKey: .objectStorageBucket)
+        try container.encode(objectStorageEndpoint, forKey: .objectStorageEndpoint)
+        try container.encode(objectStorageAppId, forKey: .objectStorageAppId)
+        try container.encode(objectStorageCustomUrl, forKey: .objectStorageCustomUrl)
+        try container.encode(objectStorageObjectKey, forKey: .objectStorageObjectKey)
+        try container.encode(autoSyncEnabled, forKey: .autoSyncEnabled)
+        try container.encode(autoSyncIntervalMinutes, forKey: .autoSyncIntervalMinutes)
+        try container.encode(autoSyncIntervalValue, forKey: .autoSyncIntervalValue)
+        try container.encode(autoSyncIntervalUnit, forKey: .autoSyncIntervalUnit)
+        try container.encode(autoSyncOnUnlock, forKey: .autoSyncOnUnlock)
+        try container.encode(conflictStrategy, forKey: .conflictStrategy)
+        try container.encode(syncMasterKey, forKey: .syncMasterKey)
+        try container.encode(deviceId, forKey: .deviceId)
+        try container.encode(lastSyncRevision, forKey: .lastSyncRevision)
+        try container.encodeIfPresent(lastSyncAt, forKey: .lastSyncAt)
+        try container.encodeIfPresent(lastSyncStatus, forKey: .lastSyncStatus)
+        try container.encodeIfPresent(lastSyncMessage, forKey: .lastSyncMessage)
+        try container.encodeIfPresent(lastRemoteFingerprint, forKey: .lastRemoteFingerprint)
+        try container.encode(hasLocalChanges, forKey: .hasLocalChanges)
+        try container.encode(logs, forKey: .logs)
+    }
+
     private static func decodeEnum<T: RawRepresentable>(
         _ type: T.Type,
         from container: KeyedDecodingContainer<CodingKeys>,
@@ -256,11 +375,26 @@ struct SyncSettings: Codable, Equatable, Sendable {
         return decoded
     }
 
+    private static func decodeFirstPresentString(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        keys: [CodingKeys],
+        defaultValue: String
+    ) throws -> String {
+        for key in keys {
+            if let value = try container.decodeIfPresent(String.self, forKey: key) {
+                return value
+            }
+        }
+        return defaultValue
+    }
+
     var syncSecrets: SyncSecretBundle {
         SyncSecretBundle(
             webdavPassword: webdavPassword,
             presignedDownloadUrl: presignedDownloadUrl,
-            presignedUploadUrl: presignedUploadUrl
+            presignedUploadUrl: presignedUploadUrl,
+            objectStorageAccessKey: objectStorageAccessKey,
+            objectStorageSecretKey: objectStorageSecretKey
         )
     }
 
@@ -273,6 +407,8 @@ struct SyncSettings: Codable, Equatable, Sendable {
         copy.webdavPassword = secrets.webdavPassword
         copy.presignedDownloadUrl = secrets.presignedDownloadUrl
         copy.presignedUploadUrl = secrets.presignedUploadUrl
+        copy.objectStorageAccessKey = secrets.objectStorageAccessKey
+        copy.objectStorageSecretKey = secrets.objectStorageSecretKey
         return copy
     }
 }
@@ -292,13 +428,17 @@ struct SyncSecretBundle: Codable, Equatable, Sendable {
     var webdavPassword: String = ""
     var presignedDownloadUrl: String = ""
     var presignedUploadUrl: String = ""
+    var objectStorageAccessKey: String = ""
+    var objectStorageSecretKey: String = ""
 
     static let empty = SyncSecretBundle()
 
     var isEmpty: Bool {
         webdavPassword.isEmpty &&
             presignedDownloadUrl.isEmpty &&
-            presignedUploadUrl.isEmpty
+            presignedUploadUrl.isEmpty &&
+            objectStorageAccessKey.isEmpty &&
+            objectStorageSecretKey.isEmpty
     }
 }
 
@@ -331,6 +471,16 @@ struct SyncClientFactory: Sendable {
                 uploadUrl: settings.presignedUploadUrl.trimmingCharacters(in: .whitespacesAndNewlines),
                 transport: transport
             )
+        case .tencentCos:
+            guard let config = ObjectStorageSyncClientConfiguration.tencentCos(settings: settings) else {
+                return nil
+            }
+            return ObjectStorageSyncClient(configuration: config, transport: transport)
+        case .aliyunOss:
+            guard let config = ObjectStorageSyncClientConfiguration.aliyunOss(settings: settings) else {
+                return nil
+            }
+            return ObjectStorageSyncClient(configuration: config, transport: transport)
         }
     }
 }

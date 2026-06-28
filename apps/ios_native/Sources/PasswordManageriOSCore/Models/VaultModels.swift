@@ -27,6 +27,7 @@ enum VaultEntryType: String, CaseIterable, Codable, Identifiable, Sendable {
 struct CredentialPayload: Codable, Equatable, Sendable {
     var username: String = ""
     var password: String = ""
+    var accounts: [ServiceAccount] = []
     var token: String = ""
     var appId: String = ""
     var accessKey: String = ""
@@ -34,6 +35,57 @@ struct CredentialPayload: Codable, Equatable, Sendable {
     var notes: String = ""
     var tags: [String] = []
     var category: String = ""
+
+    private enum CodingKeys: String, CodingKey {
+        case username
+        case password
+        case accounts
+        case token
+        case appId
+        case accessKey
+        case secretKey
+        case notes
+        case tags
+        case category
+    }
+
+    init(
+        username: String = "",
+        password: String = "",
+        accounts: [ServiceAccount] = [],
+        token: String = "",
+        appId: String = "",
+        accessKey: String = "",
+        secretKey: String = "",
+        notes: String = "",
+        tags: [String] = [],
+        category: String = ""
+    ) {
+        self.username = username
+        self.password = password
+        self.accounts = accounts
+        self.token = token
+        self.appId = appId
+        self.accessKey = accessKey
+        self.secretKey = secretKey
+        self.notes = notes
+        self.tags = tags
+        self.category = category
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        username = try container.decodeIfPresent(String.self, forKey: .username) ?? ""
+        password = try container.decodeIfPresent(String.self, forKey: .password) ?? ""
+        accounts = try container.decodeIfPresent([ServiceAccount].self, forKey: .accounts) ?? []
+        token = try container.decodeIfPresent(String.self, forKey: .token) ?? ""
+        appId = try container.decodeIfPresent(String.self, forKey: .appId) ?? ""
+        accessKey = try container.decodeIfPresent(String.self, forKey: .accessKey) ?? ""
+        secretKey = try container.decodeIfPresent(String.self, forKey: .secretKey) ?? ""
+        notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+        category = try container.decodeIfPresent(String.self, forKey: .category) ?? ""
+    }
 }
 
 struct ServerPayload: Codable, Equatable, Sendable {
@@ -48,7 +100,71 @@ struct ServerPayload: Codable, Equatable, Sendable {
     var notes: String = ""
     var tags: [String] = []
     var accountId: String?
+    var accounts: [ServiceAccount] = []
     var category: String = ""
+
+    private enum CodingKeys: String, CodingKey {
+        case name
+        case ipAddress
+        case port
+        case username
+        case password
+        case basicConfig
+        case operatingSystem
+        case location
+        case notes
+        case tags
+        case accountId
+        case accounts
+        case category
+    }
+
+    init(
+        name: String = "",
+        ipAddress: String = "",
+        port: String = "",
+        username: String = "",
+        password: String = "",
+        basicConfig: String = "",
+        operatingSystem: String = "",
+        location: String = "",
+        notes: String = "",
+        tags: [String] = [],
+        accountId: String? = nil,
+        accounts: [ServiceAccount] = [],
+        category: String = ""
+    ) {
+        self.name = name
+        self.ipAddress = ipAddress
+        self.port = port
+        self.username = username
+        self.password = password
+        self.basicConfig = basicConfig
+        self.operatingSystem = operatingSystem
+        self.location = location
+        self.notes = notes
+        self.tags = tags
+        self.accountId = accountId
+        self.accounts = accounts
+        self.category = category
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        ipAddress = try container.decodeIfPresent(String.self, forKey: .ipAddress) ?? ""
+        port = try container.decodeIfPresent(String.self, forKey: .port) ?? ""
+        username = try container.decodeIfPresent(String.self, forKey: .username) ?? ""
+        password = try container.decodeIfPresent(String.self, forKey: .password) ?? ""
+        basicConfig = try container.decodeIfPresent(String.self, forKey: .basicConfig) ?? ""
+        operatingSystem = try container.decodeIfPresent(String.self, forKey: .operatingSystem) ?? ""
+        location = try container.decodeIfPresent(String.self, forKey: .location) ?? ""
+        notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+        accountId = try container.decodeIfPresent(String.self, forKey: .accountId)
+        accounts = try container.decodeIfPresent([ServiceAccount].self, forKey: .accounts) ?? []
+        category = try container.decodeIfPresent(String.self, forKey: .category) ?? ""
+    }
 }
 
 struct ServiceAccount: Codable, Equatable, Identifiable, Sendable {
@@ -310,16 +426,157 @@ struct VaultPersistenceEnvelope: Codable, Equatable, Sendable {
 struct VaultSnapshot: Codable, Equatable, Sendable {
     var entries: [VaultEntry] = []
     var categories: [String] = []
+    var categoryTemplates: [CategoryTemplate] = []
     var tags: [String] = []
     var security: SecuritySettings = SecuritySettings()
     var syncStatus: String = "Not configured"
     var lastBackupStatus: String = "No backup has run"
     var updatedAt: Date = Date()
+
+    private enum CodingKeys: String, CodingKey {
+        case entries
+        case categories
+        case categoryTemplates
+        case tags
+        case security
+        case syncStatus
+        case lastBackupStatus
+        case updatedAt
+    }
+
+    init(
+        entries: [VaultEntry] = [],
+        categories: [String] = [],
+        categoryTemplates: [CategoryTemplate] = [],
+        tags: [String] = [],
+        security: SecuritySettings = SecuritySettings(),
+        syncStatus: String = "Not configured",
+        lastBackupStatus: String = "No backup has run",
+        updatedAt: Date = Date()
+    ) {
+        self.entries = entries
+        self.categories = categories
+        self.categoryTemplates = categoryTemplates
+        self.tags = tags
+        self.security = security
+        self.syncStatus = syncStatus
+        self.lastBackupStatus = lastBackupStatus
+        self.updatedAt = updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        entries = try container.decodeIfPresent([VaultEntry].self, forKey: .entries) ?? []
+        categories = try container.decodeIfPresent([String].self, forKey: .categories) ?? []
+        categoryTemplates = try container.decodeIfPresent([CategoryTemplate].self, forKey: .categoryTemplates) ?? []
+        tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+        security = try container.decodeIfPresent(SecuritySettings.self, forKey: .security) ?? SecuritySettings()
+        syncStatus = try container.decodeIfPresent(String.self, forKey: .syncStatus) ?? "Not configured"
+        lastBackupStatus = try container.decodeIfPresent(String.self, forKey: .lastBackupStatus) ?? "No backup has run"
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+    }
 }
 
 struct SecuritySettings: Codable, Equatable, Sendable {
     var requireTotp = false
     var totpSecret = ""
+}
+
+struct FieldTemplate: Codable, Equatable, Identifiable, Sendable {
+    var id: String
+    var name: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+    }
+
+    init(id: String = UUID().uuidString.lowercased(), name: String) {
+        self.id = id
+        self.name = name
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? CategoryTemplate.stableFieldId(name)
+    }
+}
+
+struct CategoryTemplate: Codable, Equatable, Sendable {
+    var category: String
+    var fields: [FieldTemplate]
+
+    private enum CodingKeys: String, CodingKey {
+        case category
+        case fields
+    }
+
+    init(category: String, fields: [FieldTemplate] = CategoryTemplate.defaultFields) {
+        self.category = category
+        self.fields = fields
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        category = try container.decodeIfPresent(String.self, forKey: .category) ?? ""
+        fields = try container.decodeIfPresent([FieldTemplate].self, forKey: .fields) ?? Self.defaultFields
+    }
+
+    static var defaultFields: [FieldTemplate] {
+        [
+            FieldTemplate(id: stableFieldId("名称"), name: "名称"),
+            FieldTemplate(id: stableFieldId("备注"), name: "备注")
+        ]
+    }
+
+    static func fields(for preset: CategoryTypePreset) -> [FieldTemplate] {
+        var seen = Set<String>()
+        return (defaultFields + preset.fields.map { FieldTemplate(id: stableFieldId($0), name: $0) })
+            .filter { field in
+                let key = field.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                return seen.insert(key).inserted
+            }
+    }
+
+    static func stableFieldId(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let allowedScalars = trimmed.unicodeScalars.map { scalar in
+            CharacterSet.alphanumerics.contains(scalar) ? Character(scalar) : "-"
+        }
+        let slug = String(allowedScalars)
+            .split(separator: "-")
+            .joined(separator: "-")
+            .lowercased()
+        return slug.isEmpty ? UUID().uuidString.lowercased() : "template-\(slug)"
+    }
+}
+
+enum CategoryTypePreset: String, CaseIterable, Identifiable, Sendable {
+    case server
+    case service
+    case account
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .server: "服务器"
+        case .service: "服务"
+        case .account: "账号"
+        }
+    }
+
+    var fields: [String] {
+        switch self {
+        case .server:
+            ["IP地址", "端口", "关联账号"]
+        case .service:
+            ["服务入口", "关联账号", "关联服务器"]
+        case .account:
+            ["入口"]
+        }
+    }
 }
 
 enum ScopedExportScope: String, Codable, Sendable {
@@ -419,6 +676,7 @@ extension VaultEntry {
             fields += [
                 EntryExportField(id: "credential.username", title: "Username"),
                 EntryExportField(id: "credential.password", title: "Password"),
+                EntryExportField(id: "credential.accounts", title: "Accounts"),
                 EntryExportField(id: "credential.token", title: "Token"),
                 EntryExportField(id: "credential.appId", title: "App ID"),
                 EntryExportField(id: "credential.accessKey", title: "Access Key"),
@@ -432,6 +690,7 @@ extension VaultEntry {
                 EntryExportField(id: "server.port", title: "Port"),
                 EntryExportField(id: "server.username", title: "Username"),
                 EntryExportField(id: "server.password", title: "Password"),
+                EntryExportField(id: "server.accounts", title: "Accounts"),
                 EntryExportField(id: "server.basicConfig", title: "Config"),
                 EntryExportField(id: "server.operatingSystem", title: "OS"),
                 EntryExportField(id: "server.location", title: "Location"),
@@ -489,6 +748,7 @@ private extension VaultPayload {
             if !selectedFieldIDs.contains("tags") { credential.tags = [] }
             if !selectedFieldIDs.contains("credential.username") { credential.username = "" }
             if !selectedFieldIDs.contains("credential.password") { credential.password = "" }
+            if !selectedFieldIDs.contains("credential.accounts") { credential.accounts = [] }
             if !selectedFieldIDs.contains("credential.token") { credential.token = "" }
             if !selectedFieldIDs.contains("credential.appId") { credential.appId = "" }
             if !selectedFieldIDs.contains("credential.accessKey") { credential.accessKey = "" }
@@ -503,6 +763,7 @@ private extension VaultPayload {
             if !selectedFieldIDs.contains("server.port") { server.port = "" }
             if !selectedFieldIDs.contains("server.username") { server.username = "" }
             if !selectedFieldIDs.contains("server.password") { server.password = "" }
+            if !selectedFieldIDs.contains("server.accounts") { server.accounts = [] }
             if !selectedFieldIDs.contains("server.basicConfig") { server.basicConfig = "" }
             if !selectedFieldIDs.contains("server.operatingSystem") { server.operatingSystem = "" }
             if !selectedFieldIDs.contains("server.location") { server.location = "" }

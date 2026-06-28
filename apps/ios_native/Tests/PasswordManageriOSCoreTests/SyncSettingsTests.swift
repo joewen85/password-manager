@@ -20,6 +20,9 @@ struct SyncSettingsTests {
         #expect(settings.deviceId == "device-1")
         #expect(settings.lastSyncRevision == 0)
         #expect(settings.logs.isEmpty)
+        #expect(settings.objectKey == "vault.sync.json")
+        #expect(settings.ak.isEmpty)
+        #expect(settings.sk.isEmpty)
     }
 
     @Test("Decoding tolerates missing and unknown values")
@@ -118,6 +121,9 @@ struct SyncSettingsTests {
         #expect(json["lastRemoteFingerprint"] as? String == "etag:remote-v1")
         #expect(json["conflictStrategy"] as? String == "remoteWins")
         #expect(json["syncMasterKey"] as? Bool == true)
+        #expect(json["objectKey"] as? String == "vault.sync.json")
+        #expect(json["ak"] as? String == "")
+        #expect(json["sk"] as? String == "")
     }
 
     @Test("Factory validates providers and builds configured clients")
@@ -132,6 +138,15 @@ struct SyncSettingsTests {
                 .success(syncSettingsHTTPResult(
                     url: URL(string: "https://upload.example.com/vault")!,
                     statusCode: 201
+                )),
+                .success(syncSettingsHTTPResult(
+                    url: URL(string: "https://bucket-1250000000.cos.ap-shanghai.myqcloud.com/folder/vault.json")!,
+                    statusCode: 200,
+                    body: "{}"
+                )),
+                .success(syncSettingsHTTPResult(
+                    url: URL(string: "https://bucket.oss-cn-hangzhou.aliyuncs.com/folder/vault.json")!,
+                    statusCode: 201
                 ))
             ]
         )
@@ -145,21 +160,59 @@ struct SyncSettingsTests {
         var presigned = SyncSettings.defaults(deviceId: "device-1")
         presigned.providerType = .s3Presigned
         presigned.presignedUploadUrl = "https://upload.example.com/vault"
+        var cos = SyncSettings.defaults(deviceId: "device-1")
+        cos.providerType = .tencentCos
+        cos.ak = "cos-ak"
+        cos.sk = "cos-sk"
+        cos.bucket = "bucket"
+        cos.appid = "1250000000"
+        cos.endpoint = "https://cos.ap-shanghai.myqcloud.com"
+        cos.objectKey = "folder/vault.json"
+        var oss = SyncSettings.defaults(deviceId: "device-1")
+        oss.providerType = .aliyunOss
+        oss.ak = "oss-ak"
+        oss.sk = "oss-sk"
+        oss.bucket = "bucket"
+        oss.endpoint = "https://oss-cn-hangzhou.aliyuncs.com"
+        oss.objectKey = "folder/vault.json"
 
         let missing = factory.makeClient(settings: .defaults(deviceId: "device-1"), transport: transport)
         let webdavClient = factory.makeClient(settings: webdav, transport: transport)
         let presignedClient = factory.makeClient(settings: presigned, transport: transport)
+        let missingObjectStorageClient = factory.makeClient(
+            settings: {
+                var settings = SyncSettings.defaults(deviceId: "device-1")
+                settings.providerType = .tencentCos
+                settings.ak = "ak"
+                settings.sk = "sk"
+                return settings
+            }(),
+            transport: transport
+        )
+        let cosClient = factory.makeClient(settings: cos, transport: transport)
+        let ossClient = factory.makeClient(settings: oss, transport: transport)
 
         #expect(missing == nil)
         #expect(webdavClient != nil)
         #expect(presignedClient != nil)
+        #expect(missingObjectStorageClient == nil)
+        #expect(cosClient != nil)
+        #expect(ossClient != nil)
         let webdavResult = await webdavClient?.download()
         let presignedResult = await presignedClient?.upload("{}")
+        let cosResult = await cosClient?.download()
+        let ossResult = await ossClient?.upload("{}")
         #expect(webdavResult == RemoteSyncResult(payload: "{}", statusCode: 200))
         #expect(presignedResult == RemoteSyncResult(payload: nil, statusCode: 201))
+        #expect(cosResult == RemoteSyncResult(payload: "{}", statusCode: 200))
+        #expect(ossResult == RemoteSyncResult(payload: nil, statusCode: 201))
         #expect(transport.requests[0].url?.absoluteString == "https://dav.example.com/root/vault.json")
         #expect(transport.requests[0].value(forHTTPHeaderField: "Authorization") == "Basic YWxpY2U6c2VjcmV0")
         #expect(transport.requests[1].url?.absoluteString == "https://upload.example.com/vault")
+        #expect(transport.requests[2].url?.absoluteString == "https://bucket-1250000000.cos.ap-shanghai.myqcloud.com/folder/vault.json")
+        #expect(transport.requests[2].value(forHTTPHeaderField: "Authorization")?.contains("q-ak=cos-ak") == true)
+        #expect(transport.requests[3].url?.absoluteString == "https://bucket.oss-cn-hangzhou.aliyuncs.com/folder/vault.json")
+        #expect(transport.requests[3].value(forHTTPHeaderField: "Authorization")?.hasPrefix("OSS4-HMAC-SHA256 Credential=oss-ak/") == true)
     }
 
     @Test("Repository stores sync secrets outside plaintext settings file")
@@ -177,6 +230,13 @@ struct SyncSettingsTests {
         settings.webdavPassword = "webdav-password"
         settings.presignedDownloadUrl = "https://download.example.com/vault"
         settings.presignedUploadUrl = "https://upload.example.com/vault"
+        settings.ak = "access-key"
+        settings.sk = "secret-key"
+        settings.bucket = "bucket"
+        settings.endpoint = "https://endpoint.example.com"
+        settings.appid = "1250000000"
+        settings.customUrl = "https://custom.example.com"
+        settings.objectKey = "folder/vault.json"
 
         try repository.save(settings)
 
@@ -187,6 +247,10 @@ struct SyncSettingsTests {
         #expect(!rawFile.contains("webdav-password"))
         #expect(!rawFile.contains("https://download.example.com/vault"))
         #expect(!rawFile.contains("https://upload.example.com/vault"))
+        #expect(!rawFile.contains("access-key"))
+        #expect(!rawFile.contains("secret-key"))
+        #expect(rawFile.contains("\"bucket\" : \"bucket\""))
+        #expect(rawFile.contains("\"objectKey\" : \"folder\\/vault.json\""))
         #expect(try secretStore.load(deviceId: "device-1") == settings.syncSecrets)
 
         let loaded = try repository.load()

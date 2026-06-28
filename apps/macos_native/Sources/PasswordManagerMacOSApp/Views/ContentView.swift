@@ -32,6 +32,7 @@ struct ContentView: View {
     @State private var isPresentingCreateTaxonomy = false
     @State private var createTaxonomyKind: CreateTaxonomyKind = .category
     @State private var createTaxonomyValue = ""
+    @State private var createCategoryPreset: CategoryTypePreset?
     @State private var createTaxonomyError: String?
     @State private var clearDataPassword = ""
     @State private var clearDataError: String?
@@ -115,6 +116,7 @@ struct ContentView: View {
                 EntryEditorView(
                     entry: session.entry,
                     categories: store.categories,
+                    categoryTemplates: store.categoryTemplates,
                     tags: store.tags,
                     onCreateCategory: { store.addCategory($0) },
                     onCreateTag: { store.addTag($0) },
@@ -307,6 +309,14 @@ struct ContentView: View {
                     TextField(createTaxonomyKind.placeholder, text: $createTaxonomyValue)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit(saveCreatedTaxonomy)
+                    if createTaxonomyKind == .category {
+                        Picker(L10n.t("Type"), selection: $createCategoryPreset) {
+                            Text(L10n.t("None")).tag(CategoryTypePreset?.none)
+                            ForEach(CategoryTypePreset.allCases) { preset in
+                                Text(preset.title).tag(CategoryTypePreset?.some(preset))
+                            }
+                        }
+                    }
                     if let createTaxonomyError {
                         Text(createTaxonomyError)
                             .font(.callout)
@@ -526,6 +536,7 @@ struct ContentView: View {
     private func beginCreatingTaxonomy(_ kind: CreateTaxonomyKind) {
         createTaxonomyKind = kind
         createTaxonomyValue = ""
+        createCategoryPreset = nil
         createTaxonomyError = nil
         isPresentingCreateTaxonomy = true
     }
@@ -539,7 +550,7 @@ struct ContentView: View {
         let didSave: Bool
         switch createTaxonomyKind {
         case .category:
-            didSave = store.addCategory(value)
+            didSave = store.addCategory(value, preset: createCategoryPreset)
         case .tag:
             didSave = store.addTag(value)
         }

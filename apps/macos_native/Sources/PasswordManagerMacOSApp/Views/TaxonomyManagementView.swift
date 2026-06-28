@@ -7,6 +7,7 @@ struct TaxonomyManagementView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selectedKind: TaxonomyKind = .category
     @State private var newValue = ""
+    @State private var selectedCategoryPreset: CategoryTypePreset?
     @State private var renameRequest: TaxonomyEditRequest?
     @State private var deleteRequest: TaxonomyEditRequest?
 
@@ -37,6 +38,15 @@ struct TaxonomyManagementView: View {
                         Label("Add", systemImage: "plus")
                     }
                     .disabled(isAddDisabled)
+                }
+
+                if selectedKind == .category {
+                    Picker(L10n.t("Type"), selection: $selectedCategoryPreset) {
+                        Text(L10n.t("None")).tag(CategoryTypePreset?.none)
+                        ForEach(CategoryTypePreset.allCases) { preset in
+                            Text(preset.title).tag(CategoryTypePreset?.some(preset))
+                        }
+                    }
                 }
 
                 Group {
@@ -118,12 +128,13 @@ struct TaxonomyManagementView: View {
         let didSave: Bool
         switch selectedKind {
         case .category:
-            didSave = store.addCategory(value)
+            didSave = store.addCategory(value, preset: selectedCategoryPreset)
         case .tag:
             didSave = store.addTag(value)
         }
         if didSave {
             newValue = ""
+            selectedCategoryPreset = nil
             onChange()
         }
     }

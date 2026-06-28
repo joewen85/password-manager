@@ -77,12 +77,33 @@ struct SettingsView: View {
                         Text(provider.title).tag(provider)
                     }
                 }
-                TextField("WebDAV URL", text: $syncDraft.webdavUrl)
-                TextField("WebDAV path", text: $syncDraft.webdavPath)
-                TextField("WebDAV username", text: $syncDraft.webdavUsername)
-                SecureField("WebDAV password", text: $syncDraft.webdavPassword)
-                TextField("Presigned download URL", text: $syncDraft.presignedDownloadUrl)
-                SecureField("Presigned upload URL", text: $syncDraft.presignedUploadUrl)
+                switch syncDraft.providerType {
+                case .none:
+                    EmptyView()
+                case .webdav, .nasWebdav:
+                    TextField("WebDAV URL", text: $syncDraft.webdavUrl)
+                    TextField("WebDAV path", text: $syncDraft.webdavPath)
+                    TextField("WebDAV username", text: $syncDraft.webdavUsername)
+                    SecureField("WebDAV password", text: $syncDraft.webdavPassword)
+                case .s3Presigned:
+                    TextField("Presigned download URL", text: $syncDraft.presignedDownloadUrl)
+                    SecureField("Presigned upload URL", text: $syncDraft.presignedUploadUrl)
+                case .tencentCos, .aliyunOss:
+                    SecureField("AK", text: $syncDraft.ak)
+                    SecureField("SK", text: $syncDraft.sk)
+                    TextField("Bucket", text: $syncDraft.bucket)
+                    TextField("Endpoint", text: $syncDraft.endpoint)
+                    if syncDraft.providerType == .tencentCos {
+                        TextField("App ID", text: $syncDraft.appid)
+                    }
+                    TextField("Custom URL", text: $syncDraft.customUrl)
+                    TextField("Object key", text: $syncDraft.objectKey)
+                    if objectStorageSettingsMissingRequiredFields {
+                        Text("AK, SK, bucket, and endpoint or custom URL are required.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Toggle("Auto sync", isOn: $syncDraft.autoSyncEnabled)
                 LabeledContent("Auto sync interval") {
                     HStack {
@@ -116,6 +137,7 @@ struct SettingsView: View {
                     )
                     store.updateSyncSettings(syncDraft)
                 }
+                .disabled(objectStorageSettingsMissingRequiredFields)
             }
 
             LabeledContent("Sync", value: store.syncStatus)
@@ -159,6 +181,19 @@ struct SettingsView: View {
                     biometricStatus = error.localizedDescription
                 }
             }
+        }
+    }
+
+    private var objectStorageSettingsMissingRequiredFields: Bool {
+        switch syncDraft.providerType {
+        case .tencentCos, .aliyunOss:
+            syncDraft.ak.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                syncDraft.sk.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                syncDraft.bucket.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                (syncDraft.endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                    syncDraft.customUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        case .none, .webdav, .nasWebdav, .s3Presigned:
+            false
         }
     }
 }

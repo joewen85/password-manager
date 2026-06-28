@@ -64,6 +64,8 @@ class AndroidKeystoreSyncSecretCipher(
             .put("webdavPassword", secrets.webdavPassword)
             .put("presignedDownloadUrl", secrets.presignedDownloadUrl)
             .put("presignedUploadUrl", secrets.presignedUploadUrl)
+            .put("objectStorageAccessKeyId", secrets.objectStorageAccessKeyId)
+            .put("objectStorageSecretAccessKey", secrets.objectStorageSecretAccessKey)
             .put("updatedAt", Instant.now().toString())
             .toString()
         val encrypted = crypto.encryptWithKeystoreWrappingKey(payload.toByteArray(StandardCharsets.UTF_8))
@@ -86,6 +88,8 @@ class AndroidKeystoreSyncSecretCipher(
             webdavPassword = json.optString("webdavPassword"),
             presignedDownloadUrl = json.optString("presignedDownloadUrl"),
             presignedUploadUrl = json.optString("presignedUploadUrl"),
+            objectStorageAccessKeyId = json.optString("objectStorageAccessKeyId"),
+            objectStorageSecretAccessKey = json.optString("objectStorageSecretAccessKey"),
         )
     }
 }

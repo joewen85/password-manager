@@ -4,7 +4,7 @@ struct EntryEditorView: View {
     var entry: VaultEntry?
     var categories: [String]
     var tags: [String]
-    var onCreateCategory: (String) -> Bool
+    var onCreateCategory: (String, CategoryTypePreset?) -> Bool
     var onCreateTag: (String) -> Bool
     var onSave: (EntryDraft) -> Void
     var onCancel: () -> Void
@@ -19,7 +19,7 @@ struct EntryEditorView: View {
         entry: VaultEntry?,
         categories: [String],
         tags: [String],
-        onCreateCategory: @escaping (String) -> Bool = { _ in false },
+        onCreateCategory: @escaping (String, CategoryTypePreset?) -> Bool = { _, _ in false },
         onCreateTag: @escaping (String) -> Bool = { _ in false },
         onSave: @escaping (EntryDraft) -> Void,
         onCancel: @escaping () -> Void
@@ -122,9 +122,9 @@ struct EntryEditorView: View {
         taxonomyMessage = nil
     }
 
-    private func createCategory(_ value: String) -> Bool {
+    private func createCategory(_ value: String, preset: CategoryTypePreset?) -> Bool {
         guard !value.isEmpty else { return false }
-        if onCreateCategory(value) {
+        if onCreateCategory(value, preset) {
             availableCategories = mergedValues(availableCategories + [value])
             draft.category = value
             taxonomyMessage = "Category added."
@@ -156,10 +156,11 @@ struct EntryEditorView: View {
 private struct CategorySelectField: View {
     @Binding var selectedCategory: String
     var categories: [String]
-    var onCreateCategory: (String) -> Bool
+    var onCreateCategory: (String, CategoryTypePreset?) -> Bool
 
     @State private var isPresented = false
     @State private var searchText = ""
+    @State private var selectedPreset: CategoryTypePreset?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -189,6 +190,14 @@ private struct CategorySelectField: View {
                         canCreate: canCreateCategory,
                         create: createCategory
                     )
+
+                    Picker("Type", selection: $selectedPreset) {
+                        Text("None").tag(CategoryTypePreset?.none)
+                        ForEach(CategoryTypePreset.allCases) { preset in
+                            Text(preset.title).tag(CategoryTypePreset?.some(preset))
+                        }
+                    }
+                    .pickerStyle(.segmented)
 
                     Divider()
 
@@ -232,9 +241,10 @@ private struct CategorySelectField: View {
 
     private func createCategory() {
         guard canCreateCategory else { return }
-        if onCreateCategory(trimmedSearchText) {
+        if onCreateCategory(trimmedSearchText, selectedPreset) {
             selectedCategory = trimmedSearchText
             searchText = ""
+            selectedPreset = nil
             isPresented = false
         }
     }
@@ -412,6 +422,8 @@ private struct CredentialEditor: View {
             SecureField("Secret Key", text: $payload.secretKey)
             TextField("Notes", text: $payload.notes, axis: .vertical)
         }
+
+        AccountsEditor(accounts: $payload.accounts, title: "Accounts", emptyText: "No accounts.")
     }
 }
 
@@ -425,11 +437,17 @@ private struct ServerEditor: View {
             TextField("Port", text: $payload.port)
             TextField("Username", text: $payload.username)
             SecureField("Password", text: $payload.password)
+            TextField("Account ID", text: Binding(
+                get: { payload.accountId ?? "" },
+                set: { payload.accountId = $0.isEmpty ? nil : $0 }
+            ))
             TextField("Basic Config", text: $payload.basicConfig, axis: .vertical)
             TextField("Operating System", text: $payload.operatingSystem)
             TextField("Location", text: $payload.location)
             TextField("Notes", text: $payload.notes, axis: .vertical)
         }
+
+        AccountsEditor(accounts: $payload.accounts, title: "Accounts", emptyText: "No accounts.")
     }
 }
 
@@ -452,22 +470,24 @@ private struct ServiceEditor: View {
             TextField("Notes", text: $payload.notes, axis: .vertical)
         }
 
-        ServiceAccountsEditor(accounts: $payload.accounts)
+        AccountsEditor(accounts: $payload.accounts, title: "Service Accounts", emptyText: "No service accounts.")
     }
 }
 
-private struct ServiceAccountsEditor: View {
+private struct AccountsEditor: View {
     @Binding var accounts: [ServiceAccount]
+    var title: String
+    var emptyText: String
 
     var body: some View {
-        Section("Service Accounts") {
+        Section(title) {
             if accounts.isEmpty {
-                Text("No service accounts.")
+                Text(emptyText)
                     .foregroundStyle(.secondary)
             }
 
             ForEach(accounts.indices, id: \.self) { index in
-                ServiceAccountEditor(
+                AccountEditor(
                     account: $accounts[index],
                     title: "Account \(index + 1)",
                     remove: { removeAccount(at: index) }
@@ -490,7 +510,7 @@ private struct ServiceAccountsEditor: View {
     }
 }
 
-private struct ServiceAccountEditor: View {
+private struct AccountEditor: View {
     @Binding var account: ServiceAccount
     var title: String
     var remove: () -> Void

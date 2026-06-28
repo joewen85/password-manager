@@ -3,6 +3,7 @@ import SwiftUI
 struct EntryEditorView: View {
     var entry: VaultEntry?
     var categories: [String]
+    var categoryTemplates: [CategoryTemplate]
     var tags: [String]
     var onCreateCategory: (String) -> Bool
     var onCreateTag: (String) -> Bool
@@ -18,6 +19,7 @@ struct EntryEditorView: View {
     init(
         entry: VaultEntry?,
         categories: [String],
+        categoryTemplates: [CategoryTemplate] = [],
         tags: [String],
         onCreateCategory: @escaping (String) -> Bool = { _ in false },
         onCreateTag: @escaping (String) -> Bool = { _ in false },
@@ -26,6 +28,7 @@ struct EntryEditorView: View {
     ) {
         self.entry = entry
         self.categories = categories
+        self.categoryTemplates = categoryTemplates
         self.tags = tags
         self.onCreateCategory = onCreateCategory
         self.onCreateTag = onCreateTag
@@ -96,6 +99,9 @@ struct EntryEditorView: View {
         .onChange(of: categories) { _, nextCategories in
             availableCategories = mergedValues(availableCategories + nextCategories)
         }
+        .onChange(of: draft.category) { _, nextCategory in
+            applyTemplate(for: nextCategory)
+        }
         .onChange(of: tags) { _, nextTags in
             availableTags = mergedValues(availableTags + nextTags)
         }
@@ -119,6 +125,7 @@ struct EntryEditorView: View {
         if onCreateCategory(value) {
             availableCategories = mergedValues(availableCategories + [value])
             draft.category = value
+            applyTemplate(for: value)
             taxonomyMessage = L10n.t("Category added.")
             return true
         } else {
@@ -142,6 +149,14 @@ struct EntryEditorView: View {
 
     private func mergedValues(_ values: [String]) -> [String] {
         Array(Set(values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
+    }
+
+    private func applyTemplate(for category: String) {
+        let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let template = categoryTemplates.first(where: { $0.category.caseInsensitiveCompare(normalized) == .orderedSame }) else {
+            return
+        }
+        draft.applyTemplateFields(template.fields)
     }
 }
 
@@ -396,6 +411,8 @@ private struct CredentialEditor: View {
             SecureField(L10n.t("Secret Key"), text: $payload.secretKey)
             TextField(L10n.t("Notes"), text: $payload.notes, axis: .vertical)
         }
+
+        ServiceAccountsEditor(title: L10n.t("Credential Accounts"), emptyMessage: L10n.t("No accounts."), accounts: $payload.accounts)
     }
 }
 
@@ -414,6 +431,8 @@ private struct ServerEditor: View {
             TextField(L10n.t("Location"), text: $payload.location)
             TextField(L10n.t("Notes"), text: $payload.notes, axis: .vertical)
         }
+
+        ServiceAccountsEditor(title: L10n.t("Server Accounts"), emptyMessage: L10n.t("No accounts."), accounts: $payload.accounts)
     }
 }
 
@@ -436,17 +455,19 @@ private struct ServiceEditor: View {
             TextField(L10n.t("Notes"), text: $payload.notes, axis: .vertical)
         }
 
-        ServiceAccountsEditor(accounts: $payload.accounts)
+        ServiceAccountsEditor(title: L10n.t("Service Accounts"), emptyMessage: L10n.t("No service accounts."), accounts: $payload.accounts)
     }
 }
 
 private struct ServiceAccountsEditor: View {
+    var title: String
+    var emptyMessage: String
     @Binding var accounts: [ServiceAccount]
 
     var body: some View {
-        Section(L10n.t("Service Accounts")) {
+        Section(title) {
             if accounts.isEmpty {
-                Text(L10n.t("No service accounts."))
+                Text(emptyMessage)
                     .foregroundStyle(.secondary)
             }
 

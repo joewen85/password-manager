@@ -5,6 +5,8 @@ enum SyncProviderType: String, CaseIterable, Codable, Sendable {
     case webdav
     case s3Presigned
     case nasWebdav
+    case tencentCos
+    case aliyunOss
 
     var title: String {
         switch self {
@@ -16,6 +18,10 @@ enum SyncProviderType: String, CaseIterable, Codable, Sendable {
             "S3 Presigned URL"
         case .nasWebdav:
             "NAS WebDAV"
+        case .tencentCos:
+            "Tencent COS"
+        case .aliyunOss:
+            "Aliyun OSS"
         }
     }
 }
@@ -76,6 +82,13 @@ struct SyncSettings: Codable, Equatable, Sendable {
     var webdavPath: String
     var presignedDownloadUrl: String
     var presignedUploadUrl: String
+    var ak: String
+    var sk: String
+    var bucket: String
+    var endpoint: String
+    var appid: String
+    var customUrl: String
+    var objectKey: String
     var autoSyncEnabled: Bool
     var autoSyncIntervalMinutes: Int
     var autoSyncIntervalValue: Int
@@ -100,6 +113,13 @@ struct SyncSettings: Codable, Equatable, Sendable {
         case webdavPath
         case presignedDownloadUrl
         case presignedUploadUrl
+        case ak
+        case sk
+        case bucket
+        case endpoint
+        case appid
+        case customUrl
+        case objectKey
         case autoSyncEnabled
         case autoSyncIntervalMinutes
         case autoSyncIntervalValue
@@ -126,6 +146,13 @@ struct SyncSettings: Codable, Equatable, Sendable {
             webdavPath: "/vault.json",
             presignedDownloadUrl: "",
             presignedUploadUrl: "",
+            ak: "",
+            sk: "",
+            bucket: "",
+            endpoint: "",
+            appid: "",
+            customUrl: "",
+            objectKey: "vault.sync.json",
             autoSyncEnabled: false,
             autoSyncIntervalMinutes: 30,
             autoSyncIntervalValue: 30,
@@ -156,6 +183,13 @@ struct SyncSettings: Codable, Equatable, Sendable {
         webdavPath: String,
         presignedDownloadUrl: String,
         presignedUploadUrl: String,
+        ak: String,
+        sk: String,
+        bucket: String,
+        endpoint: String,
+        appid: String,
+        customUrl: String,
+        objectKey: String,
         autoSyncEnabled: Bool,
         autoSyncIntervalMinutes: Int,
         autoSyncIntervalValue: Int,
@@ -179,6 +213,13 @@ struct SyncSettings: Codable, Equatable, Sendable {
         self.webdavPath = webdavPath
         self.presignedDownloadUrl = presignedDownloadUrl
         self.presignedUploadUrl = presignedUploadUrl
+        self.ak = ak
+        self.sk = sk
+        self.bucket = bucket
+        self.endpoint = endpoint
+        self.appid = appid
+        self.customUrl = customUrl
+        self.objectKey = objectKey
         self.autoSyncEnabled = autoSyncEnabled
         self.autoSyncIntervalMinutes = autoSyncIntervalMinutes
         self.autoSyncIntervalValue = autoSyncIntervalValue
@@ -211,6 +252,13 @@ struct SyncSettings: Codable, Equatable, Sendable {
         webdavPath = try container.decodeIfPresent(String.self, forKey: .webdavPath) ?? defaults.webdavPath
         presignedDownloadUrl = try container.decodeIfPresent(String.self, forKey: .presignedDownloadUrl) ?? defaults.presignedDownloadUrl
         presignedUploadUrl = try container.decodeIfPresent(String.self, forKey: .presignedUploadUrl) ?? defaults.presignedUploadUrl
+        ak = try container.decodeIfPresent(String.self, forKey: .ak) ?? defaults.ak
+        sk = try container.decodeIfPresent(String.self, forKey: .sk) ?? defaults.sk
+        bucket = try container.decodeIfPresent(String.self, forKey: .bucket) ?? defaults.bucket
+        endpoint = try container.decodeIfPresent(String.self, forKey: .endpoint) ?? defaults.endpoint
+        appid = try container.decodeIfPresent(String.self, forKey: .appid) ?? defaults.appid
+        customUrl = try container.decodeIfPresent(String.self, forKey: .customUrl) ?? defaults.customUrl
+        objectKey = try container.decodeIfPresent(String.self, forKey: .objectKey) ?? defaults.objectKey
         autoSyncEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoSyncEnabled) ?? defaults.autoSyncEnabled
         autoSyncIntervalUnit = Self.decodeEnum(
             SyncIntervalUnit.self,
@@ -260,7 +308,9 @@ struct SyncSettings: Codable, Equatable, Sendable {
         SyncSecretBundle(
             webdavPassword: webdavPassword,
             presignedDownloadUrl: presignedDownloadUrl,
-            presignedUploadUrl: presignedUploadUrl
+            presignedUploadUrl: presignedUploadUrl,
+            ak: ak,
+            sk: sk
         )
     }
 
@@ -273,6 +323,8 @@ struct SyncSettings: Codable, Equatable, Sendable {
         copy.webdavPassword = secrets.webdavPassword
         copy.presignedDownloadUrl = secrets.presignedDownloadUrl
         copy.presignedUploadUrl = secrets.presignedUploadUrl
+        copy.ak = secrets.ak
+        copy.sk = secrets.sk
         return copy
     }
 }
@@ -292,13 +344,17 @@ struct SyncSecretBundle: Codable, Equatable, Sendable {
     var webdavPassword: String = ""
     var presignedDownloadUrl: String = ""
     var presignedUploadUrl: String = ""
+    var ak: String = ""
+    var sk: String = ""
 
     static let empty = SyncSecretBundle()
 
     var isEmpty: Bool {
         webdavPassword.isEmpty &&
             presignedDownloadUrl.isEmpty &&
-            presignedUploadUrl.isEmpty
+            presignedUploadUrl.isEmpty &&
+            ak.isEmpty &&
+            sk.isEmpty
     }
 }
 
@@ -331,6 +387,26 @@ struct SyncClientFactory: Sendable {
                 uploadUrl: settings.presignedUploadUrl.trimmingCharacters(in: .whitespacesAndNewlines),
                 transport: transport
             )
+        case .tencentCos:
+            guard settings.hasRequiredObjectStorageFields else {
+                return nil
+            }
+            return TencentCosSyncClient(settings: settings, transport: transport)
+        case .aliyunOss:
+            guard settings.hasRequiredObjectStorageFields else {
+                return nil
+            }
+            return AliyunOssSyncClient(settings: settings, transport: transport)
         }
+    }
+}
+
+private extension SyncSettings {
+    var hasRequiredObjectStorageFields: Bool {
+        !ak.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !sk.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !bucket.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            (!endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                !customUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 }

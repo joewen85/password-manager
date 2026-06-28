@@ -27,6 +27,7 @@ class SyncSettingsTest {
         assertEquals("device-1", settings.deviceId)
         assertEquals(0, settings.lastSyncRevision)
         assertTrue(settings.logs.isEmpty())
+        assertEquals("vault.sync.json", settings.objectStorageObjectKey)
     }
 
     @Test
@@ -103,6 +104,9 @@ class SyncSettingsTest {
                 autoSyncIntervalMinutes = 1,
                 autoSyncIntervalValue = 30,
                 autoSyncIntervalUnit = SyncIntervalUnit.SECONDS,
+                objectStorageBucket = "vault",
+                objectStorageEndpoint = "oss-cn-hangzhou.aliyuncs.com",
+                objectStorageObjectKey = "sync/vault.json",
                 lastRemoteFingerprint = "etag:remote-v1",
             )
             .toJson()
@@ -112,6 +116,9 @@ class SyncSettingsTest {
         assertEquals(1, json.getInt("autoSyncIntervalMinutes"))
         assertEquals(30, json.getInt("autoSyncIntervalValue"))
         assertEquals("seconds", json.getString("autoSyncIntervalUnit"))
+        assertEquals("vault", json.getString("objectStorageBucket"))
+        assertEquals("oss-cn-hangzhou.aliyuncs.com", json.getString("objectStorageEndpoint"))
+        assertEquals("sync/vault.json", json.getString("objectStorageObjectKey"))
         assertEquals("etag:remote-v1", json.getString("lastRemoteFingerprint"))
         assertEquals("remoteWins", json.getString("conflictStrategy"))
         assertEquals(true, json.getBoolean("syncMasterKey"))
@@ -124,6 +131,7 @@ class SyncSettingsTest {
                 listOf(
                     Result.success(RemoteSyncHttpResponse(statusCode = 200, body = "{}")),
                     Result.success(RemoteSyncHttpResponse(statusCode = 201)),
+                    Result.success(RemoteSyncHttpResponse(statusCode = 200, body = "{}")),
                 )
             )
         )
@@ -146,15 +154,31 @@ class SyncSettingsTest {
             ),
             transport,
         )
+        val cos = factory.makeClient(
+            SyncSettings.defaults(deviceId = "device-1").copy(
+                providerType = SyncProviderType.TENCENT_COS,
+                objectStorageAccessKeyId = "ak",
+                objectStorageSecretAccessKey = "sk",
+                objectStorageBucket = "vault",
+                objectStorageEndpoint = "cos.ap-shanghai.myqcloud.com",
+                objectStorageAppId = "1250000000",
+                objectStorageObjectKey = "prod/vault.json",
+            ),
+            transport,
+        )
 
         assertNull(missing)
         assertNotNull(webdav)
         assertNotNull(presigned)
+        assertNotNull(cos)
         assertEquals(RemoteSyncResult(payload = "{}", statusCode = 200), webdav.download())
         assertEquals(RemoteSyncResult(payload = null, statusCode = 201), presigned.upload("{}"))
+        assertEquals(RemoteSyncResult(payload = "{}", statusCode = 200), cos.download())
         assertEquals("https://dav.example.com/root/vault.json", transport.requests[0].url.toString())
         assertEquals("Basic YWxpY2U6c2VjcmV0", transport.requests[0].headers["Authorization"])
         assertEquals("https://upload.example.com/vault", transport.requests[1].url.toString())
+        assertEquals("https://vault-1250000000.cos.ap-shanghai.myqcloud.com/prod/vault.json", transport.requests[2].url.toString())
+        assertTrue(transport.requests[2].headers["Authorization"].orEmpty().contains("q-sign-algorithm=sha1"))
     }
 
     @Test
@@ -173,6 +197,10 @@ class SyncSettingsTest {
                 webdavPassword = "webdav-password",
                 presignedDownloadUrl = "https://download.example.com/vault",
                 presignedUploadUrl = "https://upload.example.com/vault",
+                objectStorageAccessKeyId = "object-ak",
+                objectStorageSecretAccessKey = "object-sk",
+                objectStorageBucket = "vault",
+                objectStorageEndpoint = "oss-cn-hangzhou.aliyuncs.com",
             )
 
             repository.save(settings)
@@ -183,6 +211,10 @@ class SyncSettingsTest {
             assertFalse(rawFile.contains("webdav-password"))
             assertFalse(rawFile.contains("https://download.example.com/vault"))
             assertFalse(rawFile.contains("https://upload.example.com/vault"))
+            assertFalse(rawFile.contains("object-ak"))
+            assertFalse(rawFile.contains("object-sk"))
+            assertTrue(rawFile.contains("\"objectStorageBucket\": \"vault\""))
+            assertTrue(rawFile.contains("\"objectStorageEndpoint\": \"oss-cn-hangzhou.aliyuncs.com\""))
             assertEquals(settings.syncSecrets, secretStore.load("device-1"))
             assertEquals(settings, repository.load())
 

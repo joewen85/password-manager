@@ -234,6 +234,116 @@ struct FileVaultRepositoryTests {
         #expect(imported.security.totpSecret == "JBSWY3DPEHPK3PXP")
     }
 
+    @Test("Snapshot keeps category templates and multi-account payload fields")
+    func snapshotKeepsCategoryTemplatesAndMultiAccountPayloadFields() throws {
+        let repository = FileVaultRepository(
+            baseDirectory: FileManager.default.temporaryDirectory
+                .appendingPathComponent("PasswordManageriOSSnapshotShapeTests-\(UUID().uuidString)", isDirectory: true)
+        )
+        let snapshot = VaultSnapshot(
+            entries: [
+                VaultEntry(
+                    label: "Multi Login",
+                    type: .credential,
+                    payload: .credential(
+                        CredentialPayload(
+                            username: "primary",
+                            password: "primary-secret",
+                            accounts: [
+                                ServiceAccount(username: "admin", password: "admin-secret", note: "owner")
+                            ],
+                            category: "Accounts"
+                        )
+                    )
+                ),
+                VaultEntry(
+                    label: "Server",
+                    type: .server,
+                    payload: .server(
+                        ServerPayload(
+                            name: "Server",
+                            accounts: [
+                                ServiceAccount(username: "root", password: "server-secret", note: "ssh")
+                            ],
+                            category: "Servers"
+                        )
+                    )
+                )
+            ],
+            categories: ["Accounts", "Servers"],
+            categoryTemplates: [
+                CategoryTemplate(category: "Accounts", fields: CategoryTemplate.fields(for: .account))
+            ],
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        let encoded = try repository.encodeSnapshot(snapshot)
+        let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        let json = try #require(object)
+        let templates = try #require(json["categoryTemplates"] as? [[String: Any]])
+        let entries = try #require(json["entries"] as? [[String: Any]])
+        let firstPayload = try #require(entries.first?["payload"] as? [String: Any])
+        let credential = try #require(firstPayload["credential"] as? [String: Any])
+        let accounts = try #require(credential["accounts"] as? [[String: Any]])
+
+        #expect(templates.first?["category"] as? String == "Accounts")
+        #expect((templates.first?["fields"] as? [[String: Any]])?.map { $0["name"] as? String } == ["名称", "备注", "入口"])
+        #expect(accounts.first?["username"] as? String == "admin")
+
+        let decoded = try repository.decodeSnapshot(encoded)
+        guard case .credential(let decodedCredential) = decoded.entries.first?.payload else {
+            Issue.record("Expected credential payload")
+            return
+        }
+        guard case .server(let decodedServer) = decoded.entries.dropFirst().first?.payload else {
+            Issue.record("Expected server payload")
+            return
+        }
+        #expect(decoded.categoryTemplates == snapshot.categoryTemplates)
+        #expect(decodedCredential.accounts.first?.password == "admin-secret")
+        #expect(decodedServer.accounts.first?.username == "root")
+    }
+
+    @Test("Legacy payloads without new fields remain readable")
+    func legacyPayloadsWithoutNewFieldsRemainReadable() throws {
+        let data = Data(
+            """
+            {
+              "entries": [
+                {
+                  "id": "11111111-2222-3333-4444-555555555555",
+                  "label": "Legacy",
+                  "type": "credential",
+                  "payload": {
+                    "credential": {
+                      "username": "legacy-user",
+                      "password": "legacy-secret",
+                      "category": "Legacy"
+                    }
+                  },
+                  "createdAt": "2026-05-23T00:00:00Z",
+                  "updatedAt": "2026-05-23T00:00:00Z"
+                }
+              ],
+              "categories": ["Legacy"],
+              "tags": [],
+              "updatedAt": "2026-05-23T00:00:00Z"
+            }
+            """.utf8
+        )
+        let repository = FileVaultRepository()
+
+        let decoded = try repository.decodeSnapshot(data)
+
+        #expect(decoded.categoryTemplates.isEmpty)
+        guard case .credential(let credential) = decoded.entries.first?.payload else {
+            Issue.record("Expected credential payload")
+            return
+        }
+        #expect(credential.username == "legacy-user")
+        #expect(credential.accounts.isEmpty)
+    }
+
     @Test("Entry and category scoped exports decode from imports")
     func scopedExportsDecodeFromImports() throws {
         let directory = FileManager.default.temporaryDirectory

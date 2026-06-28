@@ -8,6 +8,7 @@ final class VaultStore {
     private(set) var hasMasterKey = false
     private(set) var entries: [VaultEntry] = []
     private(set) var categories: [String] = []
+    private(set) var categoryTemplates: [CategoryTemplate] = []
     private(set) var tags: [String] = []
     private(set) var syncStatus = "Not configured"
     private(set) var lastBackupStatus = "No backup has run"
@@ -221,6 +222,7 @@ final class VaultStore {
             let snapshot = try repository.loadSnapshotImport(named: fileName)
             entries = snapshot.entries
             categories = snapshot.categories
+            categoryTemplates = snapshot.categoryTemplates
             tags = snapshot.tags
             requireTotp = snapshot.security.requireTotp
             totpSecret = snapshot.security.totpSecret
@@ -249,6 +251,10 @@ final class VaultStore {
     }
 
     func addCategory(_ category: String) -> Bool {
+        addCategory(category, preset: nil)
+    }
+
+    func addCategory(_ category: String, preset: CategoryTypePreset?) -> Bool {
         let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else {
             statusMessage = "Category is required."
@@ -260,6 +266,8 @@ final class VaultStore {
         }
         categories.append(normalized)
         categories.sort()
+        let fields = preset.map(CategoryTemplate.fields(for:)) ?? CategoryTemplate.defaultFields
+        upsertCategoryTemplate(category: normalized, fields: fields)
         persistUnlockedSnapshot()
         statusMessage = "Category added."
         return true
@@ -444,6 +452,7 @@ final class VaultStore {
               let encryptedVault = envelope.encryptedVault else {
             entries = []
             categories = []
+            categoryTemplates = []
             tags = []
             requireTotp = false
             totpSecret = ""
@@ -455,6 +464,7 @@ final class VaultStore {
         let snapshot = try repository.decodeSnapshot(decrypted)
         entries = snapshot.entries
         categories = snapshot.categories
+        categoryTemplates = snapshot.categoryTemplates
         tags = snapshot.tags
         requireTotp = snapshot.security.requireTotp
         totpSecret = snapshot.security.totpSecret
@@ -484,6 +494,7 @@ final class VaultStore {
         VaultSnapshot(
             entries: entries,
             categories: categories,
+            categoryTemplates: categoryTemplates,
             tags: tags,
             security: SecuritySettings(requireTotp: requireTotp, totpSecret: totpSecret),
             syncStatus: syncStatus,
@@ -495,6 +506,7 @@ final class VaultStore {
     private func applySyncResult(_ result: VaultSyncEngineResult) throws {
         entries = result.snapshot.entries
         categories = result.snapshot.categories
+        categoryTemplates = result.snapshot.categoryTemplates
         tags = result.snapshot.tags
         requireTotp = result.snapshot.security.requireTotp
         totpSecret = result.snapshot.security.totpSecret
@@ -573,6 +585,21 @@ final class VaultStore {
         guard !syncSettings.hasLocalChanges else { return }
         syncSettings.hasLocalChanges = true
         try syncSettingsRepository?.save(syncSettings)
+    }
+
+    private func upsertCategoryTemplate(category: String, fields: [FieldTemplate]) {
+        guard !fields.isEmpty else { return }
+        let template = CategoryTemplate(category: category, fields: fields)
+        if let index = categoryTemplates.firstIndex(where: {
+            $0.category.caseInsensitiveCompare(category) == .orderedSame
+        }) {
+            categoryTemplates[index] = template
+        } else {
+            categoryTemplates.append(template)
+        }
+        categoryTemplates.sort {
+            $0.category.localizedCaseInsensitiveCompare($1.category) == .orderedAscending
+        }
     }
 }
 
