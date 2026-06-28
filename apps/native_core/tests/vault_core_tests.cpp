@@ -1,6 +1,7 @@
 #include "../src/vault_core.hpp"
 
 #include <cassert>
+#include <cstdio>
 #include <iostream>
 #include <stdexcept>
 
@@ -16,6 +17,9 @@ int main() {
     assert(!envelope.encryptedVault.ciphertextBase64.empty());
     auto loaded = pm::decryptEnvelope("test-password", envelope);
     assert(loaded.syncStatus == "Loaded");
+    assert(loaded.entries.size() == 1);
+    assert(loaded.entries[0].label == "Production Email");
+    assert(loaded.entries[0].category == "Work");
     bool rejected = false;
     try {
         (void)pm::decryptEnvelope("wrong-password", envelope);
@@ -100,6 +104,24 @@ int main() {
     assert(customCategorySnapshot.categoryTemplates[0].fields[0].name == "名称");
     assert(customCategorySnapshot.categoryTemplates[0].fields[1].name == "备注");
     assert(customCategorySnapshot.categoryTemplates[0].fields[2].name == "Owner");
+
+    const auto parsedCategorySnapshot = pm::parseSnapshotJson(pm::serializeSnapshotJson(categorySnapshot));
+    assert(parsedCategorySnapshot.categories == categorySnapshot.categories);
+    assert(parsedCategorySnapshot.categoryTemplates.size() == 1);
+    assert(parsedCategorySnapshot.categoryTemplates[0].fields[5].name == "Owner");
+
+    const auto envelopeText = pm::serializeEnvelopeText(envelope);
+    const auto parsedEnvelope = pm::parseEnvelopeText(envelopeText);
+    const auto parsedLoaded = pm::decryptEnvelope("test-password", parsedEnvelope);
+    assert(parsedLoaded.entries.size() == 1);
+    assert(parsedLoaded.entries[0].label == "Production Email");
+
+    const std::string testVaultPath = "build/native-core-roundtrip.envelope";
+    pm::saveEnvelopeFile(testVaultPath, envelope);
+    const auto fileLoaded = pm::decryptEnvelope("test-password", pm::loadEnvelopeFile(testVaultPath));
+    assert(fileLoaded.entries.size() == 1);
+    assert(fileLoaded.entries[0].username == "admin@example.com");
+    std::remove(testVaultPath.c_str());
 
     pm::ObjectSyncConfig noneConfig;
     auto noneRequest = pm::buildObjectSyncRequest(noneConfig);

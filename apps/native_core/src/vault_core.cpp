@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <fstream>
 #include <iomanip>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -11,6 +12,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace pm {
@@ -155,6 +157,151 @@ std::string escapeJson(const std::string& value) {
     return out.str();
 }
 
+class JsonReader {
+public:
+    explicit JsonReader(std::string source) : source_(std::move(source)) {}
+
+    void objectStart() {
+        skipWhitespace();
+        require('{');
+    }
+
+    bool objectEnd() {
+        skipWhitespace();
+        if (peek() != '}') return false;
+        ++position_;
+        return true;
+    }
+
+    void arrayStart() {
+        skipWhitespace();
+        require('[');
+    }
+
+    bool arrayEnd() {
+        skipWhitespace();
+        if (peek() != ']') return false;
+        ++position_;
+        return true;
+    }
+
+    bool commaIfPresent() {
+        skipWhitespace();
+        if (peek() != ',') return false;
+        ++position_;
+        return true;
+    }
+
+    std::string key() {
+        auto value = string();
+        skipWhitespace();
+        require(':');
+        return value;
+    }
+
+    std::string string() {
+        skipWhitespace();
+        require('"');
+        std::string output;
+        while (position_ < source_.size()) {
+            char ch = source_[position_++];
+            if (ch == '"') return output;
+            if (ch != '\\') {
+                output.push_back(ch);
+                continue;
+            }
+            if (position_ >= source_.size()) throw std::runtime_error("Invalid JSON escape.");
+            const char escaped = source_[position_++];
+            switch (escaped) {
+                case '"': output.push_back('"'); break;
+                case '\\': output.push_back('\\'); break;
+                case '/': output.push_back('/'); break;
+                case 'b': output.push_back('\b'); break;
+                case 'f': output.push_back('\f'); break;
+                case 'n': output.push_back('\n'); break;
+                case 'r': output.push_back('\r'); break;
+                case 't': output.push_back('\t'); break;
+                default: throw std::runtime_error("Unsupported JSON escape.");
+            }
+        }
+        throw std::runtime_error("Unterminated JSON string.");
+    }
+
+    bool boolean() {
+        skipWhitespace();
+        if (source_.compare(position_, 4, "true") == 0) {
+            position_ += 4;
+            return true;
+        }
+        if (source_.compare(position_, 5, "false") == 0) {
+            position_ += 5;
+            return false;
+        }
+        throw std::runtime_error("Expected JSON boolean.");
+    }
+
+    int integer() {
+        skipWhitespace();
+        std::size_t end = position_;
+        if (end < source_.size() && source_[end] == '-') ++end;
+        while (end < source_.size() && std::isdigit(static_cast<unsigned char>(source_[end]))) ++end;
+        if (end == position_) throw std::runtime_error("Expected JSON integer.");
+        int value = std::stoi(source_.substr(position_, end - position_));
+        position_ = end;
+        return value;
+    }
+
+    void skipValue() {
+        skipWhitespace();
+        const char ch = peek();
+        if (ch == '"') {
+            (void)string();
+        } else if (ch == '{') {
+            objectStart();
+            if (!objectEnd()) {
+                do {
+                    (void)key();
+                    skipValue();
+                } while (commaIfPresent());
+                if (!objectEnd()) throw std::runtime_error("Expected JSON object end.");
+            }
+        } else if (ch == '[') {
+            arrayStart();
+            if (!arrayEnd()) {
+                do {
+                    skipValue();
+                } while (commaIfPresent());
+                if (!arrayEnd()) throw std::runtime_error("Expected JSON array end.");
+            }
+        } else if (ch == 't' || ch == 'f') {
+            (void)boolean();
+        } else {
+            (void)integer();
+        }
+    }
+
+private:
+    char peek() {
+        skipWhitespace();
+        if (position_ >= source_.size()) return '\0';
+        return source_[position_];
+    }
+
+    void require(char expected) {
+        if (position_ >= source_.size() || source_[position_] != expected) {
+            throw std::runtime_error("Invalid JSON.");
+        }
+        ++position_;
+    }
+
+    void skipWhitespace() {
+        while (position_ < source_.size() && std::isspace(static_cast<unsigned char>(source_[position_]))) ++position_;
+    }
+
+    std::string source_;
+    std::size_t position_ = 0;
+};
+
 std::string trimCopy(const std::string& value) {
     const auto first = value.find_first_not_of(" \t\n\r\f\v");
     if (first == std::string::npos) return "";
@@ -227,6 +374,126 @@ void upsertCategoryTemplate(VaultSnapshot& snapshot, const std::string& category
     std::sort(snapshot.categoryTemplates.begin(), snapshot.categoryTemplates.end(), [](const auto& left, const auto& right) {
         return left.category < right.category;
     });
+}
+
+std::vector<std::string> readStringArray(JsonReader& reader) {
+    std::vector<std::string> values;
+    reader.arrayStart();
+    if (!reader.arrayEnd()) {
+        do {
+            values.push_back(reader.string());
+        } while (reader.commaIfPresent());
+        if (!reader.arrayEnd()) throw std::runtime_error("Expected JSON array end.");
+    }
+    return values;
+}
+
+FieldTemplate readFieldTemplate(JsonReader& reader) {
+    FieldTemplate field;
+    reader.objectStart();
+    if (!reader.objectEnd()) {
+        do {
+            const auto key = reader.key();
+            if (key == "id") {
+                field.id = reader.string();
+            } else if (key == "name") {
+                field.name = reader.string();
+            } else {
+                reader.skipValue();
+            }
+        } while (reader.commaIfPresent());
+        if (!reader.objectEnd()) throw std::runtime_error("Expected JSON object end.");
+    }
+    return field;
+}
+
+std::vector<FieldTemplate> readFieldTemplateArray(JsonReader& reader) {
+    std::vector<FieldTemplate> fields;
+    reader.arrayStart();
+    if (!reader.arrayEnd()) {
+        do {
+            fields.push_back(readFieldTemplate(reader));
+        } while (reader.commaIfPresent());
+        if (!reader.arrayEnd()) throw std::runtime_error("Expected JSON array end.");
+    }
+    return normalizeFieldTemplates(fields);
+}
+
+CategoryTemplate readCategoryTemplate(JsonReader& reader) {
+    CategoryTemplate templateEntry;
+    reader.objectStart();
+    if (!reader.objectEnd()) {
+        do {
+            const auto key = reader.key();
+            if (key == "category") {
+                templateEntry.category = reader.string();
+            } else if (key == "fields") {
+                templateEntry.fields = readFieldTemplateArray(reader);
+            } else {
+                reader.skipValue();
+            }
+        } while (reader.commaIfPresent());
+        if (!reader.objectEnd()) throw std::runtime_error("Expected JSON object end.");
+    }
+    if (templateEntry.fields.empty()) templateEntry.fields = defaultCategoryFields();
+    return templateEntry;
+}
+
+std::vector<CategoryTemplate> readCategoryTemplateArray(JsonReader& reader) {
+    std::vector<CategoryTemplate> templates;
+    reader.arrayStart();
+    if (!reader.arrayEnd()) {
+        do {
+            auto templateEntry = readCategoryTemplate(reader);
+            if (!trimCopy(templateEntry.category).empty()) templates.push_back(templateEntry);
+        } while (reader.commaIfPresent());
+        if (!reader.arrayEnd()) throw std::runtime_error("Expected JSON array end.");
+    }
+    return templates;
+}
+
+VaultEntry readVaultEntry(JsonReader& reader) {
+    VaultEntry entry;
+    reader.objectStart();
+    if (!reader.objectEnd()) {
+        do {
+            const auto key = reader.key();
+            if (key == "id") {
+                entry.id = reader.string();
+            } else if (key == "label") {
+                entry.label = reader.string();
+            } else if (key == "type") {
+                entry.type = reader.string();
+            } else if (key == "username") {
+                entry.username = reader.string();
+            } else if (key == "secret") {
+                entry.secret = reader.string();
+            } else if (key == "category") {
+                entry.category = reader.string();
+            } else if (key == "notes") {
+                entry.notes = reader.string();
+            } else if (key == "isDeleted") {
+                entry.isDeleted = reader.boolean();
+            } else {
+                reader.skipValue();
+            }
+        } while (reader.commaIfPresent());
+        if (!reader.objectEnd()) throw std::runtime_error("Expected JSON object end.");
+    }
+    entry.id = canonicalIdString(entry.id);
+    return entry;
+}
+
+std::vector<VaultEntry> readVaultEntryArray(JsonReader& reader) {
+    std::vector<VaultEntry> entries;
+    reader.arrayStart();
+    if (!reader.arrayEnd()) {
+        do {
+            entries.push_back(readVaultEntry(reader));
+        } while (reader.commaIfPresent());
+        if (!reader.arrayEnd()) throw std::runtime_error("Expected JSON array end.");
+    }
+    return entries;
 }
 
 VaultEntry canonicalEntryId(const VaultEntry& entry) {
@@ -729,8 +996,8 @@ VaultEnvelope createEnvelope(const std::string& password, const VaultSnapshot& s
 VaultSnapshot decryptEnvelope(const std::string& password, const VaultEnvelope& envelope) {
     auto key = verifyPassword(password, envelope.masterKeyRecord);
     auto raw = decryptBytes(envelope.encryptedVault, key);
-    VaultSnapshot snapshot;
-    snapshot.syncStatus = std::string(raw.begin(), raw.end()).find("entries") != std::string::npos ? "Loaded" : "Not configured";
+    auto snapshot = parseSnapshotJson(std::string(raw.begin(), raw.end()));
+    snapshot.syncStatus = "Loaded";
     return snapshot;
 }
 
@@ -764,6 +1031,111 @@ std::string serializeSnapshotJson(const VaultSnapshot& snapshot) {
     }
     out << "],\"syncStatus\":\"" << escapeJson(snapshot.syncStatus) << "\",\"backupStatus\":\"" << escapeJson(snapshot.backupStatus) << "\"}";
     return out.str();
+}
+
+VaultSnapshot parseSnapshotJson(const std::string& json) {
+    JsonReader reader(json);
+    VaultSnapshot snapshot;
+    reader.objectStart();
+    if (!reader.objectEnd()) {
+        do {
+            const auto key = reader.key();
+            if (key == "entries") {
+                snapshot.entries = readVaultEntryArray(reader);
+            } else if (key == "categories") {
+                snapshot.categories = readStringArray(reader);
+            } else if (key == "categoryTemplates") {
+                snapshot.categoryTemplates = readCategoryTemplateArray(reader);
+            } else if (key == "syncStatus") {
+                snapshot.syncStatus = reader.string();
+            } else if (key == "backupStatus") {
+                snapshot.backupStatus = reader.string();
+            } else if (key == "requireTotp") {
+                snapshot.requireTotp = reader.boolean();
+            } else if (key == "totpSecret") {
+                snapshot.totpSecret = reader.string();
+            } else {
+                reader.skipValue();
+            }
+        } while (reader.commaIfPresent());
+        if (!reader.objectEnd()) throw std::runtime_error("Expected JSON object end.");
+    }
+    if (snapshot.categories.empty()) snapshot.categories = rebuildCategories(snapshot.entries);
+    if (snapshot.categoryTemplates.empty()) {
+        for (const auto& category : snapshot.categories) {
+            snapshot.categoryTemplates.push_back(CategoryTemplate{category, defaultCategoryFields()});
+        }
+    }
+    return snapshot;
+}
+
+std::string serializeEnvelopeText(const VaultEnvelope& envelope) {
+    std::ostringstream out;
+    out << "schemaVersion=" << envelope.schemaVersion << "\n"
+        << "updatedAt=" << envelope.updatedAt << "\n"
+        << "salt=" << envelope.masterKeyRecord.saltBase64 << "\n"
+        << "iterations=" << envelope.masterKeyRecord.iterations << "\n"
+        << "verifier=" << envelope.masterKeyRecord.verifierBase64 << "\n"
+        << "metadataSalt=" << envelope.masterKeyRecord.metadataSaltBase64 << "\n"
+        << "metadataIterations=" << envelope.masterKeyRecord.metadataIterations << "\n"
+        << "payloadVersion=" << envelope.encryptedVault.version << "\n"
+        << "nonce=" << envelope.encryptedVault.nonceBase64 << "\n"
+        << "ciphertext=" << envelope.encryptedVault.ciphertextBase64 << "\n"
+        << "mac=" << envelope.encryptedVault.macBase64 << "\n";
+    return out.str();
+}
+
+VaultEnvelope parseEnvelopeText(const std::string& text) {
+    VaultEnvelope envelope;
+    std::istringstream in(text);
+    std::string line;
+    while (std::getline(in, line)) {
+        const auto split = line.find('=');
+        if (split == std::string::npos) continue;
+        const auto key = line.substr(0, split);
+        const auto value = line.substr(split + 1);
+        if (key == "schemaVersion") envelope.schemaVersion = std::stoi(value);
+        else if (key == "updatedAt") envelope.updatedAt = value;
+        else if (key == "salt") envelope.masterKeyRecord.saltBase64 = value;
+        else if (key == "iterations") envelope.masterKeyRecord.iterations = std::stoi(value);
+        else if (key == "verifier") envelope.masterKeyRecord.verifierBase64 = value;
+        else if (key == "metadataSalt") envelope.masterKeyRecord.metadataSaltBase64 = value;
+        else if (key == "metadataIterations") envelope.masterKeyRecord.metadataIterations = std::stoi(value);
+        else if (key == "payloadVersion") envelope.encryptedVault.version = std::stoi(value);
+        else if (key == "nonce") envelope.encryptedVault.nonceBase64 = value;
+        else if (key == "ciphertext") envelope.encryptedVault.ciphertextBase64 = value;
+        else if (key == "mac") envelope.encryptedVault.macBase64 = value;
+    }
+    if (envelope.masterKeyRecord.saltBase64.empty() ||
+        envelope.masterKeyRecord.verifierBase64.empty() ||
+        envelope.encryptedVault.nonceBase64.empty() ||
+        envelope.encryptedVault.ciphertextBase64.empty() ||
+        envelope.encryptedVault.macBase64.empty()) {
+        throw std::runtime_error("Vault envelope file is incomplete.");
+    }
+    if (envelope.updatedAt.empty()) envelope.updatedAt = isoTimestamp();
+    if (envelope.masterKeyRecord.metadataSaltBase64.empty()) {
+        envelope.masterKeyRecord.metadataSaltBase64 = envelope.masterKeyRecord.saltBase64;
+    }
+    if (envelope.masterKeyRecord.metadataIterations <= 0) {
+        envelope.masterKeyRecord.metadataIterations = envelope.masterKeyRecord.iterations;
+    }
+    return envelope;
+}
+
+void saveEnvelopeFile(const std::string& path, const VaultEnvelope& envelope) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) throw std::runtime_error("Unable to open vault file for writing.");
+    out << serializeEnvelopeText(envelope);
+    if (!out) throw std::runtime_error("Unable to write vault file.");
+}
+
+VaultEnvelope loadEnvelopeFile(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("Unable to open vault file.");
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    return parseEnvelopeText(buffer.str());
 }
 
 VaultEntry makeEntry(const std::string& label, const std::string& type, const std::string& username, const std::string& secret) {

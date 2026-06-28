@@ -126,6 +126,11 @@ std::vector<std::uint8_t> decryptBytes(const EncryptedPayload& payload, const st
 VaultEnvelope createEnvelope(const std::string& password, const VaultSnapshot& snapshot);
 VaultSnapshot decryptEnvelope(const std::string& password, const VaultEnvelope& envelope);
 std::string serializeSnapshotJson(const VaultSnapshot& snapshot);
+VaultSnapshot parseSnapshotJson(const std::string& json);
+std::string serializeEnvelopeText(const VaultEnvelope& envelope);
+VaultEnvelope parseEnvelopeText(const std::string& text);
+void saveEnvelopeFile(const std::string& path, const VaultEnvelope& envelope);
+VaultEnvelope loadEnvelopeFile(const std::string& path);
 VaultEntry makeEntry(const std::string& label, const std::string& type, const std::string& username, const std::string& secret);
 std::vector<FieldTemplate> defaultCategoryFields();
 std::vector<FieldTemplate> categoryFieldsForPreset(CategoryTypePreset preset, const std::vector<std::string>& customFieldNames = {});

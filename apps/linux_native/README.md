@@ -7,17 +7,18 @@
 ### 范围
 
 - 当前切片是 C++17 + OpenSSL 的 Linux terminal-native 起点，核心逻辑来自 `apps/native_core`。
-- 已实现可测试核心：PBKDF2-SHA256、AES-256-GCM encrypted vault envelope、TOTP、entry model、搜索/过滤、分类/标签集合、JSON snapshot 序列化、version-vector merge。
-- CLI 入口支持 smoke-test 初始化 encrypted envelope、TOTP 生成和 `self-test`。
+- 已实现可测试核心：PBKDF2-SHA256、AES-256-GCM encrypted vault envelope、TOTP、entry model、搜索/过滤、分类/标签集合、JSON snapshot 序列化/反序列化、encrypted vault 文件读写、version-vector merge。
+- CLI 入口支持初始化、解锁状态检查、分类模板持久化、TOTP 生成和 `self-test`，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
 - 当前尚未实现 GTK/Qt/libadwaita 图形界面，也尚未实现完整交互式 CRUD 和真实 WebDAV/S3 网络同步。
 - 当前在 macOS 上用 clang + Homebrew OpenSSL 验证核心逻辑；发布前仍需在 Linux 发行版上用系统 OpenSSL 重新构建和回归。
 
 ### 目录说明
 
 - `Makefile`: 构建和测试入口。
-- `src/main.cpp`: terminal-native smoke-test CLI。
+- `src/main.cpp`: Linux native CLI entrypoint。
 - `../native_core/src/vault_core.hpp`: Windows/Linux 共享核心类型和 API。
 - `../native_core/src/vault_core.cpp`: 共享 crypto、TOTP、entry、merge、分类模板和对象存储签名实现。
+- `../native_core/src/vault_cli.cpp`: Windows/Linux 共享 terminal-native CLI。
 - `../native_core/tests/vault_core_tests.cpp`: Windows/Linux 共用 C++ 核心测试。
 
 ### 环境要求
@@ -74,14 +75,27 @@ make OPENSSL_PREFIX=/usr
    ./build/password-manager-linux self-test
    ```
 
-3. 生成 encrypted envelope smoke-test 文件：
+3. 初始化 encrypted vault 文件：
 
    ```bash
    ./build/password-manager-linux init "test-password"
    ```
 
-4. 确认 `vault-linux-native.envelope` 包含 salt、iterations、verifier、nonce、ciphertext、mac，但不包含示例条目的明文 username 或 password。
-5. 生成 RFC 6238 TOTP fixture：
+4. 解锁并查看 vault 状态：
+
+   ```bash
+   ./build/password-manager-linux status "test-password"
+   ```
+
+5. 添加分类模板并确认能再次解锁读回：
+
+   ```bash
+   ./build/password-manager-linux add-category "test-password" Infra --preset server --field Owner
+   ./build/password-manager-linux status "test-password"
+   ```
+
+6. 确认 `vault-linux-native.envelope` 包含 salt、iterations、verifier、nonce、ciphertext、mac，但不包含分类名、username 或 password 等 vault 明文。
+7. 生成 RFC 6238 TOTP fixture：
 
    ```bash
    ./build/password-manager-linux totp GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ 59
@@ -141,8 +155,9 @@ Release notes 只能描述已经验证的能力；当前不能把 GUI、真实�
 - [x] README 说明开发、发布构建、Linux 分发/上架步骤。
 - [x] Windows/Linux 原生端共用 `apps/native_core`，避免 core 双写偏差。
 - [x] 核心使用 PBKDF2-SHA256 + AES-256-GCM。
-- [x] C++ 测试覆盖加密 envelope、错误密码拒绝、TOTP、entry 过滤、集合重建和 version-vector merge。
+- [x] C++ 测试覆盖加密 envelope、错误密码拒绝、snapshot 反序列化、encrypted vault 文件读回、TOTP、entry 过滤、集合重建和 version-vector merge。
 - [x] terminal-native smoke-test CLI 可构建。
+- [x] Windows/Linux 共用 terminal-native CLI，支持加密 vault 初始化、状态读取和分类模板持久化。
 - [ ] 在真实 Linux 发行版上构建和测试。
 - [ ] GTK/Qt/libadwaita GUI 完成。
 - [ ] 完整 CRUD、导入导出、备份恢复 UI 完成。
@@ -160,17 +175,18 @@ This directory contains the native Linux rewrite target. It is intentionally sep
 ### Scope
 
 - The current slice is a C++17 + OpenSSL Linux terminal-native starting point.
-- Testable core is implemented in shared `apps/native_core`: PBKDF2-SHA256, AES-256-GCM encrypted vault envelope, TOTP, entry model, search/filtering, category/tag collection rebuilding, JSON snapshot serialization, and version-vector merge.
-- The CLI entry point supports smoke-test encrypted envelope initialization, TOTP generation, and `self-test`.
+- Testable core is implemented in shared `apps/native_core`: PBKDF2-SHA256, AES-256-GCM encrypted vault envelope, TOTP, entry model, search/filtering, category/tag collection rebuilding, JSON snapshot serialization/deserialization, encrypted vault file read/write, and version-vector merge.
+- The CLI entry point supports encrypted vault initialization, unlock status checks, persisted category templates, TOTP generation, and `self-test`.
 - GTK/Qt/libadwaita GUI, full interactive CRUD, and real WebDAV/S3 network sync are not implemented yet.
 - The current verification runs on macOS with clang + Homebrew OpenSSL. Release must be rebuilt and regressed on Linux distributions with system OpenSSL.
 
 ### Directory Layout
 
 - `Makefile`: build and test entry point.
-- `src/main.cpp`: terminal-native smoke-test CLI.
+- `src/main.cpp`: Linux native CLI entrypoint.
 - `../native_core/src/vault_core.hpp`: shared Windows/Linux core types and API.
 - `../native_core/src/vault_core.cpp`: shared crypto, TOTP, entry, merge, category template, and object storage signing implementation.
+- `../native_core/src/vault_cli.cpp`: shared Windows/Linux terminal-native CLI.
 - `../native_core/tests/vault_core_tests.cpp`: shared Windows/Linux C++ core tests.
 
 ### Requirements

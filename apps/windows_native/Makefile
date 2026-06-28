@@ -10,7 +10,9 @@ BUILD_DIR := build
 APP := $(BUILD_DIR)/password-manager-windows-core
 TESTS := $(BUILD_DIR)/windows-native-tests
 CORE_SRC := $(NATIVE_CORE_DIR)/src/vault_core.cpp
+CLI_SRC := $(NATIVE_CORE_DIR)/src/vault_cli.cpp
 CORE_HEADER := $(NATIVE_CORE_DIR)/src/vault_core.hpp
+CLI_HEADER := $(NATIVE_CORE_DIR)/src/vault_cli.hpp
 CORE_TESTS := $(NATIVE_CORE_DIR)/tests/vault_core_tests.cpp
 
 .PHONY: all test clean
@@ -20,8 +22,8 @@ all: $(APP)
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(APP): $(BUILD_DIR) $(CORE_SRC) $(CORE_HEADER) src/main.cpp
-	$(CXX) $(CXXFLAGS) $(PM_CPPFLAGS) $(CORE_SRC) src/main.cpp $(PM_LDFLAGS) $(LDLIBS) -o $@
+$(APP): $(BUILD_DIR) $(CORE_SRC) $(CLI_SRC) $(CORE_HEADER) $(CLI_HEADER) src/main.cpp
+	$(CXX) $(CXXFLAGS) $(PM_CPPFLAGS) $(CORE_SRC) $(CLI_SRC) src/main.cpp $(PM_LDFLAGS) $(LDLIBS) -o $@
 
 $(TESTS): $(BUILD_DIR) $(CORE_SRC) $(CORE_HEADER) $(CORE_TESTS)
 	$(CXX) $(CXXFLAGS) $(PM_CPPFLAGS) $(CORE_SRC) $(CORE_TESTS) $(PM_LDFLAGS) $(LDLIBS) -o $@
