@@ -51,8 +51,8 @@
     <string name="entry_type_account">账号</string>
     <string name="entry_type_server">服务器</string>
     <string name="entry_type_service">服务</string>
-    <string name="category_type_templates">类型模板</string>
-    <string name="category_type_templates_hint">可选。未选择类型模板时，新分类只包含名称和备注。</string>
+    <string name="category_type_templates">快捷字段</string>
+    <string name="category_type_templates_hint">可选。未选择快捷字段时，新分类只包含名称和备注。</string>
     <string name="all">全部</string>
     <string name="all_categories">全部分类</string>
     <string name="more_count">...+%1$d</string>

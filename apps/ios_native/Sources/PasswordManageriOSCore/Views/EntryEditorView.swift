@@ -191,13 +191,26 @@ private struct CategorySelectField: View {
                         create: createCategory
                     )
 
-                    Picker("Type", selection: $selectedPreset) {
-                        Text("None").tag(CategoryTypePreset?.none)
-                        ForEach(CategoryTypePreset.allCases) { preset in
-                            Text(preset.title).tag(CategoryTypePreset?.some(preset))
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Field shortcuts")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            ForEach(CategoryTypePreset.allCases) { preset in
+                                Button {
+                                    selectedPreset = selectedPreset == preset ? nil : preset
+                                } label: {
+                                    Text(preset.title)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .tint(selectedPreset == preset ? .accentColor : .gray)
+                            }
                         }
+                        Text("New categories use only Name and Notes unless a shortcut is selected.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
-                    .pickerStyle(.segmented)
 
                     Divider()
 

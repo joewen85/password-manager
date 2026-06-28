@@ -1296,7 +1296,7 @@ struct Index {
       }
 
       if (this.categoryRenameSource.length === 0) {
-        Text('新分类类型')
+        Text('快捷字段')
           .fontSize(12)
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_MUTED);
@@ -1330,7 +1330,7 @@ struct Index {
       }
 
       if (this.categoryRenameSource.length > 0) {
-        Text('类型标签')
+        Text('字段快捷键')
           .fontSize(12)
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_MUTED);
@@ -1954,7 +1954,7 @@ struct Index {
     }
     await this.controller().applyCategoryPreset(clean, preset);
     this.refreshData();
-    this.toast('分类类型字段已更新');
+    this.toast('分类快捷字段已更新');
   }
 
   private async onRenameCategory(): Promise<void> {

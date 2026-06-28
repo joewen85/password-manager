@@ -310,12 +310,7 @@ struct ContentView: View {
                         .textFieldStyle(.roundedBorder)
                         .onSubmit(saveCreatedTaxonomy)
                     if createTaxonomyKind == .category {
-                        Picker(L10n.t("Type"), selection: $createCategoryPreset) {
-                            Text(L10n.t("None")).tag(CategoryTypePreset?.none)
-                            ForEach(CategoryTypePreset.allCases) { preset in
-                                Text(preset.title).tag(CategoryTypePreset?.some(preset))
-                            }
-                        }
+                        CategoryPresetShortcutButtons(selection: $createCategoryPreset)
                     }
                     if let createTaxonomyError {
                         Text(createTaxonomyError)
@@ -752,6 +747,34 @@ private struct EntryExportOptionsView: View {
                 }
             }
         )
+    }
+}
+
+struct CategoryPresetShortcutButtons: View {
+    @Binding var selection: CategoryTypePreset?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(L10n.t("Field Shortcuts"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                ForEach(CategoryTypePreset.allCases) { preset in
+                    Button {
+                        selection = selection == preset ? nil : preset
+                    } label: {
+                        Text(preset.title)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(selection == preset ? .accentColor : .gray)
+                    .help(L10n.tf("Add %@ fields", preset.title))
+                }
+            }
+            Text(L10n.t("New categories use only Name and Notes unless a shortcut is selected."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 }
 

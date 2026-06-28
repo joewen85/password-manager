@@ -41,12 +41,7 @@ struct TaxonomyManagementView: View {
                 }
 
                 if selectedKind == .category {
-                    Picker(L10n.t("Type"), selection: $selectedCategoryPreset) {
-                        Text(L10n.t("None")).tag(CategoryTypePreset?.none)
-                        ForEach(CategoryTypePreset.allCases) { preset in
-                            Text(preset.title).tag(CategoryTypePreset?.some(preset))
-                        }
-                    }
+                    CategoryPresetShortcutButtons(selection: $selectedCategoryPreset)
                 }
 
                 Group {
