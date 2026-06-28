@@ -120,6 +120,57 @@ class VaultStoreSyncTest {
     }
 
     @Test
+    fun syncNowPreservesNewlyCreatedEmptyCategory() {
+        val directory = createTempDirectory("PasswordManagerAndroidVaultStoreSyncCategoryTests").toFile()
+        try {
+            val syncRepository = SyncSettingsRepository(
+                settingsFile = File(directory, "sync_settings.json"),
+                secretStore = InMemorySyncSecretStore(),
+            )
+            val now = Instant.parse("2027-01-15T08:00:00Z")
+            val engine = VaultSyncEngine(clock = { now })
+            val repository = FileVaultRepository(directory)
+            val store = VaultStore(
+                repository = repository,
+                syncSettingsRepository = syncRepository,
+                syncEngine = engine,
+            )
+            assertTrue(store.setupMasterPassword("test-password", "test-password"))
+            val settings = SyncSettings.defaults(deviceId = "android-device").copy(
+                providerType = SyncProviderType.WEBDAV,
+                webdavUrl = "https://dav.example.com/root",
+                webdavPath = "/vault.json",
+            )
+            store.updateSyncSettings(settings)
+            assertTrue(store.addCategory("test"))
+            val client = VaultStoreSyncFakeClient(
+                downloads = ArrayDeque(listOf(RemoteSyncResult(payload = null, statusCode = 404))),
+                uploadStatusCodes = ArrayDeque(listOf(201)),
+            )
+
+            store.syncNow(client)
+
+            assertEquals(listOf("test"), store.categories())
+            assertEquals("test", store.categoryTemplate("test")?.category)
+            assertEquals(listOf("名称", "备注"), store.categoryTemplate("test")?.fields?.map { it.name })
+            val uploaded = assertNotNull(engine.decodePayload(client.uploadedPayloads.single()))
+            assertEquals(listOf("test"), uploaded.snapshot.categories)
+            assertEquals(listOf("test"), uploaded.snapshot.categoryTemplates.map { it.category })
+
+            val reloadedStore = VaultStore(
+                repository = repository,
+                syncSettingsRepository = syncRepository,
+                syncEngine = engine,
+            )
+            assertTrue(reloadedStore.unlock("test-password"))
+            assertEquals(listOf("test"), reloadedStore.categories())
+            assertEquals("test", reloadedStore.categoryTemplate("test")?.category)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun clearAllDataRequiresMasterPasswordAndKeepsVaultUsable() {
         val directory = createTempDirectory("PasswordManagerAndroidClearDataTests").toFile()
         try {

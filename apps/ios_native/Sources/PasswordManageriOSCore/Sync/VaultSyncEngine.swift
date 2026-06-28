@@ -201,17 +201,26 @@ struct VaultSyncEngine: Sendable {
     ) -> VaultSnapshot {
         let latestSnapshot = local.updatedAt >= remote.updatedAt ? local : remote
         let activeEntries = entries.filter { !$0.isDeleted }
+        let baseCategories = localHasChanges ? local.categories : remote.categories
+        let baseCategoryTemplates = localHasChanges ? local.categoryTemplates : remote.categoryTemplates
         let categories = mergeTaxonomy(
-            base: localHasChanges ? local.categories : remote.categories,
-            values: activeEntries.map(\.payload.category)
+            base: baseCategories,
+            values: activeEntries.map(\.payload.category) + baseCategoryTemplates.map(\.category)
         )
         let tags = mergeTaxonomy(
             base: localHasChanges ? local.tags : remote.tags,
             values: activeEntries.flatMap(\.payload.tags)
         )
+        let categoryTemplates = mergeCategoryTemplates(
+            base: baseCategoryTemplates,
+            local: local.categoryTemplates,
+            remote: remote.categoryTemplates,
+            categories: categories
+        )
         return VaultSnapshot(
             entries: entries.sorted { $0.updatedAt > $1.updatedAt },
             categories: categories,
+            categoryTemplates: categoryTemplates,
             tags: tags,
             security: latestSnapshot.security,
             syncStatus: latestSnapshot.syncStatus,
@@ -222,6 +231,34 @@ struct VaultSyncEngine: Sendable {
 
     private func mergeTaxonomy(base: [String], values: [String]) -> [String] {
         Array(Set((base + values).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
+    }
+
+    private func mergeCategoryTemplates(
+        base: [CategoryTemplate],
+        local: [CategoryTemplate],
+        remote: [CategoryTemplate],
+        categories: [String]
+    ) -> [CategoryTemplate] {
+        let categoryKeys = Set(categories.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
+        var templatesByCategory: [String: CategoryTemplate] = [:]
+
+        func insert(_ template: CategoryTemplate) {
+            let category = template.category.trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = category.lowercased()
+            guard !category.isEmpty, categoryKeys.contains(key), templatesByCategory[key] == nil else {
+                return
+            }
+            templatesByCategory[key] = CategoryTemplate(category: category, fields: template.fields)
+        }
+
+        base.forEach(insert)
+        local.forEach(insert)
+        remote.forEach(insert)
+
+        return categories.compactMap { category in
+            let key = category.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return templatesByCategory[key]
+        }
     }
 
     private func result(

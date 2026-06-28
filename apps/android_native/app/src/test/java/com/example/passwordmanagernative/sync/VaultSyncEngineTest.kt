@@ -1,5 +1,6 @@
 package com.example.passwordmanagernative.sync
 
+import com.example.passwordmanagernative.model.CategoryTemplate
 import com.example.passwordmanagernative.model.CredentialPayload
 import com.example.passwordmanagernative.model.SecuritySettings
 import com.example.passwordmanagernative.model.VaultEntry
@@ -128,6 +129,50 @@ class VaultSyncEngineTest {
         assertEquals(emptyList(), result.snapshot.categories)
         assertEquals(emptyList(), result.snapshot.tags)
         assertTrue(client.uploadedPayloads.isEmpty())
+    }
+
+    @Test
+    fun localEmptyCategoryKeepsTemplateWhenMergedWithNewerRemote() {
+        val now = Instant.parse("2027-01-15T08:00:00Z")
+        val engine = VaultSyncEngine(clock = { now })
+        val settings = SyncSettings.defaults(deviceId = "android-device").copy(
+            lastSyncRevision = 1,
+            hasLocalChanges = true,
+        )
+        val local = makeSnapshot(
+            categories = listOf("test"),
+            categoryTemplates = listOf(CategoryTemplate(category = "test")),
+            entries = emptyList(),
+        )
+        val remote = makeSnapshot(
+            categories = emptyList(),
+            categoryTemplates = emptyList(),
+            entries = emptyList(),
+            updatedAt = Instant.parse("2027-01-15T08:01:00Z"),
+        )
+        val remotePayload = engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt = now,
+                deviceId = "remote-device",
+                revision = 2,
+                snapshot = remote,
+            )
+        )
+        val client = FakeSyncClient(
+            downloads = ArrayDeque(listOf(RemoteSyncResult(payload = remotePayload, statusCode = 200))),
+            uploadStatusCodes = ArrayDeque(listOf(200)),
+        )
+
+        val result = engine.synchronize(localSnapshot = local, settings = settings, client = client)
+
+        assertTrue(result.uploaded)
+        assertEquals(listOf("test"), result.snapshot.categories)
+        assertEquals(listOf("test"), result.snapshot.categoryTemplates.map { it.category })
+        assertEquals(listOf("名称", "备注"), result.snapshot.categoryTemplates.single().fields.map { it.name })
+        val uploaded = engine.decodePayload(client.uploadedPayloads.single())!!
+        assertEquals(listOf("test"), uploaded.snapshot.categories)
+        assertEquals(listOf("test"), uploaded.snapshot.categoryTemplates.map { it.category })
+        assertEquals(listOf("名称", "备注"), uploaded.snapshot.categoryTemplates.single().fields.map { it.name })
     }
 
     @Test
@@ -356,6 +401,7 @@ private class FakeSyncClient(
 
 private fun makeSnapshot(
     categories: List<String> = emptyList(),
+    categoryTemplates: List<CategoryTemplate> = emptyList(),
     tags: List<String> = emptyList(),
     entries: List<VaultEntry>,
     updatedAt: Instant = Instant.parse("2026-01-01T00:00:00Z"),
@@ -363,6 +409,7 @@ private fun makeSnapshot(
     VaultSnapshot(
         entries = entries,
         categories = categories,
+        categoryTemplates = categoryTemplates,
         tags = tags,
         security = SecuritySettings(requireTotp = true, totpSecret = "JBSWY3DPEHPK3PXP"),
         syncStatus = "Idle",

@@ -1792,6 +1792,7 @@ export class VaultController {
       : remote.categoryTemplates;
     baseTags.forEach((tag: string) => tags.add(tag));
     baseCategories.forEach((category: string) => categories.add(category));
+    baseTemplates.forEach((template: CategoryTemplate) => categories.add(template.category));
     mergedEntries.filter((entry: VaultEntry) => !entry.isDeleted).forEach((entry: VaultEntry) => {
       entry.tags.forEach((tag: string) => tags.add(tag));
       const category = this.entryCategory(entry);

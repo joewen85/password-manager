@@ -1,5 +1,6 @@
 package com.example.passwordmanagernative.sync
 
+import com.example.passwordmanagernative.model.CategoryTemplate
 import com.example.passwordmanagernative.model.SecuritySettings
 import com.example.passwordmanagernative.model.VaultEntry
 import com.example.passwordmanagernative.model.VaultSnapshot
@@ -194,17 +195,26 @@ class VaultSyncEngine(
     ): VaultSnapshot {
         val latestSnapshot = if (local.updatedAt >= remote.updatedAt) local else remote
         val activeEntries = entries.filterNot { it.isDeleted }
+        val baseCategories = if (localHasChanges) local.categories else remote.categories
+        val baseCategoryTemplates = if (localHasChanges) local.categoryTemplates else remote.categoryTemplates
         val categories = mergeTaxonomy(
-            base = if (localHasChanges) local.categories else remote.categories,
-            entries = activeEntries.map { it.payload.category },
+            base = baseCategories,
+            entries = activeEntries.map { it.payload.category } + baseCategoryTemplates.map { it.category },
         )
         val tags = mergeTaxonomy(
             base = if (localHasChanges) local.tags else remote.tags,
             entries = activeEntries.flatMap { it.payload.tags },
         )
+        val categoryTemplates = mergeCategoryTemplates(
+            base = baseCategoryTemplates,
+            local = local.categoryTemplates,
+            remote = remote.categoryTemplates,
+            categories = categories,
+        )
         return VaultSnapshot(
             entries = entries.sortedByDescending { it.updatedAt },
             categories = categories,
+            categoryTemplates = categoryTemplates,
             tags = tags,
             security = latestSnapshot.security.takeUnless { it == SecuritySettings() } ?: local.security,
             syncStatus = latestSnapshot.syncStatus,
@@ -219,6 +229,33 @@ class VaultSyncEngine(
             .filter { it.isNotEmpty() }
             .toSet()
             .sorted()
+
+    private fun mergeCategoryTemplates(
+        base: List<CategoryTemplate>,
+        local: List<CategoryTemplate>,
+        remote: List<CategoryTemplate>,
+        categories: List<String>,
+    ): List<CategoryTemplate> {
+        val categoryKeys = categories.map { it.trim().lowercase() }.toSet()
+        val templatesByCategory = linkedMapOf<String, CategoryTemplate>()
+
+        fun insert(template: CategoryTemplate) {
+            val category = template.category.trim()
+            val key = category.lowercase()
+            if (category.isNotEmpty() && key in categoryKeys && key !in templatesByCategory) {
+                templatesByCategory[key] = template.copy(category = category)
+            }
+        }
+
+        base.forEach(::insert)
+        local.forEach(::insert)
+        remote.forEach(::insert)
+
+        return categories.mapNotNull { category ->
+            val key = category.trim().lowercase()
+            templatesByCategory[key]
+        }
+    }
 
     private fun result(
         snapshot: VaultSnapshot,

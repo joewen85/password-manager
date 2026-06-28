@@ -346,6 +346,54 @@ struct SyncSettingsTests {
         #expect(reloadedStore.syncStatus.contains("Synced 1 items"))
         #expect(reloadedStore.entries.contains { $0.label == "Sync Login" })
     }
+
+    @MainActor
+    @Test("VaultStore sync preserves newly created empty category")
+    func vaultStoreSyncPreservesNewlyCreatedEmptyCategory() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManageriOSVaultStoreSyncCategoryTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let secretStore = InMemorySyncSecretStore()
+        let syncRepository = try SyncSettingsRepository(baseDirectory: directory, secretStore: secretStore)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(
+            repository: repository,
+            syncSettingsRepository: syncRepository,
+            syncEngine: engine
+        )
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+        var settings = SyncSettings.defaults(deviceId: "ios-device")
+        settings.providerType = .webdav
+        settings.webdavUrl = "https://dav.example.com/root"
+        settings.webdavPath = "/vault.json"
+        store.updateSyncSettings(settings)
+        #expect(store.addCategory("test"))
+        let client = VaultStoreSyncFakeClient(
+            downloads: [RemoteSyncResult(payload: nil, statusCode: 404)],
+            uploadStatusCodes: [201]
+        )
+
+        await store.syncNow(client: client)
+
+        #expect(store.categories.contains("test"))
+        let storeTemplate = try #require(store.categoryTemplates.first { $0.category == "test" })
+        #expect(storeTemplate.fields.map(\.name) == ["名称", "备注"])
+        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.first))
+        #expect(uploaded.snapshot.categories.contains("test"))
+        #expect(uploaded.snapshot.categoryTemplates.contains { $0.category == "test" })
+
+        let reloadedStore = VaultStore(
+            repository: repository,
+            syncSettingsRepository: syncRepository,
+            syncEngine: engine
+        )
+        #expect(reloadedStore.unlock(password: "test-password"))
+        #expect(reloadedStore.categories.contains("test"))
+        #expect(reloadedStore.categoryTemplates.contains { $0.category == "test" })
+    }
 }
 
 private func syncSettingsHTTPResult(url: URL, statusCode: Int, body: String = "") -> (Data, HTTPURLResponse) {
