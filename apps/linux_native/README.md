@@ -8,8 +8,8 @@
 
 - 当前切片是 C++17 + OpenSSL 的 Linux terminal-native 起点，核心逻辑来自 `apps/native_core`。
 - 已实现可测试核心：PBKDF2-SHA256、AES-256-GCM encrypted vault envelope、TOTP、entry model、搜索/过滤、分类/标签集合、JSON snapshot 序列化/反序列化、encrypted vault 文件读写、version-vector merge。
-- CLI 入口支持初始化、解锁状态检查、分类模板持久化、credential/server/service 条目新增、搜索列表、单条查看、软删除、本地 encrypted envelope 备份/恢复、明文 snapshot 导出/导入、TOTP 生成和 `self-test`，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
-- 当前尚未实现 GTK/Qt/libadwaita 图形界面、GUI CRUD 和真实 WebDAV/S3 网络同步。
+- CLI 入口支持初始化、解锁状态检查、分类模板持久化、credential/server/service 条目新增、搜索列表、单条查看、软删除、本地 encrypted envelope 备份/恢复、明文 snapshot 导出/导入、TOTP 生成、WebDAV / S3 presigned URL / 腾讯云 COS / 阿里云 OSS 远端对象同步和 `self-test`，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
+- 当前尚未实现 GTK/Qt/libadwaita 图形界面、GUI CRUD 和 GUI 同步入口。
 - 当前在 macOS 上用 clang + Homebrew OpenSSL 验证核心逻辑；发布前仍需在 Linux 发行版上用系统 OpenSSL 重新构建和回归。
 
 ### 目录说明
@@ -23,7 +23,7 @@
 
 ### 环境要求
 
-- Linux 发布构建：GCC 或 Clang、GNU Make、OpenSSL 3 development headers。
+- Linux 发布构建：GCC 或 Clang、GNU Make、OpenSSL 3 development headers、libcurl development headers/library。
 - 本机验证环境：macOS clang + `/opt/homebrew/opt/openssl@3`。
 
 Linux 安装依赖示例：
@@ -31,13 +31,13 @@ Linux 安装依赖示例：
 ```bash
 # Debian / Ubuntu
 sudo apt-get update
-sudo apt-get install -y build-essential libssl-dev
+sudo apt-get install -y build-essential libssl-dev libcurl4-openssl-dev
 
 # Fedora
-sudo dnf install -y gcc-c++ make openssl-devel
+sudo dnf install -y gcc-c++ make openssl-devel libcurl-devel
 
 # Arch
-sudo pacman -S --needed base-devel openssl
+sudo pacman -S --needed base-devel openssl curl
 ```
 
 ### 开发
@@ -122,8 +122,41 @@ make OPENSSL_PREFIX=/usr
 
    `backup` 默认写入 vault 同级 `backups/`，只保留最新 5 份 encrypted envelope；`export-snapshot` 默认写入同级 `exports/`，内容是明文 JSON，只应保存到受信任位置。
 
-8. 确认 `vault-linux-native.envelope` 和 `backups/vault-*.json` 包含 salt、iterations、verifier、nonce、ciphertext、mac，但不包含分类名、username 或 password 等 vault 明文。
-9. 生成 RFC 6238 TOTP fixture：
+8. 执行远端对象同步。WebDAV 使用 `--endpoint`、`--object-key` 和可选 Basic Auth；S3 presigned 模式使用独立下载/上传 URL；腾讯云 COS 和阿里云 OSS 需要运行时传入 AK、SK、bucket，endpoint / appid / custom-url 按 provider 配置需要传入。同步状态默认写入 `<vault>.sync-state`，只保存远端指纹、本地 dirty flag 和同步版本，不保存 AK、SK、WebDAV 密码或主密码：
+
+   ```bash
+   ./build/password-manager-linux sync "test-password" \
+     --provider webdav \
+     --endpoint https://dav.example.com/remote.php/dav/files/me \
+     --object-key vault.sync.json \
+     --username me \
+     --remote-password "app-password"
+
+   ./build/password-manager-linux sync "test-password" \
+     --provider s3-presigned \
+     --download-url "https://storage.example.com/download-presigned" \
+     --upload-url "https://storage.example.com/upload-presigned"
+
+   ./build/password-manager-linux sync "test-password" \
+     --provider tencent-cos \
+     --ak "$TENCENT_SECRET_ID" \
+     --sk "$TENCENT_SECRET_KEY" \
+     --bucket password-manager \
+     --endpoint cos.ap-shanghai.myqcloud.com \
+     --appid "$TENCENT_APP_ID" \
+     --object-key vault.sync.json
+
+   ./build/password-manager-linux sync "test-password" \
+     --provider aliyun-oss \
+     --ak "$ALIYUN_ACCESS_KEY_ID" \
+     --sk "$ALIYUN_ACCESS_KEY_SECRET" \
+     --bucket password-manager \
+     --endpoint oss-cn-hangzhou.aliyuncs.com \
+     --object-key vault.sync.json
+   ```
+
+9. 确认 `vault-linux-native.envelope` 和 `backups/vault-*.json` 包含 salt、iterations、verifier、nonce、ciphertext、mac，但不包含分类名、username 或 password 等 vault 明文。
+10. 生成 RFC 6238 TOTP fixture：
 
    ```bash
    ./build/password-manager-linux totp GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ 59
@@ -174,7 +207,7 @@ strip build/password-manager-linux
    - 将 `.deb` / `.rpm` 放入内部 apt/yum 仓库。
    - 记录签名 key、校验和、SBOM 和发布说明。
 
-Release notes 只能描述已经验证的能力；当前不能把 GUI、真实远端同步、系统 keyring 集成写成已发布能力。
+Release notes 只能描述已经验证的能力；当前不能把 GUI、GUI 同步入口、系统 keyring 集成写成已发布能力。
 
 ### 发布检查清单
 
@@ -186,10 +219,11 @@ Release notes 只能描述已经验证的能力；当前不能把 GUI、真实�
 - [x] C++ 测试覆盖加密 envelope、错误密码拒绝、snapshot 反序列化、encrypted vault 文件读回、TOTP、entry 过滤、集合重建和 version-vector merge。
 - [x] terminal-native smoke-test CLI 可构建。
 - [x] Windows/Linux 共用 terminal-native CLI，支持加密 vault 初始化、状态读取、分类模板持久化、条目新增/搜索/查看/软删除。
+- [x] Windows/Linux 共用 terminal-native CLI 支持 WebDAV、S3 presigned URL、腾讯云 COS、阿里云 OSS 远端对象同步。
 - [ ] 在真实 Linux 发行版上构建和测试。
 - [ ] GTK/Qt/libadwaita GUI 完成。
 - [ ] 完整 CRUD、导入导出、备份恢复 GUI 完成。
-- [ ] 真实 WebDAV/S3 远端同步完成。
+- [ ] GUI 远端同步入口完成。
 - [ ] Linux secret service / keyring 集成完成。
 - [ ] `.deb`、`.rpm`、AppImage、Flatpak 或 Snap 至少一种发布包完成安装验证。
 - [ ] Flathub/Snap Store 或发行版仓库发布审核通过。
@@ -204,8 +238,8 @@ This directory contains the native Linux rewrite target. It is intentionally sep
 
 - The current slice is a C++17 + OpenSSL Linux terminal-native starting point.
 - Testable core is implemented in shared `apps/native_core`: PBKDF2-SHA256, AES-256-GCM encrypted vault envelope, TOTP, entry model, search/filtering, category/tag collection rebuilding, JSON snapshot serialization/deserialization, encrypted vault file read/write, and version-vector merge.
-- The CLI entry point supports encrypted vault initialization, unlock status checks, persisted category templates, credential/server/service entry add, search/list, single-entry view, soft delete, TOTP generation, and `self-test`.
-- GTK/Qt/libadwaita GUI, GUI CRUD, and real WebDAV/S3 network sync are not implemented yet.
+- The CLI entry point supports encrypted vault initialization, unlock status checks, persisted category templates, credential/server/service entry add, search/list, single-entry view, soft delete, local encrypted envelope backup/restore, plaintext snapshot export/import, TOTP generation, WebDAV / S3 presigned URL / Tencent COS / Aliyun OSS remote object sync, and `self-test`.
+- GTK/Qt/libadwaita GUI, GUI CRUD, and GUI sync entry points are not implemented yet.
 - The current verification runs on macOS with clang + Homebrew OpenSSL. Release must be rebuilt and regressed on Linux distributions with system OpenSSL.
 
 ### Directory Layout
@@ -219,7 +253,7 @@ This directory contains the native Linux rewrite target. It is intentionally sep
 
 ### Requirements
 
-- Linux release build: GCC or Clang, GNU Make, OpenSSL 3 development headers.
+- Linux release build: GCC or Clang, GNU Make, OpenSSL 3 development headers, libcurl development headers/library.
 - Local verification here: macOS clang + `/opt/homebrew/opt/openssl@3`.
 
 Linux dependency examples:
@@ -227,13 +261,13 @@ Linux dependency examples:
 ```bash
 # Debian / Ubuntu
 sudo apt-get update
-sudo apt-get install -y build-essential libssl-dev
+sudo apt-get install -y build-essential libssl-dev libcurl4-openssl-dev
 
 # Fedora
-sudo dnf install -y gcc-c++ make openssl-devel
+sudo dnf install -y gcc-c++ make openssl-devel libcurl-devel
 
 # Arch
-sudo pacman -S --needed base-devel openssl
+sudo pacman -S --needed base-devel openssl curl
 ```
 
 ### Develop
@@ -293,8 +327,41 @@ make OPENSSL_PREFIX=/usr
    ./build/password-manager-linux delete-entry "test-password" "<entry-id>"
    ```
 
-5. Confirm `vault-linux-native.envelope` contains salt, iterations, verifier, nonce, ciphertext, and mac, but does not contain the sample entry plaintext username or password.
-6. Generate the RFC 6238 TOTP fixture:
+5. Run remote object sync. WebDAV uses `--endpoint`, `--object-key`, and optional Basic Auth; S3 presigned mode uses explicit download/upload URLs; Tencent COS and Aliyun OSS require AK, SK, and bucket at runtime, with endpoint, appid, or custom-url provided as needed. Sync state defaults to `<vault>.sync-state` and stores only remote fingerprints, local dirty state, and sync version data, not AK, SK, WebDAV passwords, or the master password:
+
+   ```bash
+   ./build/password-manager-linux sync "test-password" \
+     --provider webdav \
+     --endpoint https://dav.example.com/remote.php/dav/files/me \
+     --object-key vault.sync.json \
+     --username me \
+     --remote-password "app-password"
+
+   ./build/password-manager-linux sync "test-password" \
+     --provider s3-presigned \
+     --download-url "https://storage.example.com/download-presigned" \
+     --upload-url "https://storage.example.com/upload-presigned"
+
+   ./build/password-manager-linux sync "test-password" \
+     --provider tencent-cos \
+     --ak "$TENCENT_SECRET_ID" \
+     --sk "$TENCENT_SECRET_KEY" \
+     --bucket password-manager \
+     --endpoint cos.ap-shanghai.myqcloud.com \
+     --appid "$TENCENT_APP_ID" \
+     --object-key vault.sync.json
+
+   ./build/password-manager-linux sync "test-password" \
+     --provider aliyun-oss \
+     --ak "$ALIYUN_ACCESS_KEY_ID" \
+     --sk "$ALIYUN_ACCESS_KEY_SECRET" \
+     --bucket password-manager \
+     --endpoint oss-cn-hangzhou.aliyuncs.com \
+     --object-key vault.sync.json
+   ```
+
+6. Confirm `vault-linux-native.envelope` contains salt, iterations, verifier, nonce, ciphertext, and mac, but does not contain the sample entry plaintext username or password.
+7. Generate the RFC 6238 TOTP fixture:
 
    ```bash
    ./build/password-manager-linux totp GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ 59
@@ -345,7 +412,7 @@ Before release, rebuild on target distributions and choose a channel:
    - Publish `.deb` / `.rpm` to internal apt/yum repositories.
    - Record signing key, checksums, SBOM, and release notes.
 
-Release notes must only describe verified capabilities. Do not list GUI, real remote sync, or system keyring integration as shipped yet.
+Release notes must only describe verified capabilities. Do not list GUI, GUI sync entry points, or system keyring integration as shipped yet.
 
 ### Release Checklist
 
@@ -356,10 +423,11 @@ Release notes must only describe verified capabilities. Do not list GUI, real re
 - [x] C++ tests cover encrypted envelope, wrong-password rejection, TOTP, entry filtering, collection rebuilding, and version-vector merge.
 - [x] Terminal-native smoke-test CLI builds.
 - [x] Shared Windows/Linux terminal-native CLI supports encrypted vault initialization, status reads, category template persistence, and entry add/search/view/soft-delete.
+- [x] Shared Windows/Linux terminal-native CLI supports WebDAV, S3 presigned URL, Tencent COS, and Aliyun OSS remote object sync.
 - [ ] Build and test on a real Linux distribution.
 - [ ] GTK/Qt/libadwaita GUI is complete.
 - [ ] Full CRUD, import/export, and backup/restore GUI is complete.
-- [ ] Real WebDAV/S3 remote sync is complete.
+- [ ] GUI remote sync entry points are complete.
 - [ ] Linux secret service / keyring integration is complete.
 - [ ] At least one `.deb`, `.rpm`, AppImage, Flatpak, or Snap package is install-tested.
 - [ ] Flathub/Snap Store or distribution repository review is approved.

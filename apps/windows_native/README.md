@@ -11,8 +11,8 @@
 - `PasswordManagerWindows.vcxproj` 提供 Visual Studio / MSBuild 项目骨架。
 - 可移植 core 复用 `apps/native_core` 的 C++17 + OpenSSL 路径，当前可在本机用 clang 构建和测试。
 - 已实现可测试核心：PBKDF2-SHA256、AES-256-GCM encrypted vault envelope、TOTP、entry model、搜索/过滤、分类/标签集合、JSON snapshot 序列化/反序列化、encrypted vault 文件读写、version-vector merge。
-- CLI 入口支持初始化、解锁状态检查、分类模板持久化、credential/server/service 条目新增、搜索列表、单条查看、软删除、本地 encrypted envelope 备份/恢复、明文 snapshot 导出/导入、TOTP 和 self-test，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
-- 当前尚未实现完整 Win32/WinUI 3/WPF 图形界面，也尚未实现 Windows Credential Manager / DPAPI 集成和真实 WebDAV/S3 网络同步。
+- CLI 入口支持初始化、解锁状态检查、分类模板持久化、credential/server/service 条目新增、搜索列表、单条查看、软删除、本地 encrypted envelope 备份/恢复、明文 snapshot 导出/导入、TOTP、WebDAV / S3 presigned URL / 腾讯云 COS / 阿里云 OSS 远端对象同步和 self-test，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
+- 当前尚未实现完整 Win32/WinUI 3/WPF 图形界面，也尚未实现 Windows Credential Manager / DPAPI 集成、GUI 同步入口和 Visual Studio 工程的生产 libcurl 打包配置。
 
 ### 目录说明
 
@@ -33,6 +33,7 @@ Windows 实机开发：
 - Visual Studio 2022，安装 Desktop development with C++ workload。
 - Windows 10/11 SDK。
 - OpenSSL 3 for Windows，或后续替换为 CNG/BCrypt 原生实现。
+- libcurl for Windows，并在 Visual Studio / MSBuild release 工程中配置 include/lib/runtime DLL 打包。
 - WiX Toolset 或 MSIX Packaging Tool，用于安装包。
 
 当前本机验证：
@@ -40,6 +41,7 @@ Windows 实机开发：
 - clang++。
 - GNU Make。
 - OpenSSL 3 headers/libs，默认路径 `/opt/homebrew/opt/openssl@3`。
+- libcurl headers/libs，可通过 `curl-config` 被 Makefile 自动发现。
 
 ### 开发
 
@@ -130,7 +132,40 @@ msbuild PasswordManagerWindows.vcxproj /p:Configuration=Release /p:Platform=x64
 
    `backup` 默认写入 vault 同级 `backups/`，只保留最新 5 份 encrypted envelope；`export-snapshot` 默认写入同级 `exports/`，内容是明文 JSON，只应保存到受信任位置。
 
-9. 确认 `vault-windows-native.envelope` 和 `backups/vault-*.json` 包含 salt、iterations、verifier、nonce、ciphertext、mac，但不包含分类名、username 或 password 等 vault 明文。
+9. 执行远端对象同步。WebDAV 使用 `--endpoint`、`--object-key` 和可选 Basic Auth；S3 presigned 模式使用独立下载/上传 URL；腾讯云 COS 和阿里云 OSS 需要运行时传入 AK、SK、bucket，endpoint / appid / custom-url 按 provider 配置需要传入。同步状态默认写入 `<vault>.sync-state`，只保存远端指纹、本地 dirty flag 和同步版本，不保存 AK、SK、WebDAV 密码或主密码：
+
+   ```bash
+   ./build/password-manager-windows-core sync "test-password" \
+     --provider webdav \
+     --endpoint https://dav.example.com/remote.php/dav/files/me \
+     --object-key vault.sync.json \
+     --username me \
+     --remote-password "app-password"
+
+   ./build/password-manager-windows-core sync "test-password" \
+     --provider s3-presigned \
+     --download-url "https://storage.example.com/download-presigned" \
+     --upload-url "https://storage.example.com/upload-presigned"
+
+   ./build/password-manager-windows-core sync "test-password" \
+     --provider tencent-cos \
+     --ak "$TENCENT_SECRET_ID" \
+     --sk "$TENCENT_SECRET_KEY" \
+     --bucket password-manager \
+     --endpoint cos.ap-shanghai.myqcloud.com \
+     --appid "$TENCENT_APP_ID" \
+     --object-key vault.sync.json
+
+   ./build/password-manager-windows-core sync "test-password" \
+     --provider aliyun-oss \
+     --ak "$ALIYUN_ACCESS_KEY_ID" \
+     --sk "$ALIYUN_ACCESS_KEY_SECRET" \
+     --bucket password-manager \
+     --endpoint oss-cn-hangzhou.aliyuncs.com \
+     --object-key vault.sync.json
+   ```
+
+10. 确认 `vault-windows-native.envelope` 和 `backups/vault-*.json` 包含 salt、iterations、verifier、nonce、ciphertext、mac，但不包含分类名、username 或 password 等 vault 明文。
 
 Windows 实机验证还需要覆盖：
 
@@ -140,7 +175,7 @@ Windows 实机验证还需要覆盖：
 4. 搜索、分类和标签。
 5. TOTP 解锁。
 6. GUI 中的导入导出、备份和恢复交互。
-7. WebDAV/S3 真实服务同步。
+7. GUI 中的远端同步配置和执行。
 8. 关闭进程和重启后的数据保留。
 9. Windows 高 DPI、深色模式、键盘导航和屏幕阅读器基础可访问性。
 
@@ -188,7 +223,7 @@ msbuild PasswordManagerWindows.vcxproj /p:Configuration=Release /p:Platform=x64
    - 使用 Intune、SCCM、MDM 或内部软件门户。
    - 记录签名证书、SHA256、SBOM、安装/卸载命令和升级策略。
 
-Release notes 只能描述已经验证的能力；当前不能把完整 GUI、Windows Credential Manager 集成或真实远端同步写成已发布能力。
+Release notes 只能描述已经验证的能力；当前不能把完整 GUI、GUI 同步入口、Windows Credential Manager 集成或 MSBuild 生产 libcurl 打包写成已发布能力。
 
 ### 发布检查清单
 
@@ -201,11 +236,13 @@ Release notes 只能描述已经验证的能力；当前不能把完整 GUI、Wi
 - [x] C++ 测试覆盖加密 envelope、错误密码拒绝、snapshot 反序列化、encrypted vault 文件读回、TOTP、entry 过滤、集合重建和 version-vector merge。
 - [x] portable smoke-test CLI 可在当前机器构建。
 - [x] Windows/Linux 共用 terminal-native CLI，支持加密 vault 初始化、状态读取、分类模板持久化、条目新增/搜索/查看/软删除。
+- [x] Windows/Linux 共用 terminal-native CLI 支持 WebDAV、S3 presigned URL、腾讯云 COS、阿里云 OSS 远端对象同步。
 - [ ] 在 Windows 10/11 上用 Visual Studio/MSBuild 构建 `.exe`。
 - [ ] 完整 Win32/WinUI 3/WPF UI 完成。
 - [ ] 完整 CRUD、导入导出、备份恢复 GUI 完成。
 - [ ] Windows Credential Manager / DPAPI / CNG 密钥保护完成。
-- [ ] 真实 WebDAV/S3 远端同步完成。
+- [ ] GUI 远端同步入口完成。
+- [ ] Visual Studio / MSBuild 工程完成生产 libcurl 链接、运行库打包和干净 Windows VM 验证。
 - [ ] `.exe` 代码签名完成。
 - [ ] MSIX/MSI/winget 至少一种安装包完成安装验证。
 - [ ] Microsoft Store 或企业分发审核通过。
@@ -223,8 +260,8 @@ This directory contains the native Windows rewrite target. It is intentionally s
 - `PasswordManagerWindows.vcxproj` provides a Visual Studio / MSBuild project scaffold.
 - The portable core uses the shared `apps/native_core` C++17 + OpenSSL path and can currently be built and tested locally with clang.
 - Testable core is implemented: PBKDF2-SHA256, AES-256-GCM encrypted vault envelope, TOTP, entry model, search/filtering, category/tag collection rebuilding, JSON snapshot serialization/deserialization, encrypted vault file read/write, and version-vector merge.
-- The CLI supports initialization, unlock status checks, persisted category templates, credential/server/service entry add, search/list, single-entry view, soft delete, TOTP, and self-test through shared `apps/native_core/src/vault_cli.cpp`.
-- Full Win32/WinUI 3/WPF GUI, Windows Credential Manager / DPAPI integration, and real WebDAV/S3 network sync are not implemented yet.
+- The CLI supports initialization, unlock status checks, persisted category templates, credential/server/service entry add, search/list, single-entry view, soft delete, local encrypted envelope backup/restore, plaintext snapshot export/import, TOTP, WebDAV / S3 presigned URL / Tencent COS / Aliyun OSS remote object sync, and self-test through shared `apps/native_core/src/vault_cli.cpp`.
+- Full Win32/WinUI 3/WPF GUI, Windows Credential Manager / DPAPI integration, GUI sync entry points, and production Visual Studio libcurl packaging are not implemented yet.
 
 ### Directory Layout
 
@@ -245,6 +282,7 @@ Windows device development:
 - Visual Studio 2022 with the Desktop development with C++ workload.
 - Windows 10/11 SDK.
 - OpenSSL 3 for Windows, or later replacement with native CNG/BCrypt.
+- libcurl for Windows with include/lib/runtime DLL packaging configured in the Visual Studio / MSBuild release project.
 - WiX Toolset or MSIX Packaging Tool for installers.
 
 Current local verification:
@@ -252,6 +290,7 @@ Current local verification:
 - clang++.
 - GNU Make.
 - OpenSSL 3 headers/libs, defaulting to `/opt/homebrew/opt/openssl@3`.
+- libcurl headers/libs discoverable by the Makefile through `curl-config`.
 
 ### Develop
 
@@ -317,7 +356,40 @@ Current portable core verification:
    ./build/password-manager-windows-core delete-entry "test-password" "<entry-id>"
    ```
 
-6. Confirm `vault-windows-native.envelope` contains salt, iterations, verifier, nonce, ciphertext, and mac, but does not contain the sample entry plaintext username or password.
+6. Run remote object sync. WebDAV uses `--endpoint`, `--object-key`, and optional Basic Auth; S3 presigned mode uses explicit download/upload URLs; Tencent COS and Aliyun OSS require AK, SK, and bucket at runtime, with endpoint, appid, or custom-url provided as needed. Sync state defaults to `<vault>.sync-state` and stores only remote fingerprints, local dirty state, and sync version data, not AK, SK, WebDAV passwords, or the master password:
+
+   ```bash
+   ./build/password-manager-windows-core sync "test-password" \
+     --provider webdav \
+     --endpoint https://dav.example.com/remote.php/dav/files/me \
+     --object-key vault.sync.json \
+     --username me \
+     --remote-password "app-password"
+
+   ./build/password-manager-windows-core sync "test-password" \
+     --provider s3-presigned \
+     --download-url "https://storage.example.com/download-presigned" \
+     --upload-url "https://storage.example.com/upload-presigned"
+
+   ./build/password-manager-windows-core sync "test-password" \
+     --provider tencent-cos \
+     --ak "$TENCENT_SECRET_ID" \
+     --sk "$TENCENT_SECRET_KEY" \
+     --bucket password-manager \
+     --endpoint cos.ap-shanghai.myqcloud.com \
+     --appid "$TENCENT_APP_ID" \
+     --object-key vault.sync.json
+
+   ./build/password-manager-windows-core sync "test-password" \
+     --provider aliyun-oss \
+     --ak "$ALIYUN_ACCESS_KEY_ID" \
+     --sk "$ALIYUN_ACCESS_KEY_SECRET" \
+     --bucket password-manager \
+     --endpoint oss-cn-hangzhou.aliyuncs.com \
+     --object-key vault.sync.json
+   ```
+
+7. Confirm `vault-windows-native.envelope` contains salt, iterations, verifier, nonce, ciphertext, and mac, but does not contain the sample entry plaintext username or password.
 
 Windows device validation still needs:
 
@@ -327,7 +399,7 @@ Windows device validation still needs:
 4. Search, categories, and tags.
 5. TOTP unlock.
 6. Import/export, backup, and restore.
-7. Real WebDAV/S3 sync.
+7. GUI remote sync configuration and execution.
 8. Data retention after process close and relaunch.
 9. High DPI, dark mode, keyboard navigation, and baseline screen-reader accessibility.
 
@@ -375,7 +447,7 @@ Available channels:
    - Use Intune, SCCM, MDM, or an internal software portal.
    - Record signing certificate, SHA256, SBOM, install/uninstall commands, and upgrade policy.
 
-Release notes must only describe verified capabilities. Do not list full GUI, Windows Credential Manager integration, or real remote sync as shipped yet.
+Release notes must only describe verified capabilities. Do not list full GUI, GUI sync entry points, Windows Credential Manager integration, or MSBuild production libcurl packaging as shipped yet.
 
 ### Release Checklist
 
@@ -387,11 +459,13 @@ Release notes must only describe verified capabilities. Do not list full GUI, Wi
 - [x] C++ tests cover encrypted envelope, wrong-password rejection, TOTP, entry filtering, collection rebuilding, and version-vector merge.
 - [x] Portable smoke-test CLI builds on the current machine.
 - [x] Shared Windows/Linux terminal-native CLI supports encrypted vault initialization, status reads, category template persistence, and entry add/search/view/soft-delete.
+- [x] Shared Windows/Linux terminal-native CLI supports WebDAV, S3 presigned URL, Tencent COS, and Aliyun OSS remote object sync.
 - [ ] Build `.exe` on Windows 10/11 with Visual Studio/MSBuild.
 - [ ] Full Win32/WinUI 3/WPF UI is complete.
 - [ ] Full CRUD, import/export, and backup/restore GUI is complete.
 - [ ] Windows Credential Manager / DPAPI / CNG key protection is complete.
-- [ ] Real WebDAV/S3 remote sync is complete.
+- [ ] GUI remote sync entry points are complete.
+- [ ] Visual Studio / MSBuild production libcurl linking, runtime packaging, and clean Windows VM validation are complete.
 - [ ] `.exe` code signing is complete.
 - [ ] At least one MSIX/MSI/winget installer is install-tested.
 - [ ] Microsoft Store or enterprise distribution review is approved.

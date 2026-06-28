@@ -2,6 +2,8 @@
 
 #include "vault_core.hpp"
 
+#include <curl/curl.h>
+
 #include <iostream>
 #include <algorithm>
 #include <cctype>
@@ -9,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <map>
 #include <stdexcept>
 #include <sstream>
 #include <string>
@@ -54,6 +57,8 @@ void printUsage(const char* platformName, const char* defaultVaultPath) {
               << "                              Write a plaintext JSON snapshot export\n"
               << "  import-snapshot <password> --in <path> [--vault <path>]\n"
               << "                              Replace the unlocked vault with a plaintext JSON snapshot\n"
+              << "  sync <password> --provider webdav|s3-presigned|tencent-cos|aliyun-oss [options]\n"
+              << "                              Merge local vault with remote object storage and upload when needed\n"
               << "  category <name> [--shortcut server|service|account] [--field <name>]...\n"
               << "                              Print category template JSON without saving\n"
               << "  totp <base32-secret> <unix> Generate a TOTP code\n"
@@ -143,9 +148,127 @@ struct ImportSnapshotArgs {
     std::string inPath;
 };
 
+struct SyncArgs {
+    std::string vaultPath;
+    std::string statePath;
+    std::string provider;
+    ObjectSyncConfig config;
+    std::string downloadUrl;
+    std::string uploadUrl;
+    std::string webDavUsername;
+    std::string webDavPassword;
+    std::string deviceId;
+    std::string conflictStrategy;
+};
+
+struct HttpResult {
+    long statusCode = 0;
+    std::string body;
+    std::string fingerprint;
+};
+
+struct HeaderAccumulator {
+    std::string eTag;
+    std::string lastModified;
+    std::string contentLength;
+};
+
+struct CurlGlobal {
+    CurlGlobal() {
+        if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
+            throw std::runtime_error("Unable to initialize libcurl.");
+        }
+    }
+    ~CurlGlobal() {
+        curl_global_cleanup();
+    }
+};
+
 std::string maskedSecret(const std::string& value, bool showSecret) {
     if (showSecret) return value;
     return value.empty() ? "" : "******";
+}
+
+std::string trimAscii(std::string value) {
+    const auto first = value.find_first_not_of(" \t\n\r\f\v");
+    if (first == std::string::npos) return "";
+    const auto last = value.find_last_not_of(" \t\n\r\f\v");
+    return value.substr(first, last - first + 1);
+}
+
+std::string lowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+std::string defaultSyncStatePath(const std::string& vaultPath) {
+    return vaultPath + ".sync-state";
+}
+
+fs::path syncStatePointerPath(const std::string& vaultPath) {
+    return fs::path(vaultPath + ".sync-state-path");
+}
+
+std::string readOptionalLine(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return "";
+    std::string line;
+    std::getline(in, line);
+    return trimAscii(line);
+}
+
+std::string resolveSyncStatePath(const std::string& vaultPath, const std::string& explicitStatePath) {
+    if (!explicitStatePath.empty()) return explicitStatePath;
+    const auto linkedPath = readOptionalLine(syncStatePointerPath(vaultPath));
+    return linkedPath.empty() ? defaultSyncStatePath(vaultPath) : linkedPath;
+}
+
+bool isHttpSuccess(long statusCode) {
+    return statusCode >= 200 && statusCode < 300;
+}
+
+bool isHttpDownloadSuccess(long statusCode) {
+    return isHttpSuccess(statusCode) || statusCode == 404;
+}
+
+std::string syncFingerprint(const HeaderAccumulator& headers) {
+    std::vector<std::string> parts;
+    if (!headers.eTag.empty()) parts.push_back("etag:" + headers.eTag);
+    if (!headers.lastModified.empty()) parts.push_back("modified:" + headers.lastModified);
+    if (parts.empty()) return "";
+    if (!headers.contentLength.empty()) parts.push_back("length:" + headers.contentLength);
+    std::ostringstream out;
+    for (std::size_t index = 0; index < parts.size(); ++index) {
+        if (index > 0) out << "|";
+        out << parts[index];
+    }
+    return out.str();
+}
+
+std::size_t curlWriteCallback(char* ptr, std::size_t size, std::size_t nmemb, void* userdata) {
+    auto* body = static_cast<std::string*>(userdata);
+    body->append(ptr, size * nmemb);
+    return size * nmemb;
+}
+
+std::size_t curlHeaderCallback(char* buffer, std::size_t size, std::size_t nitems, void* userdata) {
+    const auto total = size * nitems;
+    std::string line(buffer, total);
+    const auto split = line.find(':');
+    if (split == std::string::npos) return total;
+    const auto key = lowerAscii(trimAscii(line.substr(0, split)));
+    const auto value = trimAscii(line.substr(split + 1));
+    auto* headers = static_cast<HeaderAccumulator*>(userdata);
+    if (key == "etag") {
+        headers->eTag = value;
+    } else if (key == "last-modified") {
+        headers->lastModified = value;
+    } else if (key == "content-length") {
+        headers->contentLength = value;
+    }
+    return total;
 }
 
 CustomField parseCustomField(const std::string& value) {
@@ -394,12 +517,281 @@ ImportSnapshotArgs parseImportSnapshotArgs(int argc, char** argv, int start, con
     return args;
 }
 
+ObjectSyncProvider parseProvider(const std::string& value) {
+    const auto normalized = lowerAscii(trimAscii(value));
+    if (normalized == "webdav") return ObjectSyncProvider::WebDav;
+    if (normalized == "s3-presigned" || normalized == "presigned") return ObjectSyncProvider::S3Presigned;
+    if (normalized == "tencent-cos" || normalized == "cos") return ObjectSyncProvider::TencentCos;
+    if (normalized == "aliyun-oss" || normalized == "oss") return ObjectSyncProvider::AliyunOss;
+    throw std::invalid_argument("provider must be webdav, s3-presigned, tencent-cos, or aliyun-oss");
+}
+
+SyncArgs parseSyncArgs(int argc, char** argv, int start, const char* defaultVaultPath) {
+    SyncArgs args;
+    args.vaultPath = defaultVaultPath;
+    args.config.objectKey = "vault.sync.json";
+    for (int i = start; i < argc; ++i) {
+        const std::string arg = argv[i];
+        auto requireValue = [&](const std::string& option) -> std::string {
+            if (++i >= argc) throw std::invalid_argument(option + " requires a value");
+            return argv[i];
+        };
+        if (arg == "--vault") {
+            args.vaultPath = requireValue(arg);
+        } else if (arg.rfind("--vault=", 0) == 0) {
+            args.vaultPath = arg.substr(8);
+        } else if (arg == "--state") {
+            args.statePath = requireValue(arg);
+        } else if (arg.rfind("--state=", 0) == 0) {
+            args.statePath = arg.substr(8);
+        } else if (arg == "--provider") {
+            args.provider = requireValue(arg);
+            args.config.provider = parseProvider(args.provider);
+        } else if (arg.rfind("--provider=", 0) == 0) {
+            args.provider = arg.substr(11);
+            args.config.provider = parseProvider(args.provider);
+        } else if (arg == "--endpoint") {
+            args.config.endpoint = requireValue(arg);
+        } else if (arg.rfind("--endpoint=", 0) == 0) {
+            args.config.endpoint = arg.substr(11);
+        } else if (arg == "--custom-url") {
+            args.config.customUrl = requireValue(arg);
+        } else if (arg.rfind("--custom-url=", 0) == 0) {
+            args.config.customUrl = arg.substr(13);
+        } else if (arg == "--bucket") {
+            args.config.bucket = requireValue(arg);
+        } else if (arg.rfind("--bucket=", 0) == 0) {
+            args.config.bucket = arg.substr(9);
+        } else if (arg == "--appid" || arg == "--app-id") {
+            args.config.appId = requireValue(arg);
+        } else if (arg.rfind("--appid=", 0) == 0) {
+            args.config.appId = arg.substr(8);
+        } else if (arg.rfind("--app-id=", 0) == 0) {
+            args.config.appId = arg.substr(9);
+        } else if (arg == "--ak" || arg == "--access-key" || arg == "--access-key-id") {
+            args.config.accessKeyId = requireValue(arg);
+        } else if (arg.rfind("--ak=", 0) == 0) {
+            args.config.accessKeyId = arg.substr(5);
+        } else if (arg.rfind("--access-key=", 0) == 0) {
+            args.config.accessKeyId = arg.substr(13);
+        } else if (arg.rfind("--access-key-id=", 0) == 0) {
+            args.config.accessKeyId = arg.substr(16);
+        } else if (arg == "--sk" || arg == "--secret-key" || arg == "--secret-access-key") {
+            args.config.secretAccessKey = requireValue(arg);
+        } else if (arg.rfind("--sk=", 0) == 0) {
+            args.config.secretAccessKey = arg.substr(5);
+        } else if (arg.rfind("--secret-key=", 0) == 0) {
+            args.config.secretAccessKey = arg.substr(13);
+        } else if (arg.rfind("--secret-access-key=", 0) == 0) {
+            args.config.secretAccessKey = arg.substr(20);
+        } else if (arg == "--object-key" || arg == "--path") {
+            args.config.objectKey = requireValue(arg);
+        } else if (arg.rfind("--object-key=", 0) == 0) {
+            args.config.objectKey = arg.substr(13);
+        } else if (arg.rfind("--path=", 0) == 0) {
+            args.config.objectKey = arg.substr(7);
+        } else if (arg == "--download-url") {
+            args.downloadUrl = requireValue(arg);
+        } else if (arg.rfind("--download-url=", 0) == 0) {
+            args.downloadUrl = arg.substr(15);
+        } else if (arg == "--upload-url") {
+            args.uploadUrl = requireValue(arg);
+        } else if (arg.rfind("--upload-url=", 0) == 0) {
+            args.uploadUrl = arg.substr(13);
+        } else if (arg == "--username") {
+            args.webDavUsername = requireValue(arg);
+        } else if (arg.rfind("--username=", 0) == 0) {
+            args.webDavUsername = arg.substr(11);
+        } else if (arg == "--remote-password") {
+            args.webDavPassword = requireValue(arg);
+        } else if (arg.rfind("--remote-password=", 0) == 0) {
+            args.webDavPassword = arg.substr(18);
+        } else if (arg == "--device-id") {
+            args.deviceId = requireValue(arg);
+        } else if (arg.rfind("--device-id=", 0) == 0) {
+            args.deviceId = arg.substr(12);
+        } else if (arg == "--conflict-strategy") {
+            args.conflictStrategy = requireValue(arg);
+        } else if (arg.rfind("--conflict-strategy=", 0) == 0) {
+            args.conflictStrategy = arg.substr(20);
+        } else {
+            throw std::invalid_argument("unknown sync option: " + arg);
+        }
+    }
+    if (args.config.provider == ObjectSyncProvider::None) throw std::invalid_argument("--provider is required");
+    if (args.config.provider == ObjectSyncProvider::S3Presigned) {
+        if (args.downloadUrl.empty()) args.downloadUrl = args.config.customUrl;
+        if (args.uploadUrl.empty()) args.uploadUrl = args.config.customUrl;
+        if (args.downloadUrl.empty() || args.uploadUrl.empty()) {
+            throw std::invalid_argument("s3-presigned sync requires --download-url and --upload-url");
+        }
+    }
+    if (args.config.provider == ObjectSyncProvider::WebDav && args.config.endpoint.empty() && args.config.customUrl.empty()) {
+        throw std::invalid_argument("webdav sync requires --endpoint or --custom-url");
+    }
+    if (args.deviceId.empty()) args.deviceId = "native-cli";
+    if (args.conflictStrategy.empty()) args.conflictStrategy = "localWins";
+    args.statePath = resolveSyncStatePath(args.vaultPath, args.statePath);
+    return args;
+}
+
 VaultSnapshot loadSnapshotOrEmpty(const std::string& password, const std::string& path) {
     return decryptEnvelope(password, loadEnvelopeFile(path));
 }
 
 void saveSnapshot(const std::string& password, const std::string& path, const VaultSnapshot& snapshot) {
     saveEnvelopeFile(path, createEnvelope(password, snapshot));
+}
+
+void ensureParentDirectory(const fs::path& path);
+
+std::map<std::string, std::string> readKeyValueFile(const fs::path& path) {
+    std::map<std::string, std::string> values;
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return values;
+    std::string line;
+    while (std::getline(in, line)) {
+        const auto split = line.find('=');
+        if (split == std::string::npos) continue;
+        values[line.substr(0, split)] = line.substr(split + 1);
+    }
+    return values;
+}
+
+void writeKeyValueFile(const fs::path& path, const std::map<std::string, std::string>& values) {
+    ensureParentDirectory(path);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) throw std::runtime_error("Unable to open state file for writing: " + path.string());
+    for (const auto& [key, value] : values) out << key << "=" << value << "\n";
+    if (!out) throw std::runtime_error("Unable to write state file: " + path.string());
+}
+
+void writeSingleLineFile(const fs::path& path, const std::string& value) {
+    ensureParentDirectory(path);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) throw std::runtime_error("Unable to open state pointer for writing: " + path.string());
+    out << value << "\n";
+    if (!out) throw std::runtime_error("Unable to write state pointer: " + path.string());
+}
+
+SyncSettingsState loadSyncState(const SyncArgs& args) {
+    auto values = readKeyValueFile(args.statePath);
+    SyncSettingsState state;
+    state.deviceId = values.count("deviceId") ? values["deviceId"] : args.deviceId;
+    state.lastSyncRevision = values.count("lastSyncRevision") ? std::stoi(values["lastSyncRevision"]) : 0;
+    state.hasLocalChanges = values.count("hasLocalChanges") ? values["hasLocalChanges"] != "false" : true;
+    state.conflictStrategy = values.count("conflictStrategy") ? values["conflictStrategy"] : args.conflictStrategy;
+    state.lastRemoteFingerprint = values.count("lastRemoteFingerprint") ? values["lastRemoteFingerprint"] : "";
+    state.lastSyncStatus = values.count("lastSyncStatus") ? values["lastSyncStatus"] : "";
+    state.lastSyncMessage = values.count("lastSyncMessage") ? values["lastSyncMessage"] : "";
+    state.lastSyncAt = values.count("lastSyncAt") ? values["lastSyncAt"] : "";
+    if (!args.deviceId.empty() && state.deviceId.empty()) state.deviceId = args.deviceId;
+    if (!args.conflictStrategy.empty()) state.conflictStrategy = args.conflictStrategy;
+    return state;
+}
+
+void saveSyncState(const SyncArgs& args, const SyncSettingsState& state) {
+    writeKeyValueFile(args.statePath, {
+        {"deviceId", state.deviceId},
+        {"lastSyncRevision", std::to_string(state.lastSyncRevision)},
+        {"hasLocalChanges", state.hasLocalChanges ? "true" : "false"},
+        {"conflictStrategy", state.conflictStrategy},
+        {"lastRemoteFingerprint", state.lastRemoteFingerprint},
+        {"lastSyncStatus", state.lastSyncStatus},
+        {"lastSyncMessage", state.lastSyncMessage},
+        {"lastSyncAt", state.lastSyncAt},
+    });
+    if (args.statePath != defaultSyncStatePath(args.vaultPath)) {
+        writeSingleLineFile(syncStatePointerPath(args.vaultPath), args.statePath);
+    }
+}
+
+void markLocalChanges(const std::string& vaultPath) {
+    const auto statePath = fs::path(resolveSyncStatePath(vaultPath, ""));
+    auto values = readKeyValueFile(statePath);
+    if (values.empty()) return;
+    values["hasLocalChanges"] = "true";
+    writeKeyValueFile(statePath, values);
+}
+
+HttpResult performHttp(const ObjectSyncRequest& request, const SyncArgs& args) {
+    static CurlGlobal curlGlobal;
+    CURL* curl = curl_easy_init();
+    if (!curl) throw std::runtime_error("Unable to create HTTP client.");
+
+    std::string body;
+    HeaderAccumulator responseHeaders;
+    curl_slist* headers = nullptr;
+    try {
+        curl_easy_setopt(curl, CURLOPT_URL, request.objectUrl.c_str());
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, request.method.c_str());
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curlHeaderCallback);
+        curl_easy_setopt(curl, CURLOPT_HEADERDATA, &responseHeaders);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 12L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+
+        if (request.method == "HEAD") {
+            curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+        }
+        if (!request.body.empty() || request.method == "PUT") {
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request.body.data());
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(request.body.size()));
+        }
+        for (const auto& [key, value] : request.headers) {
+            headers = curl_slist_append(headers, (key + ": " + value).c_str());
+        }
+        if (headers) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        if (request.provider == ObjectSyncProvider::WebDav &&
+            (!args.webDavUsername.empty() || !args.webDavPassword.empty())) {
+            curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
+            curl_easy_setopt(curl, CURLOPT_USERNAME, args.webDavUsername.c_str());
+            curl_easy_setopt(curl, CURLOPT_PASSWORD, args.webDavPassword.c_str());
+        }
+
+        const auto code = curl_easy_perform(curl);
+        if (code != CURLE_OK) {
+            throw std::runtime_error(std::string("HTTP transport failed: ") + curl_easy_strerror(code));
+        }
+        long statusCode = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &statusCode);
+        if (headers) curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+        return HttpResult{statusCode, body, syncFingerprint(responseHeaders)};
+    } catch (...) {
+        if (headers) curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+        throw;
+    }
+}
+
+ObjectSyncRequest presignedRequest(const std::string& url, const std::string& method, const std::string& body = "") {
+    ObjectSyncRequest request;
+    request.provider = ObjectSyncProvider::S3Presigned;
+    request.objectUrl = url;
+    request.method = method;
+    request.body = body;
+    if (method == "PUT") request.headers["Content-Type"] = "application/json";
+    return request;
+}
+
+ObjectSyncRequest remoteRequest(const SyncArgs& args, const std::string& method, const std::string& body = "") {
+    if (args.config.provider == ObjectSyncProvider::S3Presigned) {
+        return presignedRequest(method == "PUT" ? args.uploadUrl : args.downloadUrl, method, body);
+    }
+    return buildObjectSyncSignedRequest(args.config, method, body);
+}
+
+HttpResult remoteDownload(const SyncArgs& args) {
+    auto request = remoteRequest(args, "GET");
+    return performHttp(request, args);
+}
+
+HttpResult remoteUpload(const SyncArgs& args, const std::string& payload) {
+    auto request = remoteRequest(args, "PUT", payload);
+    return performHttp(request, args);
 }
 
 std::string timestampForFileName(std::time_t now = std::time(nullptr)) {
@@ -609,6 +1001,7 @@ void addCategoryToVault(int argc, char** argv, const char* defaultVaultPath) {
     const auto fields = fieldsForCli(args.hasPreset, args.preset, args.customFields);
     if (!addCategory(snapshot, args.name, fields)) throw std::invalid_argument("category already exists or is empty");
     saveSnapshot(password, args.vaultPath, snapshot);
+    markLocalChanges(args.vaultPath);
     std::cout << "Category added to " << args.vaultPath << "\n";
 }
 
@@ -625,6 +1018,7 @@ void addEntryToVault(int argc, char** argv, const char* defaultVaultPath) {
     snapshot.entries.push_back(entry);
     rebuildTaxonomy(snapshot);
     saveSnapshot(password, args.vaultPath, snapshot);
+    markLocalChanges(args.vaultPath);
     std::cout << "Entry added " << entry.id << " to " << args.vaultPath << "\n";
 }
 
@@ -668,6 +1062,7 @@ void deleteEntry(int argc, char** argv, const char* defaultVaultPath) {
             entry.version["native-cli"] += 1;
             rebuildTaxonomy(snapshot);
             saveSnapshot(password, options.vaultPath, snapshot);
+            markLocalChanges(options.vaultPath);
             std::cout << "Entry deleted " << id << "\n";
             return;
         }
@@ -708,6 +1103,7 @@ void restoreBackup(int argc, char** argv, const char* defaultVaultPath) {
     fs::copy_file(backupPath, fs::path(args.vaultPath), fs::copy_options::overwrite_existing);
     snapshot.backupStatus = "Restored backup: " + backupPath.filename().string();
     saveSnapshot(password, args.vaultPath, snapshot);
+    markLocalChanges(args.vaultPath);
     std::cout << snapshot.backupStatus << "\n";
 }
 
@@ -732,10 +1128,43 @@ void importSnapshot(int argc, char** argv, const char* defaultVaultPath) {
     auto snapshot = parseSnapshotJson(readTextFile(fs::path(args.inPath)));
     rebuildTaxonomy(snapshot);
     saveSnapshot(password, args.vaultPath, snapshot);
+    markLocalChanges(args.vaultPath);
     const auto active = std::count_if(snapshot.entries.begin(), snapshot.entries.end(), [](const auto& entry) {
         return !entry.isDeleted;
     });
     std::cout << "Imported " << active << " active entries.\n";
+}
+
+void synchronizeVault(int argc, char** argv, const char* defaultVaultPath) {
+    if (argc < 3) throw std::invalid_argument("password is required");
+    const std::string password = argv[2];
+    const auto args = parseSyncArgs(argc, argv, 3, defaultVaultPath);
+    auto localSnapshot = loadSnapshotOrEmpty(password, args.vaultPath);
+    auto settings = loadSyncState(args);
+
+    const auto download = remoteDownload(args);
+    if (!isHttpDownloadSuccess(download.statusCode)) {
+        throw std::runtime_error("Sync download failed with status " + std::to_string(download.statusCode) + ".");
+    }
+    const auto remoteBody = download.statusCode == 404 ? "" : download.body;
+    auto result = synchronizeSnapshots(localSnapshot, settings, remoteBody, download.fingerprint);
+
+    if (result.uploaded) {
+        const auto upload = remoteUpload(args, result.uploadPayloadJson);
+        if (!isHttpSuccess(upload.statusCode)) {
+            throw std::runtime_error("Sync upload failed with status " + std::to_string(upload.statusCode) + ".");
+        }
+    }
+
+    result.snapshot.syncStatus = result.settings.lastSyncStatus.empty() ? "Synced" : result.settings.lastSyncStatus;
+    saveSnapshot(password, args.vaultPath, result.snapshot);
+    saveSyncState(args, result.settings);
+    std::cout << "Sync complete"
+              << " revision=" << result.settings.lastSyncRevision
+              << " uploaded=" << (result.uploaded ? "true" : "false")
+              << " appliedRemote=" << (result.appliedRemote ? "true" : "false")
+              << " conflicts=" << result.stats.conflicts
+              << " message=\"" << result.settings.lastSyncMessage << "\"\n";
 }
 
 void selfTest() {
@@ -801,6 +1230,10 @@ int runNativeCli(int argc, char** argv, const char* platformName, const char* de
         }
         if (command == "import-snapshot") {
             importSnapshot(argc, argv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "sync") {
+            synchronizeVault(argc, argv, defaultVaultPath);
             return 0;
         }
         if (command == "category") {

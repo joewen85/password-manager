@@ -11,6 +11,8 @@ link these sources instead of copying them into each app directory.
 - `src/vault_core.hpp`: shared native types and API.
 - `src/vault_core.cpp`: crypto, TOTP, search, taxonomy templates, merge, and
   object storage request signing helpers.
+- `src/vault_cli.cpp`: shared CLI flows, including encrypted vault CRUD,
+  backup/export/import, and libcurl-backed remote object sync.
 - `tests/vault_core_tests.cpp`: shared regression tests run by both
   `apps/windows_native` and `apps/linux_native`.
 
@@ -22,3 +24,8 @@ Run the platform Makefile tests:
 cd ../windows_native && make test
 cd ../linux_native && make test
 ```
+
+The CLI sync command supports WebDAV, S3-compatible presigned URLs, Tencent COS,
+and Aliyun OSS object transport. Tencent COS and Aliyun OSS require access key,
+secret key, and bucket values at runtime; sync state stores remote fingerprints
+and local dirty flags only, not provider secrets.

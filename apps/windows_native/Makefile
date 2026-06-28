@@ -1,10 +1,11 @@
 CXX ?= clang++
 OPENSSL_PREFIX ?= /opt/homebrew/opt/openssl@3
+CURL_CONFIG ?= curl-config
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -Wpedantic -O2
 NATIVE_CORE_DIR := ../native_core
-PM_CPPFLAGS := -I$(OPENSSL_PREFIX)/include -I$(NATIVE_CORE_DIR)/src
+PM_CPPFLAGS := -I$(OPENSSL_PREFIX)/include -I$(NATIVE_CORE_DIR)/src $(shell $(CURL_CONFIG) --cflags 2>/dev/null)
 PM_LDFLAGS := -L$(OPENSSL_PREFIX)/lib
-LDLIBS ?= -lcrypto
+LDLIBS ?= -lcrypto $(shell $(CURL_CONFIG) --libs 2>/dev/null || printf '%s' '-lcurl')
 
 BUILD_DIR := build
 APP := $(BUILD_DIR)/password-manager-windows-core
