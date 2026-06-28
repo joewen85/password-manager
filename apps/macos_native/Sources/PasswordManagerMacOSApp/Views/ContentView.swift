@@ -33,6 +33,7 @@ struct ContentView: View {
     @State private var createTaxonomyKind: CreateTaxonomyKind = .category
     @State private var createTaxonomyValue = ""
     @State private var createCategoryPreset: CategoryTypePreset?
+    @State private var createCategoryCustomFields: [CustomField] = []
     @State private var createTaxonomyError: String?
     @State private var clearDataPassword = ""
     @State private var clearDataError: String?
@@ -119,7 +120,9 @@ struct ContentView: View {
                     categories: store.categories,
                     categoryTemplates: store.categoryTemplates,
                     tags: store.tags,
-                    onCreateCategory: { store.addCategory($0) },
+                    onCreateCategory: { category, preset, customFieldNames in
+                        store.addCategory(category, preset: preset, customFieldNames: customFieldNames)
+                    },
                     onCreateTag: { store.addTag($0) },
                     onSave: { draft in
                         store.upsert(draft, editing: session.entry)
@@ -312,6 +315,7 @@ struct ContentView: View {
                         .onSubmit(saveCreatedTaxonomy)
                     if createTaxonomyKind == .category {
                         CategoryPresetShortcutButtons(selection: $createCategoryPreset)
+                        CategoryTemplateFieldNameEditor(fields: $createCategoryCustomFields)
                     }
                     if let createTaxonomyError {
                         Text(createTaxonomyError)
@@ -533,6 +537,7 @@ struct ContentView: View {
         createTaxonomyKind = kind
         createTaxonomyValue = ""
         createCategoryPreset = nil
+        createCategoryCustomFields = []
         createTaxonomyError = nil
         isPresentingCreateTaxonomy = true
     }
@@ -546,12 +551,18 @@ struct ContentView: View {
         let didSave: Bool
         switch createTaxonomyKind {
         case .category:
-            didSave = store.addCategory(value, preset: createCategoryPreset)
+            didSave = store.addCategory(
+                value,
+                preset: createCategoryPreset,
+                customFieldNames: createCategoryCustomFields.map(\.name)
+            )
         case .tag:
             didSave = store.addTag(value)
         }
         if didSave {
             createTaxonomyValue = ""
+            createCategoryPreset = nil
+            createCategoryCustomFields = []
             createTaxonomyError = nil
             isPresentingCreateTaxonomy = false
         } else {
@@ -786,6 +797,51 @@ struct CategoryPresetShortcutButtons: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+}
+
+struct CategoryTemplateFieldNameEditor: View {
+    @Binding var fields: [CustomField]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(L10n.t("Custom Fields"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if fields.isEmpty {
+                Text(L10n.t("No custom fields."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach($fields) { $field in
+                    HStack(spacing: 8) {
+                        TextField(L10n.t("Field Name"), text: $field.name)
+                            .textFieldStyle(.roundedBorder)
+                        Button(role: .destructive) {
+                            remove(field.id)
+                        } label: {
+                            Label(L10n.t("Remove Field"), systemImage: "trash")
+                        }
+                        .labelStyle(.iconOnly)
+                        .help(L10n.t("Remove Field"))
+                    }
+                }
+            }
+
+            Button(action: addField) {
+                Label(L10n.t("Add Field"), systemImage: "plus")
+            }
+            .controlSize(.small)
+        }
+    }
+
+    private func addField() {
+        fields.append(CustomField())
+    }
+
+    private func remove(_ id: UUID) {
+        fields.removeAll { $0.id == id }
     }
 }
 

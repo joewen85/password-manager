@@ -204,7 +204,11 @@ final class VaultStore {
         persistUnlockedSnapshot()
     }
 
-    func addCategory(_ category: String, preset: CategoryTypePreset? = nil) -> Bool {
+    func addCategory(
+        _ category: String,
+        preset: CategoryTypePreset? = nil,
+        customFieldNames: [String] = []
+    ) -> Bool {
         guard let normalized = validatedTaxonomyValue(
             category,
             existingValues: categories,
@@ -213,7 +217,10 @@ final class VaultStore {
             return false
         }
         manualCategories.insert(normalized)
-        upsertCategoryTemplate(category: normalized, fields: CategoryTemplate.fields(for: preset))
+        upsertCategoryTemplate(
+            category: normalized,
+            fields: CategoryTemplate.fields(for: preset, customFieldNames: customFieldNames)
+        )
         rebuildCollections()
         persistUnlockedSnapshot()
         statusMessage = "Category added."

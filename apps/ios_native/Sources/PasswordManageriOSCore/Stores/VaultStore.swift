@@ -255,6 +255,10 @@ final class VaultStore {
     }
 
     func addCategory(_ category: String, preset: CategoryTypePreset?) -> Bool {
+        addCategory(category, preset: preset, customFieldNames: [])
+    }
+
+    func addCategory(_ category: String, preset: CategoryTypePreset?, customFieldNames: [String]) -> Bool {
         let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else {
             statusMessage = "Category is required."
@@ -266,7 +270,7 @@ final class VaultStore {
         }
         categories.append(normalized)
         categories.sort()
-        let fields = preset.map(CategoryTemplate.fields(for:)) ?? CategoryTemplate.defaultFields
+        let fields = CategoryTemplate.fields(for: preset, customFieldNames: customFieldNames)
         upsertCategoryTemplate(category: normalized, fields: fields)
         persistUnlockedSnapshot()
         statusMessage = "Category added."

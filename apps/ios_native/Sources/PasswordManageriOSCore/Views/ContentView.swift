@@ -51,7 +51,9 @@ struct ContentView: View {
                     categories: store.categories,
                     categoryTemplates: store.categoryTemplates,
                     tags: store.tags,
-                    onCreateCategory: store.addCategory(_:preset:),
+                    onCreateCategory: { category, preset, customFieldNames in
+                        store.addCategory(category, preset: preset, customFieldNames: customFieldNames)
+                    },
                     onCreateTag: store.addTag,
                     onSave: { draft in
                         store.upsert(draft, editing: editingEntry)

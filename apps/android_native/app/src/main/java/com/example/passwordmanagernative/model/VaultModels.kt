@@ -94,15 +94,25 @@ data class CategoryTemplate(
                 FieldTemplate(stableFieldId("备注"), "备注"),
             )
 
-        fun fieldsForPreset(preset: CategoryTypePreset): List<FieldTemplate> =
-            (defaultCategoryFields() + preset.fields.map { fieldName ->
+        fun fieldsForPreset(
+            preset: CategoryTypePreset?,
+            customFieldNames: List<String> = emptyList(),
+        ): List<FieldTemplate> =
+            (defaultCategoryFields() + preset.orEmptyFields().map { fieldName ->
                 FieldTemplate(stableFieldId(fieldName), fieldName)
-            }).distinctBy { it.name.trim().lowercase() }
+            } + customFieldNames.map { fieldName ->
+                FieldTemplate(stableFieldId(fieldName), fieldName)
+            })
+                .filter { it.name.trim().isNotEmpty() }
+                .distinctBy { it.name.trim().lowercase() }
 
         private fun stableFieldId(name: String): String =
             "template-${name.trim().lowercase().replace(Regex("""[^a-z0-9\u4e00-\u9fa5]+"""), "-")}"
                 .trim('-')
                 .ifBlank { UUID.nameUUIDFromBytes(name.toByteArray()).toString() }
+
+        private fun CategoryTypePreset?.orEmptyFields(): List<String> =
+            this?.fields ?: emptyList()
     }
 }
 

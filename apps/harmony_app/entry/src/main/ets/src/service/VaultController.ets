@@ -884,7 +884,7 @@ export class VaultController {
     await this.persist();
   }
 
-  async addCategory(category: string): Promise<void> {
+  async addCategory(category: string, customFieldNames: string[] = []): Promise<void> {
     this.ensureUnlocked();
     const clean = category.trim();
     if (clean.length === 0 || this.snapshot.categories.includes(clean)) {
@@ -892,18 +892,22 @@ export class VaultController {
     }
     this.snapshot.categories.push(clean);
     this.snapshot.categories.sort((a: string, b: string) => a.localeCompare(b));
-    this.upsertCategoryTemplate(clean, defaultCategoryFields());
+    this.upsertCategoryTemplate(clean, fieldsForCategoryPreset('', customFieldNames));
     await this.persist();
   }
 
-  async applyCategoryPreset(category: string, preset: CategoryTypePreset): Promise<void> {
+  async applyCategoryPreset(
+    category: string,
+    preset: CategoryTypePreset,
+    customFieldNames: string[] = [],
+  ): Promise<void> {
     this.ensureUnlocked();
     const clean = category.trim();
     if (clean.length === 0) {
       return;
     }
     this.mergeCategories([clean]);
-    this.upsertCategoryTemplate(clean, fieldsForPreset(preset));
+    this.upsertCategoryTemplate(clean, fieldsForCategoryPreset(preset, customFieldNames));
     await this.persist();
   }
 
@@ -2202,16 +2206,24 @@ function defaultCategoryFields(): FieldTemplate[] {
 }
 
 function fieldsForPreset(preset: CategoryTypePreset): FieldTemplate[] {
+  return fieldsForCategoryPreset(preset);
+}
+
+function fieldsForCategoryPreset(
+  preset: CategoryTypePreset | '',
+  customFieldNames: string[] = [],
+): FieldTemplate[] {
   let names: string[] = [];
   if (preset === CategoryTypePreset.SERVER) {
     names = ['IP地址', '端口', '关联账号'];
   } else if (preset === CategoryTypePreset.SERVICE) {
     names = ['服务入口', '关联账号', '关联服务器'];
-  } else {
+  } else if (preset === CategoryTypePreset.ACCOUNT) {
     names = ['入口'];
   }
   const fields = defaultCategoryFields();
   names.forEach((name: string) => fields.push(createFieldTemplate(name)));
+  customFieldNames.forEach((name: string) => fields.push(createFieldTemplate(name)));
   return normalizeFieldTemplates(fields);
 }
 

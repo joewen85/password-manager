@@ -79,6 +79,20 @@ int main() {
     assert(serialized.find("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA") == std::string::npos);
     assert(serialized.find("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa") != std::string::npos);
 
+    pm::VaultSnapshot categorySnapshot;
+    assert(pm::addCategory(categorySnapshot, "Infra", pm::CategoryTypePreset::Server, {"Owner", "备注", ""}));
+    assert(!pm::addCategory(categorySnapshot, "infra"));
+    assert(categorySnapshot.categories.size() == 1);
+    assert(categorySnapshot.categoryTemplates.size() == 1);
+    assert(categorySnapshot.categoryTemplates[0].fields.size() == 6);
+    assert(categorySnapshot.categoryTemplates[0].fields[0].name == "名称");
+    assert(categorySnapshot.categoryTemplates[0].fields[1].name == "备注");
+    assert(categorySnapshot.categoryTemplates[0].fields[5].name == "Owner");
+    const auto categoryJson = pm::serializeSnapshotJson(categorySnapshot);
+    assert(categoryJson.find("\"categoryTemplates\"") != std::string::npos);
+    assert(categoryJson.find("\"category\":\"Infra\"") != std::string::npos);
+    assert(categoryJson.find("\"name\":\"Owner\"") != std::string::npos);
+
     pm::ObjectSyncConfig noneConfig;
     auto noneRequest = pm::buildObjectSyncRequest(noneConfig);
     assert(noneRequest.provider == pm::ObjectSyncProvider::None);

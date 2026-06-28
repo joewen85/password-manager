@@ -1364,6 +1364,36 @@ class MainActivity : FragmentActivity() {
             TaxonomyKind.TAG -> text(R.string.tag)
         })
         var selectedPreset: CategoryTypePreset? = null
+        val customFieldNames = mutableListOf<String>()
+        val customFieldsContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        fun renderCategoryCustomFields() {
+            customFieldsContainer.removeAllViews()
+            customFieldsContainer.addView(label(text(R.string.custom_fields), 12f, uiColor(R.color.ui_muted), Typeface.BOLD))
+            if (customFieldNames.isEmpty()) {
+                customFieldsContainer.addView(label(text(R.string.no_custom_fields), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(6)))
+            }
+            customFieldNames.forEachIndexed { index, name ->
+                val nameInput = input(text(R.string.custom_field_name)).apply { setText(name) }
+                nameInput.addTextChangedListener(SimpleTextWatcher { value ->
+                    customFieldNames[index] = value
+                })
+                customFieldsContainer.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(nameInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(actionButton(text(R.string.delete), primary = false, compact = true) {
+                        customFieldNames.removeAt(index)
+                        renderCategoryCustomFields()
+                    }, wrapWrap(left = dp(8)))
+                }, matchWrap(top = dp(8)))
+            }
+            customFieldsContainer.addView(actionButton(text(R.string.add_custom_field), primary = false, compact = true) {
+                customFieldNames += ""
+                renderCategoryCustomFields()
+            }, wrapWrap(top = dp(8)))
+        }
         val presetStrip = if (kind == TaxonomyKind.CATEGORY) {
             LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -1390,10 +1420,16 @@ class MainActivity : FragmentActivity() {
         } else {
             null
         }
+        if (kind == TaxonomyKind.CATEGORY) {
+            renderCategoryCustomFields()
+        }
         form.addView(formTitle(title))
         form.addView(label(description, 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(8)))
-        presetStrip?.let { form.addView(it, matchWrap(top = dp(12))) }
         form.addView(field, matchWrap(top = dp(14)))
+        presetStrip?.let { form.addView(it, matchWrap(top = dp(12))) }
+        if (kind == TaxonomyKind.CATEGORY) {
+            form.addView(customFieldsContainer, matchWrap(top = dp(12)))
+        }
         val dialog = AlertDialog.Builder(this)
             .setView(form)
             .setPositiveButton(text(R.string.save), null)
@@ -1407,9 +1443,11 @@ class MainActivity : FragmentActivity() {
                     return@setOnClickListener
                 }
                 val saved = when (kind) {
-                    TaxonomyKind.CATEGORY -> selectedPreset?.let { preset ->
-                        store.addCategory(value, CategoryTemplate.fieldsForPreset(preset))
-                    } ?: store.addCategory(value)
+                    TaxonomyKind.CATEGORY -> store.addCategory(
+                        value,
+                        selectedPreset,
+                        customFieldNames.map { it.trim() },
+                    )
                     TaxonomyKind.TAG -> store.addTag(value)
                 }
                 if (!saved) {

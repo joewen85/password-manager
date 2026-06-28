@@ -8,6 +8,7 @@ struct TaxonomyManagementView: View {
     @State private var selectedKind: TaxonomyKind = .category
     @State private var newValue = ""
     @State private var selectedCategoryPreset: CategoryTypePreset?
+    @State private var categoryCustomFields: [CustomField] = []
     @State private var renameRequest: TaxonomyEditRequest?
     @State private var deleteRequest: TaxonomyEditRequest?
 
@@ -42,6 +43,7 @@ struct TaxonomyManagementView: View {
 
                 if selectedKind == .category {
                     CategoryPresetShortcutButtons(selection: $selectedCategoryPreset)
+                    CategoryTemplateFieldNameEditor(fields: $categoryCustomFields)
                 }
 
                 Group {
@@ -95,6 +97,12 @@ struct TaxonomyManagementView: View {
             }
         }
         .frame(minWidth: 520, minHeight: 460)
+        .onChange(of: selectedKind) { _, nextKind in
+            if nextKind == .tag {
+                selectedCategoryPreset = nil
+                categoryCustomFields = []
+            }
+        }
         .sheet(item: $renameRequest) { request in
             TaxonomyRenameView(store: store, request: request) {
                 onChange()
@@ -123,13 +131,18 @@ struct TaxonomyManagementView: View {
         let didSave: Bool
         switch selectedKind {
         case .category:
-            didSave = store.addCategory(value, preset: selectedCategoryPreset)
+            didSave = store.addCategory(
+                value,
+                preset: selectedCategoryPreset,
+                customFieldNames: categoryCustomFields.map(\.name)
+            )
         case .tag:
             didSave = store.addTag(value)
         }
         if didSave {
             newValue = ""
             selectedCategoryPreset = nil
+            categoryCustomFields = []
             onChange()
         }
     }

@@ -170,6 +170,65 @@ std::string canonicalIdString(const std::string& value) {
     return normalized;
 }
 
+std::string stableFieldId(const std::string& name) {
+    std::string slug;
+    bool previousWasSeparator = false;
+    for (char raw : trimCopy(name)) {
+        const auto ch = static_cast<unsigned char>(raw);
+        if (std::isalnum(ch)) {
+            slug.push_back(static_cast<char>(std::tolower(ch)));
+            previousWasSeparator = false;
+        } else if (!previousWasSeparator) {
+            slug.push_back('-');
+            previousWasSeparator = true;
+        }
+    }
+    while (!slug.empty() && slug.front() == '-') slug.erase(slug.begin());
+    while (!slug.empty() && slug.back() == '-') slug.pop_back();
+    return "template-" + (slug.empty() ? canonicalIdString(name) : slug);
+}
+
+FieldTemplate makeFieldTemplate(const std::string& name) {
+    const auto clean = trimCopy(name);
+    return FieldTemplate{stableFieldId(clean), clean};
+}
+
+std::vector<FieldTemplate> normalizeFieldTemplates(const std::vector<FieldTemplate>& fields) {
+    std::vector<FieldTemplate> normalized;
+    std::set<std::string> seen;
+    for (const auto& field : fields) {
+        const auto cleanName = trimCopy(field.name);
+        if (cleanName.empty()) continue;
+        const auto key = lowerCopy(cleanName);
+        if (!seen.insert(key).second) continue;
+        normalized.push_back(FieldTemplate{field.id.empty() ? stableFieldId(cleanName) : field.id, cleanName});
+    }
+    return normalized;
+}
+
+std::vector<FieldTemplate> fieldsFromNames(const std::vector<std::string>& names) {
+    std::vector<FieldTemplate> fields;
+    for (const auto& name : names) fields.push_back(makeFieldTemplate(name));
+    return fields;
+}
+
+void upsertCategoryTemplate(VaultSnapshot& snapshot, const std::string& category, const std::vector<FieldTemplate>& fields) {
+    const auto clean = trimCopy(category);
+    const auto categoryKey = lowerCopy(clean);
+    const auto normalizedFields = normalizeFieldTemplates(fields.empty() ? defaultCategoryFields() : fields);
+    for (auto& templateEntry : snapshot.categoryTemplates) {
+        if (lowerCopy(trimCopy(templateEntry.category)) == categoryKey) {
+            templateEntry.category = clean;
+            templateEntry.fields = normalizedFields;
+            return;
+        }
+    }
+    snapshot.categoryTemplates.push_back(CategoryTemplate{clean, normalizedFields});
+    std::sort(snapshot.categoryTemplates.begin(), snapshot.categoryTemplates.end(), [](const auto& left, const auto& right) {
+        return left.category < right.category;
+    });
+}
+
 VaultEntry canonicalEntryId(const VaultEntry& entry) {
     VaultEntry copy = entry;
     copy.id = canonicalIdString(entry.id);
@@ -686,6 +745,23 @@ std::string serializeSnapshotJson(const VaultSnapshot& snapshot) {
             << "\",\"secret\":\"" << escapeJson(entry.secret) << "\",\"category\":\"" << escapeJson(entry.category)
             << "\",\"isDeleted\":" << (entry.isDeleted ? "true" : "false") << "}";
     }
+    out << "],\"categories\":[";
+    for (std::size_t index = 0; index < snapshot.categories.size(); ++index) {
+        if (index > 0) out << ",";
+        out << "\"" << escapeJson(snapshot.categories[index]) << "\"";
+    }
+    out << "],\"categoryTemplates\":[";
+    for (std::size_t templateIndex = 0; templateIndex < snapshot.categoryTemplates.size(); ++templateIndex) {
+        const auto& templateEntry = snapshot.categoryTemplates[templateIndex];
+        if (templateIndex > 0) out << ",";
+        out << "{\"category\":\"" << escapeJson(templateEntry.category) << "\",\"fields\":[";
+        for (std::size_t fieldIndex = 0; fieldIndex < templateEntry.fields.size(); ++fieldIndex) {
+            const auto& field = templateEntry.fields[fieldIndex];
+            if (fieldIndex > 0) out << ",";
+            out << "{\"id\":\"" << escapeJson(field.id) << "\",\"name\":\"" << escapeJson(field.name) << "\"}";
+        }
+        out << "]}";
+    }
     out << "],\"syncStatus\":\"" << escapeJson(snapshot.syncStatus) << "\",\"backupStatus\":\"" << escapeJson(snapshot.backupStatus) << "\"}";
     return out.str();
 }
@@ -698,6 +774,55 @@ VaultEntry makeEntry(const std::string& label, const std::string& type, const st
     entry.username = username;
     entry.secret = secret;
     return entry;
+}
+
+std::vector<FieldTemplate> defaultCategoryFields() {
+    return fieldsFromNames({"名称", "备注"});
+}
+
+std::vector<FieldTemplate> categoryFieldsForPreset(CategoryTypePreset preset, const std::vector<std::string>& customFieldNames) {
+    std::vector<FieldTemplate> fields = defaultCategoryFields();
+    std::vector<std::string> presetNames;
+    switch (preset) {
+        case CategoryTypePreset::Server:
+            presetNames = {"IP地址", "端口", "关联账号"};
+            break;
+        case CategoryTypePreset::Service:
+            presetNames = {"服务入口", "关联账号", "关联服务器"};
+            break;
+        case CategoryTypePreset::Account:
+            presetNames = {"入口"};
+            break;
+    }
+    auto presetFields = fieldsFromNames(presetNames);
+    fields.insert(fields.end(), presetFields.begin(), presetFields.end());
+    auto customFields = fieldsFromNames(customFieldNames);
+    fields.insert(fields.end(), customFields.begin(), customFields.end());
+    return normalizeFieldTemplates(fields);
+}
+
+std::vector<FieldTemplate> categoryFieldsWithCustom(const std::vector<std::string>& customFieldNames) {
+    std::vector<FieldTemplate> fields = defaultCategoryFields();
+    auto customFields = fieldsFromNames(customFieldNames);
+    fields.insert(fields.end(), customFields.begin(), customFields.end());
+    return normalizeFieldTemplates(fields);
+}
+
+bool addCategory(VaultSnapshot& snapshot, const std::string& category, const std::vector<FieldTemplate>& fields) {
+    const auto clean = trimCopy(category);
+    if (clean.empty()) return false;
+    const auto key = lowerCopy(clean);
+    for (const auto& existing : snapshot.categories) {
+        if (lowerCopy(trimCopy(existing)) == key) return false;
+    }
+    snapshot.categories.push_back(clean);
+    std::sort(snapshot.categories.begin(), snapshot.categories.end());
+    upsertCategoryTemplate(snapshot, clean, fields);
+    return true;
+}
+
+bool addCategory(VaultSnapshot& snapshot, const std::string& category, CategoryTypePreset preset, const std::vector<std::string>& customFieldNames) {
+    return addCategory(snapshot, category, categoryFieldsForPreset(preset, customFieldNames));
 }
 
 std::vector<VaultEntry> filterEntries(const std::vector<VaultEntry>& entries, const std::string& query, const std::string& type) {

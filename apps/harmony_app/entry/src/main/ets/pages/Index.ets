@@ -170,6 +170,7 @@ struct Index {
   @State private categoryDraft: string = '';
   @State private categoryRenameSource: string = '';
   @State private categoryDraftPreset: CategoryPresetDraft = '';
+  @State private categoryDraftCustomFields: CustomField[] = [];
 
   @State private draftType: DraftType = 'credential';
   @State private draftLabel: string = '';
@@ -1313,6 +1314,7 @@ struct Index {
             this.categoryDraftPreset = this.categoryDraftPreset === CategoryTypePreset.ACCOUNT ? '' : CategoryTypePreset.ACCOUNT;
           });
         }
+        this.CategoryDraftCustomFieldsEditor();
       }
 
       if (this.categoryRenameSource.length > 0) {
@@ -1327,6 +1329,7 @@ struct Index {
               this.categoryRenameSource = '';
               this.categoryDraft = '';
               this.categoryDraftPreset = '';
+              this.categoryDraftCustomFields = [];
             });
         }
       }
@@ -1387,6 +1390,7 @@ struct Index {
               this.categoryRenameSource = category;
               this.categoryDraft = category;
               this.categoryDraftPreset = '';
+              this.categoryDraftCustomFields = [];
             });
           }, (category: string) => category);
         }
@@ -1934,16 +1938,19 @@ struct Index {
     if (category.length === 0) {
       return;
     }
-    await this.controller().addCategory(category);
+    const customFieldNames = this.categoryDraftCustomFieldNames();
     if (this.categoryDraftPreset === CategoryTypePreset.SERVER) {
-      await this.controller().applyCategoryPreset(category, CategoryTypePreset.SERVER);
+      await this.controller().applyCategoryPreset(category, CategoryTypePreset.SERVER, customFieldNames);
     } else if (this.categoryDraftPreset === CategoryTypePreset.SERVICE) {
-      await this.controller().applyCategoryPreset(category, CategoryTypePreset.SERVICE);
+      await this.controller().applyCategoryPreset(category, CategoryTypePreset.SERVICE, customFieldNames);
     } else if (this.categoryDraftPreset === CategoryTypePreset.ACCOUNT) {
-      await this.controller().applyCategoryPreset(category, CategoryTypePreset.ACCOUNT);
+      await this.controller().applyCategoryPreset(category, CategoryTypePreset.ACCOUNT, customFieldNames);
+    } else {
+      await this.controller().addCategory(category, customFieldNames);
     }
     this.categoryDraft = '';
     this.categoryDraftPreset = '';
+    this.categoryDraftCustomFields = [];
     this.categoryRenameSource = '';
     this.refreshData();
   }
@@ -1980,6 +1987,7 @@ struct Index {
     this.categoryRenameSource = '';
     this.categoryDraft = '';
     this.categoryDraftPreset = '';
+    this.categoryDraftCustomFields = [];
     this.refreshData();
   }
 
@@ -2003,6 +2011,7 @@ struct Index {
       this.categoryRenameSource = '';
     }
     this.categoryDraftPreset = '';
+    this.categoryDraftCustomFields = [];
     this.refreshData();
   }
 
@@ -2361,6 +2370,63 @@ struct Index {
           .fontSize(12)
           .fontColor(UI_MUTED);
       }
+    }
+  }
+
+  @Builder
+  private CategoryDraftCustomFieldsEditor() {
+    Column({ space: 6 }) {
+      Row() {
+        Text('自定义字段')
+          .fontSize(12)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_MUTED);
+        Blank();
+        Text('+')
+          .width(42)
+          .height(34)
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_ACCENT)
+          .textAlign(TextAlign.Center)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(10)
+          .onClick(() => {
+            this.addCategoryDraftCustomField();
+          });
+      }
+      if (this.categoryDraftCustomFields.length === 0) {
+        Text('暂无自定义字段')
+          .fontSize(12)
+          .fontColor(UI_MUTED);
+      }
+      ForEach(this.categoryDraftCustomFields, (field: CustomField) => {
+        Row({ space: 8 }) {
+          TextInput({ placeholder: '字段名称', text: field.name })
+            .layoutWeight(1)
+            .height(48)
+            .backgroundColor(UI_SURFACE_ALT)
+            .border({ width: 1, color: UI_STROKE })
+            .borderRadius(12)
+            .padding({ left: 14, right: 14 })
+            .onChange((value: string) => {
+              this.updateCategoryDraftCustomFieldName(field.id, value);
+            });
+          Text('删除')
+            .height(36)
+            .padding({ left: 10, right: 10 })
+            .fontSize(13)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(UI_DANGER)
+            .textAlign(TextAlign.Center)
+            .backgroundColor(UI_DANGER_SURFACE)
+            .borderRadius(999)
+            .onClick(() => {
+              this.removeCategoryDraftCustomField(field.id);
+            });
+        }
+      }, (field: CustomField) => field.id);
     }
   }
 
@@ -2943,6 +3009,48 @@ struct Index {
 
   private removeDraftCustomField(id: string): void {
     this.draftCustomFields = this.draftCustomFields.filter((field: CustomField) => field.id !== id);
+  }
+
+  private addCategoryDraftCustomField(): void {
+    const field: CustomField = {
+      id: this.nextUiId(),
+      name: '',
+      value: '',
+    };
+    this.categoryDraftCustomFields = [...this.categoryDraftCustomFields, field];
+  }
+
+  private updateCategoryDraftCustomFieldName(id: string, value: string): void {
+    this.categoryDraftCustomFields = this.categoryDraftCustomFields.map((field: CustomField) => {
+      if (field.id !== id) {
+        return field;
+      }
+      return {
+        id: field.id,
+        name: value,
+        value: '',
+      };
+    });
+  }
+
+  private removeCategoryDraftCustomField(id: string): void {
+    this.categoryDraftCustomFields =
+      this.categoryDraftCustomFields.filter((field: CustomField) => field.id !== id);
+  }
+
+  private categoryDraftCustomFieldNames(): string[] {
+    const seen = new Set<string>();
+    const names: string[] = [];
+    this.categoryDraftCustomFields.forEach((field: CustomField) => {
+      const name = field.name.trim();
+      const key = name.toLowerCase();
+      if (name.length === 0 || seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      names.push(name);
+    });
+    return names;
   }
 
   private addDraftAccount(): void {

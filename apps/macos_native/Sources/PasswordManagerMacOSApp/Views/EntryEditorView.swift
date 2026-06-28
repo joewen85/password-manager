@@ -6,7 +6,7 @@ struct EntryEditorView: View {
     var categories: [String]
     var categoryTemplates: [CategoryTemplate]
     var tags: [String]
-    var onCreateCategory: (String) -> Bool
+    var onCreateCategory: (String, CategoryTypePreset?, [String]) -> Bool
     var onCreateTag: (String) -> Bool
     var onSave: (EntryDraft) -> Void
     var onCancel: () -> Void
@@ -23,7 +23,7 @@ struct EntryEditorView: View {
         categories: [String],
         categoryTemplates: [CategoryTemplate] = [],
         tags: [String],
-        onCreateCategory: @escaping (String) -> Bool = { _ in false },
+        onCreateCategory: @escaping (String, CategoryTypePreset?, [String]) -> Bool = { _, _, _ in false },
         onCreateTag: @escaping (String) -> Bool = { _ in false },
         onSave: @escaping (EntryDraft) -> Void,
         onCancel: @escaping () -> Void
@@ -143,12 +143,12 @@ struct EntryEditorView: View {
         taxonomyMessage = nil
     }
 
-    private func createCategory(_ value: String) -> Bool {
+    private func createCategory(_ value: String, preset: CategoryTypePreset?, customFieldNames: [String]) -> Bool {
         guard !value.isEmpty else { return false }
-        if onCreateCategory(value) {
+        if onCreateCategory(value, preset, customFieldNames) {
             availableCategories = mergedValues(availableCategories + [value])
             draft.category = value
-            applyTemplate(for: value)
+            applyTemplate(for: value, preset: preset, customFieldNames: customFieldNames)
             taxonomyMessage = L10n.t("Category added.")
             return true
         } else {
@@ -174,10 +174,20 @@ struct EntryEditorView: View {
         Array(Set(values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
     }
 
-    private func applyTemplate(for category: String) {
+    private func applyTemplate(
+        for category: String,
+        preset: CategoryTypePreset? = nil,
+        customFieldNames: [String] = []
+    ) {
         guard entry == nil else { return }
         let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
-        draft.configureTemplateFields(Self.templateFields(for: normalized, in: categoryTemplates))
+        let fields: [FieldTemplate]
+        if preset != nil || !customFieldNames.isEmpty {
+            fields = CategoryTemplate.fields(for: preset, customFieldNames: customFieldNames)
+        } else {
+            fields = Self.templateFields(for: normalized, in: categoryTemplates)
+        }
+        draft.configureTemplateFields(fields)
     }
 
     private static func templateFields(for category: String, in templates: [CategoryTemplate]) -> [FieldTemplate] {
@@ -190,10 +200,12 @@ struct EntryEditorView: View {
 private struct CategorySelectField: View {
     @Binding var selectedCategory: String
     var categories: [String]
-    var onCreateCategory: (String) -> Bool
+    var onCreateCategory: (String, CategoryTypePreset?, [String]) -> Bool
 
     @State private var isPresented = false
     @State private var searchText = ""
+    @State private var selectedPreset: CategoryTypePreset?
+    @State private var customFields: [CustomField] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -223,6 +235,11 @@ private struct CategorySelectField: View {
                         canCreate: canCreateCategory,
                         create: createCategory
                     )
+
+                    if canCreateCategory {
+                        CategoryPresetShortcutButtons(selection: $selectedPreset)
+                        CategoryTemplateFieldNameEditor(fields: $customFields)
+                    }
 
                     Divider()
 
@@ -266,9 +283,11 @@ private struct CategorySelectField: View {
 
     private func createCategory() {
         guard canCreateCategory else { return }
-        if onCreateCategory(trimmedSearchText) {
+        if onCreateCategory(trimmedSearchText, selectedPreset, customFields.map(\.name)) {
             selectedCategory = trimmedSearchText
             searchText = ""
+            selectedPreset = nil
+            customFields = []
             isPresented = false
         }
     }

@@ -255,6 +255,9 @@ class VaultStore(
     fun addCategory(category: String): Boolean =
         addCategory(category, CategoryTemplate.defaultCategoryFields())
 
+    fun addCategory(category: String, preset: CategoryTypePreset?, customFieldNames: List<String>): Boolean =
+        addCategory(category, CategoryTemplate.fieldsForPreset(preset, customFieldNames))
+
     fun addCategory(category: String, fields: List<FieldTemplate>): Boolean {
         val normalized = category.trim()
         if (normalized.isBlank()) {

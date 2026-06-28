@@ -530,12 +530,15 @@ struct CategoryTemplate: Codable, Equatable, Sendable {
         ]
     }
 
-    static func fields(for preset: CategoryTypePreset) -> [FieldTemplate] {
+    static func fields(for preset: CategoryTypePreset?, customFieldNames: [String] = []) -> [FieldTemplate] {
         var seen = Set<String>()
-        return (defaultFields + preset.fields.map { FieldTemplate(id: stableFieldId($0), name: $0) })
+        let presetFields = preset?.fields ?? []
+        return (defaultFields
+            + presetFields.map { FieldTemplate(id: stableFieldId($0), name: $0) }
+            + customFieldNames.map { FieldTemplate(id: stableFieldId($0), name: $0) })
             .filter { field in
                 let key = field.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                return seen.insert(key).inserted
+                return !key.isEmpty && seen.insert(key).inserted
             }
     }
 

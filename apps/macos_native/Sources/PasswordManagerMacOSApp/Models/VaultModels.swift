@@ -314,11 +314,15 @@ struct CategoryTemplate: Codable, Equatable, Hashable, Sendable {
         ]
     }
 
-    static func fields(for preset: CategoryTypePreset?) -> [FieldTemplate] {
+    static func fields(for preset: CategoryTypePreset?, customFieldNames: [String] = []) -> [FieldTemplate] {
         guard let preset else {
-            return defaultCategoryFields()
+            return normalizedFields(defaultCategoryFields() + customFieldNames.map { FieldTemplate(name: $0) })
         }
-        return normalizedFields(defaultCategoryFields() + preset.fields.map { FieldTemplate(name: $0) })
+        return normalizedFields(
+            defaultCategoryFields()
+                + preset.fields.map { FieldTemplate(name: $0) }
+                + customFieldNames.map { FieldTemplate(name: $0) }
+        )
     }
 
     private static func normalizedFields(_ fields: [FieldTemplate]) -> [FieldTemplate] {

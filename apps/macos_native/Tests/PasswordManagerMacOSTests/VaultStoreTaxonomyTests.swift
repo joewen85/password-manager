@@ -88,15 +88,15 @@ struct VaultStoreTaxonomyTests {
         )
         #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
 
-        #expect(store.addCategory("Infra", preset: .server))
+        #expect(store.addCategory("Infra", preset: .server, customFieldNames: ["Owner", "备注", ""]))
 
         let template = try #require(store.categoryTemplates.first)
         #expect(template.category == "Infra")
-        #expect(template.fields.map(\.name) == ["名称", "备注", "IP地址", "端口", "关联账号"])
+        #expect(template.fields.map(\.name) == ["名称", "备注", "IP地址", "端口", "关联账号", "Owner"])
 
         var draft = EntryDraft()
         draft.applyTemplateFields(template.fields)
 
-        #expect(draft.customFields.map(\.name) == ["名称", "备注", "IP地址", "端口", "关联账号"])
+        #expect(draft.customFields.map(\.name) == ["名称", "备注", "IP地址", "端口", "关联账号", "Owner"])
     }
 }

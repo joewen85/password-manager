@@ -39,9 +39,26 @@ struct VaultEntry {
     bool isDeleted = false;
 };
 
+struct FieldTemplate {
+    std::string id;
+    std::string name;
+};
+
+struct CategoryTemplate {
+    std::string category;
+    std::vector<FieldTemplate> fields;
+};
+
+enum class CategoryTypePreset {
+    Server,
+    Service,
+    Account,
+};
+
 struct VaultSnapshot {
     std::vector<VaultEntry> entries;
     std::vector<std::string> categories;
+    std::vector<CategoryTemplate> categoryTemplates;
     std::vector<std::string> tags;
     bool requireTotp = false;
     std::string totpSecret;
@@ -110,6 +127,11 @@ VaultEnvelope createEnvelope(const std::string& password, const VaultSnapshot& s
 VaultSnapshot decryptEnvelope(const std::string& password, const VaultEnvelope& envelope);
 std::string serializeSnapshotJson(const VaultSnapshot& snapshot);
 VaultEntry makeEntry(const std::string& label, const std::string& type, const std::string& username, const std::string& secret);
+std::vector<FieldTemplate> defaultCategoryFields();
+std::vector<FieldTemplate> categoryFieldsForPreset(CategoryTypePreset preset, const std::vector<std::string>& customFieldNames = {});
+std::vector<FieldTemplate> categoryFieldsWithCustom(const std::vector<std::string>& customFieldNames);
+bool addCategory(VaultSnapshot& snapshot, const std::string& category, const std::vector<FieldTemplate>& fields = defaultCategoryFields());
+bool addCategory(VaultSnapshot& snapshot, const std::string& category, CategoryTypePreset preset, const std::vector<std::string>& customFieldNames = {});
 std::vector<VaultEntry> filterEntries(const std::vector<VaultEntry>& entries, const std::string& query, const std::string& type = "all");
 std::vector<std::string> rebuildCategories(const std::vector<VaultEntry>& entries);
 std::vector<std::string> rebuildTags(const std::vector<VaultEntry>& entries);
