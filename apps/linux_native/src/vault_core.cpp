@@ -216,6 +216,53 @@ VaultEntry conflictCopy(const VaultEntry& entry) {
     return copy;
 }
 
+std::string defaultObjectKey(const std::string& objectKey) {
+    const auto trimmed = trimCopy(objectKey);
+    return trimmed.empty() ? "vault.sync.json" : trimmed;
+}
+
+std::string trimTrailingSlash(std::string value) {
+    while (!value.empty() && value.back() == '/') value.pop_back();
+    return value;
+}
+
+std::string trimLeadingSlash(std::string value) {
+    while (!value.empty() && value.front() == '/') value.erase(value.begin());
+    return value;
+}
+
+std::string joinUrlPath(const std::string& base, const std::string& path) {
+    const auto trimmedBase = trimTrailingSlash(trimCopy(base));
+    const auto trimmedPath = trimLeadingSlash(trimCopy(path));
+    if (trimmedBase.empty()) return trimmedPath;
+    if (trimmedPath.empty()) return trimmedBase;
+    return trimmedBase + "/" + trimmedPath;
+}
+
+bool requiresObjectStoreCredentials(ObjectSyncProvider provider) {
+    return provider == ObjectSyncProvider::TencentCos || provider == ObjectSyncProvider::AliyunOss;
+}
+
+void requireObjectStoreCredentials(const ObjectSyncConfig& config) {
+    if (!requiresObjectStoreCredentials(config.provider)) return;
+    if (trimCopy(config.accessKeyId).empty()) throw std::runtime_error("Object sync accessKeyId is required.");
+    if (trimCopy(config.secretAccessKey).empty()) throw std::runtime_error("Object sync secretAccessKey is required.");
+    if (trimCopy(config.bucket).empty()) throw std::runtime_error("Object sync bucket is required.");
+}
+
+std::string buildObjectSyncBaseUrl(const ObjectSyncConfig& config) {
+    const auto customUrl = trimCopy(config.customUrl);
+    if (!customUrl.empty()) return trimTrailingSlash(customUrl);
+
+    const auto endpoint = trimCopy(config.endpoint);
+    if (endpoint.empty()) throw std::runtime_error("Object sync endpoint or customUrl is required.");
+
+    if (config.provider == ObjectSyncProvider::TencentCos || config.provider == ObjectSyncProvider::AliyunOss) {
+        return joinUrlPath(endpoint, config.bucket);
+    }
+    return trimTrailingSlash(endpoint);
+}
+
 } // namespace
 
 std::string randomId() {
@@ -473,6 +520,23 @@ SyncMergeResult mergeEntries(const std::vector<VaultEntry>& local, const std::ve
     for (const auto& [_, entry] : remoteById) merged.push_back(entry);
     int deletes = static_cast<int>(std::count_if(merged.begin(), merged.end(), [](const auto& entry) { return entry.isDeleted; }));
     return SyncMergeResult{merged, SyncMergeStats{static_cast<int>(merged.size()), conflicts, deletes}};
+}
+
+ObjectSyncRequest buildObjectSyncRequest(const ObjectSyncConfig& config) {
+    const auto objectKey = defaultObjectKey(config.objectKey);
+    if (config.provider == ObjectSyncProvider::None) {
+        return ObjectSyncRequest{config.provider, objectKey, "", "", false};
+    }
+
+    requireObjectStoreCredentials(config);
+    const auto baseUrl = buildObjectSyncBaseUrl(config);
+    return ObjectSyncRequest{
+        config.provider,
+        objectKey,
+        baseUrl,
+        joinUrlPath(baseUrl, objectKey),
+        requiresObjectStoreCredentials(config.provider),
+    };
 }
 
 } // namespace pm

@@ -79,6 +79,77 @@ int main() {
     assert(serialized.find("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA") == std::string::npos);
     assert(serialized.find("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa") != std::string::npos);
 
+    pm::ObjectSyncConfig noneConfig;
+    auto noneRequest = pm::buildObjectSyncRequest(noneConfig);
+    assert(noneRequest.provider == pm::ObjectSyncProvider::None);
+    assert(noneRequest.objectKey == "vault.sync.json");
+    assert(noneRequest.baseUrl.empty());
+    assert(noneRequest.objectUrl.empty());
+    assert(!noneRequest.requiresCredentials);
+
+    pm::ObjectSyncConfig webDavConfig;
+    webDavConfig.provider = pm::ObjectSyncProvider::WebDav;
+    webDavConfig.endpoint = "https://dav.example.com/remote.php/dav/files/me/";
+    webDavConfig.objectKey = "/vaults/primary.json";
+    auto webDavRequest = pm::buildObjectSyncRequest(webDavConfig);
+    assert(webDavRequest.baseUrl == "https://dav.example.com/remote.php/dav/files/me");
+    assert(webDavRequest.objectUrl == "https://dav.example.com/remote.php/dav/files/me/vaults/primary.json");
+    assert(!webDavRequest.requiresCredentials);
+
+    pm::ObjectSyncConfig s3Config;
+    s3Config.provider = pm::ObjectSyncProvider::S3Presigned;
+    s3Config.customUrl = "https://s3.example.com/presigned/vault";
+    auto s3Request = pm::buildObjectSyncRequest(s3Config);
+    assert(s3Request.objectKey == "vault.sync.json");
+    assert(s3Request.objectUrl == "https://s3.example.com/presigned/vault/vault.sync.json");
+    assert(!s3Request.requiresCredentials);
+
+    pm::ObjectSyncConfig cosConfig;
+    cosConfig.provider = pm::ObjectSyncProvider::TencentCos;
+    cosConfig.accessKeyId = "ak";
+    cosConfig.secretAccessKey = "sk";
+    cosConfig.bucket = "vault-1250000000";
+    cosConfig.endpoint = "https://cos.ap-shanghai.myqcloud.com";
+    cosConfig.appId = "1250000000";
+    cosConfig.objectKey = "prod/vault.json";
+    auto cosRequest = pm::buildObjectSyncRequest(cosConfig);
+    assert(cosRequest.baseUrl == "https://cos.ap-shanghai.myqcloud.com/vault-1250000000");
+    assert(cosRequest.objectUrl == "https://cos.ap-shanghai.myqcloud.com/vault-1250000000/prod/vault.json");
+    assert(cosRequest.requiresCredentials);
+
+    pm::ObjectSyncConfig ossConfig;
+    ossConfig.provider = pm::ObjectSyncProvider::AliyunOss;
+    ossConfig.accessKeyId = "ak";
+    ossConfig.secretAccessKey = "sk";
+    ossConfig.bucket = "vault";
+    ossConfig.customUrl = "https://vault.oss-cn-hangzhou.aliyuncs.com/base/";
+    auto ossRequest = pm::buildObjectSyncRequest(ossConfig);
+    assert(ossRequest.baseUrl == "https://vault.oss-cn-hangzhou.aliyuncs.com/base");
+    assert(ossRequest.objectUrl == "https://vault.oss-cn-hangzhou.aliyuncs.com/base/vault.sync.json");
+    assert(ossRequest.requiresCredentials);
+
+    bool missingCredentialsRejected = false;
+    try {
+        pm::ObjectSyncConfig invalidCos;
+        invalidCos.provider = pm::ObjectSyncProvider::TencentCos;
+        invalidCos.bucket = "vault";
+        invalidCos.endpoint = "https://cos.example.com";
+        (void)pm::buildObjectSyncRequest(invalidCos);
+    } catch (const std::exception&) {
+        missingCredentialsRejected = true;
+    }
+    assert(missingCredentialsRejected);
+
+    bool missingUrlRejected = false;
+    try {
+        pm::ObjectSyncConfig invalidWebDav;
+        invalidWebDav.provider = pm::ObjectSyncProvider::WebDav;
+        (void)pm::buildObjectSyncRequest(invalidWebDav);
+    } catch (const std::exception&) {
+        missingUrlRejected = true;
+    }
+    assert(missingUrlRejected);
+
     std::cout << "windows-native core tests passed\n";
     return 0;
 }

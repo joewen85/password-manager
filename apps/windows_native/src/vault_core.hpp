@@ -67,6 +67,33 @@ struct SyncMergeResult {
     SyncMergeStats stats;
 };
 
+enum class ObjectSyncProvider {
+    None,
+    WebDav,
+    S3Presigned,
+    TencentCos,
+    AliyunOss,
+};
+
+struct ObjectSyncConfig {
+    ObjectSyncProvider provider = ObjectSyncProvider::None;
+    std::string accessKeyId;
+    std::string secretAccessKey;
+    std::string bucket;
+    std::string endpoint;
+    std::string appId;
+    std::string customUrl;
+    std::string objectKey;
+};
+
+struct ObjectSyncRequest {
+    ObjectSyncProvider provider = ObjectSyncProvider::None;
+    std::string objectKey;
+    std::string baseUrl;
+    std::string objectUrl;
+    bool requiresCredentials = false;
+};
+
 std::string randomId();
 std::string isoTimestamp(std::time_t now = std::time(nullptr));
 std::string base64Encode(const std::vector<std::uint8_t>& bytes);
@@ -87,5 +114,6 @@ std::string generateTotp(const std::string& base32Secret, std::uint64_t unixSeco
 bool verifyTotp(const std::string& base32Secret, const std::string& code, std::uint64_t unixSeconds);
 std::string compareVersion(const std::map<std::string, int>& local, const std::map<std::string, int>& remote);
 SyncMergeResult mergeEntries(const std::vector<VaultEntry>& local, const std::vector<VaultEntry>& remote, const std::string& strategy);
+ObjectSyncRequest buildObjectSyncRequest(const ObjectSyncConfig& config);
 
 } // namespace pm
