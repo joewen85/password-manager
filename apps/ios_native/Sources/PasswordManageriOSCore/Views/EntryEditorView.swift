@@ -124,6 +124,9 @@ struct EntryEditorView: View {
         .onChange(of: categories) { _, nextCategories in
             availableCategories = mergedValues(availableCategories + nextCategories)
         }
+        .onChange(of: draft.category) { _, nextCategory in
+            applyTemplate(for: nextCategory)
+        }
         .onChange(of: tags) { _, nextTags in
             availableTags = mergedValues(availableTags + nextTags)
         }

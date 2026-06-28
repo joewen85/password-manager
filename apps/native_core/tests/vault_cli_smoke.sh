@@ -32,6 +32,21 @@ trap cleanup EXIT
 
 "$bin" init "$password" --vault "$vault" >/dev/null
 "$bin" add-category "$password" Infra --shortcut server --field Owner --vault "$vault" >/dev/null
+"$bin" add-category "$password" CustomOnly --field Owner --vault "$vault" >/dev/null
+"$bin" export-snapshot "$password" --vault "$vault" --out "$work_dir/category-template-check.json" >/dev/null
+python3 - "$work_dir/category-template-check.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    snapshot = json.load(handle)
+
+templates = {
+    item.get("category"): [field.get("name") for field in item.get("fields", [])]
+    for item in snapshot.get("categoryTemplates", [])
+}
+assert templates["CustomOnly"] == ["名称", "备注", "Owner"]
+PY
 "$bin" add-entry "$password" \
   --label "Smoke Entry" \
   --type service \
@@ -98,11 +113,11 @@ grep -q '"entries"' "$export_file"
 grep -q 'Smoke Entry' "$export_file"
 
 "$bin" add-category "$password" Temporary --vault "$vault" >/dev/null
-"$bin" status "$password" --vault "$vault" | grep -q "categories=2"
+"$bin" status "$password" --vault "$vault" | grep -q "categories=3"
 "$bin" import-snapshot "$password" --vault "$vault" --in "$export_file" | grep -q "Imported 2 active entries."
-"$bin" status "$password" --vault "$vault" | grep -q "categories=1"
+"$bin" status "$password" --vault "$vault" | grep -q "categories=2"
 
 "$bin" add-category "$password" RestoreMarker --vault "$vault" >/dev/null
-"$bin" status "$password" --vault "$vault" | grep -q "categories=2"
+"$bin" status "$password" --vault "$vault" | grep -q "categories=3"
 "$bin" restore-backup "$password" "$backup_name" --vault "$vault" --backup-dir "$backup_dir" | grep -q "Restored backup:"
-"$bin" status "$password" --vault "$vault" | grep -q "categories=1"
+"$bin" status "$password" --vault "$vault" | grep -q "categories=2"
