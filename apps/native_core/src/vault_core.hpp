@@ -75,6 +75,7 @@ struct VaultSnapshot {
     std::string totpSecret;
     std::string syncStatus = "Not configured";
     std::string backupStatus = "No backup has run";
+    std::string updatedAt;
 };
 
 struct VaultEnvelope {
@@ -93,6 +94,34 @@ struct SyncMergeStats {
 struct SyncMergeResult {
     std::vector<VaultEntry> entries;
     SyncMergeStats stats;
+};
+
+struct VaultSyncPayload {
+    int version = 1;
+    std::string exportedAt;
+    std::string deviceId;
+    int revision = 0;
+    VaultSnapshot snapshot;
+};
+
+struct SyncSettingsState {
+    std::string deviceId = "native-cli";
+    int lastSyncRevision = 0;
+    bool hasLocalChanges = true;
+    std::string conflictStrategy = "localWins";
+    std::string lastRemoteFingerprint;
+    std::string lastSyncStatus;
+    std::string lastSyncMessage;
+    std::string lastSyncAt;
+};
+
+struct SnapshotSyncResult {
+    VaultSnapshot snapshot;
+    SyncSettingsState settings;
+    SyncMergeStats stats;
+    bool uploaded = false;
+    bool appliedRemote = false;
+    std::string uploadPayloadJson;
 };
 
 enum class ObjectSyncProvider {
@@ -155,6 +184,14 @@ std::string generateTotp(const std::string& base32Secret, std::uint64_t unixSeco
 bool verifyTotp(const std::string& base32Secret, const std::string& code, std::uint64_t unixSeconds);
 std::string compareVersion(const std::map<std::string, int>& local, const std::map<std::string, int>& remote);
 SyncMergeResult mergeEntries(const std::vector<VaultEntry>& local, const std::vector<VaultEntry>& remote, const std::string& strategy);
+std::string serializeSyncPayloadJson(const VaultSyncPayload& payload);
+VaultSyncPayload parseSyncPayloadJson(const std::string& json);
+SnapshotSyncResult synchronizeSnapshots(
+    const VaultSnapshot& localSnapshot,
+    const SyncSettingsState& settings,
+    const std::string& remotePayloadJson,
+    const std::string& remoteFingerprint = ""
+);
 ObjectSyncRequest buildObjectSyncRequest(const ObjectSyncConfig& config);
 ObjectSyncRequest buildObjectSyncSignedRequest(
     const ObjectSyncConfig& config,

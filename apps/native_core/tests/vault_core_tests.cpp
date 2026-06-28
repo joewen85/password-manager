@@ -108,6 +108,9 @@ int main() {
     assert(parsedServiceSnapshot.entries[0].type == "service");
     assert(parsedServiceSnapshot.entries[0].username == "svc-user");
     assert(parsedServiceSnapshot.entries[0].secret == "svc-secret");
+    serviceSnapshot.updatedAt = "2026-06-28T00:00:00Z";
+    const auto parsedTimestampSnapshot = pm::parseSnapshotJson(pm::serializeSnapshotJson(serviceSnapshot));
+    assert(parsedTimestampSnapshot.updatedAt == "2026-06-28T00:00:00Z");
 
     pm::VaultSnapshot categorySnapshot;
     assert(pm::addCategory(categorySnapshot, "Infra", pm::CategoryTypePreset::Server, {"Owner", "备注", ""}));
@@ -158,6 +161,76 @@ int main() {
     assert(fileLoaded.entries.size() == 1);
     assert(fileLoaded.entries[0].username == "admin@example.com");
     std::remove(testVaultPath.c_str());
+
+    pm::VaultSnapshot syncLocal;
+    syncLocal.updatedAt = "2026-06-28T00:00:00Z";
+    syncLocal.entries.push_back(pm::makeEntry("Local Sync", "credential", "local@example.com", "local-secret"));
+    syncLocal.entries[0].id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    syncLocal.entries[0].category = "Local";
+    syncLocal.categories = {"Local"};
+    syncLocal.categoryTemplates = {pm::CategoryTemplate{"Local", pm::defaultCategoryFields()}};
+    pm::SyncSettingsState syncSettings;
+    syncSettings.deviceId = "linux";
+    syncSettings.lastSyncRevision = 4;
+    syncSettings.hasLocalChanges = true;
+    syncSettings.conflictStrategy = "localWins";
+    auto missingRemoteSync = pm::synchronizeSnapshots(syncLocal, syncSettings, "");
+    assert(missingRemoteSync.uploaded);
+    assert(!missingRemoteSync.appliedRemote);
+    assert(missingRemoteSync.settings.lastSyncRevision == 4);
+    assert(missingRemoteSync.uploadPayloadJson.find("\"revision\":4") != std::string::npos);
+    auto missingRemotePayload = pm::parseSyncPayloadJson(missingRemoteSync.uploadPayloadJson);
+    assert(missingRemotePayload.deviceId == "linux");
+    assert(missingRemotePayload.snapshot.entries.size() == 1);
+
+    pm::VaultSnapshot remoteDominant;
+    remoteDominant.updatedAt = "2026-06-28T00:05:00Z";
+    remoteDominant.entries.push_back(pm::makeEntry("Remote Sync", "credential", "remote@example.com", "remote-secret"));
+    remoteDominant.entries[0].id = syncLocal.entries[0].id;
+    remoteDominant.entries[0].category = "Remote";
+    remoteDominant.entries[0].version = {{"linux", 4}, {"android", 2}};
+    syncLocal.entries[0].version = {{"linux", 4}, {"android", 1}};
+    remoteDominant.categories = {"Remote"};
+    remoteDominant.categoryTemplates = {pm::CategoryTemplate{"Remote", pm::categoryFieldsWithCustom({"Owner"})}};
+    const auto remotePayloadJson = pm::serializeSyncPayloadJson(pm::VaultSyncPayload{1, "2026-06-28T00:05:00Z", "android", 7, remoteDominant});
+    syncSettings.hasLocalChanges = false;
+    auto remoteOnlySync = pm::synchronizeSnapshots(syncLocal, syncSettings, remotePayloadJson, "etag-1");
+    assert(!remoteOnlySync.uploaded);
+    assert(remoteOnlySync.appliedRemote);
+    assert(remoteOnlySync.settings.lastSyncRevision == 7);
+    assert(remoteOnlySync.settings.lastRemoteFingerprint == "etag-1");
+    assert(remoteOnlySync.snapshot.entries.size() == 1);
+    assert(remoteOnlySync.snapshot.entries[0].label == "Remote Sync");
+    assert(remoteOnlySync.snapshot.categoryTemplates[0].fields.size() == 3);
+
+    syncSettings.hasLocalChanges = true;
+    syncSettings.lastSyncRevision = 7;
+    auto localFastPathSync = pm::synchronizeSnapshots(syncLocal, syncSettings, remotePayloadJson);
+    assert(localFastPathSync.uploaded);
+    assert(!localFastPathSync.appliedRemote);
+    assert(localFastPathSync.settings.lastSyncRevision == 8);
+    assert(pm::parseSyncPayloadJson(localFastPathSync.uploadPayloadJson).revision == 8);
+
+    pm::VaultSnapshot concurrentRemote = syncLocal;
+    concurrentRemote.updatedAt = "2026-06-28T00:10:00Z";
+    concurrentRemote.entries[0].label = "Remote Edited Sync";
+    concurrentRemote.entries[0].version = {{"linux", 4}, {"android", 2}};
+    concurrentRemote.entries[0].updatedBy = "android";
+    auto concurrentLocal = syncLocal;
+    concurrentLocal.updatedAt = "2026-06-28T00:09:00Z";
+    concurrentLocal.entries[0].label = "Local Edited Sync";
+    concurrentLocal.entries[0].version = {{"linux", 5}, {"android", 1}};
+    concurrentLocal.entries[0].updatedBy = "linux";
+    syncSettings.hasLocalChanges = true;
+    syncSettings.lastSyncRevision = 7;
+    const auto concurrentPayloadJson = pm::serializeSyncPayloadJson(pm::VaultSyncPayload{1, "2026-06-28T00:10:00Z", "android", 9, concurrentRemote});
+    auto concurrentSync = pm::synchronizeSnapshots(concurrentLocal, syncSettings, concurrentPayloadJson);
+    assert(concurrentSync.uploaded);
+    assert(concurrentSync.appliedRemote);
+    assert(concurrentSync.settings.lastSyncRevision == 10);
+    assert(concurrentSync.stats.conflicts == 1);
+    assert(concurrentSync.snapshot.entries.size() == 2);
+    assert(concurrentSync.uploadPayloadJson.find("\"revision\":10") != std::string::npos);
 
     pm::ObjectSyncConfig noneConfig;
     auto noneRequest = pm::buildObjectSyncRequest(noneConfig);

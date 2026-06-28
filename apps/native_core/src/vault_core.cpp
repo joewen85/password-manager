@@ -26,6 +26,29 @@ std::vector<std::uint8_t> randomBytes(std::size_t count) {
     return bytes;
 }
 
+bool parseIsoTimestamp(const std::string& value, std::time_t& output) {
+    if (value.empty()) return false;
+    std::tm tm{};
+    std::istringstream in(value);
+    in >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
+    if (in.fail()) return false;
+#if defined(_WIN32)
+    output = _mkgmtime(&tm);
+#else
+    output = timegm(&tm);
+#endif
+    return true;
+}
+
+bool isTimestampAtLeast(const std::string& left, const std::string& right) {
+    std::time_t leftTime = 0;
+    std::time_t rightTime = 0;
+    if (parseIsoTimestamp(left, leftTime) && parseIsoTimestamp(right, rightTime)) {
+        return leftTime >= rightTime;
+    }
+    return left >= right;
+}
+
 bool constantTimeEqual(const std::vector<std::uint8_t>& left, const std::vector<std::uint8_t>& right) {
     if (left.size() != right.size()) return false;
     std::uint8_t diff = 0;
@@ -182,6 +205,20 @@ std::string jsonStringArray(const std::vector<std::string>& values) {
         out << jsonString(values[index]);
     }
     out << "]";
+    return out.str();
+}
+
+std::string syncPayloadJson(const VaultSyncPayload& payload) {
+    const auto exportedAt = payload.exportedAt.empty() ? isoTimestamp() : payload.exportedAt;
+    auto snapshot = payload.snapshot;
+    if (snapshot.updatedAt.empty()) snapshot.updatedAt = exportedAt;
+    std::ostringstream out;
+    out << "{\"version\":" << payload.version
+        << ",\"exportedAt\":" << jsonString(exportedAt)
+        << ",\"deviceId\":" << jsonString(payload.deviceId)
+        << ",\"revision\":" << payload.revision
+        << ",\"snapshot\":" << serializeSnapshotJson(snapshot)
+        << "}";
     return out.str();
 }
 
@@ -520,6 +557,93 @@ std::string customFieldsJson(const std::vector<CustomField>& fields) {
     }
     out << "]";
     return out.str();
+}
+
+std::string syncResultMessage(const SyncMergeStats& stats, int revision) {
+    std::ostringstream out;
+    out << "Synced " << stats.total << " items, " << stats.conflicts
+        << " conflicts, " << stats.deletes << " deletes, revision " << revision << ".";
+    return out.str();
+}
+
+std::vector<std::string> mergeTaxonomyValues(std::vector<std::string> values) {
+    std::set<std::string> seen;
+    std::vector<std::string> merged;
+    for (const auto& value : values) {
+        const auto clean = trimCopy(value);
+        if (clean.empty()) continue;
+        const auto key = lowerCopy(clean);
+        if (seen.insert(key).second) merged.push_back(clean);
+    }
+    std::sort(merged.begin(), merged.end());
+    return merged;
+}
+
+std::vector<CategoryTemplate> mergeCategoryTemplatesForSync(
+    const std::vector<CategoryTemplate>& base,
+    const std::vector<CategoryTemplate>& local,
+    const std::vector<CategoryTemplate>& remote,
+    const std::vector<std::string>& categories
+) {
+    std::set<std::string> categoryKeys;
+    for (const auto& category : categories) categoryKeys.insert(lowerCopy(trimCopy(category)));
+    std::map<std::string, CategoryTemplate> templatesByCategory;
+    auto insert = [&](const CategoryTemplate& templateEntry) {
+        const auto category = trimCopy(templateEntry.category);
+        const auto key = lowerCopy(category);
+        if (category.empty() || categoryKeys.count(key) == 0 || templatesByCategory.count(key) > 0) return;
+        templatesByCategory[key] = CategoryTemplate{category, normalizeFieldTemplates(templateEntry.fields)};
+    };
+    for (const auto& templateEntry : base) insert(templateEntry);
+    for (const auto& templateEntry : local) insert(templateEntry);
+    for (const auto& templateEntry : remote) insert(templateEntry);
+    std::vector<CategoryTemplate> result;
+    for (const auto& category : categories) {
+        const auto found = templatesByCategory.find(lowerCopy(trimCopy(category)));
+        if (found != templatesByCategory.end()) result.push_back(found->second);
+    }
+    return result;
+}
+
+VaultSnapshot mergeSnapshotsForSync(
+    const VaultSnapshot& local,
+    const VaultSnapshot& remote,
+    const std::vector<VaultEntry>& entries,
+    bool localHasChanges
+) {
+    VaultSnapshot merged;
+    merged.entries = entries;
+    std::sort(merged.entries.begin(), merged.entries.end(), [](const auto& left, const auto& right) {
+        return left.updatedAt > right.updatedAt;
+    });
+    std::vector<std::string> values = localHasChanges ? local.categories : remote.categories;
+    const auto baseTemplates = localHasChanges ? local.categoryTemplates : remote.categoryTemplates;
+    for (const auto& templateEntry : baseTemplates) values.push_back(templateEntry.category);
+    for (const auto& entry : merged.entries) {
+        if (!entry.isDeleted) values.push_back(entry.category);
+    }
+    merged.categories = mergeTaxonomyValues(values);
+    values = localHasChanges ? local.tags : remote.tags;
+    for (const auto& entry : merged.entries) {
+        if (!entry.isDeleted) values.insert(values.end(), entry.tags.begin(), entry.tags.end());
+    }
+    merged.tags = mergeTaxonomyValues(values);
+    merged.categoryTemplates = mergeCategoryTemplatesForSync(baseTemplates, local.categoryTemplates, remote.categoryTemplates, merged.categories);
+    const auto& latestSnapshot = isTimestampAtLeast(local.updatedAt, remote.updatedAt) ? local : remote;
+    merged.requireTotp = latestSnapshot.requireTotp;
+    merged.totpSecret = latestSnapshot.totpSecret;
+    merged.syncStatus = latestSnapshot.syncStatus;
+    merged.backupStatus = latestSnapshot.backupStatus;
+    merged.updatedAt = isTimestampAtLeast(local.updatedAt, remote.updatedAt) ? local.updatedAt : remote.updatedAt;
+    return merged;
+}
+
+bool snapshotsEquivalent(const VaultSnapshot& left, const VaultSnapshot& right) {
+    auto normalizedLeft = left;
+    auto normalizedRight = right;
+    if (normalizedLeft.updatedAt.empty()) normalizedLeft.updatedAt = "__empty__";
+    if (normalizedRight.updatedAt.empty()) normalizedRight.updatedAt = "__empty__";
+    return serializeSnapshotJson(normalizedLeft) == serializeSnapshotJson(normalizedRight);
 }
 
 std::string versionJson(const std::map<std::string, int>& version) {
@@ -1337,7 +1461,7 @@ std::string serializeSnapshotJson(const VaultSnapshot& snapshot) {
         << ",\"syncStatus\":" << jsonString(snapshot.syncStatus)
         << ",\"backupStatus\":" << jsonString(snapshot.backupStatus)
         << ",\"lastBackupStatus\":" << jsonString(snapshot.backupStatus)
-        << ",\"updatedAt\":" << jsonString(isoTimestamp()) << "}";
+        << ",\"updatedAt\":" << jsonString(snapshot.updatedAt.empty() ? isoTimestamp() : snapshot.updatedAt) << "}";
     return out.str();
 }
 
@@ -1362,6 +1486,8 @@ VaultSnapshot parseSnapshotJson(const std::string& json) {
                 snapshot.syncStatus = reader.string();
             } else if (key == "backupStatus" || key == "lastBackupStatus") {
                 snapshot.backupStatus = reader.string();
+            } else if (key == "updatedAt") {
+                snapshot.updatedAt = reader.string();
             } else if (key == "requireTotp") {
                 snapshot.requireTotp = reader.boolean();
             } else if (key == "totpSecret") {
@@ -1372,6 +1498,7 @@ VaultSnapshot parseSnapshotJson(const std::string& json) {
         } while (reader.commaIfPresent());
         if (!reader.objectEnd()) throw std::runtime_error("Expected JSON object end.");
     }
+    if (snapshot.updatedAt.empty()) snapshot.updatedAt = isoTimestamp();
     if (snapshot.categories.empty()) snapshot.categories = rebuildCategories(snapshot.entries);
     if (snapshot.tags.empty()) snapshot.tags = rebuildTags(snapshot.entries);
     if (snapshot.categoryTemplates.empty()) {
@@ -1620,6 +1747,114 @@ SyncMergeResult mergeEntries(const std::vector<VaultEntry>& local, const std::ve
     for (const auto& [_, entry] : remoteById) merged.push_back(entry);
     int deletes = static_cast<int>(std::count_if(merged.begin(), merged.end(), [](const auto& entry) { return entry.isDeleted; }));
     return SyncMergeResult{merged, SyncMergeStats{static_cast<int>(merged.size()), conflicts, deletes}};
+}
+
+std::string serializeSyncPayloadJson(const VaultSyncPayload& payload) {
+    return syncPayloadJson(payload);
+}
+
+VaultSyncPayload parseSyncPayloadJson(const std::string& json) {
+    JsonReader reader(json);
+    VaultSyncPayload payload;
+    bool hasSnapshot = false;
+    reader.objectStart();
+    if (!reader.objectEnd()) {
+        do {
+            const auto key = reader.key();
+            if (key == "version") {
+                payload.version = reader.integer();
+            } else if (key == "exportedAt") {
+                payload.exportedAt = reader.string();
+            } else if (key == "deviceId") {
+                payload.deviceId = reader.string();
+            } else if (key == "revision") {
+                payload.revision = reader.integer();
+            } else if (key == "snapshot") {
+                payload.snapshot = parseSnapshotJson(reader.rawValue());
+                hasSnapshot = true;
+            } else {
+                reader.skipValue();
+            }
+        } while (reader.commaIfPresent());
+        if (!reader.objectEnd()) throw std::runtime_error("Expected JSON object end.");
+    }
+    if (!hasSnapshot) throw std::runtime_error("Remote sync payload is invalid.");
+    if (payload.exportedAt.empty()) payload.exportedAt = payload.snapshot.updatedAt;
+    return payload;
+}
+
+SnapshotSyncResult synchronizeSnapshots(
+    const VaultSnapshot& localSnapshot,
+    const SyncSettingsState& settings,
+    const std::string& remotePayloadJson,
+    const std::string& remoteFingerprint
+) {
+    const auto now = isoTimestamp();
+    auto resultSettings = settings;
+    auto finish = [&](SnapshotSyncResult result, int revision) {
+        resultSettings.lastSyncRevision = revision;
+        resultSettings.lastSyncAt = now;
+        resultSettings.lastSyncStatus = "success";
+        resultSettings.lastSyncMessage = syncResultMessage(result.stats, revision);
+        resultSettings.lastRemoteFingerprint = result.uploaded ? "" : remoteFingerprint;
+        resultSettings.hasLocalChanges = false;
+        result.settings = resultSettings;
+        return result;
+    };
+
+    auto local = localSnapshot;
+    if (local.updatedAt.empty()) local.updatedAt = now;
+    const VaultSyncPayload localPayload{1, now, resultSettings.deviceId, resultSettings.lastSyncRevision, local};
+    const auto remoteRaw = trimCopy(remotePayloadJson);
+    if (remoteRaw.empty()) {
+        SnapshotSyncResult result;
+        result.snapshot = local;
+        result.stats = SyncMergeStats{
+            static_cast<int>(local.entries.size()),
+            0,
+            static_cast<int>(std::count_if(local.entries.begin(), local.entries.end(), [](const auto& entry) { return entry.isDeleted; }))
+        };
+        result.uploaded = true;
+        result.uploadPayloadJson = serializeSyncPayloadJson(localPayload);
+        return finish(result, localPayload.revision);
+    }
+
+    const auto remotePayload = parseSyncPayloadJson(remoteRaw);
+    if (resultSettings.hasLocalChanges && remotePayload.revision <= resultSettings.lastSyncRevision) {
+        const auto nextRevision = resultSettings.lastSyncRevision + 1;
+        auto uploadPayload = localPayload;
+        uploadPayload.revision = nextRevision;
+        SnapshotSyncResult result;
+        result.snapshot = local;
+        result.stats = SyncMergeStats{
+            static_cast<int>(local.entries.size()),
+            0,
+            static_cast<int>(std::count_if(local.entries.begin(), local.entries.end(), [](const auto& entry) { return entry.isDeleted; }))
+        };
+        result.uploaded = true;
+        result.uploadPayloadJson = serializeSyncPayloadJson(uploadPayload);
+        return finish(result, nextRevision);
+    }
+
+    const auto mergeResult = mergeEntries(local.entries, remotePayload.snapshot.entries, resultSettings.conflictStrategy);
+    const auto mergedSnapshot = mergeSnapshotsForSync(local, remotePayload.snapshot, mergeResult.entries, resultSettings.hasLocalChanges);
+    if (snapshotsEquivalent(mergedSnapshot, remotePayload.snapshot)) {
+        SnapshotSyncResult result;
+        result.snapshot = mergedSnapshot;
+        result.stats = mergeResult.stats;
+        result.uploaded = false;
+        result.appliedRemote = !snapshotsEquivalent(mergedSnapshot, local);
+        return finish(result, remotePayload.revision);
+    }
+
+    const auto mergedRevision = std::max(localPayload.revision, remotePayload.revision) + 1;
+    SnapshotSyncResult result;
+    result.snapshot = mergedSnapshot;
+    result.stats = mergeResult.stats;
+    result.uploaded = true;
+    result.appliedRemote = !snapshotsEquivalent(mergedSnapshot, local);
+    result.uploadPayloadJson = serializeSyncPayloadJson(VaultSyncPayload{1, now, resultSettings.deviceId, mergedRevision, mergedSnapshot});
+    return finish(result, mergedRevision);
 }
 
 ObjectSyncRequest buildObjectSyncRequest(const ObjectSyncConfig& config) {
