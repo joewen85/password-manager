@@ -9,6 +9,7 @@ struct ContentView: View {
     @State private var isPresentingImport = false
     @State private var isPresentingScopedImport = false
     @State private var isPresentingSettings = false
+    @State private var isPresentingCategoryCreation = false
     @State private var importFileName = ""
     @State private var scopedImportFileName = ""
     @State private var importStrategy: ImportConflictStrategy = .keepCopy
@@ -29,6 +30,7 @@ struct ContentView: View {
                     importSnapshot: { isPresentingImport = true },
                     exportCategory: store.exportCategory,
                     syncNow: store.syncNow,
+                    createCategory: { isPresentingCategoryCreation = true },
                     showSettings: { isPresentingSettings = true }
                 )
             } content: {
@@ -82,6 +84,11 @@ struct ContentView: View {
             }
             .sheet(isPresented: $isPresentingSettings) {
                 SettingsView(store: store)
+            }
+            .sheet(isPresented: $isPresentingCategoryCreation) {
+                CategoryCreationView(store: store) {
+                    validateCurrentFilter()
+                }
             }
             .sheet(isPresented: $isPresentingImport) {
                 VStack(alignment: .leading, spacing: 16) {
@@ -171,6 +178,21 @@ struct ContentView: View {
         store.delete(entry)
         if selection == entry.id {
             selection = visibleEntries.first?.id
+        }
+    }
+
+    private func validateCurrentFilter() {
+        switch filter {
+        case .category(let category):
+            if !store.categories.contains(category) {
+                filter = .all
+            }
+        case .tag(let tag):
+            if !store.tags.contains(tag) {
+                filter = .all
+            }
+        case .all, .type:
+            break
         }
     }
 }

@@ -11,6 +11,7 @@ struct SidebarView: View {
     var importSnapshot: () -> Void
     var exportCategory: (String) -> Void
     var syncNow: () -> Void
+    var createCategory: () -> Void
     var showSettings: () -> Void
 
     var body: some View {
@@ -55,6 +56,9 @@ struct SidebarView: View {
             Section("Operations") {
                 Button(action: syncNow) {
                     Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
+                }
+                Button(action: createCategory) {
+                    Label("Create Category", systemImage: "folder.badge.plus")
                 }
                 Button(action: runBackup) {
                     Label("Run Backup", systemImage: "externaldrive.badge.timemachine")
