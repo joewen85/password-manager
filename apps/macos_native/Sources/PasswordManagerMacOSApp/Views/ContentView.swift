@@ -115,6 +115,7 @@ struct ContentView: View {
             }) { session in
                 EntryEditorView(
                     entry: session.entry,
+                    initialCategory: session.initialCategory,
                     categories: store.categories,
                     categoryTemplates: store.categoryTemplates,
                     tags: store.tags,
@@ -525,7 +526,7 @@ struct ContentView: View {
     }
 
     private func beginAddingEntry() {
-        editorSession = EntryEditorSession(entry: nil)
+        editorSession = EntryEditorSession(entry: nil, initialCategory: currentCategoryFilter)
     }
 
     private func beginCreatingTaxonomy(_ kind: CreateTaxonomyKind) {
@@ -686,6 +687,16 @@ struct ContentView: View {
 private struct EntryEditorSession: Identifiable {
     let id = UUID()
     var entry: VaultEntry?
+    var initialCategory: String = ""
+}
+
+private extension ContentView {
+    var currentCategoryFilter: String {
+        if case .category(let category) = filter {
+            return category
+        }
+        return ""
+    }
 }
 
 private struct EntryExportOptionsView: View {

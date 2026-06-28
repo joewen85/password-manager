@@ -82,37 +82,71 @@ struct PayloadFieldsView: View {
 
     var body: some View {
         Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 12) {
-            switch payload {
-            case .credential(let credential):
-                FieldRow("Username", credential.username)
-                SecretRow("Password", credential.password)
-                SecretRow("Accounts", credential.accounts.detailText)
-                FieldRow("Token", credential.token)
-                FieldRow("App ID", credential.appId)
-                FieldRow("Access Key", credential.accessKey)
-                SecretRow("Secret Key", credential.secretKey)
-                FieldRow("Notes", credential.notes)
-            case .server(let server):
-                FieldRow("Name", server.name)
-                FieldRow("IP Address", server.ipAddress)
-                FieldRow("Port", server.port)
-                FieldRow("Username", server.username)
-                SecretRow("Password", server.password)
-                SecretRow("Accounts", server.accounts.detailText)
-                FieldRow("Config", server.basicConfig)
-                FieldRow("OS", server.operatingSystem)
-                FieldRow("Location", server.location)
-                FieldRow("Notes", server.notes)
-            case .service(let service):
-                FieldRow("Name", service.name)
-                FieldRow("Address", service.connectionAddress)
-                FieldRow("Port", service.connectionPort)
-                FieldRow("Account ID", service.accountId ?? "")
-                FieldRow("Servers", service.serverIds.joined(separator: ", "))
-                SecretRow("Accounts", service.accounts.detailText)
-                FieldRow("Notes", service.notes)
+            ForEach(rows) { row in
+                if row.isSecret {
+                    SecretRow(row.title, row.value)
+                } else {
+                    FieldRow(row.title, row.value)
+                }
             }
         }
+    }
+
+    private var rows: [PayloadFieldRow] {
+        switch payload {
+        case .credential(let credential):
+            return [
+                PayloadFieldRow("Username", credential.username),
+                PayloadFieldRow("Password", credential.password, isSecret: true),
+                PayloadFieldRow("Accounts", credential.accounts.detailText, isSecret: true),
+                PayloadFieldRow("Token", credential.token),
+                PayloadFieldRow("App ID", credential.appId),
+                PayloadFieldRow("Access Key", credential.accessKey),
+                PayloadFieldRow("Secret Key", credential.secretKey, isSecret: true),
+                PayloadFieldRow("Notes", credential.notes),
+            ].filter(\.hasValue)
+        case .server(let server):
+            return [
+                PayloadFieldRow("Name", server.name),
+                PayloadFieldRow("IP Address", server.ipAddress),
+                PayloadFieldRow("Port", server.port),
+                PayloadFieldRow("Username", server.username),
+                PayloadFieldRow("Password", server.password, isSecret: true),
+                PayloadFieldRow("Accounts", server.accounts.detailText, isSecret: true),
+                PayloadFieldRow("Config", server.basicConfig),
+                PayloadFieldRow("OS", server.operatingSystem),
+                PayloadFieldRow("Location", server.location),
+                PayloadFieldRow("Notes", server.notes),
+            ].filter(\.hasValue)
+        case .service(let service):
+            return [
+                PayloadFieldRow("Name", service.name),
+                PayloadFieldRow("Address", service.connectionAddress),
+                PayloadFieldRow("Port", service.connectionPort),
+                PayloadFieldRow("Account ID", service.accountId ?? ""),
+                PayloadFieldRow("Servers", service.serverIds.joined(separator: ", ")),
+                PayloadFieldRow("Accounts", service.accounts.detailText, isSecret: true),
+                PayloadFieldRow("Notes", service.notes),
+            ].filter(\.hasValue)
+        }
+    }
+}
+
+private struct PayloadFieldRow: Identifiable {
+    let id: String
+    let title: String
+    let value: String
+    let isSecret: Bool
+
+    init(_ title: String, _ value: String, isSecret: Bool = false) {
+        self.id = title
+        self.title = title
+        self.value = value
+        self.isSecret = isSecret
+    }
+
+    var hasValue: Bool {
+        !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 

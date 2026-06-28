@@ -47,7 +47,9 @@ struct ContentView: View {
             .sheet(isPresented: $isPresentingEditor) {
                 EntryEditorView(
                     entry: editingEntry,
+                    initialCategory: currentCategoryFilter,
                     categories: store.categories,
+                    categoryTemplates: store.categoryTemplates,
                     tags: store.tags,
                     onCreateCategory: store.addCategory(_:preset:),
                     onCreateTag: store.addTag,
@@ -168,6 +170,15 @@ struct ContentView: View {
         if selection == entry.id {
             selection = visibleEntries.first?.id
         }
+    }
+}
+
+private extension ContentView {
+    var currentCategoryFilter: String {
+        if case .category(let category) = filter {
+            return category
+        }
+        return ""
     }
 }
 

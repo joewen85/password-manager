@@ -1108,6 +1108,12 @@ struct EntryDraft: Equatable {
 
     init() {}
 
+    init(category: String, templateFields: [FieldTemplate]) {
+        self.init()
+        self.category = category
+        configureTemplateFields(templateFields)
+    }
+
     init(entry: VaultEntry) {
         label = entry.label
         customFields = entry.customFields
@@ -1136,6 +1142,21 @@ struct EntryDraft: Equatable {
             guard !name.isEmpty else { continue }
             guard !customFields.contains(where: { $0.name.caseInsensitiveEquals(name) }) else { continue }
             customFields.append(CustomField(name: name))
+        }
+    }
+
+    mutating func configureTemplateFields(_ fields: [FieldTemplate]) {
+        var existingByName: [String: String] = [:]
+        for field in customFields {
+            let key = field.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if !key.isEmpty, existingByName[key] == nil {
+                existingByName[key] = field.value
+            }
+        }
+        customFields = fields.compactMap { field in
+            let name = field.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, !name.caseInsensitiveEquals("名称") else { return nil }
+            return CustomField(name: name, value: existingByName[name.lowercased()] ?? "")
         }
     }
 }

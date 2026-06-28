@@ -1068,15 +1068,17 @@ struct Index {
           this.entryEditorVisible = false;
         });
       }
-      Text('条目类型').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
+      if (this.editingEntryId.length > 0) {
+        Text('条目类型').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
 
-      Flex({ wrap: FlexWrap.Wrap }) {
-        this.EntryTypeChip('账号', 'credential');
-        this.EntryTypeChip('服务器', 'server');
-        this.EntryTypeChip('服务', 'service');
+        Flex({ wrap: FlexWrap.Wrap }) {
+          this.EntryTypeChip('账号', 'credential');
+          this.EntryTypeChip('服务器', 'server');
+          this.EntryTypeChip('服务', 'service');
+        }
       }
 
-      TextInput({ placeholder: '标题（必填）', text: $$this.draftLabel })
+      TextInput({ placeholder: '名称（必填）', text: $$this.draftLabel })
         .width('100%')
         .height(48)
         .backgroundColor(UI_SURFACE_ALT)
@@ -1087,7 +1089,7 @@ struct Index {
       this.EntryCategorySelect();
       this.EntryTagMultiSelect();
 
-      if (this.draftType === 'credential') {
+      if (this.editingEntryId.length > 0 && this.draftType === 'credential') {
         TextInput({ placeholder: '用户名', text: $$this.draftCredentialUsername })
           .width('100%')
           .height(48)
@@ -1106,7 +1108,7 @@ struct Index {
         this.AccountsEditor('账号列表');
       }
 
-      if (this.draftType === 'server') {
+      if (this.editingEntryId.length > 0 && this.draftType === 'server') {
         TextInput({ placeholder: '服务器名称', text: $$this.draftServerName })
           .width('100%')
           .height(48)
@@ -1131,7 +1133,7 @@ struct Index {
         this.AccountsEditor('服务器账号');
       }
 
-      if (this.draftType === 'service') {
+      if (this.editingEntryId.length > 0 && this.draftType === 'service') {
         TextInput({ placeholder: '服务名称', text: $$this.draftServiceName })
           .width('100%')
           .height(48)
@@ -1748,7 +1750,7 @@ struct Index {
   private async onSaveEntry(): Promise<void> {
     const label = this.draftLabel.trim();
     if (label.length === 0) {
-      this.toast('标题必填');
+      this.toast('名称必填');
       return;
     }
 
@@ -2366,7 +2368,7 @@ struct Index {
   private CustomFieldsEditor() {
     Column({ space: 6 }) {
       Row() {
-        Text('自定义字段').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
+        Text(this.editingEntryId.length > 0 ? '自定义字段' : '字段').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
         Blank();
         Text('+')
           .width(42)
@@ -2383,23 +2385,25 @@ struct Index {
           });
       }
       if (this.draftCustomFields.length === 0) {
-        Text('未添加自定义字段')
+        Text(this.editingEntryId.length > 0 ? '未添加自定义字段' : '暂无字段')
           .fontSize(12)
           .fontColor(UI_MUTED);
       }
       ForEach(this.draftCustomFields, (field: CustomField) => {
         Row({ space: 8 }) {
-          TextInput({ placeholder: '字段名称', text: field.name })
-            .layoutWeight(1)
-            .height(48)
-            .backgroundColor(UI_SURFACE_ALT)
-            .border({ width: 1, color: UI_STROKE })
-            .borderRadius(12)
-            .padding({ left: 14, right: 14 })
-            .onChange((value: string) => {
-              this.updateDraftCustomFieldName(field.id, value);
-            });
-          TextInput({ placeholder: '字段值', text: field.value })
+          if (this.editingEntryId.length > 0 || field.name.trim().length === 0) {
+            TextInput({ placeholder: '字段名称', text: field.name })
+              .layoutWeight(1)
+              .height(48)
+              .backgroundColor(UI_SURFACE_ALT)
+              .border({ width: 1, color: UI_STROKE })
+              .borderRadius(12)
+              .padding({ left: 14, right: 14 })
+              .onChange((value: string) => {
+                this.updateDraftCustomFieldName(field.id, value);
+              });
+          }
+          TextInput({ placeholder: this.editingEntryId.length > 0 ? '字段值' : field.name.trim().length > 0 ? field.name : '字段值', text: field.value })
             .layoutWeight(1)
             .height(48)
             .backgroundColor(UI_SURFACE_ALT)
@@ -2810,34 +2814,31 @@ struct Index {
     if (this.editingEntryId.length > 0) {
       return;
     }
-    const template = this.categoryTemplate(category);
-    if (template === null) {
-      return;
-    }
-    const existing = new Set<string>();
+    const existingValues = new Map<string, string>();
     this.draftCustomFields.forEach((field: CustomField) => {
       const key = field.name.trim().toLowerCase();
       if (key.length > 0) {
-        existing.add(key);
+        existingValues.set(key, field.value);
       }
     });
-    const additions: CustomField[] = [];
-    template.fields.forEach((field) => {
-      const name = field.name.trim();
+    const seen = new Set<string>();
+    const fields = this.templateFieldNames(category);
+    const nextFields: CustomField[] = [];
+    fields.forEach((fieldName: string) => {
+      const name = fieldName.trim();
       const key = name.toLowerCase();
-      if (name.length === 0 || key === '名称' || key === '备注' || existing.has(key)) {
+      if (name.length === 0 || key === '名称' || seen.has(key)) {
         return;
       }
-      existing.add(key);
-      additions.push({
-        id: field.id.length > 0 ? field.id : this.nextUiId(),
-        name,
-        value: '',
-      });
+      seen.add(key);
+      const nextField: CustomField = {
+        id: this.nextUiId(),
+        name: name,
+        value: existingValues.get(key) ?? '',
+      };
+      nextFields.push(nextField);
     });
-    if (additions.length > 0) {
-      this.draftCustomFields = [...this.draftCustomFields, ...additions];
-    }
+    this.draftCustomFields = nextFields;
   }
 
   private clearEntryDraft(): void {
@@ -2861,6 +2862,8 @@ struct Index {
 
   private beginCreateEntry(): void {
     this.clearEntryDraft();
+    this.draftCategory = this.selectedCategory;
+    this.applyCategoryTemplateToDraft(this.draftCategory);
     this.activePanel = 'home';
     this.entryEditorVisible = true;
     this.actionPanelVisible = false;
@@ -3073,7 +3076,7 @@ struct Index {
 
   private exportFieldOptions(entry: VaultEntry): ExportFieldOption[] {
     const options: ExportFieldOption[] = [
-      { id: 'label', label: '标题' },
+      { id: 'label', label: '名称' },
       { id: 'category', label: '分类' },
       { id: 'tags', label: '标签' },
       { id: 'createdAt', label: '创建时间' },

@@ -67,7 +67,6 @@ import com.example.passwordmanagernative.sync.SyncIntervalUnit
 import com.example.passwordmanagernative.sync.SyncProviderType
 import com.example.passwordmanagernative.sync.SyncSettingsConflictStrategy
 import com.example.passwordmanagernative.sync.toIntervalMinutes
-import com.example.passwordmanagernative.store.withTemplateDefaults
 import com.example.passwordmanagernative.ui.WindowLayoutPolicy
 import life.devops.passwordmanager.R
 import kotlinx.coroutines.CoroutineScope
@@ -680,7 +679,9 @@ class MainActivity : FragmentActivity() {
             addView(label(text(R.string.no_entries_description), 14f, uiColor(R.color.ui_muted)).apply {
                 setPadding(0, dp(6), 0, dp(14))
             })
-            addView(actionButton(text(R.string.new_entry), primary = true) { showEditor(null) }, wrapWrap())
+            addView(actionButton(text(R.string.new_entry), primary = true) {
+                showEditor(null, presetCategory = selectedCategory.orEmpty())
+            }, wrapWrap())
         }
 
     private fun entryRow(entry: VaultEntry): LinearLayout {
@@ -753,7 +754,7 @@ class MainActivity : FragmentActivity() {
         var popup: PopupWindow? = null
         form.addView(actionButton(text(R.string.create_entry), primary = true) {
             popup?.dismiss()
-            showEditor(null)
+            showEditor(null, presetCategory = selectedCategory.orEmpty())
         }, matchWrap(top = dp(14)))
         form.addView(actionButton(text(R.string.create_category), primary = false) {
             popup?.dismiss()
@@ -1053,12 +1054,13 @@ class MainActivity : FragmentActivity() {
         presetCategory: String = "",
         presetTag: String = "",
     ) {
+        val isCreating = entry == null
         val draft = entry?.toDraft() ?: EntryDraft(
             label = "",
             type = VaultEntryType.CREDENTIAL,
             category = presetCategory,
             tags = listOf(presetTag).filter { it.isNotBlank() },
-            customFields = emptyList<CustomField>().withTemplateDefaults(store.categoryTemplate(presetCategory)),
+            customFields = templateCustomFields(store.categoryTemplate(presetCategory)),
         )
         val form = formRoot()
         val payloadFields = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -1074,13 +1076,9 @@ class MainActivity : FragmentActivity() {
             showCategorySelectionDialog(selectedCategory) { selected ->
                 selectedCategory = selected
                 categoryPicker.text = categoryDisplayName(selectedCategory)
-                if (entry == null) {
-                    val nextFields = customFields.withTemplateDefaults(store.categoryTemplate(selectedCategory))
-                    if (nextFields != customFields) {
-                        customFields.clear()
-                        customFields += nextFields
-                        renderCustomFields()
-                    }
+                if (isCreating) {
+                    customFields.replaceWithTemplate(store.categoryTemplate(selectedCategory))
+                    renderCustomFields()
                 }
             }
         }
@@ -1172,26 +1170,31 @@ class MainActivity : FragmentActivity() {
         }
         renderCustomFields = {
             customFieldsContainer.removeAllViews()
-            customFieldsContainer.addView(sectionTitle(text(R.string.custom_fields)), matchWrap(top = dp(14)))
+            customFieldsContainer.addView(sectionTitle(text(if (isCreating) R.string.fields else R.string.custom_fields)), matchWrap(top = dp(14)))
             if (customFields.isEmpty()) {
                 customFieldsContainer.addView(label(text(R.string.no_custom_fields), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(8)))
             }
             customFields.forEachIndexed { index, field ->
-                val nameInput = input(text(R.string.custom_field_name)).apply { setText(field.name) }
                 val valueInput = input(text(R.string.custom_field_value)).apply { setText(field.value) }
                 customFieldsContainer.addView(LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     background = rounded(uiColor(R.color.ui_surface_alt), dp(12), uiColor(R.color.ui_stroke))
                     setPadding(dp(12), dp(12), dp(12), dp(12))
-                    addView(nameInput, matchWrap())
-                    addView(valueInput, matchWrap(top = dp(8)))
+                    if (isCreating && field.name.isNotBlank()) {
+                        valueInput.hint = field.name
+                        addView(valueInput, matchWrap())
+                    } else {
+                        val nameInput = input(text(R.string.custom_field_name)).apply { setText(field.name) }
+                        addView(nameInput, matchWrap())
+                        addView(valueInput, matchWrap(top = dp(8)))
+                        nameInput.addTextChangedListener(SimpleTextWatcher { value ->
+                            customFields[index] = customFields[index].copy(name = value)
+                        })
+                    }
                     addView(actionButton(text(R.string.delete), primary = false, compact = true) {
                         customFields.removeAt(index)
                         renderCustomFields()
                     }, wrapWrap(top = dp(8)))
-                    nameInput.addTextChangedListener(SimpleTextWatcher { value ->
-                        customFields[index] = customFields[index].copy(name = value)
-                    })
                     valueInput.addTextChangedListener(SimpleTextWatcher { value ->
                         customFields[index] = customFields[index].copy(value = value)
                     })
@@ -1204,13 +1207,19 @@ class MainActivity : FragmentActivity() {
         }
         form.addView(formTitle(if (entry == null) text(R.string.new_entry) else text(R.string.edit_entry)))
         form.addView(label, matchWrap(top = dp(12)))
-        form.addView(typeRow, matchWrap(top = dp(10)))
+        if (!isCreating) {
+            form.addView(typeRow, matchWrap(top = dp(10)))
+        }
         form.addView(categoryRow, matchWrap(top = dp(10)))
         form.addView(tagsRow, matchWrap(top = dp(10)))
-        form.addView(payloadFields)
+        if (!isCreating) {
+            form.addView(payloadFields)
+        }
         form.addView(customFieldsContainer)
         renderTypeChips()
-        rebuildPayloadFields(selectedEntryType)
+        if (!isCreating) {
+            rebuildPayloadFields(selectedEntryType)
+        }
         renderCustomFields()
         val dialog = AlertDialog.Builder(this)
             .setView(ScrollView(this).apply { addView(form) })
@@ -2893,7 +2902,7 @@ private fun LinearLayout.findChildByEntryId(entryId: String): View? {
 }
 
 private fun VaultEntry.detailPairs(activity: MainActivity): List<Pair<String, String>> =
-    when (val currentPayload = payload) {
+    (when (val currentPayload = payload) {
         is VaultPayload.Credential -> listOf(
             activity.getString(R.string.username) to currentPayload.value.username,
             activity.getString(R.string.password) to currentPayload.value.password,
@@ -2925,9 +2934,39 @@ private fun VaultEntry.detailPairs(activity: MainActivity): List<Pair<String, St
             activity.getString(R.string.service_accounts) to formatServiceAccountsForDisplay(currentPayload.value.accounts),
             activity.getString(R.string.notes) to currentPayload.value.notes,
         )
-    } + customFields.map { field ->
+    }).filter { (_, value) -> value.isNotBlank() } + customFields.map { field ->
         field.name.ifBlank { activity.getString(R.string.custom_field) } to field.value
     }
+
+private fun templateCustomFields(template: CategoryTemplate?): MutableList<CustomField> {
+    val seen = mutableSetOf<String>()
+    return (template?.fields ?: CategoryTemplate.defaultCategoryFields())
+        .mapNotNull { field ->
+            val name = field.name.trim()
+            val key = name.lowercase()
+            if (name.isEmpty() || key == "名称" || !seen.add(key)) {
+                null
+            } else {
+                CustomField(name = name)
+            }
+        }
+        .toMutableList()
+}
+
+private fun MutableList<CustomField>.replaceWithTemplate(template: CategoryTemplate?) {
+    val valuesByName = mutableMapOf<String, String>()
+    forEach { field ->
+        val key = field.name.trim().lowercase()
+        if (key.isNotEmpty() && !valuesByName.containsKey(key)) {
+            valuesByName[key] = field.value
+        }
+    }
+    val nextFields = templateCustomFields(template).map { field ->
+        field.copy(value = valuesByName[field.name.trim().lowercase()].orEmpty())
+    }
+    clear()
+    addAll(nextFields)
+}
 
 private class SimpleTextWatcher(
     private val onChanged: (String) -> Unit,

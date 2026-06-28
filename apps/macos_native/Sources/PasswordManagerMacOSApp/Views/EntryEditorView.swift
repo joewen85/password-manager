@@ -2,6 +2,7 @@ import SwiftUI
 
 struct EntryEditorView: View {
     var entry: VaultEntry?
+    var initialCategory: String
     var categories: [String]
     var categoryTemplates: [CategoryTemplate]
     var tags: [String]
@@ -18,6 +19,7 @@ struct EntryEditorView: View {
 
     init(
         entry: VaultEntry?,
+        initialCategory: String = "",
         categories: [String],
         categoryTemplates: [CategoryTemplate] = [],
         tags: [String],
@@ -27,6 +29,7 @@ struct EntryEditorView: View {
         onCancel: @escaping () -> Void
     ) {
         self.entry = entry
+        self.initialCategory = initialCategory
         self.categories = categories
         self.categoryTemplates = categoryTemplates
         self.tags = tags
@@ -34,7 +37,15 @@ struct EntryEditorView: View {
         self.onCreateTag = onCreateTag
         self.onSave = onSave
         self.onCancel = onCancel
-        let initialDraft = entry.map(EntryDraft.init(entry:)) ?? EntryDraft()
+        let initialDraft: EntryDraft
+        if let entry {
+            initialDraft = EntryDraft(entry: entry)
+        } else {
+            var draft = EntryDraft()
+            draft.category = initialCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+            draft.configureTemplateFields(Self.templateFields(for: draft.category, in: categoryTemplates))
+            initialDraft = draft
+        }
         _draft = State(initialValue: initialDraft)
         _selectedTags = State(initialValue: Set(initialDraft.tags))
         _availableCategories = State(initialValue: categories)
@@ -68,16 +79,20 @@ struct EntryEditorView: View {
                     )
                 }
 
-                switch draft.payload {
-                case .credential:
-                    CredentialEditor(payload: $draft.credential)
-                case .server:
-                    ServerEditor(payload: $draft.server)
-                case .service:
-                    ServiceEditor(payload: $draft.service)
-                }
+                if entry == nil {
+                    TemplateFieldsEditor(fields: $draft.customFields)
+                } else {
+                    switch draft.payload {
+                    case .credential:
+                        CredentialEditor(payload: $draft.credential)
+                    case .server:
+                        ServerEditor(payload: $draft.server)
+                    case .service:
+                        ServiceEditor(payload: $draft.service)
+                    }
 
-                CustomFieldsEditor(fields: $draft.customFields)
+                    CustomFieldsEditor(fields: $draft.customFields)
+                }
             }
             .formStyle(.grouped)
             .padding()
@@ -114,7 +129,15 @@ struct EntryEditorView: View {
     }
 
     private func resetDraft(from entry: VaultEntry?) {
-        let nextDraft = entry.map(EntryDraft.init(entry:)) ?? EntryDraft()
+        let nextDraft: EntryDraft
+        if let entry {
+            nextDraft = EntryDraft(entry: entry)
+        } else {
+            var draft = EntryDraft()
+            draft.category = initialCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+            draft.configureTemplateFields(Self.templateFields(for: draft.category, in: categoryTemplates))
+            nextDraft = draft
+        }
         draft = nextDraft
         selectedTags = Set(nextDraft.tags)
         taxonomyMessage = nil
@@ -152,11 +175,15 @@ struct EntryEditorView: View {
     }
 
     private func applyTemplate(for category: String) {
+        guard entry == nil else { return }
         let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let template = categoryTemplates.first(where: { $0.category.caseInsensitiveCompare(normalized) == .orderedSame }) else {
-            return
-        }
-        draft.applyTemplateFields(template.fields)
+        draft.configureTemplateFields(Self.templateFields(for: normalized, in: categoryTemplates))
+    }
+
+    private static func templateFields(for category: String, in templates: [CategoryTemplate]) -> [FieldTemplate] {
+        let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        return templates.first { $0.category.caseInsensitiveCompare(normalized) == .orderedSame }?.fields
+            ?? CategoryTemplate.defaultCategoryFields()
     }
 }
 
@@ -531,6 +558,56 @@ private struct CustomFieldsEditor: View {
 
     private func remove(_ id: UUID) {
         fields.removeAll { $0.id == id }
+    }
+}
+
+private struct TemplateFieldsEditor: View {
+    @Binding var fields: [CustomField]
+
+    var body: some View {
+        Section(L10n.t("Fields")) {
+            if fields.isEmpty {
+                Text(L10n.t("No custom fields."))
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach($fields) { $field in
+                    if field.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        HStack(alignment: .top, spacing: 8) {
+                            TextField(L10n.t("Field Name"), text: $field.name)
+                            TextField(L10n.t("Field Value"), text: $field.value, axis: .vertical)
+                            removeButton(field.id)
+                        }
+                    } else {
+                        HStack(alignment: .top, spacing: 8) {
+                            TextField(field.name, text: $field.value, axis: .vertical)
+                            removeButton(field.id)
+                        }
+                    }
+                }
+            }
+
+            Button(action: addField) {
+                Label(L10n.t("Add Field"), systemImage: "plus")
+            }
+        }
+    }
+
+    private func addField() {
+        fields.append(CustomField())
+    }
+
+    private func remove(_ id: UUID) {
+        fields.removeAll { $0.id == id }
+    }
+
+    private func removeButton(_ id: UUID) -> some View {
+        Button(role: .destructive) {
+            remove(id)
+        } label: {
+            Label(L10n.t("Remove Field"), systemImage: "trash")
+        }
+        .labelStyle(.iconOnly)
+        .help(L10n.t("Remove Field"))
     }
 }
 

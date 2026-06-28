@@ -660,6 +660,12 @@ struct EntryDraft: Equatable {
 
     init() {}
 
+    init(category: String, templateFields: [FieldTemplate]) {
+        self.init()
+        self.category = category
+        configureTemplateFields(templateFields)
+    }
+
     init(entry: VaultEntry) {
         label = entry.label
         type = entry.type
@@ -677,6 +683,21 @@ struct EntryDraft: Equatable {
             service = payload
             category = payload.category
             tags = payload.tags
+        }
+    }
+
+    mutating func configureTemplateFields(_ fields: [FieldTemplate]) {
+        var existingByName: [String: String] = [:]
+        for field in customFields {
+            let key = field.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if !key.isEmpty, existingByName[key] == nil {
+                existingByName[key] = field.value
+            }
+        }
+        customFields = fields.compactMap { field in
+            let name = field.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, name.caseInsensitiveCompare("名称") != .orderedSame else { return nil }
+            return CustomField(name: name, value: existingByName[name.lowercased()] ?? "")
         }
     }
 }

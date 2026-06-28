@@ -2,7 +2,9 @@ import SwiftUI
 
 struct EntryEditorView: View {
     var entry: VaultEntry?
+    var initialCategory: String
     var categories: [String]
+    var categoryTemplates: [CategoryTemplate]
     var tags: [String]
     var onCreateCategory: (String, CategoryTypePreset?) -> Bool
     var onCreateTag: (String) -> Bool
@@ -17,7 +19,9 @@ struct EntryEditorView: View {
 
     init(
         entry: VaultEntry?,
+        initialCategory: String = "",
         categories: [String],
+        categoryTemplates: [CategoryTemplate] = [],
         tags: [String],
         onCreateCategory: @escaping (String, CategoryTypePreset?) -> Bool = { _, _ in false },
         onCreateTag: @escaping (String) -> Bool = { _ in false },
@@ -25,13 +29,23 @@ struct EntryEditorView: View {
         onCancel: @escaping () -> Void
     ) {
         self.entry = entry
+        self.initialCategory = initialCategory
         self.categories = categories
+        self.categoryTemplates = categoryTemplates
         self.tags = tags
         self.onCreateCategory = onCreateCategory
         self.onCreateTag = onCreateTag
         self.onSave = onSave
         self.onCancel = onCancel
-        let initialDraft = entry.map(EntryDraft.init(entry:)) ?? EntryDraft()
+        let initialDraft: EntryDraft
+        if let entry {
+            initialDraft = EntryDraft(entry: entry)
+        } else {
+            var draft = EntryDraft()
+            draft.category = initialCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+            draft.configureTemplateFields(Self.templateFields(for: draft.category, in: categoryTemplates))
+            initialDraft = draft
+        }
         _draft = State(initialValue: initialDraft)
         _selectedTags = State(initialValue: Set(initialDraft.tags))
         _availableCategories = State(initialValue: categories)
@@ -44,13 +58,15 @@ struct EntryEditorView: View {
                 Section("Overview") {
                     TextField("Label", text: $draft.label)
 
-                    Picker("Type", selection: $draft.type) {
-                        ForEach(VaultEntryType.allCases) { type in
-                            Label(type.title, systemImage: type.systemImage)
-                                .tag(type)
+                    if entry != nil {
+                        Picker("Type", selection: $draft.type) {
+                            ForEach(VaultEntryType.allCases) { type in
+                                Label(type.title, systemImage: type.systemImage)
+                                    .tag(type)
+                            }
                         }
+                        .pickerStyle(.segmented)
                     }
-                    .pickerStyle(.segmented)
 
                     CategorySelectField(
                         selectedCategory: $draft.category,
@@ -73,16 +89,20 @@ struct EntryEditorView: View {
                     )
                 }
 
-                switch draft.type {
-                case .credential:
-                    CredentialEditor(payload: $draft.credential)
-                case .server:
-                    ServerEditor(payload: $draft.server)
-                case .service:
-                    ServiceEditor(payload: $draft.service)
-                }
+                if entry == nil {
+                    TemplateFieldsEditor(fields: $draft.customFields)
+                } else {
+                    switch draft.type {
+                    case .credential:
+                        CredentialEditor(payload: $draft.credential)
+                    case .server:
+                        ServerEditor(payload: $draft.server)
+                    case .service:
+                        ServiceEditor(payload: $draft.service)
+                    }
 
-                CustomFieldsEditor(fields: $draft.customFields)
+                    CustomFieldsEditor(fields: $draft.customFields)
+                }
             }
             .formStyle(.grouped)
             .padding()
@@ -116,7 +136,15 @@ struct EntryEditorView: View {
     }
 
     private func resetDraft(from entry: VaultEntry?) {
-        let nextDraft = entry.map(EntryDraft.init(entry:)) ?? EntryDraft()
+        let nextDraft: EntryDraft
+        if let entry {
+            nextDraft = EntryDraft(entry: entry)
+        } else {
+            var draft = EntryDraft()
+            draft.category = initialCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+            draft.configureTemplateFields(Self.templateFields(for: draft.category, in: categoryTemplates))
+            nextDraft = draft
+        }
         draft = nextDraft
         selectedTags = Set(nextDraft.tags)
         taxonomyMessage = nil
@@ -127,6 +155,7 @@ struct EntryEditorView: View {
         if onCreateCategory(value, preset) {
             availableCategories = mergedValues(availableCategories + [value])
             draft.category = value
+            applyTemplate(for: value, preset: preset)
             taxonomyMessage = "Category added."
             return true
         } else {
@@ -150,6 +179,18 @@ struct EntryEditorView: View {
 
     private func mergedValues(_ values: [String]) -> [String] {
         Array(Set(values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
+    }
+
+    private func applyTemplate(for category: String, preset: CategoryTypePreset? = nil) {
+        guard entry == nil else { return }
+        let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        draft.configureTemplateFields(preset.map(CategoryTemplate.fields(for:)) ?? Self.templateFields(for: normalized, in: categoryTemplates))
+    }
+
+    private static func templateFields(for category: String, in templates: [CategoryTemplate]) -> [FieldTemplate] {
+        let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        return templates.first { $0.category.caseInsensitiveCompare(normalized) == .orderedSame }?.fields
+            ?? CategoryTemplate.defaultFields
     }
 }
 
@@ -280,6 +321,55 @@ private struct CategorySelectField: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
+    }
+}
+
+private struct TemplateFieldsEditor: View {
+    @Binding var fields: [CustomField]
+
+    var body: some View {
+        Section("Fields") {
+            if fields.isEmpty {
+                Text("No custom fields.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach($fields) { $field in
+                    if field.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        HStack(alignment: .top, spacing: 8) {
+                            TextField("Field Name", text: $field.name)
+                            TextField("Field Value", text: $field.value, axis: .vertical)
+                            removeButton(field.id)
+                        }
+                    } else {
+                        HStack(alignment: .top, spacing: 8) {
+                            TextField(field.name, text: $field.value, axis: .vertical)
+                            removeButton(field.id)
+                        }
+                    }
+                }
+            }
+
+            Button(action: addField) {
+                Label("Add Field", systemImage: "plus")
+            }
+        }
+    }
+
+    private func addField() {
+        fields.append(CustomField())
+    }
+
+    private func remove(_ id: UUID) {
+        fields.removeAll { $0.id == id }
+    }
+
+    private func removeButton(_ id: UUID) -> some View {
+        Button(role: .destructive) {
+            remove(id)
+        } label: {
+            Label("Remove Field", systemImage: "trash")
+        }
+        .labelStyle(.iconOnly)
     }
 }
 
