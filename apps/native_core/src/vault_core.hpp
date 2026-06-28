@@ -25,6 +25,12 @@ struct MasterKeyRecord {
     int metadataIterations = kDefaultIterations;
 };
 
+struct CustomField {
+    std::string id;
+    std::string name;
+    std::string value;
+};
+
 struct VaultEntry {
     std::string id;
     std::string label;
@@ -34,8 +40,13 @@ struct VaultEntry {
     std::string category;
     std::vector<std::string> tags;
     std::string notes;
+    std::string payloadJson;
+    std::vector<CustomField> customFields;
     std::map<std::string, int> version;
-    std::string updatedBy = "linux-native";
+    std::string updatedBy = "native-cli";
+    std::string createdAt;
+    std::string updatedAt;
+    std::string deletedAt;
     bool isDeleted = false;
 };
 

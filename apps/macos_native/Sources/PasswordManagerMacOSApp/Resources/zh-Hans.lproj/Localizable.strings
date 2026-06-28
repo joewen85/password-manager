@@ -76,7 +76,7 @@
 "Create a tag without opening the entry editor." = "不打开条目编辑器，直接创建标签。";
 "Field Shortcuts" = "快捷字段";
 "Add %@ fields" = "添加%@字段";
-"New categories use only Name and Notes unless a shortcut is selected." = "未选择快捷字段时，新分类只包含名称和备注。";
+"New categories use only Name and Notes until you add custom fields." = "添加自定义字段前，新分类只包含名称和备注。";
 "Cancel" = "取消";
 "Save" = "保存";
 "This clears all entries, categories, tags, and vault security settings. This does not change the master password." = "这会清空所有条目、分类、标签和密码库安全设置，但不会修改主密码。";

@@ -6,7 +6,6 @@ struct CategoryCreationView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var value = ""
-    @State private var selectedPreset: CategoryTypePreset?
     @State private var customFields: [CustomField] = []
     @State private var errorMessage: String?
 
@@ -27,17 +26,16 @@ struct CategoryCreationView: View {
                         HStack(spacing: 8) {
                             ForEach(CategoryTypePreset.allCases) { preset in
                                 Button {
-                                    selectedPreset = selectedPreset == preset ? nil : preset
+                                    appendFields(for: preset)
                                 } label: {
                                     Text(preset.title)
                                 }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
-                                .tint(selectedPreset == preset ? .accentColor : .gray)
                             }
                         }
 
-                        Text("New categories use only Name and Notes unless a shortcut is selected.")
+                        Text("New categories use only Name and Notes until you add custom fields.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -97,7 +95,7 @@ struct CategoryCreationView: View {
 
         let didSave = store.addCategory(
             trimmed,
-            preset: selectedPreset,
+            preset: nil,
             customFieldNames: customFields.map(\.name)
         )
 
@@ -111,6 +109,18 @@ struct CategoryCreationView: View {
 
     private func addCustomField() {
         customFields.append(CustomField())
+    }
+
+    private func appendFields(for preset: CategoryTypePreset) {
+        var existing = Set(
+            customFields.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                .filter { !$0.isEmpty }
+        )
+        for name in preset.fields {
+            let key = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !key.isEmpty, existing.insert(key).inserted else { continue }
+            customFields.append(CustomField(name: name))
+        }
     }
 
     private func removeCustomField(_ id: UUID) {

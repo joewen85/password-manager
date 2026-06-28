@@ -52,7 +52,7 @@
     <string name="entry_type_server">Server</string>
     <string name="entry_type_service">Service</string>
     <string name="category_type_templates">Field shortcuts</string>
-    <string name="category_type_templates_hint">Optional. A new category starts with only Name and Notes unless a shortcut is selected.</string>
+    <string name="category_type_templates_hint">Optional. Shortcut buttons add editable custom fields; a new category starts with only Name and Notes.</string>
     <string name="all">All</string>
     <string name="all_categories">All categories</string>
     <string name="more_count">...+%1$d</string>

@@ -1367,7 +1367,6 @@ class MainActivity : FragmentActivity() {
             setText(initialValue)
             setSelection(text?.length ?: 0)
         }
-        var selectedPreset: CategoryTypePreset? = null
         val customFieldNames = mutableListOf<String>()
         val customFieldsContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1398,28 +1397,36 @@ class MainActivity : FragmentActivity() {
                 renderCategoryCustomFields()
             }, wrapWrap(top = dp(8)))
         }
-        val presetStrip = if (kind == TaxonomyKind.CATEGORY) {
+        fun addCategoryShortcutFields(preset: CategoryTypePreset) {
+            val existing = customFieldNames
+                .map { it.trim().lowercase() }
+                .filter { it.isNotBlank() }
+                .toMutableSet()
+            preset.fields.forEach { name ->
+                val key = name.trim().lowercase()
+                if (key.isNotBlank() && existing.add(key)) {
+                    customFieldNames += name
+                }
+            }
+            renderCategoryCustomFields()
+        }
+        val shortcutStrip = if (kind == TaxonomyKind.CATEGORY) {
             LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(label(text(R.string.category_type_templates), 12f, uiColor(R.color.ui_muted), Typeface.BOLD))
                 val chipsContainer = LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.HORIZONTAL
                 }
-                fun renderPresetChips() {
-                    chipsContainer.removeAllViews()
-                    CategoryTypePreset.entries.forEach { preset ->
-                        chipsContainer.addView(filterChip(preset.title, selectedPreset == preset) {
-                            selectedPreset = if (selectedPreset == preset) null else preset
-                            renderPresetChips()
-                        }, wrapWrap(right = dp(8)))
-                    }
+                CategoryTypePreset.entries.forEach { preset ->
+                    chipsContainer.addView(filterChip(preset.title, false) {
+                        addCategoryShortcutFields(preset)
+                    }, wrapWrap(right = dp(8)))
                 }
                 addView(HorizontalScrollView(this@MainActivity).apply {
                     isHorizontalScrollBarEnabled = false
                     addView(chipsContainer)
                 }, matchWrap(top = dp(6)))
                 addView(label(text(R.string.category_type_templates_hint), 12f, uiColor(R.color.ui_muted)), matchWrap(top = dp(6)))
-                renderPresetChips()
             }
         } else {
             null
@@ -1430,7 +1437,7 @@ class MainActivity : FragmentActivity() {
         form.addView(formTitle(title))
         form.addView(label(description, 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(8)))
         form.addView(field, matchWrap(top = dp(14)))
-        presetStrip?.let { form.addView(it, matchWrap(top = dp(12))) }
+        shortcutStrip?.let { form.addView(it, matchWrap(top = dp(12))) }
         if (kind == TaxonomyKind.CATEGORY) {
             form.addView(customFieldsContainer, matchWrap(top = dp(12)))
         }
@@ -1449,7 +1456,7 @@ class MainActivity : FragmentActivity() {
                 val saved = when (kind) {
                     TaxonomyKind.CATEGORY -> store.addCategory(
                         value,
-                        selectedPreset,
+                        null,
                         customFieldNames.map { it.trim() },
                     )
                     TaxonomyKind.TAG -> store.addTag(value)

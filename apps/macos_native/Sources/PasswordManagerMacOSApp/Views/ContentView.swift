@@ -32,7 +32,6 @@ struct ContentView: View {
     @State private var isPresentingCreateTaxonomy = false
     @State private var createTaxonomyKind: CreateTaxonomyKind = .category
     @State private var createTaxonomyValue = ""
-    @State private var createCategoryPreset: CategoryTypePreset?
     @State private var createCategoryCustomFields: [CustomField] = []
     @State private var createTaxonomyError: String?
     @State private var clearDataPassword = ""
@@ -314,7 +313,7 @@ struct ContentView: View {
                         .textFieldStyle(.roundedBorder)
                         .onSubmit(saveCreatedTaxonomy)
                     if createTaxonomyKind == .category {
-                        CategoryPresetShortcutButtons(selection: $createCategoryPreset)
+                        CategoryPresetShortcutButtons(fields: $createCategoryCustomFields)
                         CategoryTemplateFieldNameEditor(fields: $createCategoryCustomFields)
                     }
                     if let createTaxonomyError {
@@ -536,7 +535,6 @@ struct ContentView: View {
     private func beginCreatingTaxonomy(_ kind: CreateTaxonomyKind) {
         createTaxonomyKind = kind
         createTaxonomyValue = ""
-        createCategoryPreset = nil
         createCategoryCustomFields = []
         createTaxonomyError = nil
         isPresentingCreateTaxonomy = true
@@ -553,7 +551,7 @@ struct ContentView: View {
         case .category:
             didSave = store.addCategory(
                 value,
-                preset: createCategoryPreset,
+                preset: nil,
                 customFieldNames: createCategoryCustomFields.map(\.name)
             )
         case .tag:
@@ -561,7 +559,6 @@ struct ContentView: View {
         }
         if didSave {
             createTaxonomyValue = ""
-            createCategoryPreset = nil
             createCategoryCustomFields = []
             createTaxonomyError = nil
             isPresentingCreateTaxonomy = false
@@ -773,7 +770,7 @@ private struct EntryExportOptionsView: View {
 }
 
 struct CategoryPresetShortcutButtons: View {
-    @Binding var selection: CategoryTypePreset?
+    @Binding var fields: [CustomField]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -783,19 +780,30 @@ struct CategoryPresetShortcutButtons: View {
             HStack(spacing: 8) {
                 ForEach(CategoryTypePreset.allCases) { preset in
                     Button {
-                        selection = selection == preset ? nil : preset
+                        appendFields(for: preset)
                     } label: {
                         Text(preset.title)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .tint(selection == preset ? .accentColor : .gray)
                     .help(L10n.tf("Add %@ fields", preset.title))
                 }
             }
-            Text(L10n.t("New categories use only Name and Notes unless a shortcut is selected."))
+            Text(L10n.t("New categories use only Name and Notes until you add custom fields."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private func appendFields(for preset: CategoryTypePreset) {
+        var existing = Set(
+            fields.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                .filter { !$0.isEmpty }
+        )
+        for name in preset.fields {
+            let key = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !key.isEmpty, existing.insert(key).inserted else { continue }
+            fields.append(CustomField(name: name))
         }
     }
 }

@@ -76,7 +76,7 @@
 "Create a tag without opening the entry editor." = "Create a tag without opening the entry editor.";
 "Field Shortcuts" = "Field Shortcuts";
 "Add %@ fields" = "Add %@ fields";
-"New categories use only Name and Notes unless a shortcut is selected." = "New categories use only Name and Notes unless a shortcut is selected.";
+"New categories use only Name and Notes until you add custom fields." = "New categories use only Name and Notes until you add custom fields.";
 "Cancel" = "Cancel";
 "Save" = "Save";
 "This clears all entries, categories, tags, and vault security settings. This does not change the master password." = "This clears all entries, categories, tags, and vault security settings. This does not change the master password.";

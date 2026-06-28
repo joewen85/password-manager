@@ -211,7 +211,6 @@ private struct CategorySelectField: View {
 
     @State private var isPresented = false
     @State private var searchText = ""
-    @State private var selectedPreset: CategoryTypePreset?
     @State private var customFields: [CustomField] = []
 
     var body: some View {
@@ -251,16 +250,15 @@ private struct CategorySelectField: View {
                             HStack(spacing: 8) {
                                 ForEach(CategoryTypePreset.allCases) { preset in
                                     Button {
-                                        selectedPreset = selectedPreset == preset ? nil : preset
+                                        appendFields(for: preset)
                                     } label: {
                                         Text(preset.title)
                                     }
                                     .buttonStyle(.bordered)
                                     .controlSize(.small)
-                                    .tint(selectedPreset == preset ? .accentColor : .gray)
                                 }
                             }
-                            Text("New categories use only Name and Notes unless a shortcut is selected.")
+                            Text("New categories use only Name and Notes until you add custom fields.")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -309,12 +307,23 @@ private struct CategorySelectField: View {
 
     private func createCategory() {
         guard canCreateCategory else { return }
-        if onCreateCategory(trimmedSearchText, selectedPreset, customFields.map(\.name)) {
+        if onCreateCategory(trimmedSearchText, nil, customFields.map(\.name)) {
             selectedCategory = trimmedSearchText
             searchText = ""
-            selectedPreset = nil
             customFields = []
             isPresented = false
+        }
+    }
+
+    private func appendFields(for preset: CategoryTypePreset) {
+        var existing = Set(
+            customFields.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                .filter { !$0.isEmpty }
+        )
+        for name in preset.fields {
+            let key = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !key.isEmpty, existing.insert(key).inserted else { continue }
+            customFields.append(CustomField(name: name))
         }
     }
 

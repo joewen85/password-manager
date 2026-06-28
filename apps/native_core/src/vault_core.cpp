@@ -125,6 +125,10 @@ std::vector<std::string> searchValuesFor(const VaultEntry& entry, const std::str
     if (field.empty()) {
         std::vector<std::string> values{entry.label, entry.type, entry.username, entry.category, entry.notes};
         values.insert(values.end(), entry.tags.begin(), entry.tags.end());
+        for (const auto& customField : entry.customFields) {
+            values.push_back(customField.name);
+            values.push_back(customField.value);
+        }
         return values;
     }
     if (field == "label") return {entry.label};
@@ -134,6 +138,15 @@ std::vector<std::string> searchValuesFor(const VaultEntry& entry, const std::str
     if (field == "username") return {entry.username};
     if (field == "secret") return {entry.secret};
     if (field == "notes") return {entry.notes};
+    std::vector<std::string> customValues;
+    for (const auto& customField : entry.customFields) {
+        const auto key = compactSearchKey(customField.name);
+        if (!key.empty() && (key == field || key.find(field) != std::string::npos || field.find(key) != std::string::npos)) {
+            customValues.push_back(customField.name);
+            customValues.push_back(customField.value);
+        }
+    }
+    if (!customValues.empty()) return customValues;
     return {};
 }
 
@@ -154,6 +167,21 @@ std::string escapeJson(const std::string& value) {
             default: out << ch;
         }
     }
+    return out.str();
+}
+
+std::string jsonString(const std::string& value) {
+    return "\"" + escapeJson(value) + "\"";
+}
+
+std::string jsonStringArray(const std::vector<std::string>& values) {
+    std::ostringstream out;
+    out << "[";
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        if (index > 0) out << ",";
+        out << jsonString(values[index]);
+    }
+    out << "]";
     return out.str();
 }
 
@@ -227,6 +255,15 @@ public:
         throw std::runtime_error("Unterminated JSON string.");
     }
 
+    std::string nullableString() {
+        skipWhitespace();
+        if (source_.compare(position_, 4, "null") == 0) {
+            position_ += 4;
+            return "";
+        }
+        return string();
+    }
+
     bool boolean() {
         skipWhitespace();
         if (source_.compare(position_, 4, "true") == 0) {
@@ -249,6 +286,13 @@ public:
         int value = std::stoi(source_.substr(position_, end - position_));
         position_ = end;
         return value;
+    }
+
+    std::string rawValue() {
+        skipWhitespace();
+        const auto start = position_;
+        skipValue();
+        return source_.substr(start, position_ - start);
     }
 
     void skipValue() {
@@ -275,6 +319,8 @@ public:
             }
         } else if (ch == 't' || ch == 'f') {
             (void)boolean();
+        } else if (source_.compare(position_, 4, "null") == 0) {
+            position_ += 4;
         } else {
             (void)integer();
         }
@@ -388,6 +434,226 @@ std::vector<std::string> readStringArray(JsonReader& reader) {
     return values;
 }
 
+std::map<std::string, int> readIntMap(JsonReader& reader) {
+    std::map<std::string, int> values;
+    reader.objectStart();
+    if (!reader.objectEnd()) {
+        do {
+            const auto key = reader.key();
+            values[key] = reader.integer();
+        } while (reader.commaIfPresent());
+        if (!reader.objectEnd()) throw std::runtime_error("Expected JSON object end.");
+    }
+    return values;
+}
+
+CustomField readCustomField(JsonReader& reader) {
+    CustomField field;
+    reader.objectStart();
+    if (!reader.objectEnd()) {
+        do {
+            const auto key = reader.key();
+            if (key == "id") {
+                field.id = reader.string();
+            } else if (key == "name") {
+                field.name = reader.string();
+            } else if (key == "value") {
+                field.value = reader.string();
+            } else {
+                reader.skipValue();
+            }
+        } while (reader.commaIfPresent());
+        if (!reader.objectEnd()) throw std::runtime_error("Expected JSON object end.");
+    }
+    if (field.id.empty()) field.id = randomId();
+    return field;
+}
+
+std::vector<CustomField> readCustomFieldArray(JsonReader& reader) {
+    std::vector<CustomField> fields;
+    reader.arrayStart();
+    if (!reader.arrayEnd()) {
+        do {
+            fields.push_back(readCustomField(reader));
+        } while (reader.commaIfPresent());
+        if (!reader.arrayEnd()) throw std::runtime_error("Expected JSON array end.");
+    }
+    return fields;
+}
+
+void readServiceAccount(JsonReader& reader, VaultEntry& entry) {
+    reader.objectStart();
+    if (!reader.objectEnd()) {
+        do {
+            const auto key = reader.key();
+            if (key == "username" && entry.username.empty()) {
+                entry.username = reader.string();
+            } else if (key == "password" && entry.secret.empty()) {
+                entry.secret = reader.string();
+            } else {
+                reader.skipValue();
+            }
+        } while (reader.commaIfPresent());
+        if (!reader.objectEnd()) throw std::runtime_error("Expected JSON object end.");
+    }
+}
+
+void readServiceAccountArray(JsonReader& reader, VaultEntry& entry) {
+    reader.arrayStart();
+    if (!reader.arrayEnd()) {
+        do {
+            readServiceAccount(reader, entry);
+        } while (reader.commaIfPresent());
+        if (!reader.arrayEnd()) throw std::runtime_error("Expected JSON array end.");
+    }
+}
+
+std::string customFieldsJson(const std::vector<CustomField>& fields) {
+    std::ostringstream out;
+    out << "[";
+    for (std::size_t index = 0; index < fields.size(); ++index) {
+        if (index > 0) out << ",";
+        const auto& field = fields[index];
+        out << "{\"id\":" << jsonString(canonicalIdString(field.id))
+            << ",\"name\":" << jsonString(field.name)
+            << ",\"value\":" << jsonString(field.value) << "}";
+    }
+    out << "]";
+    return out.str();
+}
+
+std::string versionJson(const std::map<std::string, int>& version) {
+    std::ostringstream out;
+    out << "{";
+    bool first = true;
+    for (const auto& [device, count] : version) {
+        if (!first) out << ",";
+        first = false;
+        out << jsonString(device) << ":" << count;
+    }
+    out << "}";
+    return out.str();
+}
+
+void readEntryPayloadObject(JsonReader& reader, VaultEntry& entry, const std::string& payloadType) {
+    reader.objectStart();
+    if (!reader.objectEnd()) {
+        do {
+            const auto key = reader.key();
+            if (key == "category") {
+                entry.category = reader.string();
+            } else if (key == "tags") {
+                entry.tags = readStringArray(reader);
+            } else if (key == "notes") {
+                entry.notes = reader.string();
+            } else if (key == "username") {
+                entry.username = reader.string();
+            } else if (key == "password") {
+                entry.secret = reader.string();
+            } else if (key == "secretKey") {
+                const auto value = reader.string();
+                if (entry.secret.empty()) entry.secret = value;
+            } else if (key == "accounts") {
+                readServiceAccountArray(reader, entry);
+            } else if (key == "ipAddress" && entry.notes.find("ipAddress:") == std::string::npos) {
+                const auto value = reader.string();
+                if (!value.empty()) entry.notes += (entry.notes.empty() ? "" : " ") + std::string("ipAddress:") + value;
+            } else if (key == "port" && entry.notes.find("port:") == std::string::npos) {
+                const auto value = reader.string();
+                if (!value.empty()) entry.notes += (entry.notes.empty() ? "" : " ") + std::string("port:") + value;
+            } else if (key == "connectionAddress" && entry.notes.find("connectionAddress:") == std::string::npos) {
+                const auto value = reader.string();
+                if (!value.empty()) entry.notes += (entry.notes.empty() ? "" : " ") + std::string("connectionAddress:") + value;
+            } else if (key == "connectionPort" && entry.notes.find("connectionPort:") == std::string::npos) {
+                const auto value = reader.string();
+                if (!value.empty()) entry.notes += (entry.notes.empty() ? "" : " ") + std::string("connectionPort:") + value;
+            } else {
+                reader.skipValue();
+            }
+        } while (reader.commaIfPresent());
+        if (!reader.objectEnd()) throw std::runtime_error("Expected JSON object end.");
+    }
+    if (entry.type.empty() && !payloadType.empty()) entry.type = payloadType;
+}
+
+void hydrateEntryFromPayload(VaultEntry& entry) {
+    if (entry.payloadJson.empty()) return;
+    try {
+        JsonReader reader(entry.payloadJson);
+        reader.objectStart();
+        if (!reader.objectEnd()) {
+            do {
+                const auto key = reader.key();
+                if (key == "credential" || key == "server" || key == "service") {
+                    readEntryPayloadObject(reader, entry, key);
+                } else {
+                    reader.skipValue();
+                }
+            } while (reader.commaIfPresent());
+            if (!reader.objectEnd()) throw std::runtime_error("Expected JSON object end.");
+        }
+    } catch (const std::exception&) {
+        // Keep the original payload bytes even if lightweight hydration fails.
+    }
+}
+
+std::string payloadJsonFor(const VaultEntry& entry) {
+    const auto type = entry.type.empty() ? "credential" : entry.type;
+    std::ostringstream payload;
+    payload << "{\"" << escapeJson(type) << "\":{";
+    if (type == "server") {
+        payload << "\"name\":" << jsonString(entry.label)
+                << ",\"ipAddress\":\"\",\"port\":\"\",\"username\":" << jsonString(entry.username)
+                << ",\"password\":" << jsonString(entry.secret)
+                << ",\"accounts\":[],\"basicConfig\":\"\",\"operatingSystem\":\"\",\"location\":\"\"";
+    } else if (type == "service") {
+        payload << "\"name\":" << jsonString(entry.label)
+                << ",\"connectionAddress\":\"\",\"connectionPort\":\"\",\"accountId\":null,\"serverIds\":[],\"accounts\":[";
+        if (!entry.username.empty() || !entry.secret.empty()) {
+            payload << "{\"username\":" << jsonString(entry.username)
+                    << ",\"password\":" << jsonString(entry.secret)
+                    << ",\"note\":\"\"}";
+        }
+        payload << "]";
+    } else {
+        payload << "\"username\":" << jsonString(entry.username)
+                << ",\"password\":" << jsonString(entry.secret)
+                << ",\"accounts\":[],\"token\":\"\",\"appId\":\"\",\"accessKey\":\"\",\"secretKey\":\"\"";
+    }
+    payload << ",\"notes\":" << jsonString(entry.notes)
+            << ",\"tags\":" << jsonStringArray(entry.tags)
+            << ",\"category\":" << jsonString(entry.category)
+            << "}}";
+    return payload.str();
+}
+
+std::string entryPayloadJson(const VaultEntry& entry) {
+    return entry.payloadJson.empty() ? payloadJsonFor(entry) : entry.payloadJson;
+}
+
+std::string entryJson(const VaultEntry& entry) {
+    const auto now = isoTimestamp();
+    std::ostringstream out;
+    out << "{\"id\":" << jsonString(canonicalIdString(entry.id))
+        << ",\"label\":" << jsonString(entry.label)
+        << ",\"type\":" << jsonString(entry.type.empty() ? "credential" : entry.type)
+        << ",\"payload\":" << entryPayloadJson(entry)
+        << ",\"customFields\":" << customFieldsJson(entry.customFields)
+        << ",\"createdAt\":" << jsonString(entry.createdAt.empty() ? now : entry.createdAt)
+        << ",\"updatedAt\":" << jsonString(entry.updatedAt.empty() ? now : entry.updatedAt)
+        << ",\"version\":" << versionJson(entry.version)
+        << ",\"updatedBy\":" << jsonString(entry.updatedBy.empty() ? "native-cli" : entry.updatedBy)
+        << ",\"isDeleted\":" << (entry.isDeleted ? "true" : "false")
+        << ",\"deletedAt\":";
+    if (entry.deletedAt.empty()) {
+        out << "null";
+    } else {
+        out << jsonString(entry.deletedAt);
+    }
+    out << "}";
+    return out.str();
+}
+
 FieldTemplate readFieldTemplate(JsonReader& reader) {
     FieldTemplate field;
     reader.objectStart();
@@ -472,6 +738,22 @@ VaultEntry readVaultEntry(JsonReader& reader) {
                 entry.category = reader.string();
             } else if (key == "notes") {
                 entry.notes = reader.string();
+            } else if (key == "tags") {
+                entry.tags = readStringArray(reader);
+            } else if (key == "payload") {
+                entry.payloadJson = reader.rawValue();
+            } else if (key == "customFields") {
+                entry.customFields = readCustomFieldArray(reader);
+            } else if (key == "version") {
+                entry.version = readIntMap(reader);
+            } else if (key == "updatedBy") {
+                entry.updatedBy = reader.string();
+            } else if (key == "createdAt") {
+                entry.createdAt = reader.string();
+            } else if (key == "updatedAt") {
+                entry.updatedAt = reader.string();
+            } else if (key == "deletedAt") {
+                entry.deletedAt = reader.nullableString();
             } else if (key == "isDeleted") {
                 entry.isDeleted = reader.boolean();
             } else {
@@ -489,11 +771,30 @@ std::vector<VaultEntry> readVaultEntryArray(JsonReader& reader) {
     reader.arrayStart();
     if (!reader.arrayEnd()) {
         do {
-            entries.push_back(readVaultEntry(reader));
+            auto entry = readVaultEntry(reader);
+            hydrateEntryFromPayload(entry);
+            entries.push_back(entry);
         } while (reader.commaIfPresent());
         if (!reader.arrayEnd()) throw std::runtime_error("Expected JSON array end.");
     }
     return entries;
+}
+
+void readSecuritySettings(JsonReader& reader, VaultSnapshot& snapshot) {
+    reader.objectStart();
+    if (!reader.objectEnd()) {
+        do {
+            const auto key = reader.key();
+            if (key == "requireTotp") {
+                snapshot.requireTotp = reader.boolean();
+            } else if (key == "totpSecret") {
+                snapshot.totpSecret = reader.string();
+            } else {
+                reader.skipValue();
+            }
+        } while (reader.commaIfPresent());
+        if (!reader.objectEnd()) throw std::runtime_error("Expected JSON object end.");
+    }
 }
 
 VaultEntry canonicalEntryId(const VaultEntry& entry) {
@@ -879,8 +1180,13 @@ void applyAliyunOssHeaders(ObjectSyncRequest& request, const ObjectSyncConfig& c
 
 std::string randomId() {
     auto bytes = randomBytes(16);
+    bytes[6] = static_cast<std::uint8_t>((bytes[6] & 0x0f) | 0x40);
+    bytes[8] = static_cast<std::uint8_t>((bytes[8] & 0x3f) | 0x80);
     std::ostringstream out;
-    for (auto byte : bytes) out << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
+    for (std::size_t index = 0; index < bytes.size(); ++index) {
+        if (index == 4 || index == 6 || index == 8 || index == 10) out << "-";
+        out << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(bytes[index]);
+    }
     return out.str();
 }
 
@@ -1005,12 +1311,8 @@ std::string serializeSnapshotJson(const VaultSnapshot& snapshot) {
     std::ostringstream out;
     out << "{\"entries\":[";
     for (std::size_t index = 0; index < snapshot.entries.size(); ++index) {
-        const auto& entry = snapshot.entries[index];
         if (index > 0) out << ",";
-        out << "{\"id\":\"" << escapeJson(canonicalIdString(entry.id)) << "\",\"label\":\"" << escapeJson(entry.label)
-            << "\",\"type\":\"" << escapeJson(entry.type) << "\",\"username\":\"" << escapeJson(entry.username)
-            << "\",\"secret\":\"" << escapeJson(entry.secret) << "\",\"category\":\"" << escapeJson(entry.category)
-            << "\",\"isDeleted\":" << (entry.isDeleted ? "true" : "false") << "}";
+        out << entryJson(snapshot.entries[index]);
     }
     out << "],\"categories\":[";
     for (std::size_t index = 0; index < snapshot.categories.size(); ++index) {
@@ -1029,7 +1331,13 @@ std::string serializeSnapshotJson(const VaultSnapshot& snapshot) {
         }
         out << "]}";
     }
-    out << "],\"syncStatus\":\"" << escapeJson(snapshot.syncStatus) << "\",\"backupStatus\":\"" << escapeJson(snapshot.backupStatus) << "\"}";
+    out << "],\"tags\":" << jsonStringArray(snapshot.tags)
+        << ",\"security\":{\"requireTotp\":" << (snapshot.requireTotp ? "true" : "false")
+        << ",\"totpSecret\":" << jsonString(snapshot.totpSecret) << "}"
+        << ",\"syncStatus\":" << jsonString(snapshot.syncStatus)
+        << ",\"backupStatus\":" << jsonString(snapshot.backupStatus)
+        << ",\"lastBackupStatus\":" << jsonString(snapshot.backupStatus)
+        << ",\"updatedAt\":" << jsonString(isoTimestamp()) << "}";
     return out.str();
 }
 
@@ -1046,9 +1354,13 @@ VaultSnapshot parseSnapshotJson(const std::string& json) {
                 snapshot.categories = readStringArray(reader);
             } else if (key == "categoryTemplates") {
                 snapshot.categoryTemplates = readCategoryTemplateArray(reader);
+            } else if (key == "tags") {
+                snapshot.tags = readStringArray(reader);
+            } else if (key == "security") {
+                readSecuritySettings(reader, snapshot);
             } else if (key == "syncStatus") {
                 snapshot.syncStatus = reader.string();
-            } else if (key == "backupStatus") {
+            } else if (key == "backupStatus" || key == "lastBackupStatus") {
                 snapshot.backupStatus = reader.string();
             } else if (key == "requireTotp") {
                 snapshot.requireTotp = reader.boolean();
@@ -1061,6 +1373,7 @@ VaultSnapshot parseSnapshotJson(const std::string& json) {
         if (!reader.objectEnd()) throw std::runtime_error("Expected JSON object end.");
     }
     if (snapshot.categories.empty()) snapshot.categories = rebuildCategories(snapshot.entries);
+    if (snapshot.tags.empty()) snapshot.tags = rebuildTags(snapshot.entries);
     if (snapshot.categoryTemplates.empty()) {
         for (const auto& category : snapshot.categories) {
             snapshot.categoryTemplates.push_back(CategoryTemplate{category, defaultCategoryFields()});
@@ -1142,9 +1455,13 @@ VaultEntry makeEntry(const std::string& label, const std::string& type, const st
     VaultEntry entry;
     entry.id = randomId();
     entry.label = label;
-    entry.type = type;
+    entry.type = type.empty() ? "credential" : type;
     entry.username = username;
     entry.secret = secret;
+    entry.createdAt = isoTimestamp();
+    entry.updatedAt = entry.createdAt;
+    entry.updatedBy = "native-cli";
+    entry.version = {{"native-cli", 1}};
     return entry;
 }
 

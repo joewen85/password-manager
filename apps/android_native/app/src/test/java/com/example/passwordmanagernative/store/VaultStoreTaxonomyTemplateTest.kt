@@ -71,6 +71,22 @@ class VaultStoreTaxonomyTemplateTest {
     }
 
     @Test
+    fun categoryCustomFieldsDoNotRequireTypeShortcutState() {
+        val directory = createTempDirectory("PasswordManagerAndroidCategoryCustomOnlyTests").toFile()
+        try {
+            val store = VaultStore(repository = FileVaultRepository(directory))
+            assertTrue(store.setupMasterPassword("test-password", "test-password"))
+
+            assertTrue(store.addCategory("Ops", null, listOf("IP地址", "端口", "Owner", "ip地址", "")))
+
+            val template = assertNotNull(store.categoryTemplate("Ops"))
+            assertEquals(listOf("名称", "备注", "IP地址", "端口", "Owner"), template.fields.map { it.name })
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun templateDefaultsOnlyFillMissingCustomFieldNames() {
         val template = CategoryTemplate(
             category = "Service",

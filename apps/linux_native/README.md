@@ -8,8 +8,8 @@
 
 - 当前切片是 C++17 + OpenSSL 的 Linux terminal-native 起点，核心逻辑来自 `apps/native_core`。
 - 已实现可测试核心：PBKDF2-SHA256、AES-256-GCM encrypted vault envelope、TOTP、entry model、搜索/过滤、分类/标签集合、JSON snapshot 序列化/反序列化、encrypted vault 文件读写、version-vector merge。
-- CLI 入口支持初始化、解锁状态检查、分类模板持久化、TOTP 生成和 `self-test`，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
-- 当前尚未实现 GTK/Qt/libadwaita 图形界面，也尚未实现完整交互式 CRUD 和真实 WebDAV/S3 网络同步。
+- CLI 入口支持初始化、解锁状态检查、分类模板持久化、credential/server/service 条目新增、搜索列表、单条查看、软删除、TOTP 生成和 `self-test`，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
+- 当前尚未实现 GTK/Qt/libadwaita 图形界面、GUI CRUD 和真实 WebDAV/S3 网络同步。
 - 当前在 macOS 上用 clang + Homebrew OpenSSL 验证核心逻辑；发布前仍需在 Linux 发行版上用系统 OpenSSL 重新构建和回归。
 
 ### 目录说明
@@ -90,12 +90,28 @@ make OPENSSL_PREFIX=/usr
 5. 添加分类模板并确认能再次解锁读回：
 
    ```bash
-   ./build/password-manager-linux add-category "test-password" Infra --preset server --field Owner
+   ./build/password-manager-linux add-category "test-password" Infra --shortcut server --field Owner
    ./build/password-manager-linux status "test-password"
    ```
 
-6. 确认 `vault-linux-native.envelope` 包含 salt、iterations、verifier、nonce、ciphertext、mac，但不包含分类名、username 或 password 等 vault 明文。
-7. 生成 RFC 6238 TOTP fixture：
+6. 添加、搜索、查看和软删除条目。列表和查看默认隐藏 secret，只有显式传入 `--show-secret` 才显示：
+
+   ```bash
+   ./build/password-manager-linux add-entry "test-password" \
+     --label "Billing API" \
+     --type service \
+     --username svc-user \
+     --secret svc-secret \
+     --category Services \
+     --tag prod \
+     --field Owner=Platform
+   ./build/password-manager-linux list "test-password" --query Owner:Platform
+   ./build/password-manager-linux show-entry "test-password" "<entry-id>"
+   ./build/password-manager-linux delete-entry "test-password" "<entry-id>"
+   ```
+
+7. 确认 `vault-linux-native.envelope` 包含 salt、iterations、verifier、nonce、ciphertext、mac，但不包含分类名、username 或 password 等 vault 明文。
+8. 生成 RFC 6238 TOTP fixture：
 
    ```bash
    ./build/password-manager-linux totp GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ 59
@@ -157,10 +173,10 @@ Release notes 只能描述已经验证的能力；当前不能把 GUI、真实�
 - [x] 核心使用 PBKDF2-SHA256 + AES-256-GCM。
 - [x] C++ 测试覆盖加密 envelope、错误密码拒绝、snapshot 反序列化、encrypted vault 文件读回、TOTP、entry 过滤、集合重建和 version-vector merge。
 - [x] terminal-native smoke-test CLI 可构建。
-- [x] Windows/Linux 共用 terminal-native CLI，支持加密 vault 初始化、状态读取和分类模板持久化。
+- [x] Windows/Linux 共用 terminal-native CLI，支持加密 vault 初始化、状态读取、分类模板持久化、条目新增/搜索/查看/软删除。
 - [ ] 在真实 Linux 发行版上构建和测试。
 - [ ] GTK/Qt/libadwaita GUI 完成。
-- [ ] 完整 CRUD、导入导出、备份恢复 UI 完成。
+- [ ] 完整 CRUD、导入导出、备份恢复 GUI 完成。
 - [ ] 真实 WebDAV/S3 远端同步完成。
 - [ ] Linux secret service / keyring 集成完成。
 - [ ] `.deb`、`.rpm`、AppImage、Flatpak 或 Snap 至少一种发布包完成安装验证。
@@ -176,8 +192,8 @@ This directory contains the native Linux rewrite target. It is intentionally sep
 
 - The current slice is a C++17 + OpenSSL Linux terminal-native starting point.
 - Testable core is implemented in shared `apps/native_core`: PBKDF2-SHA256, AES-256-GCM encrypted vault envelope, TOTP, entry model, search/filtering, category/tag collection rebuilding, JSON snapshot serialization/deserialization, encrypted vault file read/write, and version-vector merge.
-- The CLI entry point supports encrypted vault initialization, unlock status checks, persisted category templates, TOTP generation, and `self-test`.
-- GTK/Qt/libadwaita GUI, full interactive CRUD, and real WebDAV/S3 network sync are not implemented yet.
+- The CLI entry point supports encrypted vault initialization, unlock status checks, persisted category templates, credential/server/service entry add, search/list, single-entry view, soft delete, TOTP generation, and `self-test`.
+- GTK/Qt/libadwaita GUI, GUI CRUD, and real WebDAV/S3 network sync are not implemented yet.
 - The current verification runs on macOS with clang + Homebrew OpenSSL. Release must be rebuilt and regressed on Linux distributions with system OpenSSL.
 
 ### Directory Layout
@@ -249,8 +265,24 @@ make OPENSSL_PREFIX=/usr
    ./build/password-manager-linux init "test-password"
    ```
 
-4. Confirm `vault-linux-native.envelope` contains salt, iterations, verifier, nonce, ciphertext, and mac, but does not contain the sample entry plaintext username or password.
-5. Generate the RFC 6238 TOTP fixture:
+4. Add, search, view, and soft-delete an entry. List and view output hide secrets unless `--show-secret` is passed:
+
+   ```bash
+   ./build/password-manager-linux add-entry "test-password" \
+     --label "Billing API" \
+     --type service \
+     --username svc-user \
+     --secret svc-secret \
+     --category Services \
+     --tag prod \
+     --field Owner=Platform
+   ./build/password-manager-linux list "test-password" --query Owner:Platform
+   ./build/password-manager-linux show-entry "test-password" "<entry-id>"
+   ./build/password-manager-linux delete-entry "test-password" "<entry-id>"
+   ```
+
+5. Confirm `vault-linux-native.envelope` contains salt, iterations, verifier, nonce, ciphertext, and mac, but does not contain the sample entry plaintext username or password.
+6. Generate the RFC 6238 TOTP fixture:
 
    ```bash
    ./build/password-manager-linux totp GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ 59
@@ -311,9 +343,10 @@ Release notes must only describe verified capabilities. Do not list GUI, real re
 - [x] Core uses PBKDF2-SHA256 + AES-256-GCM.
 - [x] C++ tests cover encrypted envelope, wrong-password rejection, TOTP, entry filtering, collection rebuilding, and version-vector merge.
 - [x] Terminal-native smoke-test CLI builds.
+- [x] Shared Windows/Linux terminal-native CLI supports encrypted vault initialization, status reads, category template persistence, and entry add/search/view/soft-delete.
 - [ ] Build and test on a real Linux distribution.
 - [ ] GTK/Qt/libadwaita GUI is complete.
-- [ ] Full CRUD, import/export, and backup/restore UI are complete.
+- [ ] Full CRUD, import/export, and backup/restore GUI is complete.
 - [ ] Real WebDAV/S3 remote sync is complete.
 - [ ] Linux secret service / keyring integration is complete.
 - [ ] At least one `.deb`, `.rpm`, AppImage, Flatpak, or Snap package is install-tested.

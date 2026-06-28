@@ -11,12 +11,12 @@
 - `PasswordManagerWindows.vcxproj` 提供 Visual Studio / MSBuild 项目骨架。
 - 可移植 core 复用 `apps/native_core` 的 C++17 + OpenSSL 路径，当前可在本机用 clang 构建和测试。
 - 已实现可测试核心：PBKDF2-SHA256、AES-256-GCM encrypted vault envelope、TOTP、entry model、搜索/过滤、分类/标签集合、JSON snapshot 序列化/反序列化、encrypted vault 文件读写、version-vector merge。
-- CLI 入口支持初始化、解锁状态检查、分类模板持久化、TOTP 和 self-test，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
+- CLI 入口支持初始化、解锁状态检查、分类模板持久化、credential/server/service 条目新增、搜索列表、单条查看、软删除、TOTP 和 self-test，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
 - 当前尚未实现完整 Win32/WinUI 3/WPF 图形界面，也尚未实现 Windows Credential Manager / DPAPI 集成和真实 WebDAV/S3 网络同步。
 
 ### 目录说明
 
-- `PasswordManagerWindows.vcxproj`: Visual Studio C++ Win32 app project skeleton。
+- `PasswordManagerWindows.vcxproj`: Visual Studio C++ Win32 app project skeleton，并引用共享 `vault_core` / `vault_cli` 源文件。
 - `Makefile`: 非 Windows 环境下验证 portable core 的构建和测试入口。
 - `src/win32_app.cpp`: 最小 Win32 window app。
 - `src/main.cpp`: Windows native CLI entrypoint。
@@ -98,11 +98,27 @@ msbuild PasswordManagerWindows.vcxproj /p:Configuration=Release /p:Platform=x64
 6. 添加分类模板并确认能再次解锁读回：
 
    ```bash
-   ./build/password-manager-windows-core add-category "test-password" Infra --preset server --field Owner
+   ./build/password-manager-windows-core add-category "test-password" Infra --shortcut server --field Owner
    ./build/password-manager-windows-core status "test-password"
    ```
 
-7. 确认 `vault-windows-native.envelope` 包含 salt、iterations、verifier、nonce、ciphertext、mac，但不包含分类名、username 或 password 等 vault 明文。
+7. 添加、搜索、查看和软删除条目。列表和查看默认隐藏 secret，只有显式传入 `--show-secret` 才显示：
+
+   ```bash
+   ./build/password-manager-windows-core add-entry "test-password" \
+     --label "Prod Admin" \
+     --type credential \
+     --username admin@example.com \
+     --secret super-secret \
+     --category Infra \
+     --tag prod \
+     --field Owner=SRE
+   ./build/password-manager-windows-core list "test-password" --query Owner:SRE
+   ./build/password-manager-windows-core show-entry "test-password" "<entry-id>"
+   ./build/password-manager-windows-core delete-entry "test-password" "<entry-id>"
+   ```
+
+8. 确认 `vault-windows-native.envelope` 包含 salt、iterations、verifier、nonce、ciphertext、mac，但不包含分类名、username 或 password 等 vault 明文。
 
 Windows 实机验证还需要覆盖：
 
@@ -172,10 +188,10 @@ Release notes 只能描述已经验证的能力；当前不能把完整 GUI、Wi
 - [x] Portable core 使用 PBKDF2-SHA256 + AES-256-GCM。
 - [x] C++ 测试覆盖加密 envelope、错误密码拒绝、snapshot 反序列化、encrypted vault 文件读回、TOTP、entry 过滤、集合重建和 version-vector merge。
 - [x] portable smoke-test CLI 可在当前机器构建。
-- [x] Windows/Linux 共用 terminal-native CLI，支持加密 vault 初始化、状态读取和分类模板持久化。
+- [x] Windows/Linux 共用 terminal-native CLI，支持加密 vault 初始化、状态读取、分类模板持久化、条目新增/搜索/查看/软删除。
 - [ ] 在 Windows 10/11 上用 Visual Studio/MSBuild 构建 `.exe`。
 - [ ] 完整 Win32/WinUI 3/WPF UI 完成。
-- [ ] 完整 CRUD、导入导出、备份恢复 UI 完成。
+- [ ] 完整 CRUD、导入导出、备份恢复 GUI 完成。
 - [ ] Windows Credential Manager / DPAPI / CNG 密钥保护完成。
 - [ ] 真实 WebDAV/S3 远端同步完成。
 - [ ] `.exe` 代码签名完成。
@@ -195,12 +211,12 @@ This directory contains the native Windows rewrite target. It is intentionally s
 - `PasswordManagerWindows.vcxproj` provides a Visual Studio / MSBuild project scaffold.
 - The portable core uses the shared `apps/native_core` C++17 + OpenSSL path and can currently be built and tested locally with clang.
 - Testable core is implemented: PBKDF2-SHA256, AES-256-GCM encrypted vault envelope, TOTP, entry model, search/filtering, category/tag collection rebuilding, JSON snapshot serialization/deserialization, encrypted vault file read/write, and version-vector merge.
-- The CLI supports initialization, unlock status checks, persisted category templates, TOTP, and self-test through shared `apps/native_core/src/vault_cli.cpp`.
+- The CLI supports initialization, unlock status checks, persisted category templates, credential/server/service entry add, search/list, single-entry view, soft delete, TOTP, and self-test through shared `apps/native_core/src/vault_cli.cpp`.
 - Full Win32/WinUI 3/WPF GUI, Windows Credential Manager / DPAPI integration, and real WebDAV/S3 network sync are not implemented yet.
 
 ### Directory Layout
 
-- `PasswordManagerWindows.vcxproj`: Visual Studio C++ Win32 app project skeleton.
+- `PasswordManagerWindows.vcxproj`: Visual Studio C++ Win32 app project skeleton with shared `vault_core` / `vault_cli` source references.
 - `Makefile`: build and test entry point for the portable core outside Windows.
 - `src/win32_app.cpp`: minimal Win32 window app.
 - `src/main.cpp`: Windows native CLI entrypoint.
@@ -273,7 +289,23 @@ Current portable core verification:
    ./build/password-manager-windows-core init "test-password"
    ```
 
-5. Confirm `vault-windows-native.envelope` contains salt, iterations, verifier, nonce, ciphertext, and mac, but does not contain the sample entry plaintext username or password.
+5. Add, search, view, and soft-delete an entry. List and view output hide secrets unless `--show-secret` is passed:
+
+   ```bash
+   ./build/password-manager-windows-core add-entry "test-password" \
+     --label "Prod Admin" \
+     --type credential \
+     --username admin@example.com \
+     --secret super-secret \
+     --category Infra \
+     --tag prod \
+     --field Owner=SRE
+   ./build/password-manager-windows-core list "test-password" --query Owner:SRE
+   ./build/password-manager-windows-core show-entry "test-password" "<entry-id>"
+   ./build/password-manager-windows-core delete-entry "test-password" "<entry-id>"
+   ```
+
+6. Confirm `vault-windows-native.envelope` contains salt, iterations, verifier, nonce, ciphertext, and mac, but does not contain the sample entry plaintext username or password.
 
 Windows device validation still needs:
 
@@ -342,9 +374,10 @@ Release notes must only describe verified capabilities. Do not list full GUI, Wi
 - [x] Portable core uses PBKDF2-SHA256 + AES-256-GCM.
 - [x] C++ tests cover encrypted envelope, wrong-password rejection, TOTP, entry filtering, collection rebuilding, and version-vector merge.
 - [x] Portable smoke-test CLI builds on the current machine.
+- [x] Shared Windows/Linux terminal-native CLI supports encrypted vault initialization, status reads, category template persistence, and entry add/search/view/soft-delete.
 - [ ] Build `.exe` on Windows 10/11 with Visual Studio/MSBuild.
 - [ ] Full Win32/WinUI 3/WPF UI is complete.
-- [ ] Full CRUD, import/export, and backup/restore UI are complete.
+- [ ] Full CRUD, import/export, and backup/restore GUI is complete.
 - [ ] Windows Credential Manager / DPAPI / CNG key protection is complete.
 - [ ] Real WebDAV/S3 remote sync is complete.
 - [ ] `.exe` code signing is complete.

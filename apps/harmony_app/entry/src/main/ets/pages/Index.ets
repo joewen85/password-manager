@@ -33,7 +33,6 @@ import {
 
 type DraftType = 'credential' | 'server' | 'service';
 type ActivePanel = 'home' | 'settings' | 'category' | 'tag';
-type CategoryPresetDraft = CategoryTypePreset | '';
 const MAX_UNLOCK_ATTEMPTS: number = 5;
 const UI_BACKGROUND: string = '#F4F6F8';
 const UI_SURFACE: string = '#FFFFFF';
@@ -169,7 +168,6 @@ struct Index {
   @State private tagDraft: string = '';
   @State private categoryDraft: string = '';
   @State private categoryRenameSource: string = '';
-  @State private categoryDraftPreset: CategoryPresetDraft = '';
   @State private categoryDraftCustomFields: CustomField[] = [];
 
   @State private draftType: DraftType = 'credential';
@@ -1304,14 +1302,14 @@ struct Index {
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_MUTED);
         Flex({ wrap: FlexWrap.Wrap }) {
-          this.ChoiceChip('服务器', this.categoryDraftPreset === CategoryTypePreset.SERVER, () => {
-            this.categoryDraftPreset = this.categoryDraftPreset === CategoryTypePreset.SERVER ? '' : CategoryTypePreset.SERVER;
+          this.ChoiceChip('服务器', false, () => {
+            this.addCategoryDraftShortcutFields(CategoryTypePreset.SERVER);
           });
-          this.ChoiceChip('服务', this.categoryDraftPreset === CategoryTypePreset.SERVICE, () => {
-            this.categoryDraftPreset = this.categoryDraftPreset === CategoryTypePreset.SERVICE ? '' : CategoryTypePreset.SERVICE;
+          this.ChoiceChip('服务', false, () => {
+            this.addCategoryDraftShortcutFields(CategoryTypePreset.SERVICE);
           });
-          this.ChoiceChip('账号', this.categoryDraftPreset === CategoryTypePreset.ACCOUNT, () => {
-            this.categoryDraftPreset = this.categoryDraftPreset === CategoryTypePreset.ACCOUNT ? '' : CategoryTypePreset.ACCOUNT;
+          this.ChoiceChip('账号', false, () => {
+            this.addCategoryDraftShortcutFields(CategoryTypePreset.ACCOUNT);
           });
         }
         this.CategoryDraftCustomFieldsEditor();
@@ -1328,7 +1326,6 @@ struct Index {
             .onClick(() => {
               this.categoryRenameSource = '';
               this.categoryDraft = '';
-              this.categoryDraftPreset = '';
               this.categoryDraftCustomFields = [];
             });
         }
@@ -1389,7 +1386,6 @@ struct Index {
             .onClick(() => {
               this.categoryRenameSource = category;
               this.categoryDraft = category;
-              this.categoryDraftPreset = '';
               this.categoryDraftCustomFields = [];
             });
           }, (category: string) => category);
@@ -1939,17 +1935,8 @@ struct Index {
       return;
     }
     const customFieldNames = this.categoryDraftCustomFieldNames();
-    if (this.categoryDraftPreset === CategoryTypePreset.SERVER) {
-      await this.controller().applyCategoryPreset(category, CategoryTypePreset.SERVER, customFieldNames);
-    } else if (this.categoryDraftPreset === CategoryTypePreset.SERVICE) {
-      await this.controller().applyCategoryPreset(category, CategoryTypePreset.SERVICE, customFieldNames);
-    } else if (this.categoryDraftPreset === CategoryTypePreset.ACCOUNT) {
-      await this.controller().applyCategoryPreset(category, CategoryTypePreset.ACCOUNT, customFieldNames);
-    } else {
-      await this.controller().addCategory(category, customFieldNames);
-    }
+    await this.controller().addCategory(category, customFieldNames);
     this.categoryDraft = '';
-    this.categoryDraftPreset = '';
     this.categoryDraftCustomFields = [];
     this.categoryRenameSource = '';
     this.refreshData();
@@ -1986,7 +1973,6 @@ struct Index {
     }
     this.categoryRenameSource = '';
     this.categoryDraft = '';
-    this.categoryDraftPreset = '';
     this.categoryDraftCustomFields = [];
     this.refreshData();
   }
@@ -2010,20 +1996,23 @@ struct Index {
     if (this.categoryRenameSource === category) {
       this.categoryRenameSource = '';
     }
-    this.categoryDraftPreset = '';
     this.categoryDraftCustomFields = [];
     this.refreshData();
   }
 
   private categoryPresetSelected(category: string, preset: CategoryTypePreset): boolean {
     const names = this.templateFieldNames(category);
+    return this.categoryPresetFieldNames(preset).every((name: string) => names.includes(name));
+  }
+
+  private categoryPresetFieldNames(preset: CategoryTypePreset): string[] {
     if (preset === CategoryTypePreset.SERVER) {
-      return ['IP地址', '端口', '关联账号'].every((name: string) => names.includes(name));
+      return ['IP地址', '端口', '关联账号'];
     }
     if (preset === CategoryTypePreset.SERVICE) {
-      return ['服务入口', '关联账号', '关联服务器'].every((name: string) => names.includes(name));
+      return ['服务入口', '关联账号', '关联服务器'];
     }
-    return ['入口'].every((name: string) => names.includes(name));
+    return ['入口'];
   }
 
   private templateFieldNames(category: string): string[] {
@@ -2302,14 +2291,14 @@ struct Index {
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_MUTED);
         Flex({ wrap: FlexWrap.Wrap }) {
-          this.ChoiceChip('服务器', this.categoryDraftPreset === CategoryTypePreset.SERVER, () => {
-            this.categoryDraftPreset = this.categoryDraftPreset === CategoryTypePreset.SERVER ? '' : CategoryTypePreset.SERVER;
+          this.ChoiceChip('服务器', false, () => {
+            this.addCategoryDraftShortcutFields(CategoryTypePreset.SERVER);
           });
-          this.ChoiceChip('服务', this.categoryDraftPreset === CategoryTypePreset.SERVICE, () => {
-            this.categoryDraftPreset = this.categoryDraftPreset === CategoryTypePreset.SERVICE ? '' : CategoryTypePreset.SERVICE;
+          this.ChoiceChip('服务', false, () => {
+            this.addCategoryDraftShortcutFields(CategoryTypePreset.SERVICE);
           });
-          this.ChoiceChip('账号', this.categoryDraftPreset === CategoryTypePreset.ACCOUNT, () => {
-            this.categoryDraftPreset = this.categoryDraftPreset === CategoryTypePreset.ACCOUNT ? '' : CategoryTypePreset.ACCOUNT;
+          this.ChoiceChip('账号', false, () => {
+            this.addCategoryDraftShortcutFields(CategoryTypePreset.ACCOUNT);
           });
         }
         this.CategoryDraftCustomFieldsEditor();
@@ -2848,16 +2837,7 @@ struct Index {
     }
     const category = this.draftCategorySearch.trim();
     const customFieldNames = this.categoryDraftCustomFieldNames();
-    if (this.categoryDraftPreset === CategoryTypePreset.SERVER) {
-      await this.controller().applyCategoryPreset(category, CategoryTypePreset.SERVER, customFieldNames);
-    } else if (this.categoryDraftPreset === CategoryTypePreset.SERVICE) {
-      await this.controller().applyCategoryPreset(category, CategoryTypePreset.SERVICE, customFieldNames);
-    } else if (this.categoryDraftPreset === CategoryTypePreset.ACCOUNT) {
-      await this.controller().applyCategoryPreset(category, CategoryTypePreset.ACCOUNT, customFieldNames);
-    } else {
-      await this.controller().addCategory(category, customFieldNames);
-    }
-    this.categoryDraftPreset = '';
+    await this.controller().addCategory(category, customFieldNames);
     this.categoryDraftCustomFields = [];
     this.refreshData();
     this.selectDraftCategory(category);
@@ -2866,7 +2846,6 @@ struct Index {
   private selectDraftCategory(category: string): void {
     this.draftCategory = category;
     this.draftCategorySearch = '';
-    this.categoryDraftPreset = '';
     this.categoryDraftCustomFields = [];
     this.applyCategoryTemplateToDraft(category);
   }
@@ -3049,6 +3028,31 @@ struct Index {
       value: '',
     };
     this.categoryDraftCustomFields = [...this.categoryDraftCustomFields, field];
+  }
+
+  private addCategoryDraftShortcutFields(preset: CategoryTypePreset): void {
+    const existing = new Set<string>();
+    this.categoryDraftCustomFields.forEach((field: CustomField) => {
+      const key = field.name.trim().toLowerCase();
+      if (key.length > 0) {
+        existing.add(key);
+      }
+    });
+    this.categoryPresetFieldNames(preset).forEach((name: string) => {
+      const key = name.trim().toLowerCase();
+      if (key.length === 0 || existing.has(key)) {
+        return;
+      }
+      existing.add(key);
+      this.categoryDraftCustomFields = [
+        ...this.categoryDraftCustomFields,
+        {
+          id: this.nextUiId(),
+          name: name,
+          value: '',
+        },
+      ];
+    });
   }
 
   private updateCategoryDraftCustomFieldName(id: string, value: string): void {

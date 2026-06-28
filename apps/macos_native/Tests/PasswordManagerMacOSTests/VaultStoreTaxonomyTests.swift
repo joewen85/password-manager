@@ -99,4 +99,24 @@ struct VaultStoreTaxonomyTests {
 
         #expect(draft.customFields.map(\.name) == ["名称", "备注", "IP地址", "端口", "关联账号", "Owner"])
     }
+
+    @MainActor
+    @Test("Category custom fields are user-defined without requiring a type")
+    func categoryCustomFieldsAreUserDefinedWithoutRequiringAType() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManagerMacOSCategoryCustomOnlyTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = VaultStore(
+            repository: FileVaultRepository(baseDirectory: directory),
+            syncSettingsRepository: nil
+        )
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+
+        #expect(store.addCategory("Private", preset: nil, customFieldNames: []))
+        #expect(store.categoryTemplates.first { $0.category == "Private" }?.fields.map(\.name) == ["名称", "备注"])
+
+        #expect(store.addCategory("Ops", preset: nil, customFieldNames: ["IP地址", "端口", "Owner", "ip地址", ""]))
+        #expect(store.categoryTemplates.first { $0.category == "Ops" }?.fields.map(\.name) == ["名称", "备注", "IP地址", "端口", "Owner"])
+    }
 }

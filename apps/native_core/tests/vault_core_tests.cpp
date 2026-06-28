@@ -10,6 +10,8 @@ int main() {
     auto entry = pm::makeEntry("Production Email", "credential", "admin@example.com", "secret-password");
     entry.category = "Work";
     entry.tags = {"mail", "shared"};
+    entry.notes = "owner:sre-team";
+    entry.customFields = {pm::CustomField{"11111111-1111-4111-8111-111111111111", "Owner", "SRE"}};
     snapshot.entries.push_back(entry);
 
     auto envelope = pm::createEnvelope("test-password", snapshot);
@@ -20,6 +22,10 @@ int main() {
     assert(loaded.entries.size() == 1);
     assert(loaded.entries[0].label == "Production Email");
     assert(loaded.entries[0].category == "Work");
+    assert(loaded.entries[0].tags.size() == 2);
+    assert(loaded.entries[0].notes == "owner:sre-team");
+    assert(loaded.entries[0].customFields.size() == 1);
+    assert(loaded.entries[0].customFields[0].name == "Owner");
     bool rejected = false;
     try {
         (void)pm::decryptEnvelope("wrong-password", envelope);
@@ -82,6 +88,26 @@ int main() {
     const auto serialized = pm::serializeSnapshotJson(uppercaseSnapshot);
     assert(serialized.find("AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA") == std::string::npos);
     assert(serialized.find("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa") != std::string::npos);
+    assert(serialized.find("\"payload\":{\"credential\"") != std::string::npos);
+    assert(serialized.find("\"customFields\"") != std::string::npos);
+    assert(serialized.find("\"updatedBy\"") != std::string::npos);
+
+    const auto parsedEntrySnapshot = pm::parseSnapshotJson(serialized);
+    assert(parsedEntrySnapshot.entries.size() == 1);
+    assert(parsedEntrySnapshot.entries[0].id == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    assert(parsedEntrySnapshot.entries[0].tags.size() == 2);
+    assert(parsedEntrySnapshot.entries[0].customFields.size() == 1);
+    assert(parsedEntrySnapshot.entries[0].version.at("macos") == 1);
+
+    pm::VaultSnapshot serviceSnapshot;
+    auto serviceEntry = pm::makeEntry("Billing API", "service", "svc-user", "svc-secret");
+    serviceEntry.category = "Services";
+    serviceSnapshot.entries.push_back(serviceEntry);
+    const auto parsedServiceSnapshot = pm::parseSnapshotJson(pm::serializeSnapshotJson(serviceSnapshot));
+    assert(parsedServiceSnapshot.entries.size() == 1);
+    assert(parsedServiceSnapshot.entries[0].type == "service");
+    assert(parsedServiceSnapshot.entries[0].username == "svc-user");
+    assert(parsedServiceSnapshot.entries[0].secret == "svc-secret");
 
     pm::VaultSnapshot categorySnapshot;
     assert(pm::addCategory(categorySnapshot, "Infra", pm::CategoryTypePreset::Server, {"Owner", "备注", ""}));
@@ -104,6 +130,16 @@ int main() {
     assert(customCategorySnapshot.categoryTemplates[0].fields[0].name == "名称");
     assert(customCategorySnapshot.categoryTemplates[0].fields[1].name == "备注");
     assert(customCategorySnapshot.categoryTemplates[0].fields[2].name == "Owner");
+
+    pm::VaultSnapshot shortcutOnlyCategorySnapshot;
+    assert(pm::addCategory(shortcutOnlyCategorySnapshot, "Ops", pm::categoryFieldsWithCustom({"IP地址", "端口", "Owner", "ip地址", ""})));
+    assert(shortcutOnlyCategorySnapshot.categoryTemplates.size() == 1);
+    assert(shortcutOnlyCategorySnapshot.categoryTemplates[0].fields.size() == 5);
+    assert(shortcutOnlyCategorySnapshot.categoryTemplates[0].fields[0].name == "名称");
+    assert(shortcutOnlyCategorySnapshot.categoryTemplates[0].fields[1].name == "备注");
+    assert(shortcutOnlyCategorySnapshot.categoryTemplates[0].fields[2].name == "IP地址");
+    assert(shortcutOnlyCategorySnapshot.categoryTemplates[0].fields[3].name == "端口");
+    assert(shortcutOnlyCategorySnapshot.categoryTemplates[0].fields[4].name == "Owner");
 
     const auto parsedCategorySnapshot = pm::parseSnapshotJson(pm::serializeSnapshotJson(categorySnapshot));
     assert(parsedCategorySnapshot.categories == categorySnapshot.categories);

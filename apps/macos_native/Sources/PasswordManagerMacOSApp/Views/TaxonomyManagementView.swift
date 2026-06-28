@@ -7,7 +7,6 @@ struct TaxonomyManagementView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selectedKind: TaxonomyKind = .category
     @State private var newValue = ""
-    @State private var selectedCategoryPreset: CategoryTypePreset?
     @State private var categoryCustomFields: [CustomField] = []
     @State private var renameRequest: TaxonomyEditRequest?
     @State private var deleteRequest: TaxonomyEditRequest?
@@ -42,7 +41,7 @@ struct TaxonomyManagementView: View {
                 }
 
                 if selectedKind == .category {
-                    CategoryPresetShortcutButtons(selection: $selectedCategoryPreset)
+                    CategoryPresetShortcutButtons(fields: $categoryCustomFields)
                     CategoryTemplateFieldNameEditor(fields: $categoryCustomFields)
                 }
 
@@ -99,7 +98,6 @@ struct TaxonomyManagementView: View {
         .frame(minWidth: 520, minHeight: 460)
         .onChange(of: selectedKind) { _, nextKind in
             if nextKind == .tag {
-                selectedCategoryPreset = nil
                 categoryCustomFields = []
             }
         }
@@ -133,7 +131,7 @@ struct TaxonomyManagementView: View {
         case .category:
             didSave = store.addCategory(
                 value,
-                preset: selectedCategoryPreset,
+                preset: nil,
                 customFieldNames: categoryCustomFields.map(\.name)
             )
         case .tag:
@@ -141,7 +139,6 @@ struct TaxonomyManagementView: View {
         }
         if didSave {
             newValue = ""
-            selectedCategoryPreset = nil
             categoryCustomFields = []
             onChange()
         }

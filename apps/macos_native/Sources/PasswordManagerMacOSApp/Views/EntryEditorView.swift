@@ -204,7 +204,6 @@ private struct CategorySelectField: View {
 
     @State private var isPresented = false
     @State private var searchText = ""
-    @State private var selectedPreset: CategoryTypePreset?
     @State private var customFields: [CustomField] = []
 
     var body: some View {
@@ -237,7 +236,7 @@ private struct CategorySelectField: View {
                     )
 
                     if canCreateCategory {
-                        CategoryPresetShortcutButtons(selection: $selectedPreset)
+                        CategoryPresetShortcutButtons(fields: $customFields)
                         CategoryTemplateFieldNameEditor(fields: $customFields)
                     }
 
@@ -283,10 +282,9 @@ private struct CategorySelectField: View {
 
     private func createCategory() {
         guard canCreateCategory else { return }
-        if onCreateCategory(trimmedSearchText, selectedPreset, customFields.map(\.name)) {
+        if onCreateCategory(trimmedSearchText, nil, customFields.map(\.name)) {
             selectedCategory = trimmedSearchText
             searchText = ""
-            selectedPreset = nil
             customFields = []
             isPresented = false
         }
