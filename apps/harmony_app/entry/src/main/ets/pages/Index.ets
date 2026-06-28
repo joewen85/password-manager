@@ -2296,6 +2296,24 @@ struct Index {
             }
           });
       }
+      if (this.canCreateDraftCategory()) {
+        Text('快捷字段')
+          .fontSize(12)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_MUTED);
+        Flex({ wrap: FlexWrap.Wrap }) {
+          this.ChoiceChip('服务器', this.categoryDraftPreset === CategoryTypePreset.SERVER, () => {
+            this.categoryDraftPreset = this.categoryDraftPreset === CategoryTypePreset.SERVER ? '' : CategoryTypePreset.SERVER;
+          });
+          this.ChoiceChip('服务', this.categoryDraftPreset === CategoryTypePreset.SERVICE, () => {
+            this.categoryDraftPreset = this.categoryDraftPreset === CategoryTypePreset.SERVICE ? '' : CategoryTypePreset.SERVICE;
+          });
+          this.ChoiceChip('账号', this.categoryDraftPreset === CategoryTypePreset.ACCOUNT, () => {
+            this.categoryDraftPreset = this.categoryDraftPreset === CategoryTypePreset.ACCOUNT ? '' : CategoryTypePreset.ACCOUNT;
+          });
+        }
+        this.CategoryDraftCustomFieldsEditor();
+      }
       if (this.filteredDraftCategories().length > 0) {
         Flex({ wrap: FlexWrap.Wrap }) {
           ForEach(this.filteredDraftCategories(), (category: string) => {
@@ -2829,7 +2847,18 @@ struct Index {
       return;
     }
     const category = this.draftCategorySearch.trim();
-    await this.controller().addCategory(category);
+    const customFieldNames = this.categoryDraftCustomFieldNames();
+    if (this.categoryDraftPreset === CategoryTypePreset.SERVER) {
+      await this.controller().applyCategoryPreset(category, CategoryTypePreset.SERVER, customFieldNames);
+    } else if (this.categoryDraftPreset === CategoryTypePreset.SERVICE) {
+      await this.controller().applyCategoryPreset(category, CategoryTypePreset.SERVICE, customFieldNames);
+    } else if (this.categoryDraftPreset === CategoryTypePreset.ACCOUNT) {
+      await this.controller().applyCategoryPreset(category, CategoryTypePreset.ACCOUNT, customFieldNames);
+    } else {
+      await this.controller().addCategory(category, customFieldNames);
+    }
+    this.categoryDraftPreset = '';
+    this.categoryDraftCustomFields = [];
     this.refreshData();
     this.selectDraftCategory(category);
   }
@@ -2837,6 +2866,8 @@ struct Index {
   private selectDraftCategory(category: string): void {
     this.draftCategory = category;
     this.draftCategorySearch = '';
+    this.categoryDraftPreset = '';
+    this.categoryDraftCustomFields = [];
     this.applyCategoryTemplateToDraft(category);
   }
 

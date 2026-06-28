@@ -93,6 +93,14 @@ int main() {
     assert(categoryJson.find("\"category\":\"Infra\"") != std::string::npos);
     assert(categoryJson.find("\"name\":\"Owner\"") != std::string::npos);
 
+    pm::VaultSnapshot customCategorySnapshot;
+    assert(pm::addCategory(customCategorySnapshot, "Private", pm::categoryFieldsWithCustom({"Owner", "备注", ""})));
+    assert(customCategorySnapshot.categoryTemplates.size() == 1);
+    assert(customCategorySnapshot.categoryTemplates[0].fields.size() == 3);
+    assert(customCategorySnapshot.categoryTemplates[0].fields[0].name == "名称");
+    assert(customCategorySnapshot.categoryTemplates[0].fields[1].name == "备注");
+    assert(customCategorySnapshot.categoryTemplates[0].fields[2].name == "Owner");
+
     pm::ObjectSyncConfig noneConfig;
     auto noneRequest = pm::buildObjectSyncRequest(noneConfig);
     assert(noneRequest.provider == pm::ObjectSyncProvider::None);

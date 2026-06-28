@@ -3,6 +3,8 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -10,8 +12,50 @@ void printUsage() {
     std::cout << "Password Manager Linux Native\n"
               << "Commands:\n"
               << "  init <password>             Create an encrypted vault smoke-test envelope\n"
+              << "  category <name> [--preset server|service|account] [--field <name>]...\n"
+              << "                              Print category template JSON with custom fields\n"
               << "  totp <base32-secret> <unix> Generate a TOTP code\n"
               << "  self-test                   Run a small runtime check\n";
+}
+
+pm::CategoryTypePreset parsePreset(const std::string& value) {
+    if (value == "server") return pm::CategoryTypePreset::Server;
+    if (value == "service") return pm::CategoryTypePreset::Service;
+    if (value == "account") return pm::CategoryTypePreset::Account;
+    throw std::invalid_argument("preset must be server, service, or account");
+}
+
+void printCategoryTemplate(int argc, char** argv) {
+    if (argc < 3) throw std::invalid_argument("category name is required");
+    std::string name = argv[2];
+    std::vector<std::string> customFields;
+    pm::CategoryTypePreset preset = pm::CategoryTypePreset::Account;
+    bool hasPreset = false;
+    for (int i = 3; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--preset") {
+            if (++i >= argc) throw std::invalid_argument("--preset requires a value");
+            preset = parsePreset(argv[i]);
+            hasPreset = true;
+        } else if (arg.rfind("--preset=", 0) == 0) {
+            preset = parsePreset(arg.substr(9));
+            hasPreset = true;
+        } else if (arg == "--field") {
+            if (++i >= argc) throw std::invalid_argument("--field requires a value");
+            customFields.push_back(argv[i]);
+        } else if (arg.rfind("--field=", 0) == 0) {
+            customFields.push_back(arg.substr(8));
+        } else {
+            throw std::invalid_argument("unknown category option: " + arg);
+        }
+    }
+
+    pm::VaultSnapshot snapshot;
+    const bool added = hasPreset
+        ? pm::addCategory(snapshot, name, preset, customFields)
+        : pm::addCategory(snapshot, name, pm::categoryFieldsWithCustom(customFields));
+    if (!added) throw std::invalid_argument("category name is required");
+    std::cout << pm::serializeSnapshotJson(snapshot) << "\n";
 }
 
 } // namespace
@@ -40,6 +84,10 @@ int main(int argc, char** argv) {
         }
         if (command == "totp" && argc == 4) {
             std::cout << pm::generateTotp(argv[2], std::stoull(argv[3])) << "\n";
+            return 0;
+        }
+        if (command == "category") {
+            printCategoryTemplate(argc, argv);
             return 0;
         }
         if (command == "self-test") {

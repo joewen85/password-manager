@@ -1347,6 +1347,7 @@ class MainActivity : FragmentActivity() {
 
     private fun showTaxonomyInputDialog(
         kind: TaxonomyKind,
+        initialValue: String = "",
         onSaved: ((String) -> Unit)? = null,
         returnToHomeAfterSave: Boolean = true,
     ) {
@@ -1362,7 +1363,10 @@ class MainActivity : FragmentActivity() {
         val field = input(when (kind) {
             TaxonomyKind.CATEGORY -> text(R.string.category)
             TaxonomyKind.TAG -> text(R.string.tag)
-        })
+        }).apply {
+            setText(initialValue)
+            setSelection(text?.length ?: 0)
+        }
         var selectedPreset: CategoryTypePreset? = null
         val customFieldNames = mutableListOf<String>()
         val customFieldsContainer = LinearLayout(this).apply {
@@ -2361,13 +2365,15 @@ class MainActivity : FragmentActivity() {
         addButton.setOnClickListener {
             val value = search.text.toString().trim()
             if (value.isBlank()) return@setOnClickListener
-            if (store.addCategory(value)) {
-                onSelected(value)
-                dialog?.dismiss()
-                toast(store.statusMessage ?: text(R.string.saved))
-            } else {
-                toast(store.statusMessage ?: text(R.string.operation_failed))
-            }
+            showTaxonomyInputDialog(
+                TaxonomyKind.CATEGORY,
+                initialValue = value,
+                onSaved = { saved ->
+                    onSelected(saved)
+                    dialog?.dismiss()
+                },
+                returnToHomeAfterSave = false,
+            )
         }
         search.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
