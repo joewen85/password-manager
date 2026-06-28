@@ -9,7 +9,7 @@
 - 当前切片是 C++17 + Win32 的 Windows 原生起点。
 - `src/win32_app.cpp` 提供最小 Win32 window skeleton，供后续接入真实 UI。
 - `PasswordManagerWindows.vcxproj` 提供 Visual Studio / MSBuild 项目骨架。
-- 可移植 core 复用 C++17 + OpenSSL 路径，当前可在本机用 clang 构建和测试。
+- 可移植 core 复用 `apps/native_core` 的 C++17 + OpenSSL 路径，当前可在本机用 clang 构建和测试。
 - 已实现可测试核心：PBKDF2-SHA256、AES-256-GCM encrypted vault envelope、TOTP、entry model、搜索/过滤、分类/标签集合、JSON snapshot 序列化、version-vector merge。
 - 当前尚未实现完整 Win32/WinUI 3/WPF 图形界面，也尚未实现 Windows Credential Manager / DPAPI 集成和真实 WebDAV/S3 网络同步。
 
@@ -18,10 +18,10 @@
 - `PasswordManagerWindows.vcxproj`: Visual Studio C++ Win32 app project skeleton。
 - `Makefile`: 非 Windows 环境下验证 portable core 的构建和测试入口。
 - `src/win32_app.cpp`: 最小 Win32 window app。
-- `src/vault_core.hpp`: 核心类型和 API。
-- `src/vault_core.cpp`: crypto、TOTP、entry、merge 实现。
 - `src/main.cpp`: portable smoke-test CLI。
-- `tests/vault_core_tests.cpp`: C++ core tests。
+- `../native_core/src/vault_core.hpp`: 共享核心类型和 API。
+- `../native_core/src/vault_core.cpp`: 共享 crypto、TOTP、entry、merge、分类模板和对象存储签名实现。
+- `../native_core/tests/vault_core_tests.cpp`: Windows/Linux 共用 C++ core tests。
 
 ### 环境要求
 
@@ -153,6 +153,7 @@ Release notes 只能描述已经验证的能力；当前不能把完整 GUI、Wi
 - [x] README 提供中文和英文版本。
 - [x] README 说明开发、发布构建、Windows 分发/上架步骤。
 - [x] Win32 app skeleton 和 Visual Studio `.vcxproj` 已添加。
+- [x] Windows/Linux 原生端共用 `apps/native_core`，避免 core 双写偏差。
 - [x] Portable core 使用 PBKDF2-SHA256 + AES-256-GCM。
 - [x] C++ 测试覆盖加密 envelope、错误密码拒绝、TOTP、entry 过滤、集合重建和 version-vector merge。
 - [x] portable smoke-test CLI 可在当前机器构建。
@@ -176,7 +177,7 @@ This directory contains the native Windows rewrite target. It is intentionally s
 - The current slice is a C++17 + Win32 native Windows starting point.
 - `src/win32_app.cpp` provides a minimal Win32 window skeleton for future real UI work.
 - `PasswordManagerWindows.vcxproj` provides a Visual Studio / MSBuild project scaffold.
-- The portable core uses the C++17 + OpenSSL path and can currently be built and tested locally with clang.
+- The portable core uses the shared `apps/native_core` C++17 + OpenSSL path and can currently be built and tested locally with clang.
 - Testable core is implemented: PBKDF2-SHA256, AES-256-GCM encrypted vault envelope, TOTP, entry model, search/filtering, category/tag collection rebuilding, JSON snapshot serialization, and version-vector merge.
 - Full Win32/WinUI 3/WPF GUI, Windows Credential Manager / DPAPI integration, and real WebDAV/S3 network sync are not implemented yet.
 
@@ -185,10 +186,10 @@ This directory contains the native Windows rewrite target. It is intentionally s
 - `PasswordManagerWindows.vcxproj`: Visual Studio C++ Win32 app project skeleton.
 - `Makefile`: build and test entry point for the portable core outside Windows.
 - `src/win32_app.cpp`: minimal Win32 window app.
-- `src/vault_core.hpp`: core types and API.
-- `src/vault_core.cpp`: crypto, TOTP, entry, and merge implementation.
 - `src/main.cpp`: portable smoke-test CLI.
-- `tests/vault_core_tests.cpp`: C++ core tests.
+- `../native_core/src/vault_core.hpp`: shared core types and API.
+- `../native_core/src/vault_core.cpp`: shared crypto, TOTP, entry, merge, category template, and object storage signing implementation.
+- `../native_core/tests/vault_core_tests.cpp`: shared Windows/Linux C++ core tests.
 
 ### Requirements
 

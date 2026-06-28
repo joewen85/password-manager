@@ -1,14 +1,17 @@
 CXX ?= clang++
 OPENSSL_PREFIX ?= /opt/homebrew/opt/openssl@3
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -Wpedantic -O2
-PM_CPPFLAGS := -I$(OPENSSL_PREFIX)/include
+NATIVE_CORE_DIR := ../native_core
+PM_CPPFLAGS := -I$(OPENSSL_PREFIX)/include -I$(NATIVE_CORE_DIR)/src
 PM_LDFLAGS := -L$(OPENSSL_PREFIX)/lib
 LDLIBS ?= -lcrypto
 
 BUILD_DIR := build
 APP := $(BUILD_DIR)/password-manager-linux
 TESTS := $(BUILD_DIR)/linux-native-tests
-CORE_SRC := src/vault_core.cpp
+CORE_SRC := $(NATIVE_CORE_DIR)/src/vault_core.cpp
+CORE_HEADER := $(NATIVE_CORE_DIR)/src/vault_core.hpp
+CORE_TESTS := $(NATIVE_CORE_DIR)/tests/vault_core_tests.cpp
 
 .PHONY: all test clean
 
@@ -17,11 +20,11 @@ all: $(APP)
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(APP): $(BUILD_DIR) $(CORE_SRC) src/main.cpp src/vault_core.hpp
+$(APP): $(BUILD_DIR) $(CORE_SRC) $(CORE_HEADER) src/main.cpp
 	$(CXX) $(CXXFLAGS) $(PM_CPPFLAGS) $(CORE_SRC) src/main.cpp $(PM_LDFLAGS) $(LDLIBS) -o $@
 
-$(TESTS): $(BUILD_DIR) $(CORE_SRC) tests/vault_core_tests.cpp src/vault_core.hpp
-	$(CXX) $(CXXFLAGS) $(PM_CPPFLAGS) $(CORE_SRC) tests/vault_core_tests.cpp $(PM_LDFLAGS) $(LDLIBS) -o $@
+$(TESTS): $(BUILD_DIR) $(CORE_SRC) $(CORE_HEADER) $(CORE_TESTS)
+	$(CXX) $(CXXFLAGS) $(PM_CPPFLAGS) $(CORE_SRC) $(CORE_TESTS) $(PM_LDFLAGS) $(LDLIBS) -o $@
 
 test: $(TESTS)
 	$(TESTS)

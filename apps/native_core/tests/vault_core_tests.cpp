@@ -180,6 +180,6 @@ int main() {
     }
     assert(missingUrlRejected);
 
-    std::cout << "linux-native core tests passed\n";
+    std::cout << "native core tests passed\n";
     return 0;
 }

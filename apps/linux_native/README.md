@@ -6,7 +6,7 @@
 
 ### 范围
 
-- 当前切片是 C++17 + OpenSSL 的 Linux terminal-native 起点。
+- 当前切片是 C++17 + OpenSSL 的 Linux terminal-native 起点，核心逻辑来自 `apps/native_core`。
 - 已实现可测试核心：PBKDF2-SHA256、AES-256-GCM encrypted vault envelope、TOTP、entry model、搜索/过滤、分类/标签集合、JSON snapshot 序列化、version-vector merge。
 - CLI 入口支持 smoke-test 初始化 encrypted envelope、TOTP 生成和 `self-test`。
 - 当前尚未实现 GTK/Qt/libadwaita 图形界面，也尚未实现完整交互式 CRUD 和真实 WebDAV/S3 网络同步。
@@ -15,10 +15,10 @@
 ### 目录说明
 
 - `Makefile`: 构建和测试入口。
-- `src/vault_core.hpp`: 核心类型和 API。
-- `src/vault_core.cpp`: crypto、TOTP、entry、merge 实现。
 - `src/main.cpp`: terminal-native smoke-test CLI。
-- `tests/vault_core_tests.cpp`: C++ 核心测试。
+- `../native_core/src/vault_core.hpp`: Windows/Linux 共享核心类型和 API。
+- `../native_core/src/vault_core.cpp`: 共享 crypto、TOTP、entry、merge、分类模板和对象存储签名实现。
+- `../native_core/tests/vault_core_tests.cpp`: Windows/Linux 共用 C++ 核心测试。
 
 ### 环境要求
 
@@ -139,6 +139,7 @@ Release notes 只能描述已经验证的能力；当前不能把 GUI、真实�
 - [x] Linux 原生目录在 `apps/linux_native` 下创建。
 - [x] README 提供中文和英文版本。
 - [x] README 说明开发、发布构建、Linux 分发/上架步骤。
+- [x] Windows/Linux 原生端共用 `apps/native_core`，避免 core 双写偏差。
 - [x] 核心使用 PBKDF2-SHA256 + AES-256-GCM。
 - [x] C++ 测试覆盖加密 envelope、错误密码拒绝、TOTP、entry 过滤、集合重建和 version-vector merge。
 - [x] terminal-native smoke-test CLI 可构建。
@@ -159,7 +160,7 @@ This directory contains the native Linux rewrite target. It is intentionally sep
 ### Scope
 
 - The current slice is a C++17 + OpenSSL Linux terminal-native starting point.
-- Testable core is implemented: PBKDF2-SHA256, AES-256-GCM encrypted vault envelope, TOTP, entry model, search/filtering, category/tag collection rebuilding, JSON snapshot serialization, and version-vector merge.
+- Testable core is implemented in shared `apps/native_core`: PBKDF2-SHA256, AES-256-GCM encrypted vault envelope, TOTP, entry model, search/filtering, category/tag collection rebuilding, JSON snapshot serialization, and version-vector merge.
 - The CLI entry point supports smoke-test encrypted envelope initialization, TOTP generation, and `self-test`.
 - GTK/Qt/libadwaita GUI, full interactive CRUD, and real WebDAV/S3 network sync are not implemented yet.
 - The current verification runs on macOS with clang + Homebrew OpenSSL. Release must be rebuilt and regressed on Linux distributions with system OpenSSL.
@@ -167,10 +168,10 @@ This directory contains the native Linux rewrite target. It is intentionally sep
 ### Directory Layout
 
 - `Makefile`: build and test entry point.
-- `src/vault_core.hpp`: core types and API.
-- `src/vault_core.cpp`: crypto, TOTP, entry, and merge implementation.
 - `src/main.cpp`: terminal-native smoke-test CLI.
-- `tests/vault_core_tests.cpp`: C++ core tests.
+- `../native_core/src/vault_core.hpp`: shared Windows/Linux core types and API.
+- `../native_core/src/vault_core.cpp`: shared crypto, TOTP, entry, merge, category template, and object storage signing implementation.
+- `../native_core/tests/vault_core_tests.cpp`: shared Windows/Linux C++ core tests.
 
 ### Requirements
 
