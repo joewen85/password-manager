@@ -8,7 +8,7 @@
 
 - 当前切片是 C++17 + OpenSSL 的 Linux terminal-native 起点，核心逻辑来自 `apps/native_core`。
 - 已实现可测试核心：PBKDF2-SHA256、AES-256-GCM encrypted vault envelope、TOTP、entry model、搜索/过滤、分类/标签集合、JSON snapshot 序列化/反序列化、encrypted vault 文件读写、version-vector merge。
-- CLI 入口支持初始化、解锁状态检查、分类模板持久化、credential/server/service 条目新增、搜索列表、单条查看、软删除、TOTP 生成和 `self-test`，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
+- CLI 入口支持初始化、解锁状态检查、分类模板持久化、credential/server/service 条目新增、搜索列表、单条查看、软删除、本地 encrypted envelope 备份/恢复、明文 snapshot 导出/导入、TOTP 生成和 `self-test`，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
 - 当前尚未实现 GTK/Qt/libadwaita 图形界面、GUI CRUD 和真实 WebDAV/S3 网络同步。
 - 当前在 macOS 上用 clang + Homebrew OpenSSL 验证核心逻辑；发布前仍需在 Linux 发行版上用系统 OpenSSL 重新构建和回归。
 
@@ -110,8 +110,20 @@ make OPENSSL_PREFIX=/usr
    ./build/password-manager-linux delete-entry "test-password" "<entry-id>"
    ```
 
-7. 确认 `vault-linux-native.envelope` 包含 salt、iterations、verifier、nonce、ciphertext、mac，但不包含分类名、username 或 password 等 vault 明文。
-8. 生成 RFC 6238 TOTP fixture：
+7. 备份、列出备份、导出明文 snapshot、导入 snapshot、恢复备份：
+
+   ```bash
+   ./build/password-manager-linux backup "test-password"
+   ./build/password-manager-linux list-backups
+   ./build/password-manager-linux export-snapshot "test-password"
+   ./build/password-manager-linux import-snapshot "test-password" --in exports/vault-export-YYYYMMDD-HHMMSS.json
+   ./build/password-manager-linux restore-backup "test-password" latest
+   ```
+
+   `backup` 默认写入 vault 同级 `backups/`，只保留最新 5 份 encrypted envelope；`export-snapshot` 默认写入同级 `exports/`，内容是明文 JSON，只应保存到受信任位置。
+
+8. 确认 `vault-linux-native.envelope` 和 `backups/vault-*.json` 包含 salt、iterations、verifier、nonce、ciphertext、mac，但不包含分类名、username 或 password 等 vault 明文。
+9. 生成 RFC 6238 TOTP fixture：
 
    ```bash
    ./build/password-manager-linux totp GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ 59

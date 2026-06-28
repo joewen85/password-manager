@@ -4,12 +4,21 @@
 
 #include <iostream>
 #include <algorithm>
+#include <cctype>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <stdexcept>
+#include <sstream>
 #include <string>
 #include <vector>
 
 namespace pm {
 namespace {
+namespace fs = std::filesystem;
+
+constexpr int kBackupRetentionCount = 5;
 
 struct CliOptions {
     std::string vaultPath;
@@ -35,6 +44,16 @@ void printUsage(const char* platformName, const char* defaultVaultPath) {
               << "                              Print one entry as JSON\n"
               << "  delete-entry <password> <id> [--vault <path>]\n"
               << "                              Soft-delete one entry in the encrypted vault\n"
+              << "  backup <password> [--vault <path>] [--backup-dir <dir>]\n"
+              << "                              Copy the encrypted vault envelope to backups/, keeping newest 5\n"
+              << "  list-backups [--vault <path>] [--backup-dir <dir>]\n"
+              << "                              List local encrypted backup envelopes\n"
+              << "  restore-backup <password> [latest|file] [--vault <path>] [--backup-dir <dir>]\n"
+              << "                              Validate and restore an encrypted backup envelope\n"
+              << "  export-snapshot <password> [--vault <path>] [--out <path>] [--export-dir <dir>]\n"
+              << "                              Write a plaintext JSON snapshot export\n"
+              << "  import-snapshot <password> --in <path> [--vault <path>]\n"
+              << "                              Replace the unlocked vault with a plaintext JSON snapshot\n"
               << "  category <name> [--shortcut server|service|account] [--field <name>]...\n"
               << "                              Print category template JSON without saving\n"
               << "  totp <base32-secret> <unix> Generate a TOTP code\n"
@@ -104,6 +123,24 @@ struct ListArgs {
 struct ShowEntryArgs {
     bool showSecret = false;
     std::string vaultPath;
+};
+
+struct BackupArgs {
+    std::string vaultPath;
+    std::string backupDir;
+    std::string backupName = "latest";
+    bool hasBackupName = false;
+};
+
+struct ExportSnapshotArgs {
+    std::string vaultPath;
+    std::string exportDir;
+    std::string outPath;
+};
+
+struct ImportSnapshotArgs {
+    std::string vaultPath;
+    std::string inPath;
 };
 
 std::string maskedSecret(const std::string& value, bool showSecret) {
@@ -269,12 +306,205 @@ CategoryArgs parseCategoryArgs(
     return args;
 }
 
+BackupArgs parseBackupArgs(int argc, char** argv, int start, const char* defaultVaultPath, bool allowBackupName) {
+    BackupArgs args;
+    args.vaultPath = defaultVaultPath;
+    for (int i = start; i < argc; ++i) {
+        const std::string arg = argv[i];
+        auto requireValue = [&](const std::string& option) -> std::string {
+            if (++i >= argc) throw std::invalid_argument(option + " requires a value");
+            return argv[i];
+        };
+        if (arg == "--vault") {
+            args.vaultPath = requireValue(arg);
+        } else if (arg.rfind("--vault=", 0) == 0) {
+            args.vaultPath = arg.substr(8);
+        } else if (arg == "--backup-dir") {
+            args.backupDir = requireValue(arg);
+        } else if (arg.rfind("--backup-dir=", 0) == 0) {
+            args.backupDir = arg.substr(13);
+        } else if (allowBackupName && arg == "--name") {
+            args.backupName = requireValue(arg);
+            args.hasBackupName = true;
+        } else if (allowBackupName && arg.rfind("--name=", 0) == 0) {
+            args.backupName = arg.substr(7);
+            args.hasBackupName = true;
+        } else if (allowBackupName && !args.hasBackupName && !arg.empty() && arg[0] != '-') {
+            args.backupName = arg;
+            args.hasBackupName = true;
+        } else {
+            throw std::invalid_argument("unknown backup option: " + arg);
+        }
+    }
+    return args;
+}
+
+ExportSnapshotArgs parseExportSnapshotArgs(int argc, char** argv, int start, const char* defaultVaultPath) {
+    ExportSnapshotArgs args;
+    args.vaultPath = defaultVaultPath;
+    for (int i = start; i < argc; ++i) {
+        const std::string arg = argv[i];
+        auto requireValue = [&](const std::string& option) -> std::string {
+            if (++i >= argc) throw std::invalid_argument(option + " requires a value");
+            return argv[i];
+        };
+        if (arg == "--vault") {
+            args.vaultPath = requireValue(arg);
+        } else if (arg.rfind("--vault=", 0) == 0) {
+            args.vaultPath = arg.substr(8);
+        } else if (arg == "--out") {
+            args.outPath = requireValue(arg);
+        } else if (arg.rfind("--out=", 0) == 0) {
+            args.outPath = arg.substr(6);
+        } else if (arg == "--export-dir") {
+            args.exportDir = requireValue(arg);
+        } else if (arg.rfind("--export-dir=", 0) == 0) {
+            args.exportDir = arg.substr(13);
+        } else {
+            throw std::invalid_argument("unknown export option: " + arg);
+        }
+    }
+    return args;
+}
+
+ImportSnapshotArgs parseImportSnapshotArgs(int argc, char** argv, int start, const char* defaultVaultPath) {
+    ImportSnapshotArgs args;
+    args.vaultPath = defaultVaultPath;
+    for (int i = start; i < argc; ++i) {
+        const std::string arg = argv[i];
+        auto requireValue = [&](const std::string& option) -> std::string {
+            if (++i >= argc) throw std::invalid_argument(option + " requires a value");
+            return argv[i];
+        };
+        if (arg == "--vault") {
+            args.vaultPath = requireValue(arg);
+        } else if (arg.rfind("--vault=", 0) == 0) {
+            args.vaultPath = arg.substr(8);
+        } else if (arg == "--in" || arg == "--input") {
+            args.inPath = requireValue(arg);
+        } else if (arg.rfind("--in=", 0) == 0) {
+            args.inPath = arg.substr(5);
+        } else if (arg.rfind("--input=", 0) == 0) {
+            args.inPath = arg.substr(8);
+        } else {
+            throw std::invalid_argument("unknown import option: " + arg);
+        }
+    }
+    if (args.inPath.empty()) throw std::invalid_argument("--in is required");
+    return args;
+}
+
 VaultSnapshot loadSnapshotOrEmpty(const std::string& password, const std::string& path) {
     return decryptEnvelope(password, loadEnvelopeFile(path));
 }
 
 void saveSnapshot(const std::string& password, const std::string& path, const VaultSnapshot& snapshot) {
     saveEnvelopeFile(path, createEnvelope(password, snapshot));
+}
+
+std::string timestampForFileName(std::time_t now = std::time(nullptr)) {
+    std::tm tm{};
+#if defined(_WIN32)
+    gmtime_s(&tm, &now);
+#else
+    gmtime_r(&now, &tm);
+#endif
+    std::ostringstream out;
+    out << std::put_time(&tm, "%Y%m%d-%H%M%S");
+    return out.str();
+}
+
+fs::path siblingDirectory(const std::string& vaultPath, const std::string& directoryName) {
+    const auto parent = fs::path(vaultPath).parent_path();
+    return (parent.empty() ? fs::path(".") : parent) / directoryName;
+}
+
+fs::path backupDirectoryFor(const BackupArgs& args) {
+    return args.backupDir.empty() ? siblingDirectory(args.vaultPath, "backups") : fs::path(args.backupDir);
+}
+
+fs::path exportDirectoryFor(const ExportSnapshotArgs& args) {
+    return args.exportDir.empty() ? siblingDirectory(args.vaultPath, "exports") : fs::path(args.exportDir);
+}
+
+void ensureDirectory(const fs::path& directory) {
+    if (directory.empty()) return;
+    fs::create_directories(directory);
+    if (!fs::is_directory(directory)) throw std::runtime_error("Unable to create directory: " + directory.string());
+}
+
+void ensureParentDirectory(const fs::path& path) {
+    const auto parent = path.parent_path();
+    if (!parent.empty()) ensureDirectory(parent);
+}
+
+bool allDigits(const std::string& value, std::size_t start, std::size_t count) {
+    if (start + count > value.size()) return false;
+    for (std::size_t index = start; index < start + count; ++index) {
+        if (!std::isdigit(static_cast<unsigned char>(value[index]))) return false;
+    }
+    return true;
+}
+
+bool isBackupFileName(const std::string& name) {
+    return name.size() == 26 &&
+           name.rfind("vault-", 0) == 0 &&
+           name[14] == '-' &&
+           name.compare(21, 5, ".json") == 0 &&
+           allDigits(name, 6, 8) &&
+           allDigits(name, 15, 6);
+}
+
+std::vector<fs::path> listBackupPaths(const fs::path& backupDir) {
+    ensureDirectory(backupDir);
+    std::vector<fs::path> backups;
+    for (const auto& entry : fs::directory_iterator(backupDir)) {
+        if (entry.is_regular_file() && isBackupFileName(entry.path().filename().string())) {
+            backups.push_back(entry.path());
+        }
+    }
+    std::sort(backups.begin(), backups.end(), [](const fs::path& left, const fs::path& right) {
+        return left.filename().string() > right.filename().string();
+    });
+    return backups;
+}
+
+void pruneBackups(const fs::path& backupDir) {
+    const auto backups = listBackupPaths(backupDir);
+    for (std::size_t index = kBackupRetentionCount; index < backups.size(); ++index) {
+        fs::remove(backups[index]);
+    }
+}
+
+fs::path selectedBackupPath(const BackupArgs& args) {
+    const auto backupDir = backupDirectoryFor(args);
+    if (args.backupName.empty() || args.backupName == "latest") {
+        const auto backups = listBackupPaths(backupDir);
+        if (backups.empty()) throw std::runtime_error("No local backup is available.");
+        return backups.front();
+    }
+    const auto sanitizedName = fs::path(args.backupName).filename().string();
+    if (!isBackupFileName(sanitizedName)) throw std::invalid_argument("Backup file is not available.");
+    const auto backupPath = backupDir / sanitizedName;
+    if (!fs::is_regular_file(backupPath)) throw std::runtime_error("Backup file is not available.");
+    return backupPath;
+}
+
+std::string readTextFile(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("Unable to open file for reading: " + path.string());
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    if (!in.good() && !in.eof()) throw std::runtime_error("Unable to read file: " + path.string());
+    return buffer.str();
+}
+
+void writeTextFile(const fs::path& path, const std::string& text) {
+    ensureParentDirectory(path);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) throw std::runtime_error("Unable to open file for writing: " + path.string());
+    out << text;
+    if (!out) throw std::runtime_error("Unable to write file: " + path.string());
 }
 
 void printCounts(const VaultSnapshot& snapshot) {
@@ -445,6 +675,69 @@ void deleteEntry(int argc, char** argv, const char* defaultVaultPath) {
     throw std::invalid_argument("entry not found");
 }
 
+void backupVault(int argc, char** argv, const char* defaultVaultPath) {
+    if (argc < 3) throw std::invalid_argument("password is required");
+    const std::string password = argv[2];
+    const auto args = parseBackupArgs(argc, argv, 3, defaultVaultPath, false);
+    auto snapshot = loadSnapshotOrEmpty(password, args.vaultPath);
+    const auto backupDir = backupDirectoryFor(args);
+    ensureDirectory(backupDir);
+    const auto backupPath = backupDir / ("vault-" + timestampForFileName() + ".json");
+    fs::copy_file(fs::path(args.vaultPath), backupPath, fs::copy_options::overwrite_existing);
+    pruneBackups(backupDir);
+    snapshot.backupStatus = "Backup saved: " + backupPath.filename().string();
+    saveSnapshot(password, args.vaultPath, snapshot);
+    std::cout << snapshot.backupStatus << " (" << backupPath.string() << ")\n";
+}
+
+void listBackups(int argc, char** argv, const char* defaultVaultPath) {
+    const auto args = parseBackupArgs(argc, argv, 2, defaultVaultPath, false);
+    const auto backups = listBackupPaths(backupDirectoryFor(args));
+    std::cout << "backups=" << backups.size() << "\n";
+    for (const auto& backup : backups) {
+        std::cout << backup.filename().string() << " | bytes=" << fs::file_size(backup) << "\n";
+    }
+}
+
+void restoreBackup(int argc, char** argv, const char* defaultVaultPath) {
+    if (argc < 3) throw std::invalid_argument("password is required");
+    const std::string password = argv[2];
+    const auto args = parseBackupArgs(argc, argv, 3, defaultVaultPath, true);
+    const auto backupPath = selectedBackupPath(args);
+    auto snapshot = decryptEnvelope(password, loadEnvelopeFile(backupPath.string()));
+    fs::copy_file(backupPath, fs::path(args.vaultPath), fs::copy_options::overwrite_existing);
+    snapshot.backupStatus = "Restored backup: " + backupPath.filename().string();
+    saveSnapshot(password, args.vaultPath, snapshot);
+    std::cout << snapshot.backupStatus << "\n";
+}
+
+void exportSnapshot(int argc, char** argv, const char* defaultVaultPath) {
+    if (argc < 3) throw std::invalid_argument("password is required");
+    const std::string password = argv[2];
+    const auto args = parseExportSnapshotArgs(argc, argv, 3, defaultVaultPath);
+    auto snapshot = loadSnapshotOrEmpty(password, args.vaultPath);
+    rebuildTaxonomy(snapshot);
+    const auto exportPath = args.outPath.empty()
+        ? exportDirectoryFor(args) / ("vault-export-" + timestampForFileName() + ".json")
+        : fs::path(args.outPath);
+    writeTextFile(exportPath, serializeSnapshotJson(snapshot));
+    std::cout << "Export saved: " << exportPath.string() << "\n";
+}
+
+void importSnapshot(int argc, char** argv, const char* defaultVaultPath) {
+    if (argc < 3) throw std::invalid_argument("password is required");
+    const std::string password = argv[2];
+    const auto args = parseImportSnapshotArgs(argc, argv, 3, defaultVaultPath);
+    (void)loadSnapshotOrEmpty(password, args.vaultPath);
+    auto snapshot = parseSnapshotJson(readTextFile(fs::path(args.inPath)));
+    rebuildTaxonomy(snapshot);
+    saveSnapshot(password, args.vaultPath, snapshot);
+    const auto active = std::count_if(snapshot.entries.begin(), snapshot.entries.end(), [](const auto& entry) {
+        return !entry.isDeleted;
+    });
+    std::cout << "Imported " << active << " active entries.\n";
+}
+
 void selfTest() {
     VaultSnapshot snapshot;
     snapshot.entries.push_back(makeEntry("Self Test", "credential", "self@example.com", "secret"));
@@ -488,6 +781,26 @@ int runNativeCli(int argc, char** argv, const char* platformName, const char* de
         }
         if (command == "delete-entry") {
             deleteEntry(argc, argv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "backup") {
+            backupVault(argc, argv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "list-backups") {
+            listBackups(argc, argv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "restore-backup") {
+            restoreBackup(argc, argv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "export-snapshot") {
+            exportSnapshot(argc, argv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "import-snapshot") {
+            importSnapshot(argc, argv, defaultVaultPath);
             return 0;
         }
         if (command == "category") {

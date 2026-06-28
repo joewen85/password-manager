@@ -28,8 +28,9 @@ $(APP): $(BUILD_DIR) $(CORE_SRC) $(CLI_SRC) $(CORE_HEADER) $(CLI_HEADER) src/mai
 $(TESTS): $(BUILD_DIR) $(CORE_SRC) $(CORE_HEADER) $(CORE_TESTS)
 	$(CXX) $(CXXFLAGS) $(PM_CPPFLAGS) $(CORE_SRC) $(CORE_TESTS) $(PM_LDFLAGS) $(LDLIBS) -o $@
 
-test: $(TESTS)
+test: $(TESTS) $(APP)
 	$(TESTS)
+	bash $(NATIVE_CORE_DIR)/tests/vault_cli_smoke.sh $(APP)
 
 clean:
 	rm -rf $(BUILD_DIR)

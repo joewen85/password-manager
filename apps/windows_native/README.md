@@ -11,7 +11,7 @@
 - `PasswordManagerWindows.vcxproj` 提供 Visual Studio / MSBuild 项目骨架。
 - 可移植 core 复用 `apps/native_core` 的 C++17 + OpenSSL 路径，当前可在本机用 clang 构建和测试。
 - 已实现可测试核心：PBKDF2-SHA256、AES-256-GCM encrypted vault envelope、TOTP、entry model、搜索/过滤、分类/标签集合、JSON snapshot 序列化/反序列化、encrypted vault 文件读写、version-vector merge。
-- CLI 入口支持初始化、解锁状态检查、分类模板持久化、credential/server/service 条目新增、搜索列表、单条查看、软删除、TOTP 和 self-test，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
+- CLI 入口支持初始化、解锁状态检查、分类模板持久化、credential/server/service 条目新增、搜索列表、单条查看、软删除、本地 encrypted envelope 备份/恢复、明文 snapshot 导出/导入、TOTP 和 self-test，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
 - 当前尚未实现完整 Win32/WinUI 3/WPF 图形界面，也尚未实现 Windows Credential Manager / DPAPI 集成和真实 WebDAV/S3 网络同步。
 
 ### 目录说明
@@ -118,7 +118,19 @@ msbuild PasswordManagerWindows.vcxproj /p:Configuration=Release /p:Platform=x64
    ./build/password-manager-windows-core delete-entry "test-password" "<entry-id>"
    ```
 
-8. 确认 `vault-windows-native.envelope` 包含 salt、iterations、verifier、nonce、ciphertext、mac，但不包含分类名、username 或 password 等 vault 明文。
+8. 备份、列出备份、导出明文 snapshot、导入 snapshot、恢复备份：
+
+   ```bash
+   ./build/password-manager-windows-core backup "test-password"
+   ./build/password-manager-windows-core list-backups
+   ./build/password-manager-windows-core export-snapshot "test-password"
+   ./build/password-manager-windows-core import-snapshot "test-password" --in exports/vault-export-YYYYMMDD-HHMMSS.json
+   ./build/password-manager-windows-core restore-backup "test-password" latest
+   ```
+
+   `backup` 默认写入 vault 同级 `backups/`，只保留最新 5 份 encrypted envelope；`export-snapshot` 默认写入同级 `exports/`，内容是明文 JSON，只应保存到受信任位置。
+
+9. 确认 `vault-windows-native.envelope` 和 `backups/vault-*.json` 包含 salt、iterations、verifier、nonce、ciphertext、mac，但不包含分类名、username 或 password 等 vault 明文。
 
 Windows 实机验证还需要覆盖：
 
@@ -127,7 +139,7 @@ Windows 实机验证还需要覆盖：
 3. credential/server/service CRUD。
 4. 搜索、分类和标签。
 5. TOTP 解锁。
-6. 导入导出、备份和恢复。
+6. GUI 中的导入导出、备份和恢复交互。
 7. WebDAV/S3 真实服务同步。
 8. 关闭进程和重启后的数据保留。
 9. Windows 高 DPI、深色模式、键盘导航和屏幕阅读器基础可访问性。
