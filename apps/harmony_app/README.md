@@ -2,7 +2,7 @@
 
 ## 中文
 
-该目录包含 HarmonyOS 6 原生重构目标。它与 `apps/flutter_app` 明确隔离，用于在不改动现有 Flutter 实现和既有功能行为的前提下，继续补齐 HarmonyOS 原生端能力。
+该目录包含 HarmonyOS 6 原生应用，用于继续补齐 HarmonyOS 原生端能力。
 
 ### 范围
 
@@ -201,7 +201,7 @@ hdc list targets
 
 ## English
 
-This directory contains the native HarmonyOS 6 rewrite target. It is intentionally separate from `apps/flutter_app` so the existing Flutter implementation remains untouched while native HarmonyOS parity is built incrementally.
+This directory contains the native HarmonyOS 6 application target, used to build HarmonyOS-native parity incrementally.
 
 ### Scope
 

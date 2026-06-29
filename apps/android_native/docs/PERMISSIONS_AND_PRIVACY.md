@@ -2,7 +2,7 @@
 
 ## 中文
 
-该文件记录 `apps/android_native` 当前权限、数据存储和 Google Play Data safety 披露基线。它只描述原生 Android 目录，不覆盖或修改 `apps/flutter_app`。
+该文件记录 `apps/android_native` 当前权限、数据存储和 Google Play Data safety 披露基线。它只描述原生 Android 目录。
 
 ### Manifest 权限
 
@@ -67,7 +67,7 @@ EXPECTED_RELEASE_CERT_SHA256=AA:BB:CC:... \
 
 ## English
 
-This file records the current permissions, data storage, and Google Play Data safety disclosure baseline for `apps/android_native`. It only describes the native Android directory and does not cover or modify `apps/flutter_app`.
+This file records the current permissions, data storage, and Google Play Data safety disclosure baseline for `apps/android_native`. It only describes the native Android directory.
 
 ### Manifest Permissions
 

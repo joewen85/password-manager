@@ -8,7 +8,6 @@ function Require-Command($name) {
 }
 
 Require-Command dart
-Require-Command flutter
 
 Write-Host "==> Running package tests"
 Push-Location packages/crypto
@@ -25,11 +24,6 @@ Pop-Location
 
 Push-Location packages/storage
   dart test
-Pop-Location
-
-Write-Host "==> Running app widget tests"
-Push-Location apps/flutter_app
-  flutter test
 Pop-Location
 
 Write-Host "All tests passed."

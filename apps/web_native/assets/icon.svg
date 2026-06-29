@@ -1,5 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Password Manager">
-  <rect width="128" height="128" rx="28" fill="#0f172a"/>
-  <path d="M38 58a26 26 0 1 1 47 15l17 17-10 10-9-9-8 8-10-10 7-7a26 26 0 0 1-34-24Z" fill="#38bdf8"/>
-  <circle cx="64" cy="58" r="10" fill="#f8fafc"/>
-</svg>

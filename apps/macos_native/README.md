@@ -2,7 +2,7 @@
 
 ## 中文
 
-该目录包含 macOS 原生重构目标。它与 `apps/flutter_app` 明确隔离，用于在不改动现有 Flutter 实现和既有功能行为的前提下，逐步补齐原生端能力。
+该目录包含 macOS 原生应用，用于逐步补齐 macOS 端原生能力。
 
 ### 范围
 
@@ -331,7 +331,7 @@ APP_SPECIFIC_PASSWORD=xxxx-xxxx-xxxx-xxxx \
 
 ## English
 
-This directory contains the native macOS rewrite target. It is intentionally separate from `apps/flutter_app` so the existing Flutter implementation remains untouched while native parity is built incrementally.
+This directory contains the native macOS application target, used to build macOS-native parity incrementally.
 
 ### Scope
 

@@ -2,7 +2,7 @@
 
 ## 中文
 
-该目录包含 Linux 原生重构目标。它与 `apps/flutter_app` 明确隔离，用于在不改动现有 Flutter Linux 实现和既有功能行为的前提下，逐步补齐 Linux 原生端能力。
+该目录包含 Linux 原生应用，用于逐步补齐 Linux 端原生能力。
 
 ### 范围
 
@@ -232,7 +232,7 @@ Release notes 只能描述已经验证的能力；当前不能把 GUI、GUI 同�
 
 ## English
 
-This directory contains the native Linux rewrite target. It is intentionally separate from `apps/flutter_app` so the existing Flutter Linux implementation remains untouched while native Linux parity is built incrementally.
+This directory contains the native Linux application target, used to build Linux-native parity incrementally.
 
 ### Scope
 

@@ -2,7 +2,7 @@
 
 ## 中文
 
-该目录包含 iOS 原生重构目标。它与 `apps/flutter_app` 明确隔离，用于在不改动现有 Flutter iOS 实现和既有功能行为的前提下，逐步补齐 iOS 原生端能力。
+该目录包含 iOS 原生应用，用于逐步补齐 iOS 端原生能力。
 
 ### 范围
 
@@ -11,7 +11,7 @@
 - SwiftUI 视图已放入 `PasswordManageriOSCore`，并提供 `PasswordManageriOSAppRoot` 作为 Xcode iOS app target 的根视图。
 - 当前包含 SwiftPM 可测试核心模块和 `PasswordManageriOS.xcodeproj` 原生 app target。
 - 已配置 Debug/Release build configuration、bundle identifier、生成式 launch screen、placeholder asset catalog、空 entitlements 和 privacy manifest。生产发布前仍需替换正式 app icon、配置 Apple Developer Team/signing、真机验证和 App Store Connect 验证。
-- 本目录不依赖或修改 Flutter iOS 工程。
+- 本目录不依赖已移除的 Flutter iOS 工程。
 
 ### 目录说明
 
@@ -158,7 +158,7 @@ xcodebuild archive \
 
 ## English
 
-This directory contains the native iOS rewrite target. It is intentionally separate from `apps/flutter_app` so the existing Flutter iOS implementation remains untouched while native iOS parity is built incrementally.
+This directory contains the native iOS application target, used to build iOS-native parity incrementally.
 
 ### Scope
 
@@ -167,7 +167,7 @@ This directory contains the native iOS rewrite target. It is intentionally separ
 - SwiftUI views are included in `PasswordManageriOSCore`, and `PasswordManageriOSAppRoot` is used as the root view for the Xcode iOS app target.
 - The current form includes a SwiftPM-tested core module and a `PasswordManageriOS.xcodeproj` native app target.
 - Debug/Release build configurations, bundle identifier, generated launch screen, placeholder asset catalog, empty entitlements, and a privacy manifest are scaffolded. Production release still needs final app icons, Apple Developer Team/signing, device validation, and App Store Connect validation.
-- This directory does not depend on or modify the Flutter iOS project.
+- This directory does not depend on the removed Flutter iOS project.
 
 ### Directory Layout
 

@@ -2,7 +2,7 @@
 
 ## 中文
 
-该目录包含 Android 原生重构目标。它与 `apps/flutter_app` 明确隔离，用于在不改动现有 Flutter Android 实现和既有功能行为的前提下，逐步补齐原生端能力。
+该目录包含 Android 原生应用，用于逐步补齐 Android 端原生能力。
 
 ### 范围
 
@@ -295,7 +295,7 @@ docs/PERMISSIONS_AND_PRIVACY.md
 
 ## English
 
-This directory contains the native Android rewrite target. It is intentionally separate from `apps/flutter_app` so the existing Flutter Android implementation remains untouched while native parity is built incrementally.
+This directory contains the native Android application target, used to build Android-native parity incrementally.
 
 ### Scope
 

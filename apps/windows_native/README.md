@@ -2,7 +2,7 @@
 
 ## 中文
 
-该目录包含 Windows 原生重构目标。它与 `apps/flutter_app` 明确隔离，用于在不改动现有 Flutter Windows 实现和既有功能行为的前提下，逐步补齐 Windows 原生端能力。
+该目录包含 Windows 原生应用，用于逐步补齐 Windows 端原生能力。
 
 ### 范围
 
@@ -251,7 +251,7 @@ Release notes 只能描述已经验证的能力；当前不能把完整 GUI、GU
 
 ## English
 
-This directory contains the native Windows rewrite target. It is intentionally separate from `apps/flutter_app` so the existing Flutter Windows implementation remains untouched while native Windows parity is built incrementally.
+This directory contains the native Windows application target, used to build Windows-native parity incrementally.
 
 ### Scope
 
