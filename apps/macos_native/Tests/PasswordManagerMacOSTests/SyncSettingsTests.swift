@@ -574,6 +574,73 @@ struct SyncSettingsTests {
         #expect(reloadedStore.categories == ["test"])
         #expect(reloadedStore.categoryTemplates.map(\.category) == ["test"])
     }
+
+    @MainActor
+    @Test("VaultStore sync does not restore locally deleted empty category")
+    func vaultStoreSyncDoesNotRestoreLocallyDeletedEmptyCategory() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManagerMacOSVaultStoreSyncDeletedCategoryTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let secretStore = InMemorySyncSecretStore()
+        let syncRepository = try SyncSettingsRepository(baseDirectory: directory, secretStore: secretStore)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(
+            repository: repository,
+            syncSettingsRepository: syncRepository,
+            syncEngine: engine
+        )
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+        var settings = SyncSettings.defaults(deviceId: "mac-device")
+        settings.providerType = .webdav
+        settings.webdavUrl = "https://dav.example.com/root"
+        settings.webdavPath = "/vault.json"
+        settings.conflictStrategy = .keepBoth
+        settings.lastSyncRevision = 2
+        store.updateSyncSettings(settings)
+        #expect(store.addCategory("test"))
+        #expect(store.deleteCategory("test"))
+
+        let staleRemote = VaultSnapshot(
+            entries: [],
+            categories: ["test"],
+            categoryTemplates: [CategoryTemplate(category: "test")],
+            tags: [],
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_100)
+        )
+        let remotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 3,
+                snapshot: staleRemote
+            )
+        )
+        let client = VaultStoreSyncFakeClient(
+            downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)],
+            uploadStatusCodes: [200]
+        )
+
+        await store.syncNow(client: client)
+
+        #expect(store.categories == [])
+        #expect(store.categoryTemplates == [])
+        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.first))
+        #expect(uploaded.revision == 4)
+        #expect(uploaded.snapshot.categories == [])
+        #expect(uploaded.snapshot.categoryTemplates == [])
+
+        let reloadedStore = VaultStore(
+            repository: repository,
+            syncSettingsRepository: syncRepository,
+            syncEngine: engine
+        )
+        #expect(reloadedStore.unlock(password: "test-password"))
+        #expect(reloadedStore.categories == [])
+        #expect(reloadedStore.categoryTemplates == [])
+    }
 }
 
 private func syncSettingsHTTPResult(url: URL, statusCode: Int, body: String = "") -> (Data, HTTPURLResponse) {

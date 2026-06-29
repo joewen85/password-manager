@@ -349,7 +349,13 @@ export async function synchronizeSnapshot(localSnapshot, settings, client, now =
     settings.conflictStrategy ?? "remoteWins",
     now
   );
-  const mergedSnapshot = mergeSnapshot(localSnapshot, remotePayload.snapshot, mergeResult.entries);
+  const mergedSnapshot = mergeSnapshot(
+    localSnapshot,
+    remotePayload.snapshot,
+    mergeResult.entries,
+    settings.conflictStrategy ?? "remoteWins",
+    settings.hasLocalChanges === true
+  );
 
   if (snapshotEquals(mergedSnapshot, remotePayload.snapshot)) {
     return syncResult(
@@ -623,13 +629,25 @@ async function uploadSyncPayload(client, payload) {
   }
 }
 
-function mergeSnapshot(local, remote, entries) {
+function mergeSnapshot(local, remote, entries, conflictStrategy = "remoteWins", localHasChanges = false) {
   const latest = (local.updatedAt ?? "") >= (remote.updatedAt ?? "") ? local : remote;
+  const shouldMergeCleanLocalTaxonomy = conflictStrategy === "keepBoth" && !localHasChanges;
+  const baseCategories = shouldMergeCleanLocalTaxonomy
+    ? [...(local.categories ?? []), ...(remote.categories ?? [])]
+    : localHasChanges
+      ? (local.categories ?? [])
+      : (remote.categories ?? []);
+  const baseTags = shouldMergeCleanLocalTaxonomy
+    ? [...(local.tags ?? []), ...(remote.tags ?? [])]
+    : localHasChanges
+      ? (local.tags ?? [])
+      : (remote.tags ?? []);
+  const activeEntries = entries.filter((entry) => !entry.isDeleted);
   return {
     ...latest,
     entries: entries.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
-    categories: [...new Set([...(local.categories ?? []), ...(remote.categories ?? [])])].sort(),
-    tags: [...new Set([...(local.tags ?? []), ...(remote.tags ?? [])])].sort(),
+    categories: [...new Set([...baseCategories, ...activeEntries.map((entry) => entry.payload.category).filter(Boolean)])].sort(),
+    tags: [...new Set([...baseTags, ...activeEntries.flatMap((entry) => entry.payload.tags ?? []).filter(Boolean)])].sort(),
     updatedAt: [local.updatedAt, remote.updatedAt].filter(Boolean).sort().at(-1) ?? new Date().toISOString()
   };
 }

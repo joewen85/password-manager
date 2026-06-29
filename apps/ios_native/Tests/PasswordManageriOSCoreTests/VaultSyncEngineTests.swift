@@ -207,6 +207,92 @@ struct VaultSyncEngineTests {
         #expect(uploaded.snapshot.categoryTemplates.map(\.category) == ["test"])
     }
 
+    @Test("Keep both does not restore a locally deleted empty category")
+    func keepBothDoesNotRestoreLocallyDeletedEmptyCategory() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        var settings = SyncSettings.defaults(deviceId: "ios-device")
+        settings.lastSyncRevision = 2
+        settings.hasLocalChanges = true
+        settings.conflictStrategy = .keepBoth
+        let local = makeSnapshot(
+            categories: [],
+            categoryTemplates: [],
+            entries: [],
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_100)
+        )
+        let remote = makeSnapshot(
+            categories: ["test"],
+            categoryTemplates: [CategoryTemplate(category: "test")],
+            entries: [],
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        let remotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 3,
+                snapshot: remote
+            )
+        )
+        let client = FakeSyncClient(
+            downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)],
+            uploadStatusCodes: [200]
+        )
+
+        let result = try await engine.synchronize(localSnapshot: local, settings: settings, client: client)
+
+        #expect(result.uploaded)
+        #expect(result.snapshot.categories == [])
+        #expect(result.snapshot.categoryTemplates == [])
+        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.single))
+        #expect(uploaded.snapshot.categories == [])
+        #expect(uploaded.snapshot.categoryTemplates == [])
+    }
+
+    @Test("Keep both does not restore old category name after local rename")
+    func keepBothDoesNotRestoreOldCategoryNameAfterLocalRename() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        var settings = SyncSettings.defaults(deviceId: "ios-device")
+        settings.lastSyncRevision = 2
+        settings.hasLocalChanges = true
+        settings.conflictStrategy = .keepBoth
+        let local = makeSnapshot(
+            categories: ["prod"],
+            categoryTemplates: [CategoryTemplate(category: "prod")],
+            entries: [],
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_100)
+        )
+        let remote = makeSnapshot(
+            categories: ["test"],
+            categoryTemplates: [CategoryTemplate(category: "test")],
+            entries: [],
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        let remotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 3,
+                snapshot: remote
+            )
+        )
+        let client = FakeSyncClient(
+            downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)],
+            uploadStatusCodes: [200]
+        )
+
+        let result = try await engine.synchronize(localSnapshot: local, settings: settings, client: client)
+
+        #expect(result.uploaded)
+        #expect(result.snapshot.categories == ["prod"])
+        #expect(result.snapshot.categoryTemplates.map(\.category) == ["prod"])
+        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.single))
+        #expect(uploaded.snapshot.categories == ["prod"])
+        #expect(uploaded.snapshot.categoryTemplates.map(\.category) == ["prod"])
+    }
+
     @Test("Unchanged remote fingerprint skips full download when local is clean")
     func unchangedRemoteFingerprintSkipsFullDownloadWhenLocalIsClean() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)

@@ -220,6 +220,28 @@ int main() {
     assert(cleanEmptyCategoryMerge.snapshot.categoryTemplates.size() == 1);
     assert(cleanEmptyCategoryMerge.snapshot.categoryTemplates[0].fields.size() == 2);
 
+    const auto retainedEmptyCategoryRemotePayload = pm::serializeSyncPayloadJson(
+        pm::VaultSyncPayload{1, "2026-06-28T00:05:00Z", "remote", 4, emptyCategoryLocal}
+    );
+    emptyCategorySettings.hasLocalChanges = true;
+    pm::VaultSnapshot deletedEmptyCategoryLocal;
+    deletedEmptyCategoryLocal.updatedAt = "2026-06-28T00:06:00Z";
+    auto deletedEmptyCategoryMerge = pm::synchronizeSnapshots(deletedEmptyCategoryLocal, emptyCategorySettings, retainedEmptyCategoryRemotePayload);
+    assert(deletedEmptyCategoryMerge.uploaded);
+    assert(deletedEmptyCategoryMerge.snapshot.categories.empty());
+    assert(deletedEmptyCategoryMerge.snapshot.categoryTemplates.empty());
+
+    pm::VaultSnapshot renamedEmptyCategoryLocal;
+    renamedEmptyCategoryLocal.updatedAt = "2026-06-28T00:06:00Z";
+    renamedEmptyCategoryLocal.categories = {"prod"};
+    renamedEmptyCategoryLocal.categoryTemplates = {pm::CategoryTemplate{"prod", pm::defaultCategoryFields()}};
+    auto renamedEmptyCategoryMerge = pm::synchronizeSnapshots(renamedEmptyCategoryLocal, emptyCategorySettings, retainedEmptyCategoryRemotePayload);
+    assert(renamedEmptyCategoryMerge.uploaded);
+    assert(renamedEmptyCategoryMerge.snapshot.categories.size() == 1);
+    assert(renamedEmptyCategoryMerge.snapshot.categories[0] == "prod");
+    assert(renamedEmptyCategoryMerge.snapshot.categoryTemplates.size() == 1);
+    assert(renamedEmptyCategoryMerge.snapshot.categoryTemplates[0].category == "prod");
+
     pm::VaultSnapshot remoteDominant;
     remoteDominant.updatedAt = "2026-06-28T00:05:00Z";
     remoteDominant.entries.push_back(pm::makeEntry("Remote Sync", "credential", "remote@example.com", "remote-secret"));

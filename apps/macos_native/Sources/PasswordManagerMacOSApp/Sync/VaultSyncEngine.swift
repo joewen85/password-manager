@@ -210,18 +210,18 @@ struct VaultSyncEngine: Sendable {
     ) -> VaultSnapshot {
         let latestSnapshot = local.updatedAt >= remote.updatedAt ? local : remote
         let activeEntries = entries.filter { !$0.isDeleted }
-        let keepBothTaxonomy = conflictStrategy == .keepBoth
-        let baseCategories = keepBothTaxonomy
+        let shouldMergeCleanLocalTaxonomy = conflictStrategy == .keepBoth && !localHasChanges
+        let baseCategories = shouldMergeCleanLocalTaxonomy
             ? local.categories + remote.categories
             : (localHasChanges ? local.categories : remote.categories)
-        let baseCategoryTemplates = keepBothTaxonomy
-            ? preferredTemplates(local: local, remote: remote, localHasChanges: localHasChanges)
+        let baseCategoryTemplates = shouldMergeCleanLocalTaxonomy
+            ? remote.categoryTemplates + local.categoryTemplates
             : (localHasChanges ? local.categoryTemplates : remote.categoryTemplates)
         let categories = mergeTaxonomy(
             base: baseCategories,
             values: activeEntries.map(\.payload.category) + baseCategoryTemplates.map(\.category)
         )
-        let baseTags = keepBothTaxonomy
+        let baseTags = shouldMergeCleanLocalTaxonomy
             ? local.tags + remote.tags
             : (localHasChanges ? local.tags : remote.tags)
         let tags = mergeTaxonomy(
@@ -244,16 +244,6 @@ struct VaultSyncEngine: Sendable {
             lastBackupStatus: latestSnapshot.lastBackupStatus,
             updatedAt: max(local.updatedAt, remote.updatedAt)
         )
-    }
-
-    private func preferredTemplates(
-        local: VaultSnapshot,
-        remote: VaultSnapshot,
-        localHasChanges: Bool
-    ) -> [CategoryTemplate] {
-        localHasChanges
-            ? local.categoryTemplates + remote.categoryTemplates
-            : remote.categoryTemplates + local.categoryTemplates
     }
 
     private func mergeTaxonomy(base: [String], values: [String]) -> [String] {

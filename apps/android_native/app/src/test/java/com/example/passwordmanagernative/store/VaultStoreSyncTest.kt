@@ -1,15 +1,19 @@
 package com.example.passwordmanagernative.store
 
+import com.example.passwordmanagernative.model.CategoryTemplate
 import com.example.passwordmanagernative.model.CredentialPayload
 import com.example.passwordmanagernative.model.EntryDraft
 import com.example.passwordmanagernative.model.VaultEntryType
+import com.example.passwordmanagernative.model.VaultSnapshot
 import com.example.passwordmanagernative.sync.InMemorySyncSecretStore
 import com.example.passwordmanagernative.sync.RemoteSyncClient
 import com.example.passwordmanagernative.sync.RemoteSyncResult
+import com.example.passwordmanagernative.sync.SyncSettingsConflictStrategy
 import com.example.passwordmanagernative.sync.SyncProviderType
 import com.example.passwordmanagernative.sync.SyncSettings
 import com.example.passwordmanagernative.sync.SyncSettingsRepository
 import com.example.passwordmanagernative.sync.VaultSyncEngine
+import com.example.passwordmanagernative.sync.VaultSyncPayload
 import java.io.File
 import java.time.Instant
 import kotlin.io.path.createTempDirectory
@@ -165,6 +169,75 @@ class VaultStoreSyncTest {
             assertTrue(reloadedStore.unlock("test-password"))
             assertEquals(listOf("test"), reloadedStore.categories())
             assertEquals("test", reloadedStore.categoryTemplate("test")?.category)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun syncNowDoesNotRestoreLocallyDeletedEmptyCategory() {
+        val directory = createTempDirectory("PasswordManagerAndroidVaultStoreSyncDeletedCategoryTests").toFile()
+        try {
+            val syncRepository = SyncSettingsRepository(
+                settingsFile = File(directory, "sync_settings.json"),
+                secretStore = InMemorySyncSecretStore(),
+            )
+            val now = Instant.parse("2027-01-15T08:00:00Z")
+            val engine = VaultSyncEngine(clock = { now })
+            val repository = FileVaultRepository(directory)
+            val store = VaultStore(
+                repository = repository,
+                syncSettingsRepository = syncRepository,
+                syncEngine = engine,
+            )
+            assertTrue(store.setupMasterPassword("test-password", "test-password"))
+            val settings = SyncSettings.defaults(deviceId = "android-device").copy(
+                providerType = SyncProviderType.WEBDAV,
+                webdavUrl = "https://dav.example.com/root",
+                webdavPath = "/vault.json",
+                conflictStrategy = SyncSettingsConflictStrategy.KEEP_BOTH,
+                lastSyncRevision = 2,
+            )
+            store.updateSyncSettings(settings)
+            assertTrue(store.addCategory("test"))
+            assertTrue(store.deleteCategory("test"))
+            val staleRemote = VaultSnapshot(
+                entries = emptyList(),
+                categories = listOf("test"),
+                categoryTemplates = listOf(CategoryTemplate(category = "test")),
+                tags = emptyList(),
+                updatedAt = Instant.parse("2027-01-15T08:01:00Z"),
+            )
+            val remotePayload = engine.encodePayload(
+                VaultSyncPayload(
+                    exportedAt = now,
+                    deviceId = "remote-device",
+                    revision = 3,
+                    snapshot = staleRemote,
+                )
+            )
+            val client = VaultStoreSyncFakeClient(
+                downloads = ArrayDeque(listOf(RemoteSyncResult(payload = remotePayload, statusCode = 200))),
+                uploadStatusCodes = ArrayDeque(listOf(200)),
+            )
+
+            store.syncNow(client)
+
+            assertEquals(emptyList(), store.categories())
+            assertEquals(null, store.categoryTemplate("test"))
+            val uploaded = assertNotNull(engine.decodePayload(client.uploadedPayloads.single()))
+            assertEquals(4, uploaded.revision)
+            assertEquals(emptyList(), uploaded.snapshot.categories)
+            assertEquals(emptyList(), uploaded.snapshot.categoryTemplates)
+
+            val reloadedStore = VaultStore(
+                repository = repository,
+                syncSettingsRepository = syncRepository,
+                syncEngine = engine,
+            )
+            assertTrue(reloadedStore.unlock("test-password"))
+            assertEquals(emptyList(), reloadedStore.categories())
+            assertEquals(null, reloadedStore.categoryTemplate("test"))
         } finally {
             directory.deleteRecursively()
         }

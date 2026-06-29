@@ -293,3 +293,144 @@ test("sync engine merges remote payload and uploads a new revision", async () =>
   assert.equal(uploaded.revision, 9);
   assert.equal(uploaded.snapshot.entries[0].label, "Local");
 });
+
+test("sync engine keepBoth preserves clean local empty category", async () => {
+  const localSnapshot = {
+    ...defaultSnapshot(new Date("2026-01-01T00:00:00Z")),
+    categories: ["test"],
+    updatedAt: "2026-01-01T00:00:00.000Z"
+  };
+  const remoteSnapshot = {
+    ...defaultSnapshot(new Date("2026-01-01T00:01:00Z")),
+    categories: [],
+    updatedAt: "2026-01-01T00:01:00.000Z"
+  };
+  const remotePayload = encodeSyncPayload({
+    version: 1,
+    exportedAt: "2026-01-01T00:01:00.000Z",
+    deviceId: "remote-device",
+    revision: 2,
+    snapshot: remoteSnapshot
+  });
+  let uploadedPayload = null;
+  const client = {
+    async download() {
+      return { payload: remotePayload, statusCode: 200 };
+    },
+    async upload(payload) {
+      uploadedPayload = payload;
+      return { payload: null, statusCode: 200 };
+    }
+  };
+
+  const result = await synchronizeSnapshot(
+    localSnapshot,
+    {
+      ...defaultSyncSettings("device-1"),
+      lastSyncRevision: 1,
+      conflictStrategy: "keepBoth",
+      hasLocalChanges: false
+    },
+    client,
+    new Date("2026-01-01T00:03:00Z")
+  );
+  const uploaded = decodeSyncPayload(uploadedPayload);
+
+  assert.equal(result.uploaded, true);
+  assert.deepEqual(result.snapshot.categories, ["test"]);
+  assert.deepEqual(uploaded.snapshot.categories, ["test"]);
+});
+
+test("sync engine keepBoth does not restore locally deleted category", async () => {
+  const localSnapshot = {
+    ...defaultSnapshot(new Date("2026-01-01T00:02:00Z")),
+    categories: [],
+    updatedAt: "2026-01-01T00:02:00.000Z"
+  };
+  const remoteSnapshot = {
+    ...defaultSnapshot(new Date("2026-01-01T00:01:00Z")),
+    categories: ["test"],
+    updatedAt: "2026-01-01T00:01:00.000Z"
+  };
+  const remotePayload = encodeSyncPayload({
+    version: 1,
+    exportedAt: "2026-01-01T00:01:00.000Z",
+    deviceId: "remote-device",
+    revision: 3,
+    snapshot: remoteSnapshot
+  });
+  let uploadedPayload = null;
+  const client = {
+    async download() {
+      return { payload: remotePayload, statusCode: 200 };
+    },
+    async upload(payload) {
+      uploadedPayload = payload;
+      return { payload: null, statusCode: 200 };
+    }
+  };
+
+  const result = await synchronizeSnapshot(
+    localSnapshot,
+    {
+      ...defaultSyncSettings("device-1"),
+      lastSyncRevision: 2,
+      conflictStrategy: "keepBoth",
+      hasLocalChanges: true
+    },
+    client,
+    new Date("2026-01-01T00:03:00Z")
+  );
+  const uploaded = decodeSyncPayload(uploadedPayload);
+
+  assert.equal(result.uploaded, true);
+  assert.deepEqual(result.snapshot.categories, []);
+  assert.deepEqual(uploaded.snapshot.categories, []);
+});
+
+test("sync engine keepBoth does not restore old category name after local rename", async () => {
+  const localSnapshot = {
+    ...defaultSnapshot(new Date("2026-01-01T00:02:00Z")),
+    categories: ["prod"],
+    updatedAt: "2026-01-01T00:02:00.000Z"
+  };
+  const remoteSnapshot = {
+    ...defaultSnapshot(new Date("2026-01-01T00:01:00Z")),
+    categories: ["test"],
+    updatedAt: "2026-01-01T00:01:00.000Z"
+  };
+  const remotePayload = encodeSyncPayload({
+    version: 1,
+    exportedAt: "2026-01-01T00:01:00.000Z",
+    deviceId: "remote-device",
+    revision: 3,
+    snapshot: remoteSnapshot
+  });
+  let uploadedPayload = null;
+  const client = {
+    async download() {
+      return { payload: remotePayload, statusCode: 200 };
+    },
+    async upload(payload) {
+      uploadedPayload = payload;
+      return { payload: null, statusCode: 200 };
+    }
+  };
+
+  const result = await synchronizeSnapshot(
+    localSnapshot,
+    {
+      ...defaultSyncSettings("device-1"),
+      lastSyncRevision: 2,
+      conflictStrategy: "keepBoth",
+      hasLocalChanges: true
+    },
+    client,
+    new Date("2026-01-01T00:03:00Z")
+  );
+  const uploaded = decodeSyncPayload(uploadedPayload);
+
+  assert.equal(result.uploaded, true);
+  assert.deepEqual(result.snapshot.categories, ["prod"]);
+  assert.deepEqual(uploaded.snapshot.categories, ["prod"]);
+});

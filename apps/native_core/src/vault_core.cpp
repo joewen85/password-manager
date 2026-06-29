@@ -617,19 +617,18 @@ VaultSnapshot mergeSnapshotsForSync(
     std::sort(merged.entries.begin(), merged.entries.end(), [](const auto& left, const auto& right) {
         return left.updatedAt > right.updatedAt;
     });
-    const bool keepBothTaxonomy = conflictStrategy == "keepBoth";
+    const bool shouldMergeCleanLocalTaxonomy = conflictStrategy == "keepBoth" && !localHasChanges;
     std::vector<std::string> values;
-    if (keepBothTaxonomy) {
+    if (shouldMergeCleanLocalTaxonomy) {
         values = local.categories;
         values.insert(values.end(), remote.categories.begin(), remote.categories.end());
     } else {
         values = localHasChanges ? local.categories : remote.categories;
     }
     std::vector<CategoryTemplate> baseTemplates;
-    if (keepBothTaxonomy) {
-        baseTemplates = localHasChanges ? local.categoryTemplates : remote.categoryTemplates;
-        const auto& secondaryTemplates = localHasChanges ? remote.categoryTemplates : local.categoryTemplates;
-        baseTemplates.insert(baseTemplates.end(), secondaryTemplates.begin(), secondaryTemplates.end());
+    if (shouldMergeCleanLocalTaxonomy) {
+        baseTemplates = remote.categoryTemplates;
+        baseTemplates.insert(baseTemplates.end(), local.categoryTemplates.begin(), local.categoryTemplates.end());
     } else {
         baseTemplates = localHasChanges ? local.categoryTemplates : remote.categoryTemplates;
     }
@@ -638,7 +637,7 @@ VaultSnapshot mergeSnapshotsForSync(
         if (!entry.isDeleted) values.push_back(entry.category);
     }
     merged.categories = mergeTaxonomyValues(values);
-    if (keepBothTaxonomy) {
+    if (shouldMergeCleanLocalTaxonomy) {
         values = local.tags;
         values.insert(values.end(), remote.tags.begin(), remote.tags.end());
     } else {

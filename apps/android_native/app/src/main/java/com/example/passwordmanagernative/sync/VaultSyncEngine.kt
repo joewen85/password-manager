@@ -197,16 +197,16 @@ class VaultSyncEngine(
     ): VaultSnapshot {
         val latestSnapshot = if (local.updatedAt >= remote.updatedAt) local else remote
         val activeEntries = entries.filterNot { it.isDeleted }
-        val keepBothTaxonomy = conflictStrategy == SyncSettingsConflictStrategy.KEEP_BOTH
-        val baseCategories = if (keepBothTaxonomy) {
+        val shouldMergeCleanLocalTaxonomy = conflictStrategy == SyncSettingsConflictStrategy.KEEP_BOTH && !localHasChanges
+        val baseCategories = if (shouldMergeCleanLocalTaxonomy) {
             local.categories + remote.categories
         } else if (localHasChanges) {
             local.categories
         } else {
             remote.categories
         }
-        val baseCategoryTemplates = if (keepBothTaxonomy) {
-            preferredTemplates(local, remote, localHasChanges)
+        val baseCategoryTemplates = if (shouldMergeCleanLocalTaxonomy) {
+            remote.categoryTemplates + local.categoryTemplates
         } else if (localHasChanges) {
             local.categoryTemplates
         } else {
@@ -216,7 +216,7 @@ class VaultSyncEngine(
             base = baseCategories,
             entries = activeEntries.map { it.payload.category } + baseCategoryTemplates.map { it.category },
         )
-        val baseTags = if (keepBothTaxonomy) {
+        val baseTags = if (shouldMergeCleanLocalTaxonomy) {
             local.tags + remote.tags
         } else if (localHasChanges) {
             local.tags
@@ -244,17 +244,6 @@ class VaultSyncEngine(
             updatedAt = maxOf(local.updatedAt, remote.updatedAt),
         )
     }
-
-    private fun preferredTemplates(
-        local: VaultSnapshot,
-        remote: VaultSnapshot,
-        localHasChanges: Boolean,
-    ): List<CategoryTemplate> =
-        if (localHasChanges) {
-            local.categoryTemplates + remote.categoryTemplates
-        } else {
-            remote.categoryTemplates + local.categoryTemplates
-        }
 
     private fun mergeTaxonomy(base: List<String>, entries: List<String>): List<String> =
         (base + entries)
