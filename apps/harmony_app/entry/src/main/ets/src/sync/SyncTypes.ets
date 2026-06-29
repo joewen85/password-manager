@@ -93,5 +93,5 @@ export function defaultSyncSettings(): SyncSettings {
 function generateDeviceId(): string {
   const ts = Date.now().toString(36);
   const rand = Math.floor(Math.random() * 1_000_000_000).toString(36);
-  return `${ts}-${rand}`;
+  return `${ts}_${rand}`;
 }

@@ -269,7 +269,7 @@ data class SyncSettings(
         }
 
         fun generateDeviceId(): String =
-            "${Instant.now().toEpochMilli() * 1000}-${UUID.randomUUID().toString().take(8).lowercase(Locale.US)}"
+            "${Instant.now().toEpochMilli() * 1000}_${UUID.randomUUID().toString().take(8).lowercase(Locale.US)}"
     }
 }
 

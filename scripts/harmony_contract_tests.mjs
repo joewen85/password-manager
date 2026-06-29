@@ -12,6 +12,7 @@ const files = {
   crypto: 'apps/harmony_app/entry/src/main/ets/src/security/VaultCryptoService.ets',
   totp: 'apps/harmony_app/entry/src/main/ets/src/security/TotpService.ets',
   controller: 'apps/harmony_app/entry/src/main/ets/src/service/VaultController.ets',
+  syncTypes: 'apps/harmony_app/entry/src/main/ets/src/sync/SyncTypes.ets',
 };
 
 const expectedBundleName = 'life.devops.passwordmanager';
@@ -136,6 +137,11 @@ function checkPersistenceAndSyncSecrecy() {
   assertMatches(controller, /safe\.replace\(\/\(Bearer\\s\+\)\[A-Za-z0-9\\\-._~\+\/\]\+=\*\/gi,\s*'\$1\*\*\*'\)/, 'Log redaction covers Bearer tokens');
 }
 
+function checkSyncSettingsContract() {
+  const syncTypes = read(files.syncTypes);
+  assertIncludes(syncTypes, 'return `${ts}_${rand}`;', 'Harmony generated device IDs use underscore separators');
+}
+
 function main() {
   for (const file of Object.values(files)) {
     const absolute = path.join(root, file);
@@ -145,6 +151,7 @@ function main() {
   checkCryptoContract();
   checkTotpContract();
   checkPersistenceAndSyncSecrecy();
+  checkSyncSettingsContract();
 
   if (failures > 0) {
     console.error(`[FAIL] Harmony contract tests failed: ${failures}`);

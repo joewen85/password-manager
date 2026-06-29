@@ -31,6 +31,14 @@ class SyncSettingsTest {
     }
 
     @Test
+    fun generatedDeviceIdUsesUnderscoreSeparator() {
+        val deviceId = SyncSettings.generateDeviceId()
+
+        assertFalse(deviceId.contains('-'))
+        assertTrue(Regex("^[a-z0-9_]+$").matches(deviceId))
+    }
+
+    @Test
     fun jsonDecodeToleratesMissingAndUnknownValues() {
         val settings = SyncSettings.fromJson(
             JSONObject(
