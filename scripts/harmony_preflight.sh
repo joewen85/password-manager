@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_DIR="$ROOT_DIR/apps/harmony_app"
+EXPECTED_BUNDLE_NAME="life.devops.passwordmanager"
+EXPECTED_VENDOR="DevOps Life"
 source "$ROOT_DIR/scripts/harmony_env.sh"
 
 ok() { printf "[OK] %s\n" "$1"; }
@@ -48,11 +50,33 @@ for file in "${required_files[@]}"; do
   fi
 done
 
+if node "$ROOT_DIR/scripts/harmony_contract_tests.mjs"; then
+  ok "Harmony contract tests passed"
+else
+  fail "Harmony contract tests failed"
+  status=1
+fi
+
 crypto_file="$APP_DIR/entry/src/main/ets/src/security/VaultCryptoService.ets"
 if grep -Eq "DEFAULT_ITERATIONS:[[:space:]]*number[[:space:]]*=[[:space:]]*600000;" "$crypto_file"; then
   ok "Harmony PBKDF2 default matches Dart/Android/macOS/iOS contract: 600000 iterations"
 else
   fail "Harmony PBKDF2 default must be 600000 iterations for new vaults"
+  status=1
+fi
+
+app_scope_file="$APP_DIR/AppScope/app.json5"
+if grep -Eq "\"bundleName\"[[:space:]]*:[[:space:]]*\"$EXPECTED_BUNDLE_NAME\"" "$app_scope_file"; then
+  ok "Harmony bundleName matches Android production applicationId: $EXPECTED_BUNDLE_NAME"
+else
+  fail "Harmony bundleName must be $EXPECTED_BUNDLE_NAME, not an example identifier"
+  status=1
+fi
+
+if grep -Eq "\"vendor\"[[:space:]]*:[[:space:]]*\"$EXPECTED_VENDOR\"" "$app_scope_file"; then
+  ok "Harmony vendor is production metadata: $EXPECTED_VENDOR"
+else
+  fail "Harmony vendor must be production metadata, not an example value"
   status=1
 fi
 

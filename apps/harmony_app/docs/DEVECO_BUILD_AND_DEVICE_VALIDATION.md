@@ -76,13 +76,13 @@ hdc list targets
 ### 5.2 安装 HAP
 
 ```bash
-./scripts/harmony_install_hap.sh <你的hap路径> com.example.passwordmanager
+./scripts/harmony_install_hap.sh <你的hap路径> life.devops.passwordmanager
 ```
 
 示例：
 
 ```bash
-./scripts/harmony_install_hap.sh apps/harmony_app/entry/build/default/outputs/default/entry-default-signed.hap com.example.passwordmanager
+./scripts/harmony_install_hap.sh apps/harmony_app/entry/build/default/outputs/default/entry-default-signed.hap life.devops.passwordmanager
 ```
 
 安装后可在设备桌面直接启动 App。

@@ -6,12 +6,12 @@ source "$ROOT_DIR/scripts/harmony_env.sh"
 
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <path-to-hap> [bundle-name]"
-  echo "Example: $0 apps/harmony_app/entry/build/default/outputs/default/entry-default-signed.hap com.example.passwordmanager"
+  echo "Example: $0 apps/harmony_app/entry/build/default/outputs/default/entry-default-signed.hap life.devops.passwordmanager"
   exit 1
 fi
 
 HAP_PATH="$1"
-BUNDLE_NAME="${2:-com.example.passwordmanager}"
+BUNDLE_NAME="${2:-life.devops.passwordmanager}"
 
 if ! command -v hdc >/dev/null 2>&1; then
   echo "[FAIL] hdc is not available in PATH"

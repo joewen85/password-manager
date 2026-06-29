@@ -145,7 +145,7 @@ hdc list targets
 ```bash
 ./scripts/harmony_install_hap.sh \
   apps/harmony_app/entry/build/default/outputs/default/entry-default-signed.hap \
-  com.example.passwordmanager
+  life.devops.passwordmanager
 ```
 
 然后按 `docs/DEVECO_BUILD_AND_DEVICE_VALIDATION.md` 执行真机冒烟回归，并使用 `docs/DEVICE_VALIDATION_RESULT_TEMPLATE.md` 记录结果。
@@ -180,6 +180,8 @@ hdc list targets
 - [x] 已实现 WebDAV/S3 同步状态机、revision、冲突策略和同步日志。
 - [x] 已实现单条、分类、全库 JSON 导出。
 - [x] 已实现单条/分类 JSON 导入、预览和冲突策略。
+- [x] 已配置生产 bundleName/vendor metadata，并与 Android applicationId 对齐为 `life.devops.passwordmanager`。
+- [x] `harmony_preflight.sh` 和 HAP 构建脚本会校验生产 metadata，防止回退到 example 包名。
 - [x] 权限声明保持最小化，目前声明 `ohos.permission.INTERNET` 与 `ohos.permission.ACCESS_BIOMETRIC`。
 - [x] 已提供 DevEco 编译、签名、真机验证、权限隐私、加密兼容回归文档。
 - [ ] signed HAP 已用发布签名材料生成。
@@ -193,7 +195,7 @@ hdc list targets
 
 ### 当前验证结论
 
-- 命令行预检与 `assembleHap` 已通过，当前产物为 `entry-default-unsigned.hap`。
+- 命令行预检与 `assembleHap` 已通过，当前产物为 `entry-default-unsigned.hap`；HAP 内 `pack.info` 的 bundleName 与 `module.json` 的 vendor 已通过脚本校验。
 - 生物识别解锁代码已通过 ArkTS 编译；真机上的 Face/Fingerprint/HUKS token 流程仍需安装 signed HAP 后验证。
 - 当前环境 `hdc` 曾可用，但设备列表为空，尚不能执行安装与真机回归。
 - 当前签名配置仍缺少 `HARMONY_SIGN_PROFILE` 与 `HARMONY_SIGN_CERTPATH`，无法生成可安装 signed HAP。
@@ -345,7 +347,7 @@ Install:
 ```bash
 ./scripts/harmony_install_hap.sh \
   apps/harmony_app/entry/build/default/outputs/default/entry-default-signed.hap \
-  com.example.passwordmanager
+  life.devops.passwordmanager
 ```
 
 Then run the smoke regression in `docs/DEVECO_BUILD_AND_DEVICE_VALIDATION.md` and record the result with `docs/DEVICE_VALIDATION_RESULT_TEMPLATE.md`.
@@ -380,6 +382,8 @@ Official entry points:
 - [x] WebDAV/S3 sync state machine, revisions, conflict strategy, and logs are implemented.
 - [x] Item, category, and full-vault JSON export are implemented.
 - [x] Item/category JSON import, preview, and conflict strategies are implemented.
+- [x] Production bundleName/vendor metadata is configured and aligned with the Android applicationId as `life.devops.passwordmanager`.
+- [x] `harmony_preflight.sh` and the HAP build script verify production metadata so example package names cannot regress.
 - [x] Permission declaration is minimized to `ohos.permission.INTERNET` and `ohos.permission.ACCESS_BIOMETRIC`.
 - [x] DevEco build, signing, device validation, permissions/privacy, and crypto compatibility regression docs exist.
 - [ ] Signed HAP is generated with release signing materials.
@@ -393,7 +397,7 @@ Official entry points:
 
 ### Current Verification Status
 
-- Command-line preflight and `assembleHap` have passed, with `entry-default-unsigned.hap` recorded as the current artifact.
+- Command-line preflight and `assembleHap` have passed, with `entry-default-unsigned.hap` recorded as the current artifact; the HAP `pack.info` bundleName and `module.json` vendor are verified by script.
 - Biometric unlock code has passed ArkTS compilation; the device Face/Fingerprint/HUKS token flow still requires signed-HAP installation validation.
 - `hdc` was previously available in the local environment, but the device list was empty, so install and device regression could not be run.
 - Signing config is still missing `HARMONY_SIGN_PROFILE` and `HARMONY_SIGN_CERTPATH`, so an installable signed HAP cannot be generated yet.

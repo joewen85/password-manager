@@ -1,7 +1,7 @@
 {
   "app": {
-    "bundleName": "com.example.passwordmanager",
-    "vendor": "example",
+    "bundleName": "life.devops.passwordmanager",
+    "vendor": "DevOps Life",
     "versionCode": 1000000,
     "versionName": "1.0.0",
     "icon": "$media:app_icon",

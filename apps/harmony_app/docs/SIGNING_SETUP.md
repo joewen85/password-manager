@@ -55,7 +55,7 @@
 ## 5. 安装验证
 
 ```bash
-./scripts/harmony_install_hap.sh <signed_hap路径> com.example.passwordmanager
+./scripts/harmony_install_hap.sh <signed_hap路径> life.devops.passwordmanager
 ```
 
 再按 `DEVECO_BUILD_AND_DEVICE_VALIDATION.md` 的真机冒烟清单执行并回填结果。
