@@ -7,7 +7,7 @@ const AES_GCM_NONCE_BYTES: number = 12;
 const DERIVED_KEY_BYTES: number = 32;
 
 export class VaultCryptoService {
-  static readonly DEFAULT_ITERATIONS: number = 120000;
+  static readonly DEFAULT_ITERATIONS: number = 600000;
 
   async deriveVerifier(
     password: string,

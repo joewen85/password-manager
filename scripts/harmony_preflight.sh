@@ -48,6 +48,14 @@ for file in "${required_files[@]}"; do
   fi
 done
 
+crypto_file="$APP_DIR/entry/src/main/ets/src/security/VaultCryptoService.ets"
+if grep -Eq "DEFAULT_ITERATIONS:[[:space:]]*number[[:space:]]*=[[:space:]]*600000;" "$crypto_file"; then
+  ok "Harmony PBKDF2 default matches Dart/Android/macOS/iOS contract: 600000 iterations"
+else
+  fail "Harmony PBKDF2 default must be 600000 iterations for new vaults"
+  status=1
+fi
+
 check_cmd() {
   local cmd="$1"
   local name="$2"

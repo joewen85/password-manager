@@ -55,21 +55,7 @@ struct EntryEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             Form {
-                Section("Overview") {
-                    TextField("Label", text: $draft.label)
-
-                CategorySelectField(
-                    selectedCategory: $draft.category,
-                    categories: availableCategories,
-                    onCreateCategory: createCategory
-                    )
-
-                    if let taxonomyMessage {
-                        Text(taxonomyMessage)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                overviewSection
 
                 Section("Tags") {
                     TagMultiSelectField(
@@ -79,16 +65,20 @@ struct EntryEditorView: View {
                     )
                 }
 
-                switch draft.type {
-                case .credential:
-                    CredentialEditor(payload: $draft.credential)
-                case .server:
-                    ServerEditor(payload: $draft.server)
-                case .service:
-                    ServiceEditor(payload: $draft.service)
-                }
+                if usesTemplateFields {
+                    TemplateFieldsEditor(fields: $draft.customFields)
+                } else {
+                    switch draft.type {
+                    case .credential:
+                        CredentialEditor(payload: $draft.credential)
+                    case .server:
+                        ServerEditor(payload: $draft.server)
+                    case .service:
+                        ServiceEditor(payload: $draft.service)
+                    }
 
-                TemplateFieldsEditor(fields: $draft.customFields)
+                    CustomFieldsEditor(fields: $draft.customFields)
+                }
             }
             .formStyle(.grouped)
             .padding()
@@ -124,10 +114,36 @@ struct EntryEditorView: View {
         }
     }
 
+    private var overviewSection: some View {
+        Section("Overview") {
+            TextField("Label", text: $draft.label)
+
+            CategorySelectField(
+                selectedCategory: $draft.category,
+                categories: availableCategories,
+                onCreateCategory: createCategory
+            )
+
+            if let taxonomyMessage {
+                Text(taxonomyMessage)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private func resetDraft(from entry: VaultEntry?) {
         let nextDraft: EntryDraft
         if let entry {
-            nextDraft = EntryDraft(entry: entry)
+            var draft = EntryDraft(entry: entry)
+            if Self.shouldUseTemplateFields(
+                for: draft,
+                isCreating: false,
+                in: categoryTemplates
+            ), let fields = Self.categoryTemplateFields(for: draft.category, in: categoryTemplates) {
+                draft.configureTemplateFields(fields)
+            }
+            nextDraft = draft
         } else {
             var draft = EntryDraft()
             draft.category = initialCategory.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -175,21 +191,46 @@ struct EntryEditorView: View {
         preset: CategoryTypePreset? = nil,
         customFieldNames: [String] = []
     ) {
-        guard entry == nil else { return }
         let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
         let fields: [FieldTemplate]
         if preset != nil || !customFieldNames.isEmpty {
             fields = CategoryTemplate.fields(for: preset, customFieldNames: customFieldNames)
+        } else if let templateFields = Self.categoryTemplateFields(for: normalized, in: categoryTemplates) {
+            fields = templateFields
+        } else if entry == nil {
+            fields = CategoryTemplate.defaultFields
         } else {
-            fields = Self.templateFields(for: normalized, in: categoryTemplates)
+            return
         }
         draft.configureTemplateFields(fields)
     }
 
+    private var usesTemplateFields: Bool {
+        Self.shouldUseTemplateFields(
+            for: draft,
+            isCreating: entry == nil,
+            in: categoryTemplates
+        )
+    }
+
+    private static func shouldUseTemplateFields(
+        for draft: EntryDraft,
+        isCreating: Bool,
+        in templates: [CategoryTemplate]
+    ) -> Bool {
+        guard !isCreating else { return true }
+        guard categoryTemplateFields(for: draft.category, in: templates) != nil else { return false }
+        return !draft.customFields.isEmpty || !draft.payload.hasLegacyEditorValues
+    }
+
     private static func templateFields(for category: String, in templates: [CategoryTemplate]) -> [FieldTemplate] {
+        categoryTemplateFields(for: category, in: templates)
+            ?? CategoryTemplate.defaultFields
+    }
+
+    private static func categoryTemplateFields(for category: String, in templates: [CategoryTemplate]) -> [FieldTemplate]? {
         let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
         return templates.first { $0.category.caseInsensitiveCompare(normalized) == .orderedSame }?.fields
-            ?? CategoryTemplate.defaultFields
     }
 }
 
@@ -432,12 +473,41 @@ private struct CustomFieldRow: View {
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(uiColor: .secondarySystemBackground))
+                .fill(Color.secondary.opacity(0.08))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
         )
+    }
+}
+
+private struct CustomFieldsEditor: View {
+    @Binding var fields: [CustomField]
+
+    var body: some View {
+        Section("Custom Fields") {
+            if fields.isEmpty {
+                Text("No custom fields.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach($fields) { $field in
+                    CustomFieldRow(field: $field, showsValue: true, remove: { remove(field.id) })
+                }
+            }
+
+            Button(action: addField) {
+                Label("Add Field", systemImage: "plus")
+            }
+        }
+    }
+
+    private func addField() {
+        fields.append(CustomField())
+    }
+
+    private func remove(_ id: UUID) {
+        fields.removeAll { $0.id == id }
     }
 }
 
@@ -582,7 +652,6 @@ private struct SearchCreationField: View {
 
 private struct CredentialEditor: View {
     @Binding var payload: CredentialPayload
-    @Binding var customFields: [CustomField]
 
     var body: some View {
         Section("Fields") {
@@ -593,24 +662,13 @@ private struct CredentialEditor: View {
             TextField("Access Key", text: $payload.accessKey)
             SecureField("Secret Key", text: $payload.secretKey)
             TextField("Notes", text: $payload.notes, axis: .vertical)
-
-            if !customFields.isEmpty {
-                ForEach($customFields) { $field in
-                    CustomFieldRow(field: $field, remove: { removeCustomField(field.id) })
-                }
-            }
         }
         AccountsEditor(accounts: $payload.accounts, title: "Accounts", emptyText: "No accounts.")
-    }
-
-    private func removeCustomField(_ id: UUID) {
-        customFields.removeAll { $0.id == id }
     }
 }
 
 private struct ServerEditor: View {
     @Binding var payload: ServerPayload
-    @Binding var customFields: [CustomField]
 
     var body: some View {
         Section("Fields") {
@@ -627,25 +685,14 @@ private struct ServerEditor: View {
             TextField("Operating System", text: $payload.operatingSystem)
             TextField("Location", text: $payload.location)
             TextField("Notes", text: $payload.notes, axis: .vertical)
-
-            if !customFields.isEmpty {
-                ForEach($customFields) { $field in
-                    CustomFieldRow(field: $field, remove: { removeCustomField(field.id) })
-                }
-            }
         }
 
         AccountsEditor(accounts: $payload.accounts, title: "Accounts", emptyText: "No accounts.")
-    }
-
-    private func removeCustomField(_ id: UUID) {
-        customFields.removeAll { $0.id == id }
     }
 }
 
 private struct ServiceEditor: View {
     @Binding var payload: ServicePayload
-    @Binding var customFields: [CustomField]
 
     var body: some View {
         Section("Fields") {
@@ -661,19 +708,50 @@ private struct ServiceEditor: View {
                 set: { payload.serverIds = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } }
             ))
             TextField("Notes", text: $payload.notes, axis: .vertical)
-
-            if !customFields.isEmpty {
-                ForEach($customFields) { $field in
-                    CustomFieldRow(field: $field, remove: { removeCustomField(field.id) })
-                }
-            }
         }
 
         AccountsEditor(accounts: $payload.accounts, title: "Service Accounts", emptyText: "No service accounts.")
     }
+}
 
-    private func removeCustomField(_ id: UUID) {
-        customFields.removeAll { $0.id == id }
+private extension VaultPayload {
+    var hasLegacyEditorValues: Bool {
+        switch self {
+        case .credential(let payload):
+            payload.accounts.isEmpty == false
+                || payload.username.hasEditorValue
+                || payload.password.hasEditorValue
+                || payload.token.hasEditorValue
+                || payload.appId.hasEditorValue
+                || payload.accessKey.hasEditorValue
+                || payload.secretKey.hasEditorValue
+                || payload.notes.hasEditorValue
+        case .server(let payload):
+            payload.accounts.isEmpty == false
+                || payload.name.hasEditorValue
+                || payload.ipAddress.hasEditorValue
+                || payload.port.hasEditorValue
+                || payload.username.hasEditorValue
+                || payload.password.hasEditorValue
+                || payload.basicConfig.hasEditorValue
+                || payload.operatingSystem.hasEditorValue
+                || payload.location.hasEditorValue
+                || payload.notes.hasEditorValue
+        case .service(let payload):
+            payload.accounts.isEmpty == false
+                || payload.name.hasEditorValue
+                || payload.connectionAddress.hasEditorValue
+                || payload.connectionPort.hasEditorValue
+                || (payload.accountId?.hasEditorValue ?? false)
+                || payload.serverIds.contains { $0.hasEditorValue }
+                || payload.notes.hasEditorValue
+        }
+    }
+}
+
+private extension String {
+    var hasEditorValue: Bool {
+        !trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
@@ -738,43 +816,5 @@ private struct AccountEditor: View {
             SecureField("Password", text: $account.password)
             TextField("Note", text: $account.note, axis: .vertical)
         }
-    }
-}
-
-private struct CustomFieldsEditor: View {
-    @Binding var fields: [CustomField]
-
-    var body: some View {
-        Section("Custom Fields") {
-            if fields.isEmpty {
-                Text("No custom fields.")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach($fields) { $field in
-                    HStack(alignment: .top, spacing: 8) {
-                        TextField("Field Name", text: $field.name)
-                        TextField("Field Value", text: $field.value, axis: .vertical)
-                        Button(role: .destructive) {
-                            remove(field.id)
-                        } label: {
-                            Label("Remove Field", systemImage: "trash")
-                        }
-                        .labelStyle(.iconOnly)
-                    }
-                }
-            }
-
-            Button(action: addField) {
-                Label("Add Field", systemImage: "plus")
-            }
-        }
-    }
-
-    private func addField() {
-        fields.append(CustomField())
-    }
-
-    private func remove(_ id: UUID) {
-        fields.removeAll { $0.id == id }
     }
 }

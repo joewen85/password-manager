@@ -10,6 +10,7 @@
 - 已完成 Stage 工程骨架、UIAbility 入口、主页面和应用级配置。
 - 已完成离线 MVP：主密码初始化/解锁、条目/标签管理、Preferences 持久化。
 - 已切换到 `CryptoArchitectureKit` 显式加密路径：PBKDF2 + AES-GCM。
+- PBKDF2 默认参数已对齐 Dart/Android/macOS/iOS 契约：新建 HarmonyOS 原生保险库使用 600000 次迭代；旧保险库继续按记录中的迭代次数解锁。
 - 已完成同步状态机：WebDAV/S3、revision、冲突策略和同步日志。
 - 已接入 2FA(TOTP) 与解锁失败限制：5 次失败后锁定 5 分钟。
 - 已接入生物识别解锁：主密码凭据使用 HUKS AES-GCM 硬件密钥加密，解密需要 Face/Fingerprint 认证 token，新增生物特征后密钥失效。
@@ -209,6 +210,7 @@ This directory contains the native HarmonyOS 6 application target, used to build
 - Stage project scaffold, UIAbility entry point, main page, and app-level configuration are in place.
 - Offline MVP is implemented: master password setup/unlock, entry/tag management, and Preferences persistence.
 - Explicit `CryptoArchitectureKit` encryption path is wired: PBKDF2 + AES-GCM.
+- PBKDF2 defaults match the Dart/Android/macOS/iOS contract: new native HarmonyOS vaults use 600000 iterations; existing vaults continue to unlock with the iterations stored in their records.
 - Sync state machine is implemented for WebDAV/S3, revisions, conflict strategy, and sync logs.
 - TOTP-based 2FA and unlock throttling are implemented: 5 failed attempts lock the vault for 5 minutes.
 - Biometric unlock is implemented: the master-password credential is encrypted by a HUKS AES-GCM hardware key and decryption requires a Face/Fingerprint authentication token. The key is invalidated when new biometric credentials are enrolled.
