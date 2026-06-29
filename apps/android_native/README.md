@@ -170,7 +170,7 @@ docs/PERMISSIONS_AND_PRIVACY.md
    PASSWORD_MANAGER_RELEASE_KEY_PASSWORD=...
    ```
 
-   四个属性都存在时，release build 会使用 upload key 签名；缺少任一属性时，release bundle 仍可构建为未签名 artifact，用于 CI 编译验证。
+   四个属性都存在时，release build 会使用 upload key 签名；缺少任一属性时，release bundle / APK 仍可构建为未签名 artifact，用于 CI 编译验证。
 
 3. 通过 Gradle property 传版本号。`VERSION_NAME` 是对外版本号，`VERSION_CODE` 是正整数构建号，必须每次发版递增；不传时默认使用 `1.0.0` 和 `1`。
 4. 构建 Android App Bundle：
@@ -183,6 +183,48 @@ docs/PERMISSIONS_AND_PRIVACY.md
 
    ```bash
    ./gradlew :app:assembleRelease -PVERSION_NAME=1.2.3 -PVERSION_CODE=45
+   ```
+
+   如果只传 `VERSION_NAME` / `VERSION_CODE`，但没有提供上面的四个 `PASSWORD_MANAGER_RELEASE_*` 签名属性，APK 会生成在：
+
+   ```text
+   app/build/outputs/apk/release/app-release-unsigned.apk
+   ```
+
+   `app-release-unsigned.apk` 是未签名包，不能作为正常 Android 安装包分发或安装。提供 release keystore 后再构建，APK 会生成在：
+
+   ```text
+   app/build/outputs/apk/release/app-release.apk
+   ```
+
+   AAB 产物固定生成在：
+
+   ```text
+   app/build/outputs/bundle/release/app-release.aab
+   ```
+
+   正式签名 APK 构建示例：
+
+   ```bash
+   ./gradlew :app:assembleRelease \
+     -PVERSION_NAME=1.0.13 \
+     -PVERSION_CODE=14 \
+     -PPASSWORD_MANAGER_RELEASE_STORE_FILE=/absolute/path/to/upload-keystore.jks \
+     -PPASSWORD_MANAGER_RELEASE_STORE_PASSWORD='...' \
+     -PPASSWORD_MANAGER_RELEASE_KEY_ALIAS='...' \
+     -PPASSWORD_MANAGER_RELEASE_KEY_PASSWORD='...'
+   ```
+
+   本机临时测试安装可以使用 Android debug keystore 生成可安装 APK，但该包只适合本机/QA 验证，不能用于正式发布或上传商店：
+
+   ```bash
+   ./gradlew :app:assembleRelease \
+     -PVERSION_NAME=1.0.13 \
+     -PVERSION_CODE=14 \
+     -PPASSWORD_MANAGER_RELEASE_STORE_FILE="$HOME/.android/debug.keystore" \
+     -PPASSWORD_MANAGER_RELEASE_STORE_PASSWORD=android \
+     -PPASSWORD_MANAGER_RELEASE_KEY_ALIAS=androiddebugkey \
+     -PPASSWORD_MANAGER_RELEASE_KEY_PASSWORD=android
    ```
 
    也可以把版本号写入 CI secret 或本机 `~/.gradle/gradle.properties`：
@@ -419,7 +461,7 @@ docs/PERMISSIONS_AND_PRIVACY.md
    PASSWORD_MANAGER_RELEASE_KEY_PASSWORD=...
    ```
 
-   When all four properties are present, the release build is signed with the upload key. If any property is missing, the release bundle can still be built as an unsigned artifact for CI compile verification.
+   When all four properties are present, the release build is signed with the upload key. If any property is missing, the release bundle / APK can still be built as an unsigned artifact for CI compile verification.
 
 3. Pass the version through Gradle properties. `VERSION_NAME` is the public version and `VERSION_CODE` is a positive integer build number that must increase for every release. If omitted, local builds default to `1.0.0` and `1`.
 4. Build an Android App Bundle:
@@ -432,6 +474,48 @@ docs/PERMISSIONS_AND_PRIVACY.md
 
    ```bash
    ./gradlew :app:assembleRelease -PVERSION_NAME=1.2.3 -PVERSION_CODE=45
+   ```
+
+   If only `VERSION_NAME` / `VERSION_CODE` are provided and the four `PASSWORD_MANAGER_RELEASE_*` signing properties are missing, the APK is written to:
+
+   ```text
+   app/build/outputs/apk/release/app-release-unsigned.apk
+   ```
+
+   `app-release-unsigned.apk` is unsigned and should not be distributed or installed as a normal Android package. After providing a release keystore, the signed APK is written to:
+
+   ```text
+   app/build/outputs/apk/release/app-release.apk
+   ```
+
+   The AAB artifact is written to:
+
+   ```text
+   app/build/outputs/bundle/release/app-release.aab
+   ```
+
+   Example signed APK build:
+
+   ```bash
+   ./gradlew :app:assembleRelease \
+     -PVERSION_NAME=1.0.13 \
+     -PVERSION_CODE=14 \
+     -PPASSWORD_MANAGER_RELEASE_STORE_FILE=/absolute/path/to/upload-keystore.jks \
+     -PPASSWORD_MANAGER_RELEASE_STORE_PASSWORD='...' \
+     -PPASSWORD_MANAGER_RELEASE_KEY_ALIAS='...' \
+     -PPASSWORD_MANAGER_RELEASE_KEY_PASSWORD='...'
+   ```
+
+   For temporary local test installs, Android's debug keystore can produce an installable APK. This package is only for local/QA validation and must not be used for production release or store upload:
+
+   ```bash
+   ./gradlew :app:assembleRelease \
+     -PVERSION_NAME=1.0.13 \
+     -PVERSION_CODE=14 \
+     -PPASSWORD_MANAGER_RELEASE_STORE_FILE="$HOME/.android/debug.keystore" \
+     -PPASSWORD_MANAGER_RELEASE_STORE_PASSWORD=android \
+     -PPASSWORD_MANAGER_RELEASE_KEY_ALIAS=androiddebugkey \
+     -PPASSWORD_MANAGER_RELEASE_KEY_PASSWORD=android
    ```
 
    You can also store the version values in CI secrets or local `~/.gradle/gradle.properties`:
