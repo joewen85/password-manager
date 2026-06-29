@@ -80,7 +80,7 @@ require_file "$APP_BUNDLE/Info.plist"
 require_file "$APP_BUNDLE/PrivacyInfo.xcprivacy"
 require_file "$APP_BUNDLE/Assets.car"
 
-require_plist_value "$APP_BUNDLE/Info.plist" "CFBundleIdentifier" "life.dev-ops.passwordmanager"
+require_plist_value "$APP_BUNDLE/Info.plist" "CFBundleIdentifier" "life.devops.passwordmanager"
 require_plist_value "$APP_BUNDLE/Info.plist" "CFBundleDisplayName" "Password Manager"
 require_plist_value "$APP_BUNDLE/Info.plist" "NSFaceIDUsageDescription" "Use Face ID to unlock Password Manager on this device."
 

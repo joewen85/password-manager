@@ -3,7 +3,7 @@ import LocalAuthentication
 import Security
 
 struct iOSBiometricCredentialStore: Sendable {
-    static let keychainService = "life.dev-ops.passwordmanager.biometric-unlock"
+    static let keychainService = "life.devops.passwordmanager.biometric-unlock"
 
     private let service = Self.keychainService
     private let account = "master-password"

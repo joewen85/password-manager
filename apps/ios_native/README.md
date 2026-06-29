@@ -64,7 +64,7 @@ xcodebuild build \
 ```bash
 xcrun simctl boot "iPhone 17 Pro"
 xcrun simctl install booted build/Debug-iphonesimulator/PasswordManageriOS.app
-xcrun simctl launch booted life.dev-ops.passwordmanager
+xcrun simctl launch booted life.devops.passwordmanager
 ```
 
 ### 本地功能验证
@@ -220,7 +220,7 @@ Local simulator install and launch example:
 ```bash
 xcrun simctl boot "iPhone 17 Pro"
 xcrun simctl install booted build/Debug-iphonesimulator/PasswordManageriOS.app
-xcrun simctl launch booted life.dev-ops.passwordmanager
+xcrun simctl launch booted life.devops.passwordmanager
 ```
 
 ### Local Feature Verification
