@@ -1499,7 +1499,7 @@ VaultSnapshot parseSnapshotJson(const std::string& json) {
         if (!reader.objectEnd()) throw std::runtime_error("Expected JSON object end.");
     }
     if (snapshot.updatedAt.empty()) snapshot.updatedAt = isoTimestamp();
-    if (snapshot.categories.empty()) snapshot.categories = rebuildCategories(snapshot.entries);
+    if (snapshot.categories.empty()) snapshot.categories = rebuildCategories(snapshot.entries, snapshot.categoryTemplates);
     if (snapshot.tags.empty()) snapshot.tags = rebuildTags(snapshot.entries);
     if (snapshot.categoryTemplates.empty()) {
         for (const auto& category : snapshot.categories) {
@@ -1662,6 +1662,21 @@ std::vector<VaultEntry> filterEntries(const std::vector<VaultEntry>& entries, co
 std::vector<std::string> rebuildCategories(const std::vector<VaultEntry>& entries) {
     std::set<std::string> values;
     for (const auto& entry : entries) if (!entry.isDeleted && !entry.category.empty()) values.insert(entry.category);
+    return {values.begin(), values.end()};
+}
+
+std::vector<std::string> rebuildCategories(
+    const std::vector<VaultEntry>& entries,
+    const std::vector<CategoryTemplate>& categoryTemplates
+) {
+    std::set<std::string> values;
+    for (const auto& entry : entries) {
+        if (!entry.isDeleted && !entry.category.empty()) values.insert(entry.category);
+    }
+    for (const auto& templateEntry : categoryTemplates) {
+        const auto category = trimCopy(templateEntry.category);
+        if (!category.empty()) values.insert(category);
+    }
     return {values.begin(), values.end()};
 }
 

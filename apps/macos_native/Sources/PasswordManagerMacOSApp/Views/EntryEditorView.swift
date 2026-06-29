@@ -549,17 +549,7 @@ private struct CustomFieldsEditor: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach($fields) { $field in
-                    HStack(alignment: .top, spacing: 8) {
-                        TextField(L10n.t("Field Name"), text: $field.name)
-                        TextField(L10n.t("Field Value"), text: $field.value, axis: .vertical)
-                        Button(role: .destructive) {
-                            remove(field.id)
-                        } label: {
-                            Label(L10n.t("Remove Field"), systemImage: "trash")
-                        }
-                        .labelStyle(.iconOnly)
-                        .help(L10n.t("Remove Field"))
-                    }
+                    CustomFieldRow(field: $field, showsValue: true, remove: { remove(field.id) })
                 }
             }
 
@@ -588,18 +578,7 @@ private struct TemplateFieldsEditor: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach($fields) { $field in
-                    if field.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        HStack(alignment: .top, spacing: 8) {
-                            TextField(L10n.t("Field Name"), text: $field.name)
-                            TextField(L10n.t("Field Value"), text: $field.value, axis: .vertical)
-                            removeButton(field.id)
-                        }
-                    } else {
-                        HStack(alignment: .top, spacing: 8) {
-                            TextField(field.name, text: $field.value, axis: .vertical)
-                            removeButton(field.id)
-                        }
-                    }
+                    CustomFieldRow(field: $field, showsValue: true, remove: { remove(field.id) })
                 }
             }
 
@@ -615,16 +594,6 @@ private struct TemplateFieldsEditor: View {
 
     private func remove(_ id: UUID) {
         fields.removeAll { $0.id == id }
-    }
-
-    private func removeButton(_ id: UUID) -> some View {
-        Button(role: .destructive) {
-            remove(id)
-        } label: {
-            Label(L10n.t("Remove Field"), systemImage: "trash")
-        }
-        .labelStyle(.iconOnly)
-        .help(L10n.t("Remove Field"))
     }
 }
 
@@ -650,5 +619,41 @@ private struct ServiceAccountEditor: View {
             SecureField(L10n.t("Password"), text: $account.password)
             TextField(L10n.t("Note"), text: $account.note, axis: .vertical)
         }
+    }
+}
+
+private struct CustomFieldRow: View {
+    @Binding var field: CustomField
+    var showsValue: Bool
+    var remove: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                TextField(L10n.t("Field Name"), text: $field.name)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 160)
+                Spacer()
+                Button(role: .destructive, action: remove) {
+                    Label(L10n.t("Remove Field"), systemImage: "trash")
+                }
+                .labelStyle(.iconOnly)
+                .help(L10n.t("Remove Field"))
+            }
+
+            if showsValue {
+                TextField(L10n.t("Field Value"), text: $field.value, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+        )
     }
 }

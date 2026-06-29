@@ -72,6 +72,23 @@ struct TaxonomyManagementView: View {
                                 .labelStyle(.iconOnly)
                                 .help("Delete")
                             }
+                            .contentShape(Rectangle())
+                            .onTapGesture(count: 2) {
+                                renameRequest = TaxonomyEditRequest(kind: selectedKind, value: value)
+                            }
+                            .contextMenu {
+                                Button {
+                                    renameRequest = TaxonomyEditRequest(kind: selectedKind, value: value)
+                                } label: {
+                                    Label("Rename", systemImage: "pencil")
+                                }
+
+                                Button(role: .destructive) {
+                                    deleteRequest = TaxonomyEditRequest(kind: selectedKind, value: value)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
                         }
                     }
                 }

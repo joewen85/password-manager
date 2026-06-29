@@ -179,6 +179,7 @@ bool addCategory(VaultSnapshot& snapshot, const std::string& category, const std
 bool addCategory(VaultSnapshot& snapshot, const std::string& category, CategoryTypePreset preset, const std::vector<std::string>& customFieldNames = {});
 std::vector<VaultEntry> filterEntries(const std::vector<VaultEntry>& entries, const std::string& query, const std::string& type = "all");
 std::vector<std::string> rebuildCategories(const std::vector<VaultEntry>& entries);
+std::vector<std::string> rebuildCategories(const std::vector<VaultEntry>& entries, const std::vector<CategoryTemplate>& categoryTemplates);
 std::vector<std::string> rebuildTags(const std::vector<VaultEntry>& entries);
 std::string generateTotp(const std::string& base32Secret, std::uint64_t unixSeconds);
 bool verifyTotp(const std::string& base32Secret, const std::string& code, std::uint64_t unixSeconds);

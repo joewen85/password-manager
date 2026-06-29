@@ -826,6 +826,7 @@ struct CategoryTemplateFieldNameEditor: View {
                     HStack(spacing: 8) {
                         TextField(L10n.t("Field Name"), text: $field.name)
                             .textFieldStyle(.roundedBorder)
+                            .frame(minWidth: 160)
                         Button(role: .destructive) {
                             remove(field.id)
                         } label: {
@@ -834,6 +835,15 @@ struct CategoryTemplateFieldNameEditor: View {
                         .labelStyle(.iconOnly)
                         .help(L10n.t("Remove Field"))
                     }
+                    .padding(8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color(nsColor: .controlBackgroundColor))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                    )
                 }
             }
 

@@ -912,11 +912,8 @@ void printCounts(const VaultSnapshot& snapshot) {
 
 void rebuildTaxonomy(VaultSnapshot& snapshot) {
     auto categories = snapshot.categories;
-    for (const auto& templateEntry : snapshot.categoryTemplates) {
-        if (!templateEntry.category.empty()) categories.push_back(templateEntry.category);
-    }
-    const auto entryCategories = rebuildCategories(snapshot.entries);
-    categories.insert(categories.end(), entryCategories.begin(), entryCategories.end());
+    const auto rebuiltCategories = rebuildCategories(snapshot.entries, snapshot.categoryTemplates);
+    categories.insert(categories.end(), rebuiltCategories.begin(), rebuiltCategories.end());
     std::sort(categories.begin(), categories.end());
     categories.erase(std::unique(categories.begin(), categories.end()), categories.end());
     snapshot.categories = categories;

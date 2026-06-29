@@ -183,6 +183,35 @@ int main() {
     assert(missingRemotePayload.deviceId == "linux");
     assert(missingRemotePayload.snapshot.entries.size() == 1);
 
+    pm::VaultSnapshot emptyCategoryLocal;
+    emptyCategoryLocal.updatedAt = "2026-06-28T00:00:00Z";
+    emptyCategoryLocal.categories = {"test"};
+    emptyCategoryLocal.categoryTemplates = {pm::CategoryTemplate{"test", pm::defaultCategoryFields()}};
+    pm::SyncSettingsState emptyCategorySettings;
+    emptyCategorySettings.deviceId = "linux";
+    emptyCategorySettings.lastSyncRevision = 1;
+    emptyCategorySettings.hasLocalChanges = true;
+    emptyCategorySettings.conflictStrategy = "keepBoth";
+    auto emptyCategoryUpload = pm::synchronizeSnapshots(emptyCategoryLocal, emptyCategorySettings, "");
+    assert(emptyCategoryUpload.uploaded);
+    auto emptyCategoryPayload = pm::parseSyncPayloadJson(emptyCategoryUpload.uploadPayloadJson);
+    assert(emptyCategoryPayload.snapshot.categories.size() == 1);
+    assert(emptyCategoryPayload.snapshot.categories[0] == "test");
+    assert(emptyCategoryPayload.snapshot.categoryTemplates.size() == 1);
+    assert(emptyCategoryPayload.snapshot.categoryTemplates[0].category == "test");
+
+    pm::VaultSnapshot emptyCategoryRemote;
+    emptyCategoryRemote.updatedAt = "2026-06-28T00:05:00Z";
+    const auto emptyCategoryRemotePayload = pm::serializeSyncPayloadJson(
+        pm::VaultSyncPayload{1, "2026-06-28T00:05:00Z", "remote", 3, emptyCategoryRemote}
+    );
+    auto emptyCategoryMerge = pm::synchronizeSnapshots(emptyCategoryLocal, emptyCategorySettings, emptyCategoryRemotePayload);
+    assert(emptyCategoryMerge.uploaded);
+    assert(emptyCategoryMerge.snapshot.categories.size() == 1);
+    assert(emptyCategoryMerge.snapshot.categories[0] == "test");
+    assert(emptyCategoryMerge.snapshot.categoryTemplates.size() == 1);
+    assert(emptyCategoryMerge.snapshot.categoryTemplates[0].fields.size() == 2);
+
     pm::VaultSnapshot remoteDominant;
     remoteDominant.updatedAt = "2026-06-28T00:05:00Z";
     remoteDominant.entries.push_back(pm::makeEntry("Remote Sync", "credential", "remote@example.com", "remote-secret"));

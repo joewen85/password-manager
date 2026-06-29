@@ -481,6 +481,7 @@ struct SyncSettingsTests {
         settings.providerType = .webdav
         settings.webdavUrl = "https://dav.example.com/root"
         settings.webdavPath = "/vault.json"
+        settings.conflictStrategy = .keepBoth
         store.updateSyncSettings(settings)
         #expect(store.addCategory("test"))
         let client = VaultStoreSyncFakeClient(
@@ -493,7 +494,74 @@ struct SyncSettingsTests {
         #expect(store.categories == ["test"])
         #expect(store.categoryTemplates.map(\.category) == ["test"])
         #expect(store.categoryTemplates.first?.fields.map(\.name) == ["名称", "备注"])
+        #expect(store.syncSettings.conflictStrategy == .keepBoth)
         let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.first))
+        #expect(uploaded.snapshot.categories == ["test"])
+        #expect(uploaded.snapshot.categoryTemplates.map(\.category) == ["test"])
+
+        let reloadedStore = VaultStore(
+            repository: repository,
+            syncSettingsRepository: syncRepository,
+            syncEngine: engine
+        )
+        #expect(reloadedStore.unlock(password: "test-password"))
+        #expect(reloadedStore.categories == ["test"])
+        #expect(reloadedStore.categoryTemplates.map(\.category) == ["test"])
+    }
+
+    @MainActor
+    @Test("VaultStore sync keeps local empty category when remote revision advanced")
+    func vaultStoreSyncKeepsLocalEmptyCategoryWhenRemoteRevisionAdvanced() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManagerMacOSVaultStoreSyncMergeCategoryTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let secretStore = InMemorySyncSecretStore()
+        let syncRepository = try SyncSettingsRepository(baseDirectory: directory, secretStore: secretStore)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(
+            repository: repository,
+            syncSettingsRepository: syncRepository,
+            syncEngine: engine
+        )
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+        var settings = SyncSettings.defaults(deviceId: "mac-device")
+        settings.providerType = .webdav
+        settings.webdavUrl = "https://dav.example.com/root"
+        settings.webdavPath = "/vault.json"
+        settings.conflictStrategy = .keepBoth
+        settings.lastSyncRevision = 1
+        store.updateSyncSettings(settings)
+        #expect(store.addCategory("test"))
+
+        let remotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 2,
+                snapshot: VaultSnapshot(
+                    entries: [],
+                    categories: [],
+                    categoryTemplates: [],
+                    tags: [],
+                    updatedAt: Date(timeIntervalSince1970: 1_800_000_100)
+                )
+            )
+        )
+        let client = VaultStoreSyncFakeClient(
+            downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)],
+            uploadStatusCodes: [200]
+        )
+
+        await store.syncNow(client: client)
+
+        #expect(store.categories == ["test"])
+        #expect(store.categoryTemplates.map(\.category) == ["test"])
+        #expect(store.categoryTemplates.first?.fields.map(\.name) == ["名称", "备注"])
+        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.first))
+        #expect(uploaded.revision == 3)
         #expect(uploaded.snapshot.categories == ["test"])
         #expect(uploaded.snapshot.categoryTemplates.map(\.category) == ["test"])
 
