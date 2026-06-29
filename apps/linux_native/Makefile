@@ -8,6 +8,7 @@ PM_LDFLAGS := -L$(OPENSSL_PREFIX)/lib
 LDLIBS ?= -lcrypto $(shell $(CURL_CONFIG) --libs 2>/dev/null || printf '%s' '-lcurl')
 
 BUILD_DIR := build
+PACKAGE_VERSION ?= 0.1.0
 APP := $(BUILD_DIR)/password-manager-linux
 TESTS := $(BUILD_DIR)/linux-native-tests
 CORE_SRC := $(NATIVE_CORE_DIR)/src/vault_core.cpp
@@ -16,7 +17,7 @@ CORE_HEADER := $(NATIVE_CORE_DIR)/src/vault_core.hpp
 CLI_HEADER := $(NATIVE_CORE_DIR)/src/vault_cli.hpp
 CORE_TESTS := $(NATIVE_CORE_DIR)/tests/vault_core_tests.cpp
 
-.PHONY: all test clean
+.PHONY: all test package-deb clean
 
 all: $(APP)
 
@@ -32,6 +33,9 @@ $(TESTS): $(BUILD_DIR) $(CORE_SRC) $(CORE_HEADER) $(CORE_TESTS)
 test: $(TESTS) $(APP)
 	$(TESTS)
 	bash $(NATIVE_CORE_DIR)/tests/vault_cli_smoke.sh $(APP)
+
+package-deb: $(APP)
+	LINUX_PACKAGE_VERSION="$(PACKAGE_VERSION)" scripts/package_deb.sh $(APP)
 
 clean:
 	rm -rf $(BUILD_DIR)

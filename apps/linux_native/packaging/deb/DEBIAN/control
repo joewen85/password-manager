@@ -1,0 +1,13 @@
+Package: @PACKAGE_NAME@
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: @ARCHITECTURE@
+Maintainer: DevOps Life <support@life.devops>
+Depends: libc6, libgcc-s1, libstdc++6, libcurl4, libssl3
+Installed-Size: @INSTALLED_SIZE@
+Homepage: https://life.devops
+Description: Password Manager Linux terminal client
+ Native Linux terminal client for Password Manager. It stores vault data in an
+ encrypted local envelope and supports TOTP, import/export, backup/restore, and
+ remote object sync through the shared cross-platform native core.

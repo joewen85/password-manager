@@ -12,7 +12,8 @@ usage() {
 Usage: $(basename "$0")
 
 Builds and tests the Linux native CLI inside a real Linux distribution
-container. Override with:
+container. On apt-based images, it also builds, installs, runs, and uninstalls
+the CLI Debian package. Override with:
 
   LINUX_RELEASE_DOCKER_IMAGE=ubuntu:24.04 $(basename "$0")
   LINUX_RELEASE_CXX=g++ $(basename "$0")
@@ -49,6 +50,7 @@ docker run --rm \
       apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
+        dpkg-dev \
         file \
         libcurl4-openssl-dev \
         libssl-dev \
@@ -98,6 +100,18 @@ docker run --rm \
     grep -q "libcurl" /tmp/password-manager-linux.ldd
 
     ./build/password-manager-linux self-test
+
+    if command -v apt-get >/dev/null 2>&1; then
+      make package-deb \
+        CXX="$CONTAINER_CXX" \
+        OPENSSL_PREFIX=/usr \
+        CXXFLAGS="-std=c++17 -Wall -Wextra -Wpedantic -O2 -DNDEBUG"
+      deb_path="$(find dist -maxdepth 1 -name "password-manager-linux_*.deb" -print -quit)"
+      test -n "$deb_path"
+      bash scripts/verify_install_deb.sh "$PWD/$deb_path"
+    else
+      echo "[WARN] Skipping Debian package install check on non-apt image."
+    fi
   '
 
 echo "Linux release verification completed."
