@@ -3,8 +3,14 @@ import LocalAuthentication
 import Security
 
 struct MacBiometricCredentialStore: Sendable {
-    private let service = "com.example.password-manager.native.macos.biometric-unlock.v2"
-    private let legacyService = "com.example.password-manager.native.macos.biometric-unlock"
+    static let keychainService = "life.devops.passwordmanager.macos.biometric-unlock.v2"
+    static let legacyKeychainServices = [
+        "com.example.password-manager.native.macos.biometric-unlock.v2",
+        "com.example.password-manager.native.macos.biometric-unlock"
+    ]
+
+    private let service = Self.keychainService
+    private let legacyServices = Self.legacyKeychainServices
     private let account = "master-password"
 
     func canAuthenticate() -> Bool {
@@ -14,13 +20,15 @@ struct MacBiometricCredentialStore: Sendable {
     }
 
     func hasSavedCredential() -> Bool {
-        var query = baseQuery
-        query[kSecReturnAttributes as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        credentialQueries.contains { query in
+            var query = query
+            query[kSecReturnAttributes as String] = true
+            query[kSecMatchLimit as String] = kSecMatchLimitOne
 
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        return status == errSecSuccess
+            var result: CFTypeRef?
+            let status = SecItemCopyMatching(query as CFDictionary, &result)
+            return status == errSecSuccess
+        }
     }
 
     func savePassword(_ password: String, reason: String) async throws {
@@ -53,27 +61,34 @@ struct MacBiometricCredentialStore: Sendable {
 
     func readPassword(reason: String) async throws -> String {
         try await authenticate(reason: reason)
-        var query = baseQuery
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var lastStatus = errSecItemNotFound
+        for baseQuery in credentialQueries {
+            var query = baseQuery
+            query[kSecReturnData as String] = true
+            query[kSecMatchLimit as String] = kSecMatchLimitOne
 
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess else {
-            throw status == errSecItemNotFound
-                ? MacBiometricCredentialStoreError.missingCredential
-                : MacBiometricCredentialStoreError.keychainStatus(status)
+            var result: CFTypeRef?
+            let status = SecItemCopyMatching(query as CFDictionary, &result)
+            if status == errSecItemNotFound {
+                lastStatus = status
+                continue
+            }
+            guard status == errSecSuccess else {
+                throw MacBiometricCredentialStoreError.keychainStatus(status)
+            }
+            guard let data = result as? Data,
+                  let password = String(data: data, encoding: .utf8) else {
+                throw MacBiometricCredentialStoreError.invalidCredentialData
+            }
+            return password
         }
-        guard let data = result as? Data,
-              let password = String(data: data, encoding: .utf8) else {
-            throw MacBiometricCredentialStoreError.invalidCredentialData
-        }
-        return password
+        throw lastStatus == errSecItemNotFound
+            ? MacBiometricCredentialStoreError.missingCredential
+            : MacBiometricCredentialStoreError.keychainStatus(lastStatus)
     }
 
     func clear() {
-        SecItemDelete(baseQuery as CFDictionary)
-        SecItemDelete(legacyBaseQuery as CFDictionary)
+        credentialQueries.forEach { _ = SecItemDelete($0 as CFDictionary) }
     }
 
     private var baseQuery: [String: Any] {
@@ -84,12 +99,14 @@ struct MacBiometricCredentialStore: Sendable {
         ]
     }
 
-    private var legacyBaseQuery: [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: legacyService,
-            kSecAttrAccount as String: account
-        ]
+    private var credentialQueries: [[String: Any]] {
+        [baseQuery] + legacyServices.map {
+            [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: $0,
+                kSecAttrAccount as String: account
+            ]
+        }
     }
 
     private func authenticate(reason: String) async throws {

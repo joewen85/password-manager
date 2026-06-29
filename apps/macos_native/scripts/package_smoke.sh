@@ -11,6 +11,7 @@ PRODUCT_NAME="PasswordManagerMacOS"
 DERIVED_APP_DIR="$APP_ROOT/dist/release"
 APP_BUNDLE="$DERIVED_APP_DIR/$APP_NAME.app"
 ARCHIVE="$DERIVED_APP_DIR/$APP_NAME.zip"
+EXPECTED_BUNDLE_ID="${EXPECTED_BUNDLE_ID:-${BUNDLE_ID:-life.devops.passwordmanager}}"
 CONTENTS_DIR="$APP_BUNDLE/Contents"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 RESOURCE_BUNDLE_NAME="${PRODUCT_NAME}_PasswordManagerMacOSApp.bundle"
@@ -38,6 +39,11 @@ BUILD_NUMBER="$("$PLIST_BUDDY" -c "Print :CFBundleVersion" "$CONTENTS_DIR/Info.p
 
 if [[ -z "$BUNDLE_ID" || -z "$ICON_FILE" || -z "$SHORT_VERSION" || -z "$BUILD_NUMBER" ]]; then
   echo "Bundle metadata is incomplete." >&2
+  exit 1
+fi
+
+if [[ "$BUNDLE_ID" != "$EXPECTED_BUNDLE_ID" ]]; then
+  echo "Bundle identifier mismatch: expected $EXPECTED_BUNDLE_ID, got $BUNDLE_ID." >&2
   exit 1
 fi
 

@@ -6,7 +6,7 @@ APP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 PRODUCT_NAME="PasswordManagerMacOS"
 APP_NAME="${APP_NAME:-Password Manager}"
-BUNDLE_ID="${BUNDLE_ID:-life.dev-ops.passwordmanager}"
+BUNDLE_ID="${BUNDLE_ID:-life.devops.passwordmanager}"
 MARKETING_VERSION="${MARKETING_VERSION:-0.1.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"

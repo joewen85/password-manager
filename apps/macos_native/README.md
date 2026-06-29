@@ -200,7 +200,7 @@ dist/release/Password Manager.zip
 
 ```bash
 APP_NAME="Password Manager" \
-BUNDLE_ID=life.dev-ops.passwordmanager \
+BUNDLE_ID=life.devops.passwordmanager \
 MARKETING_VERSION=1.0.0 \
 BUILD_NUMBER=100 \
 ICON_NAME=AppIcon \
@@ -530,7 +530,7 @@ More release metadata and signing identity can be overridden with environment va
 
 ```bash
 APP_NAME="Password Manager" \
-BUNDLE_ID=life.dev-ops.passwordmanager \
+BUNDLE_ID=life.devops.passwordmanager \
 MARKETING_VERSION=1.0.0 \
 BUILD_NUMBER=100 \
 ICON_NAME=AppIcon \
