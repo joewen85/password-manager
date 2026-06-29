@@ -10,7 +10,7 @@
 - 当前切片复用并迁移 macOS 原生端已验证的 Swift 核心：数据模型、本地加密持久化、TOTP、导入导出、备份、同步设置、远端同步 transport、同步合并和同步引擎。
 - SwiftUI 视图已放入 `PasswordManageriOSCore`，并提供 `PasswordManageriOSAppRoot` 作为 Xcode iOS app target 的根视图。
 - 当前包含 SwiftPM 可测试核心模块和 `PasswordManageriOS.xcodeproj` 原生 app target。
-- 已配置 Debug/Release build configuration、bundle identifier、生成式 launch screen、asset catalog、空 entitlements 和包含 UserDefaults required-reason 声明的 privacy manifest。生产发布前仍需配置 Apple Developer Team/signing、真机验证和 App Store Connect 验证。
+- 已配置 Debug/Release build configuration、bundle identifier、生成式 launch screen、asset catalog、空 entitlements、包含 UserDefaults required-reason 声明的 privacy manifest，以及本机可运行的 Release simulator + generic iOS archive contract gate。生产发布前仍需配置 Apple Developer Team/signing、真机验证和 App Store Connect 验证。
 - 本目录不依赖已移除的 Flutter iOS 工程。
 
 ### 目录说明
@@ -67,6 +67,22 @@ xcrun simctl install booted build/Debug-iphonesimulator/PasswordManageriOS.app
 xcrun simctl launch booted life.devops.passwordmanager
 ```
 
+运行本地 release gate：
+
+```bash
+./scripts/verify_release.sh
+```
+
+该脚本会运行 SwiftPM 测试、Release simulator build，并创建 `build/PasswordManageriOS.xcarchive` 的 generic iOS archive；默认使用 `CODE_SIGNING_ALLOWED=NO` 做本机 archive 内容校验，不声称已完成 Apple 签名。配置 Apple Developer Team 后，可强制签名 archive：
+
+```bash
+IOS_REQUIRE_SIGNED_ARCHIVE=true \
+IOS_DEVELOPMENT_TEAM=ABCDE12345 \
+IOS_CODE_SIGN_IDENTITY="Apple Distribution" \
+IOS_ALLOW_PROVISIONING_UPDATES=true \
+./scripts/verify_release.sh
+```
+
 ### 本地功能验证
 
 当前可自动验证的范围：
@@ -96,7 +112,7 @@ xcrun simctl launch booted life.devops.passwordmanager
 
 ### 发布构建
 
-当前已创建 Xcode iOS app target。发布 iOS app 前需要完成 release signing 和归档验证：
+当前已创建 Xcode iOS app target，并且本地 release gate 会生成 generic iOS archive 并校验 bundle id、版本号、arm64 app、privacy manifest、Assets.car 和 dSYM。发布 iOS app 前还需要完成 Apple signing、真机安装和 App Store Connect 验证：
 
 1. 在 `PasswordManageriOS.xcodeproj` 中设置 Apple Developer Team、release signing certificate 和 provisioning profile。
 2. 确认正式 1024x1024 app icon 和 asset catalog 参与 Release target。
@@ -118,6 +134,8 @@ xcodebuild archive \
   -destination 'generic/platform=iOS' \
   -archivePath build/PasswordManageriOS.xcarchive
 ```
+
+本地无签名 archive contract 可由 release gate 自动执行；上传候选包必须设置 `IOS_REQUIRE_SIGNED_ARCHIVE=true`，并在 Apple signing 通过后再进入 Validate archive / TestFlight。
 
 ### TestFlight / App Store 上架
 
@@ -148,7 +166,8 @@ xcodebuild archive \
 - [x] Xcode iOS app target 已创建。
 - [x] iOS bundle id、生成式 launch screen、空 entitlements、app icon asset 和 UserDefaults privacy manifest 已配置。
 - [x] iOS simulator build/run 已验证。
-- [ ] Apple Developer Team、release signing、真机 archive 和 App Store/TestFlight 上传验证已完成。
+- [x] 本地 release gate 会生成 generic iOS archive，并校验 arm64 app、Info.plist、privacy manifest、Assets.car 和 dSYM。
+- [ ] Apple Developer Team、release signing、真机安装和 App Store/TestFlight 上传验证已完成。
 - [ ] iOS 真机安装和基础回归已验证。
 - [ ] 真实 WebDAV/S3 同步服务端到端验证完成。
 - [ ] TestFlight internal testing 安装验证完成。
@@ -166,7 +185,7 @@ This directory contains the native iOS application target, used to build iOS-nat
 - The current slice migrates the already-verified Swift core from the native macOS target: data models, local encrypted persistence, TOTP, import/export, backup, sync settings, remote sync transport, sync merge, and sync engine.
 - SwiftUI views are included in `PasswordManageriOSCore`, and `PasswordManageriOSAppRoot` is used as the root view for the Xcode iOS app target.
 - The current form includes a SwiftPM-tested core module and a `PasswordManageriOS.xcodeproj` native app target.
-- Debug/Release build configurations, bundle identifier, generated launch screen, asset catalog, empty entitlements, and a privacy manifest with the UserDefaults required-reason disclosure are configured. Production release still needs Apple Developer Team/signing, device validation, and App Store Connect validation.
+- Debug/Release build configurations, bundle identifier, generated launch screen, asset catalog, empty entitlements, a privacy manifest with the UserDefaults required-reason disclosure, and a locally runnable Release simulator + generic iOS archive contract gate are configured. Production release still needs Apple Developer Team/signing, device validation, and App Store Connect validation.
 - This directory does not depend on the removed Flutter iOS project.
 
 ### Directory Layout
@@ -223,6 +242,22 @@ xcrun simctl install booted build/Debug-iphonesimulator/PasswordManageriOS.app
 xcrun simctl launch booted life.devops.passwordmanager
 ```
 
+Run the local release gate:
+
+```bash
+./scripts/verify_release.sh
+```
+
+The script runs SwiftPM tests, a Release simulator build, and creates `build/PasswordManageriOS.xcarchive` as a generic iOS archive. By default it uses `CODE_SIGNING_ALLOWED=NO` for local archive content validation and does not claim Apple signing is complete. After configuring an Apple Developer Team, require a signed archive with:
+
+```bash
+IOS_REQUIRE_SIGNED_ARCHIVE=true \
+IOS_DEVELOPMENT_TEAM=ABCDE12345 \
+IOS_CODE_SIGN_IDENTITY="Apple Distribution" \
+IOS_ALLOW_PROVISIONING_UPDATES=true \
+./scripts/verify_release.sh
+```
+
 ### Local Feature Verification
 
 The current automated scope covers:
@@ -252,7 +287,7 @@ The initial `Initialize Vault` screen has been launched on an iPhone 17 Pro simu
 
 ### Release Build
 
-The Xcode iOS app target now exists. Before releasing an iOS app, finish release signing and archive validation:
+The Xcode iOS app target now exists, and the local release gate creates a generic iOS archive and verifies the bundle id, version, arm64 app, privacy manifest, Assets.car, and dSYM. Before releasing an iOS app, finish Apple signing, device installation, and App Store Connect validation:
 
 1. Set Apple Developer Team, release signing certificate, and provisioning profile in `PasswordManageriOS.xcodeproj`.
 2. Confirm the final 1024x1024 app icon and asset catalog participate in the Release target.
@@ -274,6 +309,8 @@ xcodebuild archive \
   -destination 'generic/platform=iOS' \
   -archivePath build/PasswordManageriOS.xcarchive
 ```
+
+The unsigned local archive contract is run by the release gate. Upload candidates must set `IOS_REQUIRE_SIGNED_ARCHIVE=true` and pass Apple signing before Validate archive / TestFlight.
 
 ### TestFlight / App Store Submission
 
@@ -304,7 +341,8 @@ Official entry points:
 - [x] Xcode iOS app target is created.
 - [x] iOS bundle id, generated launch screen, empty entitlements, app icon asset, and UserDefaults privacy manifest are configured.
 - [x] iOS simulator build/run is verified.
-- [ ] Apple Developer Team, release signing, device archive, and App Store/TestFlight upload validation are complete.
+- [x] The local release gate creates a generic iOS archive and verifies the arm64 app, Info.plist, privacy manifest, Assets.car, and dSYM.
+- [ ] Apple Developer Team, release signing, device installation, and App Store/TestFlight upload validation are complete.
 - [ ] iOS device install and baseline regression are verified.
 - [ ] Real WebDAV/S3 end-to-end sync validation is complete.
 - [ ] TestFlight internal testing install validation is complete.
