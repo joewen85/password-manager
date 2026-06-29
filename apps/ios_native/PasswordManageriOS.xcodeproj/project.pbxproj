@@ -7,11 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		PMI0000000000000000000019 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = PMI000000000000000000001A /* Assets.xcassets */; };
 		PMI0000000000000000000010 /* PasswordManageriOSCore in Frameworks */ = {isa = PBXBuildFile; productRef = PMI000000000000000000000F /* PasswordManageriOSCore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		PMI0000000000000000000003 /* PasswordManageriOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PasswordManageriOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		PMI000000000000000000001A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = PasswordManageriOS/Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -53,6 +55,7 @@
 			isa = PBXGroup;
 			children = (
 				PMI0000000000000000000004 /* PasswordManageriOS */,
+				PMI000000000000000000001A /* Assets.xcassets */,
 				PMI0000000000000000000002 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -132,6 +135,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				PMI0000000000000000000019 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -273,6 +277,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				INFOPLIST_KEY_CFBundleDisplayName = "Password Manager";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Use Face ID to unlock Password Manager on this device.";
@@ -306,6 +311,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				INFOPLIST_KEY_CFBundleDisplayName = "Password Manager";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Use Face ID to unlock Password Manager on this device.";

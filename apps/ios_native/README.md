@@ -10,7 +10,7 @@
 - 当前切片复用并迁移 macOS 原生端已验证的 Swift 核心：数据模型、本地加密持久化、TOTP、导入导出、备份、同步设置、远端同步 transport、同步合并和同步引擎。
 - SwiftUI 视图已放入 `PasswordManageriOSCore`，并提供 `PasswordManageriOSAppRoot` 作为 Xcode iOS app target 的根视图。
 - 当前包含 SwiftPM 可测试核心模块和 `PasswordManageriOS.xcodeproj` 原生 app target。
-- 已配置 Debug/Release build configuration、bundle identifier、生成式 launch screen、placeholder asset catalog、空 entitlements 和 privacy manifest。生产发布前仍需替换正式 app icon、配置 Apple Developer Team/signing、真机验证和 App Store Connect 验证。
+- 已配置 Debug/Release build configuration、bundle identifier、生成式 launch screen、asset catalog、空 entitlements 和包含 UserDefaults required-reason 声明的 privacy manifest。生产发布前仍需配置 Apple Developer Team/signing、真机验证和 App Store Connect 验证。
 - 本目录不依赖已移除的 Flutter iOS 工程。
 
 ### 目录说明
@@ -64,7 +64,7 @@ xcodebuild build \
 ```bash
 xcrun simctl boot "iPhone 17 Pro"
 xcrun simctl install booted build/Debug-iphonesimulator/PasswordManageriOS.app
-xcrun simctl launch booted com.example.passwordmanager.native.ios
+xcrun simctl launch booted life.dev-ops.passwordmanager
 ```
 
 ### 本地功能验证
@@ -99,10 +99,10 @@ xcrun simctl launch booted com.example.passwordmanager.native.ios
 当前已创建 Xcode iOS app target。发布 iOS app 前需要完成 release signing 和归档验证：
 
 1. 在 `PasswordManageriOS.xcodeproj` 中设置 Apple Developer Team、release signing certificate 和 provisioning profile。
-2. 将 placeholder app icon 替换为正式 1024x1024 icon，并确认 asset catalog 参与 Release target。
+2. 确认正式 1024x1024 app icon 和 asset catalog 参与 Release target。
 3. 更新 display name、version、build number、deployment target 和 App Store Connect bundle id。
 4. 按实际实现最小化配置必要 entitlements；当前通用 Keychain password item 不需要额外 keychain access group。
-5. 审查 `PrivacyInfo.xcprivacy`，补充任何新增 required-reason API 或数据收集披露。
+5. 审查 `PrivacyInfo.xcprivacy`；当前已声明 `@AppStorage`/UserDefaults 的 `CA92.1` required reason，新增 required-reason API 或数据收集时必须同步更新。
 6. 选择 Generic iOS Device 或 Any iOS Device。
 7. 执行 Product > Archive。
 8. Validate archive。
@@ -146,9 +146,9 @@ xcodebuild archive \
 - [x] README 说明开发、发布构建、TestFlight 和 App Store 上架步骤。
 - [x] Core 测试覆盖 macOS 原生端已验证的 crypto、TOTP、导入导出、备份和同步数据层。
 - [x] Xcode iOS app target 已创建。
-- [x] iOS bundle id、生成式 launch screen、空 entitlements、placeholder assets 和 privacy manifest 已 scaffold。
+- [x] iOS bundle id、生成式 launch screen、空 entitlements、app icon asset 和 UserDefaults privacy manifest 已配置。
 - [x] iOS simulator build/run 已验证。
-- [ ] Apple Developer Team、release signing 和正式 app icon/archive assets 已配置并验证。
+- [ ] Apple Developer Team、release signing、真机 archive 和 App Store/TestFlight 上传验证已完成。
 - [ ] iOS 真机安装和基础回归已验证。
 - [ ] 真实 WebDAV/S3 同步服务端到端验证完成。
 - [ ] TestFlight internal testing 安装验证完成。
@@ -166,7 +166,7 @@ This directory contains the native iOS application target, used to build iOS-nat
 - The current slice migrates the already-verified Swift core from the native macOS target: data models, local encrypted persistence, TOTP, import/export, backup, sync settings, remote sync transport, sync merge, and sync engine.
 - SwiftUI views are included in `PasswordManageriOSCore`, and `PasswordManageriOSAppRoot` is used as the root view for the Xcode iOS app target.
 - The current form includes a SwiftPM-tested core module and a `PasswordManageriOS.xcodeproj` native app target.
-- Debug/Release build configurations, bundle identifier, generated launch screen, placeholder asset catalog, empty entitlements, and a privacy manifest are scaffolded. Production release still needs final app icons, Apple Developer Team/signing, device validation, and App Store Connect validation.
+- Debug/Release build configurations, bundle identifier, generated launch screen, asset catalog, empty entitlements, and a privacy manifest with the UserDefaults required-reason disclosure are configured. Production release still needs Apple Developer Team/signing, device validation, and App Store Connect validation.
 - This directory does not depend on the removed Flutter iOS project.
 
 ### Directory Layout
@@ -220,7 +220,7 @@ Local simulator install and launch example:
 ```bash
 xcrun simctl boot "iPhone 17 Pro"
 xcrun simctl install booted build/Debug-iphonesimulator/PasswordManageriOS.app
-xcrun simctl launch booted com.example.passwordmanager.native.ios
+xcrun simctl launch booted life.dev-ops.passwordmanager
 ```
 
 ### Local Feature Verification
@@ -255,10 +255,10 @@ The initial `Initialize Vault` screen has been launched on an iPhone 17 Pro simu
 The Xcode iOS app target now exists. Before releasing an iOS app, finish release signing and archive validation:
 
 1. Set Apple Developer Team, release signing certificate, and provisioning profile in `PasswordManageriOS.xcodeproj`.
-2. Replace the placeholder app icon with the final 1024x1024 icon and confirm the asset catalog participates in the Release target.
+2. Confirm the final 1024x1024 app icon and asset catalog participate in the Release target.
 3. Update display name, version, build number, deployment target, and the App Store Connect bundle id.
 4. Configure required entitlements with least privilege; the current generic Keychain password item usage does not require an extra keychain access group.
-5. Review `PrivacyInfo.xcprivacy` and add any new required-reason API or data collection disclosures.
+5. Review `PrivacyInfo.xcprivacy`; `@AppStorage`/UserDefaults currently declares the `CA92.1` required reason, and any new required-reason API or data collection disclosure must be added here.
 6. Select Generic iOS Device or Any iOS Device.
 7. Product > Archive.
 8. Validate the archive.
@@ -302,9 +302,9 @@ Official entry points:
 - [x] README documents development, release build, TestFlight, and App Store submission steps.
 - [x] Core tests cover the crypto, TOTP, import/export, backup, and sync data-layer behavior already verified in the native macOS target.
 - [x] Xcode iOS app target is created.
-- [x] iOS bundle id, generated launch screen, empty entitlements, placeholder assets, and privacy manifest are scaffolded.
+- [x] iOS bundle id, generated launch screen, empty entitlements, app icon asset, and UserDefaults privacy manifest are configured.
 - [x] iOS simulator build/run is verified.
-- [ ] Apple Developer Team, release signing, and final app icon/archive assets are configured and validated.
+- [ ] Apple Developer Team, release signing, device archive, and App Store/TestFlight upload validation are complete.
 - [ ] iOS device install and baseline regression are verified.
 - [ ] Real WebDAV/S3 end-to-end sync validation is complete.
 - [ ] TestFlight internal testing install validation is complete.
