@@ -172,17 +172,24 @@ docs/PERMISSIONS_AND_PRIVACY.md
 
    四个属性都存在时，release build 会使用 upload key 签名；缺少任一属性时，release bundle 仍可构建为未签名 artifact，用于 CI 编译验证。
 
-3. 递增 `versionCode` 和 `versionName`。
+3. 通过 Gradle property 传版本号。`VERSION_NAME` 是对外版本号，`VERSION_CODE` 是正整数构建号，必须每次发版递增；不传时默认使用 `1.0.0` 和 `1`。
 4. 构建 Android App Bundle：
 
    ```bash
-   ./gradlew :app:bundleRelease
+   ./gradlew :app:bundleRelease -PVERSION_NAME=1.2.3 -PVERSION_CODE=45
    ```
 
 5. 仅在直接分发或内部 QA 需要 APK 时构建 APK：
 
    ```bash
-   ./gradlew :app:assembleRelease
+   ./gradlew :app:assembleRelease -PVERSION_NAME=1.2.3 -PVERSION_CODE=45
+   ```
+
+   也可以把版本号写入 CI secret 或本机 `~/.gradle/gradle.properties`：
+
+   ```properties
+   VERSION_NAME=1.2.3
+   VERSION_CODE=45
    ```
 
 6. 提供签名属性后，验证 bundle：
@@ -414,17 +421,24 @@ docs/PERMISSIONS_AND_PRIVACY.md
 
    When all four properties are present, the release build is signed with the upload key. If any property is missing, the release bundle can still be built as an unsigned artifact for CI compile verification.
 
-3. Increment `versionCode` and `versionName`.
+3. Pass the version through Gradle properties. `VERSION_NAME` is the public version and `VERSION_CODE` is a positive integer build number that must increase for every release. If omitted, local builds default to `1.0.0` and `1`.
 4. Build an Android App Bundle:
 
    ```bash
-   ./gradlew :app:bundleRelease
+   ./gradlew :app:bundleRelease -PVERSION_NAME=1.2.3 -PVERSION_CODE=45
    ```
 
 5. Build an APK only for direct distribution or internal QA:
 
    ```bash
-   ./gradlew :app:assembleRelease
+   ./gradlew :app:assembleRelease -PVERSION_NAME=1.2.3 -PVERSION_CODE=45
+   ```
+
+   You can also store the version values in CI secrets or local `~/.gradle/gradle.properties`:
+
+   ```properties
+   VERSION_NAME=1.2.3
+   VERSION_CODE=45
    ```
 
 6. After providing signing properties, verify the bundle:

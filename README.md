@@ -225,6 +225,7 @@ flutter build web --release
 2. `x.y.z` 为对外版本号；`build` 为构建号，必须是整数，每次发版递增（Android 的 `versionCode` 由此生成）。
 3. Flutter 构建时会自动注入版本到平台包信息中（Android: `versionName` / `versionCode`；iOS/macOS: `CFBundleShortVersionString` / `CFBundleVersion`，来源于 `Info.plist` 的 `FLUTTER_BUILD_NAME/NUMBER`）。
 4. CI 或临时构建可用命令行覆盖，例如 `flutter build <platform> --build-name 1.2.3 --build-number 45`。
+5. 原生 Android 构建通过 Gradle property 传版本号，例如 `cd apps/android_native && ./gradlew :app:bundleRelease -PVERSION_NAME=1.2.3 -PVERSION_CODE=45`。`VERSION_CODE` 必须是正整数并在每次发版递增。
 
 ### 4.2 macOS 打包发布（App）
 1) 安装并验证依赖  
@@ -303,6 +304,10 @@ flutter build web --release
    - AAB: `apps/flutter_app/build/app/outputs/bundle/release/`  
 5) 签名说明  
    - Release 需配置 keystore 与签名信息（Android 官方流程）  
+6) 原生 Android 构建
+   - `cd apps/android_native`
+   - AAB: `./gradlew :app:bundleRelease -PVERSION_NAME=1.2.3 -PVERSION_CODE=45`
+   - APK: `./gradlew :app:assembleRelease -PVERSION_NAME=1.2.3 -PVERSION_CODE=45`
 
 ### 4.5 Windows 打包发布（桌面）
 1) 依赖准备  

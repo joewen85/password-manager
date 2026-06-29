@@ -21,6 +21,18 @@ val hasReleaseSigningConfig = listOf(
     releaseKeyAlias,
     releaseKeyPassword,
 ).all { it != null }
+val androidVersionCode = providers.gradleProperty("VERSION_CODE")
+    .map { value ->
+        value.toIntOrNull()?.takeIf { it > 0 }
+            ?: error("VERSION_CODE must be a positive integer.")
+    }
+    .orElse(1)
+val androidVersionName = providers.gradleProperty("VERSION_NAME")
+    .map { value ->
+        value.trim().takeIf { it.isNotEmpty() }
+            ?: error("VERSION_NAME must not be blank.")
+    }
+    .orElse("1.0.0")
 
 android {
     namespace = "life.devops.passwordmanager"
@@ -30,8 +42,8 @@ android {
         applicationId = "life.devops.passwordmanager"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = androidVersionCode.get()
+        versionName = androidVersionName.get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
