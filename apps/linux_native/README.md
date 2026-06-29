@@ -10,7 +10,7 @@
 - 已实现可测试核心：PBKDF2-SHA256、AES-256-GCM encrypted vault envelope、TOTP、entry model、搜索/过滤、分类/标签集合、JSON snapshot 序列化/反序列化、encrypted vault 文件读写、version-vector merge。
 - CLI 入口支持初始化、`--password-stdin` 主密码输入、TOTP vault 解锁强制校验、解锁状态检查、分类模板持久化、credential/server/service 条目新增、搜索列表、单条查看、软删除、本地 encrypted envelope 备份/恢复、明文 snapshot 导出/导入、TOTP 生成、WebDAV / S3 presigned URL / 腾讯云 COS / 阿里云 OSS 远端对象同步和 `self-test`，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
 - 当前尚未实现 GTK/Qt/libadwaita 图形界面、GUI CRUD 和 GUI 同步入口。
-- 当前在 macOS 上用 clang + Homebrew OpenSSL 验证核心逻辑；发布前仍需在 Linux 发行版上用系统 OpenSSL 重新构建和回归。
+- 当前在 macOS 上用 clang + Homebrew OpenSSL 验证核心逻辑；同时提供 Docker 化 Ubuntu release gate，可在真实 Linux userspace 中使用系统 OpenSSL/libcurl 重新构建并跑完整 core/CLI smoke。
 
 ### 目录说明
 
@@ -65,6 +65,14 @@ make clean
 ```bash
 make OPENSSL_PREFIX=/usr
 ```
+
+在 Ubuntu 容器中执行 Linux release gate：
+
+```bash
+./scripts/verify_release_docker.sh
+```
+
+该脚本会把 `apps/linux_native` 与 `apps/native_core` 只读挂载进容器，复制到容器内临时工作区，然后安装发行版 OpenSSL/libcurl 开发包，执行 release flags 构建、`make test`、ELF/动态库检查和 CLI `self-test`。可通过 `LINUX_RELEASE_DOCKER_IMAGE` 覆盖发行版镜像。
 
 ### 本地功能验证
 
@@ -189,6 +197,12 @@ make CXXFLAGS="-std=c++17 -O2 -DNDEBUG"
 strip build/password-manager-linux
 ```
 
+发布候选必须先通过容器化 Linux release gate：
+
+```bash
+./scripts/verify_release_docker.sh
+```
+
 ### Linux 分发 / 上架
 
 发布前需要在目标发行版上重新构建，并选择合适渠道：
@@ -230,7 +244,7 @@ Release notes 只能描述已经验证的能力；当前不能把 GUI、GUI 同�
 - [x] terminal-native smoke-test CLI 可构建。
 - [x] Windows/Linux 共用 terminal-native CLI，支持加密 vault 初始化、stdin 主密码输入、TOTP vault 解锁强制校验、状态读取、分类模板持久化、条目新增/搜索/查看/软删除。
 - [x] Windows/Linux 共用 terminal-native CLI 支持 WebDAV、S3 presigned URL、腾讯云 COS、阿里云 OSS 远端对象同步。
-- [ ] 在真实 Linux 发行版上构建和测试。
+- [x] Ubuntu Docker release gate 可在真实 Linux userspace 中构建、测试并校验 ELF/动态库。
 - [ ] GTK/Qt/libadwaita GUI 完成。
 - [ ] 完整 CRUD、导入导出、备份恢复 GUI 完成。
 - [ ] GUI 远端同步入口完成。
@@ -250,7 +264,7 @@ This directory contains the native Linux application target, used to build Linux
 - Testable core is implemented in shared `apps/native_core`: PBKDF2-SHA256, AES-256-GCM encrypted vault envelope, TOTP, entry model, search/filtering, category/tag collection rebuilding, JSON snapshot serialization/deserialization, encrypted vault file read/write, and version-vector merge.
 - The CLI entry point supports encrypted vault initialization, `--password-stdin` master password input, TOTP-protected vault enforcement, unlock status checks, persisted category templates, credential/server/service entry add, search/list, single-entry view, soft delete, local encrypted envelope backup/restore, plaintext snapshot export/import, TOTP generation, WebDAV / S3 presigned URL / Tencent COS / Aliyun OSS remote object sync, and `self-test`.
 - GTK/Qt/libadwaita GUI, GUI CRUD, and GUI sync entry points are not implemented yet.
-- The current verification runs on macOS with clang + Homebrew OpenSSL. Release must be rebuilt and regressed on Linux distributions with system OpenSSL.
+- The current verification runs on macOS with clang + Homebrew OpenSSL. A Dockerized Ubuntu release gate is also available to rebuild with distribution OpenSSL/libcurl and run the full core/CLI smoke coverage in a real Linux userspace.
 
 ### Directory Layout
 
@@ -305,6 +319,14 @@ If OpenSSL is installed in a custom location:
 ```bash
 make OPENSSL_PREFIX=/usr
 ```
+
+Run the Linux release gate inside an Ubuntu container:
+
+```bash
+./scripts/verify_release_docker.sh
+```
+
+The script read-only mounts `apps/linux_native` and `apps/native_core`, copies them into a temporary container workspace, installs distribution OpenSSL/libcurl development packages, runs a release-flags build, `make test`, ELF/dependency checks, and the CLI `self-test`. Override the distro image with `LINUX_RELEASE_DOCKER_IMAGE` when needed.
 
 ### Local Feature Verification
 
@@ -404,6 +426,12 @@ make CXXFLAGS="-std=c++17 -O2 -DNDEBUG"
 strip build/password-manager-linux
 ```
 
+Release candidates must pass the containerized Linux release gate first:
+
+```bash
+./scripts/verify_release_docker.sh
+```
+
 ### Linux Distribution / Submission
 
 Before release, rebuild on target distributions and choose a channel:
@@ -444,7 +472,7 @@ Release notes must only describe verified capabilities. Do not list GUI, GUI syn
 - [x] Terminal-native smoke-test CLI builds.
 - [x] Shared Windows/Linux terminal-native CLI supports encrypted vault initialization, stdin master password input, TOTP-protected vault enforcement, status reads, category template persistence, and entry add/search/view/soft-delete.
 - [x] Shared Windows/Linux terminal-native CLI supports WebDAV, S3 presigned URL, Tencent COS, and Aliyun OSS remote object sync.
-- [ ] Build and test on a real Linux distribution.
+- [x] Ubuntu Docker release gate builds, tests, and verifies ELF/dependencies in a real Linux userspace.
 - [ ] GTK/Qt/libadwaita GUI is complete.
 - [ ] Full CRUD, import/export, and backup/restore GUI is complete.
 - [ ] GUI remote sync entry points are complete.
