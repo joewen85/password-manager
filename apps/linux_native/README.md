@@ -8,7 +8,7 @@
 
 - 当前切片是 C++17 + OpenSSL 的 Linux terminal-native 起点，核心逻辑来自 `apps/native_core`。
 - 已实现可测试核心：PBKDF2-SHA256、AES-256-GCM encrypted vault envelope、TOTP、entry model、搜索/过滤、分类/标签集合、JSON snapshot 序列化/反序列化、encrypted vault 文件读写、version-vector merge。
-- CLI 入口支持初始化、解锁状态检查、分类模板持久化、credential/server/service 条目新增、搜索列表、单条查看、软删除、本地 encrypted envelope 备份/恢复、明文 snapshot 导出/导入、TOTP 生成、WebDAV / S3 presigned URL / 腾讯云 COS / 阿里云 OSS 远端对象同步和 `self-test`，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
+- CLI 入口支持初始化、`--password-stdin` 主密码输入、TOTP vault 解锁强制校验、解锁状态检查、分类模板持久化、credential/server/service 条目新增、搜索列表、单条查看、软删除、本地 encrypted envelope 备份/恢复、明文 snapshot 导出/导入、TOTP 生成、WebDAV / S3 presigned URL / 腾讯云 COS / 阿里云 OSS 远端对象同步和 `self-test`，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
 - 当前尚未实现 GTK/Qt/libadwaita 图形界面、GUI CRUD 和 GUI 同步入口。
 - 当前在 macOS 上用 clang + Homebrew OpenSSL 验证核心逻辑；发布前仍需在 Linux 发行版上用系统 OpenSSL 重新构建和回归。
 
@@ -75,6 +75,14 @@ make OPENSSL_PREFIX=/usr
    ./build/password-manager-linux self-test
    ```
 
+   生产或多人机器上建议用 stdin 传入主密码，避免主密码进入进程 argv 或 shell history：
+
+   ```bash
+   printf '%s\n' "$PM_PASSWORD" | ./build/password-manager-linux status --password-stdin
+   ```
+
+   如果 vault 启用了 TOTP，所有解锁 vault 的命令都必须额外传入 `--totp-code <code>`，或在主密码之后通过 `--totp-stdin` 从 stdin 读取一次性验证码。
+
 3. 初始化 encrypted vault 文件：
 
    ```bash
@@ -123,6 +131,8 @@ make OPENSSL_PREFIX=/usr
    `backup` 默认写入 vault 同级 `backups/`，只保留最新 5 份 encrypted envelope；`export-snapshot` 默认写入同级 `exports/`，内容是明文 JSON，只应保存到受信任位置。
 
 8. 执行远端对象同步。WebDAV 使用 `--endpoint`、`--object-key` 和可选 Basic Auth；S3 presigned 模式使用独立下载/上传 URL；腾讯云 COS 和阿里云 OSS 需要运行时传入 AK、SK、bucket，endpoint / appid / custom-url 按 provider 配置需要传入。同步状态默认写入 `<vault>.sync-state`，只保存远端指纹、本地 dirty flag 和同步版本，不保存 AK、SK、WebDAV 密码或主密码：
+
+   生产环境建议将 WebDAV password、对象存储 SK 和 presigned URL 分别通过 `--remote-password-stdin`、`--sk-stdin` / `--secret-key-stdin`、`--download-url-stdin` / `--upload-url-stdin` 输入，避免同步凭据出现在 argv。
 
    ```bash
    ./build/password-manager-linux sync "test-password" \
@@ -218,7 +228,7 @@ Release notes 只能描述已经验证的能力；当前不能把 GUI、GUI 同�
 - [x] 核心使用 PBKDF2-SHA256 + AES-256-GCM。
 - [x] C++ 测试覆盖加密 envelope、错误密码拒绝、snapshot 反序列化、encrypted vault 文件读回、TOTP、entry 过滤、集合重建和 version-vector merge。
 - [x] terminal-native smoke-test CLI 可构建。
-- [x] Windows/Linux 共用 terminal-native CLI，支持加密 vault 初始化、状态读取、分类模板持久化、条目新增/搜索/查看/软删除。
+- [x] Windows/Linux 共用 terminal-native CLI，支持加密 vault 初始化、stdin 主密码输入、TOTP vault 解锁强制校验、状态读取、分类模板持久化、条目新增/搜索/查看/软删除。
 - [x] Windows/Linux 共用 terminal-native CLI 支持 WebDAV、S3 presigned URL、腾讯云 COS、阿里云 OSS 远端对象同步。
 - [ ] 在真实 Linux 发行版上构建和测试。
 - [ ] GTK/Qt/libadwaita GUI 完成。
@@ -238,7 +248,7 @@ This directory contains the native Linux application target, used to build Linux
 
 - The current slice is a C++17 + OpenSSL Linux terminal-native starting point.
 - Testable core is implemented in shared `apps/native_core`: PBKDF2-SHA256, AES-256-GCM encrypted vault envelope, TOTP, entry model, search/filtering, category/tag collection rebuilding, JSON snapshot serialization/deserialization, encrypted vault file read/write, and version-vector merge.
-- The CLI entry point supports encrypted vault initialization, unlock status checks, persisted category templates, credential/server/service entry add, search/list, single-entry view, soft delete, local encrypted envelope backup/restore, plaintext snapshot export/import, TOTP generation, WebDAV / S3 presigned URL / Tencent COS / Aliyun OSS remote object sync, and `self-test`.
+- The CLI entry point supports encrypted vault initialization, `--password-stdin` master password input, TOTP-protected vault enforcement, unlock status checks, persisted category templates, credential/server/service entry add, search/list, single-entry view, soft delete, local encrypted envelope backup/restore, plaintext snapshot export/import, TOTP generation, WebDAV / S3 presigned URL / Tencent COS / Aliyun OSS remote object sync, and `self-test`.
 - GTK/Qt/libadwaita GUI, GUI CRUD, and GUI sync entry points are not implemented yet.
 - The current verification runs on macOS with clang + Homebrew OpenSSL. Release must be rebuilt and regressed on Linux distributions with system OpenSSL.
 
@@ -305,6 +315,14 @@ make OPENSSL_PREFIX=/usr
    ./build/password-manager-linux self-test
    ```
 
+   On production or shared machines, prefer stdin password input so the master password does not enter process argv or shell history:
+
+   ```bash
+   printf '%s\n' "$PM_PASSWORD" | ./build/password-manager-linux status --password-stdin
+   ```
+
+   If the vault has TOTP enabled, every command that unlocks the vault must also provide `--totp-code <code>` or read the one-time code from stdin with `--totp-stdin` after any stdin password.
+
 3. Generate an encrypted envelope smoke-test file:
 
    ```bash
@@ -328,6 +346,8 @@ make OPENSSL_PREFIX=/usr
    ```
 
 5. Run remote object sync. WebDAV uses `--endpoint`, `--object-key`, and optional Basic Auth; S3 presigned mode uses explicit download/upload URLs; Tencent COS and Aliyun OSS require AK, SK, and bucket at runtime, with endpoint, appid, or custom-url provided as needed. Sync state defaults to `<vault>.sync-state` and stores only remote fingerprints, local dirty state, and sync version data, not AK, SK, WebDAV passwords, or the master password:
+
+   In production, prefer `--remote-password-stdin` for WebDAV passwords, `--sk-stdin` / `--secret-key-stdin` for object-storage secret keys, and `--download-url-stdin` / `--upload-url-stdin` for presigned URLs so sync credentials do not appear in argv.
 
    ```bash
    ./build/password-manager-linux sync "test-password" \
@@ -422,7 +442,7 @@ Release notes must only describe verified capabilities. Do not list GUI, GUI syn
 - [x] Core uses PBKDF2-SHA256 + AES-256-GCM.
 - [x] C++ tests cover encrypted envelope, wrong-password rejection, TOTP, entry filtering, collection rebuilding, and version-vector merge.
 - [x] Terminal-native smoke-test CLI builds.
-- [x] Shared Windows/Linux terminal-native CLI supports encrypted vault initialization, status reads, category template persistence, and entry add/search/view/soft-delete.
+- [x] Shared Windows/Linux terminal-native CLI supports encrypted vault initialization, stdin master password input, TOTP-protected vault enforcement, status reads, category template persistence, and entry add/search/view/soft-delete.
 - [x] Shared Windows/Linux terminal-native CLI supports WebDAV, S3 presigned URL, Tencent COS, and Aliyun OSS remote object sync.
 - [ ] Build and test on a real Linux distribution.
 - [ ] GTK/Qt/libadwaita GUI is complete.

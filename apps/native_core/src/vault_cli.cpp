@@ -27,37 +27,58 @@ struct CliOptions {
     std::string vaultPath;
 };
 
+struct CommandAuth {
+    std::string password;
+    std::string totpCode;
+};
+
+struct NormalizedCommandLine {
+    CommandAuth auth;
+    std::vector<std::string> values;
+    std::vector<char*> argv;
+};
+
 void printUsage(const char* platformName, const char* defaultVaultPath) {
     std::cout << "Password Manager " << platformName << " Native\n"
+              << "Auth options for vault commands:\n"
+              << "  <password>                    Legacy positional password\n"
+              << "  --password-stdin              Read the master password from stdin\n"
+              << "  --totp-code <code>            Unlock a TOTP-protected vault\n"
+              << "  --totp-stdin                  Read the TOTP code from stdin after any stdin password\n"
+              << "  --remote-password-stdin       Read a WebDAV password from stdin for sync\n"
+              << "  --sk-stdin                    Read an object-storage secret key from stdin for sync\n"
+              << "  --download-url-stdin          Read an S3 presigned download URL from stdin for sync\n"
+              << "  --upload-url-stdin            Read an S3 presigned upload URL from stdin for sync\n"
+              << "\n"
               << "Commands:\n"
-              << "  init <password> [--vault <path>]\n"
+              << "  init <password>|--password-stdin [--vault <path>]\n"
               << "                              Create an encrypted vault file\n"
-              << "  status <password> [--vault <path>]\n"
+              << "  status <password>|--password-stdin [--totp-code <code>|--totp-stdin] [--vault <path>]\n"
               << "                              Unlock and print vault counts\n"
-              << "  add-category <password> <name> [--shortcut server|service|account] [--field <name>]... [--vault <path>]\n"
+              << "  add-category <password>|--password-stdin <name> [--shortcut server|service|account] [--field <name>]... [--vault <path>]\n"
               << "                              Persist a category template; shortcuts add editable custom fields\n"
-              << "  add-entry <password> --label <text> [--type credential|server|service]\n"
+              << "  add-entry <password>|--password-stdin --label <text> [--type credential|server|service]\n"
               << "            [--username <value>] [--secret <value>] [--category <name>]\n"
               << "            [--tag <name>]... [--note <text>] [--field <name=value>]... [--vault <path>]\n"
               << "                              Add an encrypted vault entry\n"
-              << "  list <password> [--query <text>] [--type all|credential|server|service]\n"
+              << "  list <password>|--password-stdin [--query <text>] [--type all|credential|server|service]\n"
               << "       [--show-secret] [--vault <path>]\n"
               << "                              Search entries without exposing secrets by default\n"
-              << "  show-entry <password> <id> [--show-secret] [--vault <path>]\n"
+              << "  show-entry <password>|--password-stdin <id> [--show-secret] [--vault <path>]\n"
               << "                              Print one entry as JSON\n"
-              << "  delete-entry <password> <id> [--vault <path>]\n"
+              << "  delete-entry <password>|--password-stdin <id> [--vault <path>]\n"
               << "                              Soft-delete one entry in the encrypted vault\n"
-              << "  backup <password> [--vault <path>] [--backup-dir <dir>]\n"
+              << "  backup <password>|--password-stdin [--vault <path>] [--backup-dir <dir>]\n"
               << "                              Copy the encrypted vault envelope to backups/, keeping newest 5\n"
               << "  list-backups [--vault <path>] [--backup-dir <dir>]\n"
               << "                              List local encrypted backup envelopes\n"
-              << "  restore-backup <password> [latest|file] [--vault <path>] [--backup-dir <dir>]\n"
+              << "  restore-backup <password>|--password-stdin [latest|file] [--vault <path>] [--backup-dir <dir>]\n"
               << "                              Validate and restore an encrypted backup envelope\n"
-              << "  export-snapshot <password> [--vault <path>] [--out <path>] [--export-dir <dir>]\n"
+              << "  export-snapshot <password>|--password-stdin [--vault <path>] [--out <path>] [--export-dir <dir>]\n"
               << "                              Write a plaintext JSON snapshot export\n"
-              << "  import-snapshot <password> --in <path> [--vault <path>]\n"
+              << "  import-snapshot <password>|--password-stdin --in <path> [--vault <path>]\n"
               << "                              Replace the unlocked vault with a plaintext JSON snapshot\n"
-              << "  sync <password> --provider webdav|s3-presigned|tencent-cos|aliyun-oss [options]\n"
+              << "  sync <password>|--password-stdin --provider webdav|s3-presigned|tencent-cos|aliyun-oss [options]\n"
               << "                              Merge local vault with remote object storage and upload when needed\n"
               << "  category <name> [--shortcut server|service|account] [--field <name>]...\n"
               << "                              Print category template JSON without saving\n"
@@ -96,6 +117,110 @@ CliOptions parseVaultOption(int argc, char** argv, int start, const char* defaul
         }
     }
     return options;
+}
+
+std::string readSensitiveLine(const std::string& label) {
+    std::string value;
+    if (!std::getline(std::cin, value)) {
+        throw std::invalid_argument("unable to read " + label + " from stdin");
+    }
+    if (!value.empty() && value.back() == '\r') value.pop_back();
+    return value;
+}
+
+bool commandRequiresPassword(const std::string& command) {
+    return command == "init" ||
+           command == "status" ||
+           command == "add-category" ||
+           command == "add-entry" ||
+           command == "list" ||
+           command == "show-entry" ||
+           command == "delete-entry" ||
+           command == "backup" ||
+           command == "restore-backup" ||
+           command == "export-snapshot" ||
+           command == "import-snapshot" ||
+           command == "sync";
+}
+
+void rebuildArgv(NormalizedCommandLine& commandLine) {
+    commandLine.argv.clear();
+    for (auto& value : commandLine.values) {
+        commandLine.argv.push_back(const_cast<char*>(value.c_str()));
+    }
+    commandLine.argv.push_back(nullptr);
+}
+
+NormalizedCommandLine normalizeCommandLine(int argc, char** argv, bool requiresPassword) {
+    NormalizedCommandLine commandLine;
+    for (int i = 0; i < std::min(argc, 2); ++i) commandLine.values.push_back(argv[i]);
+    if (!requiresPassword) {
+        for (int i = 2; i < argc; ++i) commandLine.values.push_back(argv[i]);
+        rebuildArgv(commandLine);
+        return commandLine;
+    }
+
+    std::vector<std::string> remaining;
+    bool readPasswordFromStdin = false;
+    bool hasTotpSource = false;
+    bool readTotpFromStdin = false;
+    for (int i = 2; i < argc; ++i) {
+        const std::string arg = argv[i];
+        auto requireValue = [&](const std::string& option) -> std::string {
+            if (++i >= argc) throw std::invalid_argument(option + " requires a value");
+            return argv[i];
+        };
+
+        if (arg == "--password-stdin") {
+            if (readPasswordFromStdin) throw std::invalid_argument("multiple password sources were provided");
+            readPasswordFromStdin = true;
+        } else if (arg == "--totp-code") {
+            if (hasTotpSource) throw std::invalid_argument("multiple TOTP code sources were provided");
+            commandLine.auth.totpCode = requireValue(arg);
+            hasTotpSource = true;
+        } else if (arg.rfind("--totp-code=", 0) == 0) {
+            if (hasTotpSource) throw std::invalid_argument("multiple TOTP code sources were provided");
+            commandLine.auth.totpCode = arg.substr(12);
+            hasTotpSource = true;
+        } else if (arg == "--totp-stdin") {
+            if (hasTotpSource) throw std::invalid_argument("multiple TOTP code sources were provided");
+            readTotpFromStdin = true;
+            hasTotpSource = true;
+        } else {
+            remaining.push_back(arg);
+        }
+    }
+
+    if (requiresPassword) {
+        if (readPasswordFromStdin) {
+            commandLine.auth.password = readSensitiveLine("password");
+        } else {
+            if (remaining.empty()) throw std::invalid_argument("password is required");
+            commandLine.auth.password = remaining.front();
+            remaining.erase(remaining.begin());
+        }
+        commandLine.values.push_back(commandLine.auth.password);
+    }
+    if (readTotpFromStdin) {
+        commandLine.auth.totpCode = readSensitiveLine("TOTP code");
+    }
+
+    commandLine.values.insert(commandLine.values.end(), remaining.begin(), remaining.end());
+    rebuildArgv(commandLine);
+    return commandLine;
+}
+
+void requireTotpIfNeeded(const CommandAuth& auth, const VaultSnapshot& snapshot) {
+    if (!snapshot.requireTotp) return;
+    if (snapshot.totpSecret.empty()) {
+        throw std::runtime_error("Vault requires TOTP but has no TOTP secret configured.");
+    }
+    if (auth.totpCode.empty()) {
+        throw std::invalid_argument("TOTP code is required for this vault. Use --totp-code or --totp-stdin.");
+    }
+    if (!verifyTotp(snapshot.totpSecret, auth.totpCode, static_cast<std::uint64_t>(std::time(nullptr)))) {
+        throw std::invalid_argument("TOTP code is invalid.");
+    }
 }
 
 struct CategoryArgs {
@@ -584,6 +709,8 @@ SyncArgs parseSyncArgs(int argc, char** argv, int start, const char* defaultVaul
             args.config.secretAccessKey = arg.substr(13);
         } else if (arg.rfind("--secret-access-key=", 0) == 0) {
             args.config.secretAccessKey = arg.substr(20);
+        } else if (arg == "--sk-stdin" || arg == "--secret-key-stdin" || arg == "--secret-access-key-stdin") {
+            args.config.secretAccessKey = readSensitiveLine("secret access key");
         } else if (arg == "--object-key" || arg == "--path") {
             args.config.objectKey = requireValue(arg);
         } else if (arg.rfind("--object-key=", 0) == 0) {
@@ -594,10 +721,14 @@ SyncArgs parseSyncArgs(int argc, char** argv, int start, const char* defaultVaul
             args.downloadUrl = requireValue(arg);
         } else if (arg.rfind("--download-url=", 0) == 0) {
             args.downloadUrl = arg.substr(15);
+        } else if (arg == "--download-url-stdin") {
+            args.downloadUrl = readSensitiveLine("download URL");
         } else if (arg == "--upload-url") {
             args.uploadUrl = requireValue(arg);
         } else if (arg.rfind("--upload-url=", 0) == 0) {
             args.uploadUrl = arg.substr(13);
+        } else if (arg == "--upload-url-stdin") {
+            args.uploadUrl = readSensitiveLine("upload URL");
         } else if (arg == "--username") {
             args.webDavUsername = requireValue(arg);
         } else if (arg.rfind("--username=", 0) == 0) {
@@ -606,6 +737,8 @@ SyncArgs parseSyncArgs(int argc, char** argv, int start, const char* defaultVaul
             args.webDavPassword = requireValue(arg);
         } else if (arg.rfind("--remote-password=", 0) == 0) {
             args.webDavPassword = arg.substr(18);
+        } else if (arg == "--remote-password-stdin") {
+            args.webDavPassword = readSensitiveLine("remote password");
         } else if (arg == "--device-id") {
             args.deviceId = requireValue(arg);
         } else if (arg.rfind("--device-id=", 0) == 0) {
@@ -635,8 +768,10 @@ SyncArgs parseSyncArgs(int argc, char** argv, int start, const char* defaultVaul
     return args;
 }
 
-VaultSnapshot loadSnapshotOrEmpty(const std::string& password, const std::string& path) {
-    return decryptEnvelope(password, loadEnvelopeFile(path));
+VaultSnapshot loadUnlockedSnapshot(const CommandAuth& auth, const std::string& path) {
+    auto snapshot = decryptEnvelope(auth.password, loadEnvelopeFile(path));
+    requireTotpIfNeeded(auth, snapshot);
+    return snapshot;
 }
 
 void saveSnapshot(const std::string& password, const std::string& path, const VaultSnapshot& snapshot) {
@@ -976,37 +1111,32 @@ void printCategoryTemplate(int argc, char** argv, const char* defaultVaultPath) 
     std::cout << serializeSnapshotJson(snapshot) << "\n";
 }
 
-void initializeVault(int argc, char** argv, const char* defaultVaultPath) {
-    if (argc < 3) throw std::invalid_argument("password is required");
+void initializeVault(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
     const auto options = parseVaultOption(argc, argv, 3, defaultVaultPath);
     VaultSnapshot snapshot;
-    saveSnapshot(argv[2], options.vaultPath, snapshot);
+    saveSnapshot(auth.password, options.vaultPath, snapshot);
     std::cout << "Encrypted vault written to " << options.vaultPath << "\n";
 }
 
-void printStatus(int argc, char** argv, const char* defaultVaultPath) {
-    if (argc < 3) throw std::invalid_argument("password is required");
+void printStatus(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
     const auto options = parseVaultOption(argc, argv, 3, defaultVaultPath);
-    printCounts(loadSnapshotOrEmpty(argv[2], options.vaultPath));
+    printCounts(loadUnlockedSnapshot(auth, options.vaultPath));
 }
 
-void addCategoryToVault(int argc, char** argv, const char* defaultVaultPath) {
+void addCategoryToVault(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
     if (argc < 4) throw std::invalid_argument("password and category name are required");
-    const std::string password = argv[2];
     const auto args = parseCategoryArgs(argc, argv, 3, 4, defaultVaultPath, true);
-    auto snapshot = loadSnapshotOrEmpty(password, args.vaultPath);
+    auto snapshot = loadUnlockedSnapshot(auth, args.vaultPath);
     const auto fields = fieldsForCli(args.hasPreset, args.preset, args.customFields);
     if (!addCategory(snapshot, args.name, fields)) throw std::invalid_argument("category already exists or is empty");
-    saveSnapshot(password, args.vaultPath, snapshot);
+    saveSnapshot(auth.password, args.vaultPath, snapshot);
     markLocalChanges(args.vaultPath);
     std::cout << "Category added to " << args.vaultPath << "\n";
 }
 
-void addEntryToVault(int argc, char** argv, const char* defaultVaultPath) {
-    if (argc < 3) throw std::invalid_argument("password is required");
-    const std::string password = argv[2];
+void addEntryToVault(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
     const auto args = parseEntryArgs(argc, argv, 3, defaultVaultPath);
-    auto snapshot = loadSnapshotOrEmpty(password, args.vaultPath);
+    auto snapshot = loadUnlockedSnapshot(auth, args.vaultPath);
     auto entry = makeEntry(args.label, args.type, args.username, args.secret);
     entry.category = args.category;
     entry.tags = args.tags;
@@ -1014,27 +1144,24 @@ void addEntryToVault(int argc, char** argv, const char* defaultVaultPath) {
     entry.customFields = args.customFields;
     snapshot.entries.push_back(entry);
     rebuildTaxonomy(snapshot);
-    saveSnapshot(password, args.vaultPath, snapshot);
+    saveSnapshot(auth.password, args.vaultPath, snapshot);
     markLocalChanges(args.vaultPath);
     std::cout << "Entry added " << entry.id << " to " << args.vaultPath << "\n";
 }
 
-void listEntries(int argc, char** argv, const char* defaultVaultPath) {
-    if (argc < 3) throw std::invalid_argument("password is required");
-    const std::string password = argv[2];
+void listEntries(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
     const auto args = parseListArgs(argc, argv, 3, defaultVaultPath);
-    const auto snapshot = loadSnapshotOrEmpty(password, args.vaultPath);
+    const auto snapshot = loadUnlockedSnapshot(auth, args.vaultPath);
     const auto entries = filterEntries(snapshot.entries, args.query, args.type);
     std::cout << "matches=" << entries.size() << "\n";
     for (const auto& entry : entries) printEntryLine(entry, args.showSecret);
 }
 
-void showEntry(int argc, char** argv, const char* defaultVaultPath) {
+void showEntry(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
     if (argc < 4) throw std::invalid_argument("password and entry id are required");
-    const std::string password = argv[2];
     const std::string id = argv[3];
     const auto args = parseShowEntryArgs(argc, argv, 4, defaultVaultPath);
-    const auto snapshot = loadSnapshotOrEmpty(password, args.vaultPath);
+    const auto snapshot = loadUnlockedSnapshot(auth, args.vaultPath);
     for (const auto& entry : snapshot.entries) {
         if (entry.id == id) {
             std::cout << entryJsonForDisplay(entry, args.showSecret) << "\n";
@@ -1044,12 +1171,11 @@ void showEntry(int argc, char** argv, const char* defaultVaultPath) {
     throw std::invalid_argument("entry not found");
 }
 
-void deleteEntry(int argc, char** argv, const char* defaultVaultPath) {
+void deleteEntry(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
     if (argc < 4) throw std::invalid_argument("password and entry id are required");
-    const std::string password = argv[2];
     const std::string id = argv[3];
     const auto options = parseVaultOption(argc, argv, 4, defaultVaultPath);
-    auto snapshot = loadSnapshotOrEmpty(password, options.vaultPath);
+    auto snapshot = loadUnlockedSnapshot(auth, options.vaultPath);
     for (auto& entry : snapshot.entries) {
         if (entry.id == id) {
             entry.isDeleted = true;
@@ -1058,7 +1184,7 @@ void deleteEntry(int argc, char** argv, const char* defaultVaultPath) {
             entry.updatedBy = "native-cli";
             entry.version["native-cli"] += 1;
             rebuildTaxonomy(snapshot);
-            saveSnapshot(password, options.vaultPath, snapshot);
+            saveSnapshot(auth.password, options.vaultPath, snapshot);
             markLocalChanges(options.vaultPath);
             std::cout << "Entry deleted " << id << "\n";
             return;
@@ -1067,18 +1193,16 @@ void deleteEntry(int argc, char** argv, const char* defaultVaultPath) {
     throw std::invalid_argument("entry not found");
 }
 
-void backupVault(int argc, char** argv, const char* defaultVaultPath) {
-    if (argc < 3) throw std::invalid_argument("password is required");
-    const std::string password = argv[2];
+void backupVault(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
     const auto args = parseBackupArgs(argc, argv, 3, defaultVaultPath, false);
-    auto snapshot = loadSnapshotOrEmpty(password, args.vaultPath);
+    auto snapshot = loadUnlockedSnapshot(auth, args.vaultPath);
     const auto backupDir = backupDirectoryFor(args);
     ensureDirectory(backupDir);
     const auto backupPath = backupDir / ("vault-" + timestampForFileName() + ".json");
     fs::copy_file(fs::path(args.vaultPath), backupPath, fs::copy_options::overwrite_existing);
     pruneBackups(backupDir);
     snapshot.backupStatus = "Backup saved: " + backupPath.filename().string();
-    saveSnapshot(password, args.vaultPath, snapshot);
+    saveSnapshot(auth.password, args.vaultPath, snapshot);
     std::cout << snapshot.backupStatus << " (" << backupPath.string() << ")\n";
 }
 
@@ -1091,24 +1215,22 @@ void listBackups(int argc, char** argv, const char* defaultVaultPath) {
     }
 }
 
-void restoreBackup(int argc, char** argv, const char* defaultVaultPath) {
-    if (argc < 3) throw std::invalid_argument("password is required");
-    const std::string password = argv[2];
+void restoreBackup(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
     const auto args = parseBackupArgs(argc, argv, 3, defaultVaultPath, true);
     const auto backupPath = selectedBackupPath(args);
-    auto snapshot = decryptEnvelope(password, loadEnvelopeFile(backupPath.string()));
+    (void)loadUnlockedSnapshot(auth, args.vaultPath);
+    auto snapshot = decryptEnvelope(auth.password, loadEnvelopeFile(backupPath.string()));
+    requireTotpIfNeeded(auth, snapshot);
     fs::copy_file(backupPath, fs::path(args.vaultPath), fs::copy_options::overwrite_existing);
     snapshot.backupStatus = "Restored backup: " + backupPath.filename().string();
-    saveSnapshot(password, args.vaultPath, snapshot);
+    saveSnapshot(auth.password, args.vaultPath, snapshot);
     markLocalChanges(args.vaultPath);
     std::cout << snapshot.backupStatus << "\n";
 }
 
-void exportSnapshot(int argc, char** argv, const char* defaultVaultPath) {
-    if (argc < 3) throw std::invalid_argument("password is required");
-    const std::string password = argv[2];
+void exportSnapshot(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
     const auto args = parseExportSnapshotArgs(argc, argv, 3, defaultVaultPath);
-    auto snapshot = loadSnapshotOrEmpty(password, args.vaultPath);
+    auto snapshot = loadUnlockedSnapshot(auth, args.vaultPath);
     rebuildTaxonomy(snapshot);
     const auto exportPath = args.outPath.empty()
         ? exportDirectoryFor(args) / ("vault-export-" + timestampForFileName() + ".json")
@@ -1117,14 +1239,12 @@ void exportSnapshot(int argc, char** argv, const char* defaultVaultPath) {
     std::cout << "Export saved: " << exportPath.string() << "\n";
 }
 
-void importSnapshot(int argc, char** argv, const char* defaultVaultPath) {
-    if (argc < 3) throw std::invalid_argument("password is required");
-    const std::string password = argv[2];
+void importSnapshot(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
     const auto args = parseImportSnapshotArgs(argc, argv, 3, defaultVaultPath);
-    (void)loadSnapshotOrEmpty(password, args.vaultPath);
+    (void)loadUnlockedSnapshot(auth, args.vaultPath);
     auto snapshot = parseSnapshotJson(readTextFile(fs::path(args.inPath)));
     rebuildTaxonomy(snapshot);
-    saveSnapshot(password, args.vaultPath, snapshot);
+    saveSnapshot(auth.password, args.vaultPath, snapshot);
     markLocalChanges(args.vaultPath);
     const auto active = std::count_if(snapshot.entries.begin(), snapshot.entries.end(), [](const auto& entry) {
         return !entry.isDeleted;
@@ -1132,11 +1252,9 @@ void importSnapshot(int argc, char** argv, const char* defaultVaultPath) {
     std::cout << "Imported " << active << " active entries.\n";
 }
 
-void synchronizeVault(int argc, char** argv, const char* defaultVaultPath) {
-    if (argc < 3) throw std::invalid_argument("password is required");
-    const std::string password = argv[2];
+void synchronizeVault(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
     const auto args = parseSyncArgs(argc, argv, 3, defaultVaultPath);
-    auto localSnapshot = loadSnapshotOrEmpty(password, args.vaultPath);
+    auto localSnapshot = loadUnlockedSnapshot(auth, args.vaultPath);
     auto settings = loadSyncState(args);
 
     const auto download = remoteDownload(args);
@@ -1154,7 +1272,7 @@ void synchronizeVault(int argc, char** argv, const char* defaultVaultPath) {
     }
 
     result.snapshot.syncStatus = result.settings.lastSyncStatus.empty() ? "Synced" : result.settings.lastSyncStatus;
-    saveSnapshot(password, args.vaultPath, result.snapshot);
+    saveSnapshot(auth.password, args.vaultPath, result.snapshot);
     saveSyncState(args, result.settings);
     std::cout << "Sync complete"
               << " revision=" << result.settings.lastSyncRevision
@@ -1181,36 +1299,39 @@ int runNativeCli(int argc, char** argv, const char* platformName, const char* de
             return 0;
         }
         const std::string command = argv[1];
+        auto normalized = normalizeCommandLine(argc, argv, commandRequiresPassword(command));
+        const auto normalizedArgc = static_cast<int>(normalized.values.size());
+        auto normalizedArgv = normalized.argv.data();
         if (command == "init") {
-            initializeVault(argc, argv, defaultVaultPath);
+            initializeVault(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
             return 0;
         }
         if (command == "status") {
-            printStatus(argc, argv, defaultVaultPath);
+            printStatus(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
             return 0;
         }
         if (command == "add-category") {
-            addCategoryToVault(argc, argv, defaultVaultPath);
+            addCategoryToVault(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
             return 0;
         }
         if (command == "add-entry") {
-            addEntryToVault(argc, argv, defaultVaultPath);
+            addEntryToVault(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
             return 0;
         }
         if (command == "list") {
-            listEntries(argc, argv, defaultVaultPath);
+            listEntries(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
             return 0;
         }
         if (command == "show-entry") {
-            showEntry(argc, argv, defaultVaultPath);
+            showEntry(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
             return 0;
         }
         if (command == "delete-entry") {
-            deleteEntry(argc, argv, defaultVaultPath);
+            deleteEntry(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
             return 0;
         }
         if (command == "backup") {
-            backupVault(argc, argv, defaultVaultPath);
+            backupVault(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
             return 0;
         }
         if (command == "list-backups") {
@@ -1218,19 +1339,19 @@ int runNativeCli(int argc, char** argv, const char* platformName, const char* de
             return 0;
         }
         if (command == "restore-backup") {
-            restoreBackup(argc, argv, defaultVaultPath);
+            restoreBackup(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
             return 0;
         }
         if (command == "export-snapshot") {
-            exportSnapshot(argc, argv, defaultVaultPath);
+            exportSnapshot(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
             return 0;
         }
         if (command == "import-snapshot") {
-            importSnapshot(argc, argv, defaultVaultPath);
+            importSnapshot(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
             return 0;
         }
         if (command == "sync") {
-            synchronizeVault(argc, argv, defaultVaultPath);
+            synchronizeVault(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
             return 0;
         }
         if (command == "category") {

@@ -56,6 +56,7 @@ PY
   --tag smoke \
   --field Owner=Platform \
   --vault "$vault" >/dev/null
+printf '%s\n' "$password" | "$bin" list --password-stdin --vault "$vault" --query "Smoke Entry" | grep -q "matches=1"
 
 python3 "$(dirname "$0")/vault_sync_server.py" "$server_port_file" "$remote_store" &
 server_pid="$!"
@@ -66,12 +67,14 @@ done
 test -s "$server_port_file"
 sync_url="http://127.0.0.1:$(cat "$server_port_file")"
 
-"$bin" sync "$password" \
+printf '%s\n%s\n' "$password" "remote-password" | "$bin" sync --password-stdin \
   --provider webdav \
   --endpoint "$sync_url" \
   --object-key vault.sync.json \
   --vault "$vault" \
   --state "$sync_state" \
+  --username native-smoke \
+  --remote-password-stdin \
   --device-id native-smoke | grep -q "uploaded=true"
 grep -q '"revision":0' "$remote_store"
 grep -q 'hasLocalChanges=false' "$sync_state"
@@ -121,3 +124,50 @@ grep -q 'Smoke Entry' "$export_file"
 "$bin" status "$password" --vault "$vault" | grep -q "categories=3"
 "$bin" restore-backup "$password" "$backup_name" --vault "$vault" --backup-dir "$backup_dir" | grep -q "Restored backup:"
 "$bin" status "$password" --vault "$vault" | grep -q "categories=2"
+
+totp_vault="$work_dir/totp-vault.envelope"
+totp_restore_target="$work_dir/totp-restore-target.envelope"
+totp_export="$work_dir/totp-export.json"
+totp_error="$work_dir/totp-error.txt"
+totp_backup_dir="$work_dir/totp-backups"
+totp_secret="GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+"$bin" init "$password" --vault "$totp_vault" >/dev/null
+"$bin" export-snapshot "$password" --vault "$totp_vault" --out "$totp_export" >/dev/null
+python3 - "$totp_export" "$totp_secret" <<'PY'
+import json
+import sys
+
+path, secret = sys.argv[1], sys.argv[2]
+with open(path, "r", encoding="utf-8") as handle:
+    snapshot = json.load(handle)
+
+snapshot["security"] = {"requireTotp": True, "totpSecret": secret}
+
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(snapshot, handle, ensure_ascii=False)
+PY
+"$bin" import-snapshot "$password" --vault "$totp_vault" --in "$totp_export" | grep -q "Imported 0 active entries."
+if "$bin" status "$password" --vault "$totp_vault" >"$work_dir/totp-status.txt" 2>"$totp_error"; then
+  echo "TOTP-protected vault unlocked without a code" >&2
+  exit 1
+fi
+grep -q "TOTP code is required" "$totp_error"
+if "$bin" status "$password" --vault "$totp_vault" --totp-code 000000 >"$work_dir/totp-status.txt" 2>"$totp_error"; then
+  echo "TOTP-protected vault unlocked with an invalid code" >&2
+  exit 1
+fi
+grep -q "TOTP code is invalid" "$totp_error"
+totp_code="$("$bin" totp "$totp_secret" "$(date +%s)")"
+"$bin" status "$password" --vault "$totp_vault" --totp-code "$totp_code" | grep -q "entries=0"
+printf '%s\n%s\n' "$password" "$totp_code" | "$bin" status --password-stdin --totp-stdin --vault "$totp_vault" | grep -q "entries=0"
+printf '%s\n%s\n' "$password" "$totp_code" | "$bin" status --totp-stdin --password-stdin --vault "$totp_vault" | grep -q "entries=0"
+"$bin" backup "$password" --vault "$totp_vault" --backup-dir "$totp_backup_dir" --totp-code "$totp_code" | grep -q "Backup saved:"
+totp_backup_name="$("$bin" list-backups --vault "$totp_vault" --backup-dir "$totp_backup_dir" | awk 'NR == 2 { print $1 }')"
+test -n "$totp_backup_name"
+"$bin" init "$password" --vault "$totp_restore_target" >/dev/null
+if "$bin" restore-backup "$password" "$totp_backup_name" --vault "$totp_restore_target" --backup-dir "$totp_backup_dir" >"$work_dir/totp-restore.txt" 2>"$totp_error"; then
+  echo "TOTP-protected backup restored without a code" >&2
+  exit 1
+fi
+grep -q "TOTP code is required" "$totp_error"
+"$bin" restore-backup "$password" "$totp_backup_name" --vault "$totp_restore_target" --backup-dir "$totp_backup_dir" --totp-code "$totp_code" | grep -q "Restored backup:"
