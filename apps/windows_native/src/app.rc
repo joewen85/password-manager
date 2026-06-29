@@ -1,0 +1,40 @@
+#include "resource.h"
+#include <winver.h>
+
+STRINGTABLE
+BEGIN
+    IDS_APP_NAME "Password Manager"
+    IDS_COMPANY_NAME "DevOps Life"
+END
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION VER_FILE_VERSION
+ PRODUCTVERSION VER_PRODUCT_VERSION
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "DevOps Life\0"
+            VALUE "FileDescription", "Password Manager Windows Native\0"
+            VALUE "FileVersion", VER_FILE_VERSION_STR
+            VALUE "InternalName", "PasswordManagerWindows.exe\0"
+            VALUE "OriginalFilename", "PasswordManagerWindows.exe\0"
+            VALUE "ProductName", "Password Manager\0"
+            VALUE "ProductVersion", VER_PRODUCT_VERSION_STR
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

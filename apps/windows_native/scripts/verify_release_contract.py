@@ -11,7 +11,16 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 PROJECT = APP_ROOT / "PasswordManagerWindows.vcxproj"
 VCPKG_MANIFEST = APP_ROOT / "vcpkg.json"
 README = APP_ROOT / "README.md"
+APP_MANIFEST = APP_ROOT / "src" / "PasswordManagerWindows.manifest"
+RESOURCE_HEADER = APP_ROOT / "src" / "resource.h"
+RESOURCE_SCRIPT = APP_ROOT / "src" / "app.rc"
 MSBUILD_NS = {"msb": "http://schemas.microsoft.com/developer/msbuild/2003"}
+MANIFEST_NS = {
+    "asmv1": "urn:schemas-microsoft-com:asm.v1",
+    "asmv3": "urn:schemas-microsoft-com:asm.v3",
+    "compat": "urn:schemas-microsoft-com:compatibility.v1",
+    "win2016": "http://schemas.microsoft.com/SMI/2016/WindowsSettings",
+}
 
 
 def fail(message: str) -> None:
@@ -107,6 +116,8 @@ def check_vcxproj() -> None:
 
     compile_items = item_includes(root, "ClCompile")
     include_items = item_includes(root, "ClInclude")
+    resource_items = item_includes(root, "ResourceCompile")
+    manifest_items = item_includes(root, "Manifest")
     for source in [
         r"src\win32_app.cpp",
         r"..\native_core\src\vault_core.cpp",
@@ -116,8 +127,11 @@ def check_vcxproj() -> None:
     for header in [
         r"..\native_core\src\vault_core.hpp",
         r"..\native_core\src\vault_cli.hpp",
+        r"src\resource.h",
     ]:
         require(normalize_path(header) in include_items, f"project references {header}")
+    require(normalize_path(r"src\app.rc") in resource_items, "project compiles Windows version resource")
+    require(normalize_path(r"src\PasswordManagerWindows.manifest") in manifest_items, "project embeds Windows application manifest")
 
     release = release_item_definition(root)
     release_compile = release.find("msb:ClCompile", MSBUILD_NS)
@@ -141,12 +155,81 @@ def check_vcxproj() -> None:
     require(child_text(release_link, "msb:EnableCOMDATFolding") == "true", "Release enables COMDAT folding")
 
 
+def check_app_manifest() -> None:
+    require(APP_MANIFEST.exists(), "Windows application manifest exists")
+    root = ET.parse(APP_MANIFEST).getroot()
+
+    identity = root.find("asmv1:assemblyIdentity", MANIFEST_NS)
+    require(identity is not None, "manifest declares assembly identity")
+    if identity is None:
+        fail("Manifest identity parsing failed")
+    require(identity.attrib.get("name") == "DevOpsLife.PasswordManager.Windows", "manifest identity name is stable")
+    require(identity.attrib.get("version") == "0.1.0.0", "manifest identity version is stable")
+    require(identity.attrib.get("type") == "win32", "manifest identity type is win32")
+    require(identity.attrib.get("processorArchitecture") == "*", "manifest supports architecture-specific builds")
+
+    description = root.findtext("asmv1:description", default="", namespaces=MANIFEST_NS)
+    require(description == "Password Manager Windows Native", "manifest description is product-specific")
+
+    execution_level = root.find(".//asmv3:requestedExecutionLevel", MANIFEST_NS)
+    require(execution_level is not None, "manifest declares UAC execution level")
+    if execution_level is None:
+        fail("Manifest execution level parsing failed")
+    require(execution_level.attrib.get("level") == "asInvoker", "manifest uses asInvoker UAC level")
+    require(execution_level.attrib.get("uiAccess") == "false", "manifest disables UIAccess")
+
+    supported_os = root.find(".//compat:supportedOS", MANIFEST_NS)
+    require(supported_os is not None, "manifest declares Windows compatibility")
+    if supported_os is None:
+        fail("Manifest supportedOS parsing failed")
+    require(
+        supported_os.attrib.get("Id") == "{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}",
+        "manifest declares Windows 10/11 compatibility GUID",
+    )
+
+    long_path = root.find(".//win2016:longPathAware", MANIFEST_NS)
+    require(long_path is not None and normalize(long_path.text).lower() == "true", "manifest enables long path awareness")
+
+
+def check_version_resource() -> None:
+    require(RESOURCE_HEADER.exists(), "Windows resource header exists")
+    require(RESOURCE_SCRIPT.exists(), "Windows version resource script exists")
+    header = RESOURCE_HEADER.read_text(encoding="utf-8")
+    script = RESOURCE_SCRIPT.read_text(encoding="utf-8")
+
+    for needle in [
+        '#define IDS_APP_NAME 101',
+        '#define IDS_COMPANY_NAME 102',
+        '#define VER_FILE_VERSION 0,1,0,0',
+        '#define VER_FILE_VERSION_STR "0.1.0.0\\0"',
+        '#define VER_PRODUCT_VERSION 0,1,0,0',
+        '#define VER_PRODUCT_VERSION_STR "0.1.0\\0"',
+    ]:
+        require(needle in header, f"resource header declares {needle}")
+
+    for needle in [
+        '#include "resource.h"',
+        "#include <winver.h>",
+        "VS_VERSION_INFO VERSIONINFO",
+        'IDS_APP_NAME "Password Manager"',
+        'IDS_COMPANY_NAME "DevOps Life"',
+        'VALUE "CompanyName", "DevOps Life\\0"',
+        'VALUE "FileDescription", "Password Manager Windows Native\\0"',
+        'VALUE "InternalName", "PasswordManagerWindows.exe\\0"',
+        'VALUE "OriginalFilename", "PasswordManagerWindows.exe\\0"',
+        'VALUE "ProductName", "Password Manager\\0"',
+    ]:
+        require(needle in script, f"version resource declares {needle}")
+
+
 def check_readme() -> None:
     require(README.exists(), "README exists")
     text = README.read_text(encoding="utf-8")
     for needle in [
         "scripts/verify_release_contract.py",
         "vcpkg.json",
+        "PasswordManagerWindows.manifest",
+        "VERSIONINFO",
         "VcpkgEnableManifest",
         "x64-windows",
         "Visual Studio / MSBuild release contract",
@@ -158,6 +241,8 @@ def check_readme() -> None:
 def main() -> None:
     check_vcpkg_manifest()
     check_vcxproj()
+    check_app_manifest()
+    check_version_resource()
     check_readme()
     print("[OK] Windows release contract verification completed")
 

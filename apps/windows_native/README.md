@@ -211,11 +211,11 @@ msbuild PasswordManagerWindows.vcxproj /p:Configuration=Release /p:Platform=x64
 python3 scripts/verify_release_contract.py
 ```
 
-该脚本校验 `vcpkg.json`、`VcpkgEnableManifest`、`x64-windows` triplet、Release 运行库/安全选项、OpenSSL/libcurl 链接项和 README 清单；它不替代 Windows 实机 MSBuild、签名或干净 VM 安装验证。
+该脚本校验 `vcpkg.json`、`VcpkgEnableManifest`、`x64-windows` triplet、Release 运行库/安全选项、OpenSSL/libcurl 链接项、`PasswordManagerWindows.manifest`、`VERSIONINFO` 版本资源和 README 清单；它不替代 Windows 实机 MSBuild、签名或干净 VM 安装验证。
 
 发布前需要：
 
-1. 设置应用名称、版本号、公司名、图标和 manifest。
+1. 复核应用名称、版本号、公司名、图标和 manifest；当前 manifest 与 `VERSIONINFO` 版本资源已纳入本机 contract gate，正式图标仍需随安装器/商店素材补齐。
 2. 配置 Release 编译选项和运行库策略。
 3. 接入 Windows 原生密钥保护：Credential Manager、DPAPI 或 CNG/BCrypt。
 4. 生成 `.exe` 并进行代码签名：
@@ -259,7 +259,8 @@ Release notes 只能描述已经验证的能力；当前不能把完整 GUI、GU
 - [x] Win32 app skeleton 和 Visual Studio `.vcxproj` 已添加。
 - [x] Windows/Linux 原生端共用 `apps/native_core`，避免 core 双写偏差。
 - [x] `vcpkg.json` 声明 Visual Studio / MSBuild release 依赖 OpenSSL 和 libcurl。
-- [x] `scripts/verify_release_contract.py` 会验证 Release|x64、vcpkg manifest、shared core 引用、运行库/安全选项和 OpenSSL/libcurl 链接合同。
+- [x] 应用 manifest 和 `VERSIONINFO` 版本资源已配置，并纳入本机 release contract gate。
+- [x] `scripts/verify_release_contract.py` 会验证 Release|x64、vcpkg manifest、shared core 引用、运行库/安全选项、OpenSSL/libcurl 链接合同、应用 manifest 和 `VERSIONINFO` 版本资源。
 - [x] Portable core 使用 PBKDF2-SHA256 + AES-256-GCM。
 - [x] C++ 测试覆盖加密 envelope、错误密码拒绝、snapshot 反序列化、encrypted vault 文件读回、TOTP、entry 过滤、集合重建和 version-vector merge。
 - [x] portable smoke-test CLI 可在当前机器构建。
@@ -463,11 +464,11 @@ Run the local contract gate before release:
 python3 scripts/verify_release_contract.py
 ```
 
-The script verifies `vcpkg.json`, `VcpkgEnableManifest`, the `x64-windows` triplet, Release runtime/security settings, OpenSSL/libcurl link entries, and the README checklist. It does not replace Windows-host MSBuild, signing, or clean-VM installation validation.
+The script verifies `vcpkg.json`, `VcpkgEnableManifest`, the `x64-windows` triplet, Release runtime/security settings, OpenSSL/libcurl link entries, `PasswordManagerWindows.manifest`, `VERSIONINFO` version resources, and the README checklist. It does not replace Windows-host MSBuild, signing, or clean-VM installation validation.
 
 Before release:
 
-1. Configure app name, version, company name, icon, and manifest.
+1. Review the app name, version, company name, icon, and manifest. The manifest and `VERSIONINFO` version resources are now covered by the local contract gate; the final icon still belongs with installer/store assets.
 2. Configure Release compiler options and runtime library strategy.
 3. Add Windows-native key protection through Credential Manager, DPAPI, or CNG/BCrypt.
 4. Generate `.exe` and code sign it:
@@ -510,7 +511,8 @@ Release notes must only describe verified capabilities. Do not list full GUI, GU
 - [x] README documents development, release build, Windows distribution/submission steps.
 - [x] Win32 app skeleton and Visual Studio `.vcxproj` are added.
 - [x] `vcpkg.json` declares OpenSSL and libcurl for Visual Studio / MSBuild release dependency restoration.
-- [x] `scripts/verify_release_contract.py` verifies Release|x64, vcpkg manifest mode, shared core references, runtime/security settings, and OpenSSL/libcurl link contract.
+- [x] The application manifest and `VERSIONINFO` version resources are configured and covered by the local release contract gate.
+- [x] `scripts/verify_release_contract.py` verifies Release|x64, vcpkg manifest mode, shared core references, runtime/security settings, OpenSSL/libcurl link contract, the application manifest, and `VERSIONINFO` version resources.
 - [x] Portable core uses PBKDF2-SHA256 + AES-256-GCM.
 - [x] C++ tests cover encrypted envelope, wrong-password rejection, TOTP, entry filtering, collection rebuilding, and version-vector merge.
 - [x] Portable smoke-test CLI builds on the current machine.
