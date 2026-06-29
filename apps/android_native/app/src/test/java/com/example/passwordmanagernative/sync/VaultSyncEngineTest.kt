@@ -176,6 +176,50 @@ class VaultSyncEngineTest {
     }
 
     @Test
+    fun keepBothPreservesLocalEmptyCategoryWhenLocalChangesFlagIsClean() {
+        val now = Instant.parse("2027-01-15T08:00:00Z")
+        val engine = VaultSyncEngine(clock = { now })
+        val settings = SyncSettings.defaults(deviceId = "android-device").copy(
+            lastSyncRevision = 1,
+            hasLocalChanges = false,
+            conflictStrategy = SyncSettingsConflictStrategy.KEEP_BOTH,
+        )
+        val local = makeSnapshot(
+            categories = listOf("test"),
+            categoryTemplates = listOf(CategoryTemplate(category = "test")),
+            entries = emptyList(),
+        )
+        val remote = makeSnapshot(
+            categories = emptyList(),
+            categoryTemplates = emptyList(),
+            entries = emptyList(),
+            updatedAt = Instant.parse("2027-01-15T08:01:00Z"),
+        )
+        val remotePayload = engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt = now,
+                deviceId = "remote-device",
+                revision = 2,
+                snapshot = remote,
+            )
+        )
+        val client = FakeSyncClient(
+            downloads = ArrayDeque(listOf(RemoteSyncResult(payload = remotePayload, statusCode = 200))),
+            uploadStatusCodes = ArrayDeque(listOf(200)),
+        )
+
+        val result = engine.synchronize(localSnapshot = local, settings = settings, client = client)
+
+        assertTrue(result.uploaded)
+        assertEquals(listOf("test"), result.snapshot.categories)
+        assertEquals(listOf("test"), result.snapshot.categoryTemplates.map { it.category })
+        assertEquals(listOf("名称", "备注"), result.snapshot.categoryTemplates.single().fields.map { it.name })
+        val uploaded = engine.decodePayload(client.uploadedPayloads.single())!!
+        assertEquals(listOf("test"), uploaded.snapshot.categories)
+        assertEquals(listOf("test"), uploaded.snapshot.categoryTemplates.map { it.category })
+    }
+
+    @Test
     fun unchangedRemoteFingerprintSkipsFullDownloadWhenLocalIsClean() {
         val now = Instant.parse("2027-01-15T08:00:00Z")
         val engine = VaultSyncEngine(clock = { now })

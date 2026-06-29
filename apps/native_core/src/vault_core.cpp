@@ -609,21 +609,41 @@ VaultSnapshot mergeSnapshotsForSync(
     const VaultSnapshot& local,
     const VaultSnapshot& remote,
     const std::vector<VaultEntry>& entries,
-    bool localHasChanges
+    bool localHasChanges,
+    const std::string& conflictStrategy
 ) {
     VaultSnapshot merged;
     merged.entries = entries;
     std::sort(merged.entries.begin(), merged.entries.end(), [](const auto& left, const auto& right) {
         return left.updatedAt > right.updatedAt;
     });
-    std::vector<std::string> values = localHasChanges ? local.categories : remote.categories;
-    const auto baseTemplates = localHasChanges ? local.categoryTemplates : remote.categoryTemplates;
+    const bool keepBothTaxonomy = conflictStrategy == "keepBoth";
+    std::vector<std::string> values;
+    if (keepBothTaxonomy) {
+        values = local.categories;
+        values.insert(values.end(), remote.categories.begin(), remote.categories.end());
+    } else {
+        values = localHasChanges ? local.categories : remote.categories;
+    }
+    std::vector<CategoryTemplate> baseTemplates;
+    if (keepBothTaxonomy) {
+        baseTemplates = localHasChanges ? local.categoryTemplates : remote.categoryTemplates;
+        const auto& secondaryTemplates = localHasChanges ? remote.categoryTemplates : local.categoryTemplates;
+        baseTemplates.insert(baseTemplates.end(), secondaryTemplates.begin(), secondaryTemplates.end());
+    } else {
+        baseTemplates = localHasChanges ? local.categoryTemplates : remote.categoryTemplates;
+    }
     for (const auto& templateEntry : baseTemplates) values.push_back(templateEntry.category);
     for (const auto& entry : merged.entries) {
         if (!entry.isDeleted) values.push_back(entry.category);
     }
     merged.categories = mergeTaxonomyValues(values);
-    values = localHasChanges ? local.tags : remote.tags;
+    if (keepBothTaxonomy) {
+        values = local.tags;
+        values.insert(values.end(), remote.tags.begin(), remote.tags.end());
+    } else {
+        values = localHasChanges ? local.tags : remote.tags;
+    }
     for (const auto& entry : merged.entries) {
         if (!entry.isDeleted) values.insert(values.end(), entry.tags.begin(), entry.tags.end());
     }
@@ -1852,7 +1872,13 @@ SnapshotSyncResult synchronizeSnapshots(
     }
 
     const auto mergeResult = mergeEntries(local.entries, remotePayload.snapshot.entries, resultSettings.conflictStrategy);
-    const auto mergedSnapshot = mergeSnapshotsForSync(local, remotePayload.snapshot, mergeResult.entries, resultSettings.hasLocalChanges);
+    const auto mergedSnapshot = mergeSnapshotsForSync(
+        local,
+        remotePayload.snapshot,
+        mergeResult.entries,
+        resultSettings.hasLocalChanges,
+        resultSettings.conflictStrategy
+    );
     if (snapshotsEquivalent(mergedSnapshot, remotePayload.snapshot)) {
         SnapshotSyncResult result;
         result.snapshot = mergedSnapshot;

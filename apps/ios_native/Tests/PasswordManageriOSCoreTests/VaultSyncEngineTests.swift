@@ -164,6 +164,49 @@ struct VaultSyncEngineTests {
         #expect(uploaded.snapshot.categoryTemplates.first?.fields.map(\.name) == ["名称", "备注"])
     }
 
+    @Test("Keep both preserves local empty category even when local changes flag is clean")
+    func keepBothPreservesLocalEmptyCategoryWhenClean() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        var settings = SyncSettings.defaults(deviceId: "ios-device")
+        settings.lastSyncRevision = 1
+        settings.hasLocalChanges = false
+        settings.conflictStrategy = .keepBoth
+        let local = makeSnapshot(
+            categories: ["test"],
+            categoryTemplates: [CategoryTemplate(category: "test")],
+            entries: []
+        )
+        let remote = makeSnapshot(
+            categories: [],
+            categoryTemplates: [],
+            entries: [],
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_100)
+        )
+        let remotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 2,
+                snapshot: remote
+            )
+        )
+        let client = FakeSyncClient(
+            downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)],
+            uploadStatusCodes: [200]
+        )
+
+        let result = try await engine.synchronize(localSnapshot: local, settings: settings, client: client)
+
+        #expect(result.uploaded)
+        #expect(result.snapshot.categories == ["test"])
+        #expect(result.snapshot.categoryTemplates.map(\.category) == ["test"])
+        #expect(result.snapshot.categoryTemplates.first?.fields.map(\.name) == ["名称", "备注"])
+        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.single))
+        #expect(uploaded.snapshot.categories == ["test"])
+        #expect(uploaded.snapshot.categoryTemplates.map(\.category) == ["test"])
+    }
+
     @Test("Unchanged remote fingerprint skips full download when local is clean")
     func unchangedRemoteFingerprintSkipsFullDownloadWhenLocalIsClean() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)

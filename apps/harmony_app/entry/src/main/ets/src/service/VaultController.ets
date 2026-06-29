@@ -1789,11 +1789,17 @@ export class VaultController {
 
     const tags = new Set<string>();
     const categories = new Set<string>();
-    const baseTags = local.syncSettings.hasLocalChanges ? local.tags : remote.tags;
-    const baseCategories = local.syncSettings.hasLocalChanges ? local.categories : remote.categories;
-    const baseTemplates = local.syncSettings.hasLocalChanges
-      ? local.categoryTemplates
-      : remote.categoryTemplates;
+    const keepBothTaxonomy = strategy === ConflictStrategy.KEEP_BOTH;
+    const localHasChanges = local.syncSettings.hasLocalChanges;
+    const baseTags = keepBothTaxonomy
+      ? local.tags.concat(remote.tags)
+      : (localHasChanges ? local.tags : remote.tags);
+    const baseCategories = keepBothTaxonomy
+      ? local.categories.concat(remote.categories)
+      : (localHasChanges ? local.categories : remote.categories);
+    const baseTemplates = keepBothTaxonomy
+      ? preferredCategoryTemplates(local, remote, localHasChanges)
+      : (localHasChanges ? local.categoryTemplates : remote.categoryTemplates);
     baseTags.forEach((tag: string) => tags.add(tag));
     baseCategories.forEach((category: string) => categories.add(category));
     baseTemplates.forEach((template: CategoryTemplate) => categories.add(template.category));
@@ -2340,6 +2346,16 @@ function mergeCategoryTemplates(
   const output: CategoryTemplate[] = [];
   merged.forEach((template: CategoryTemplate) => output.push(template));
   return normalizeCategoryTemplates(output, categories);
+}
+
+function preferredCategoryTemplates(
+  local: VaultRuntimePayload,
+  remote: VaultRuntimePayload,
+  localHasChanges: boolean,
+): CategoryTemplate[] {
+  return localHasChanges
+    ? local.categoryTemplates.concat(remote.categoryTemplates)
+    : remote.categoryTemplates.concat(local.categoryTemplates);
 }
 
 function cloneCategoryTemplate(template: CategoryTemplate): CategoryTemplate {

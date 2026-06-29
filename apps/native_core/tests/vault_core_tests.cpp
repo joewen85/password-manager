@@ -212,6 +212,14 @@ int main() {
     assert(emptyCategoryMerge.snapshot.categoryTemplates.size() == 1);
     assert(emptyCategoryMerge.snapshot.categoryTemplates[0].fields.size() == 2);
 
+    emptyCategorySettings.hasLocalChanges = false;
+    auto cleanEmptyCategoryMerge = pm::synchronizeSnapshots(emptyCategoryLocal, emptyCategorySettings, emptyCategoryRemotePayload);
+    assert(cleanEmptyCategoryMerge.uploaded);
+    assert(cleanEmptyCategoryMerge.snapshot.categories.size() == 1);
+    assert(cleanEmptyCategoryMerge.snapshot.categories[0] == "test");
+    assert(cleanEmptyCategoryMerge.snapshot.categoryTemplates.size() == 1);
+    assert(cleanEmptyCategoryMerge.snapshot.categoryTemplates[0].fields.size() == 2);
+
     pm::VaultSnapshot remoteDominant;
     remoteDominant.updatedAt = "2026-06-28T00:05:00Z";
     remoteDominant.entries.push_back(pm::makeEntry("Remote Sync", "credential", "remote@example.com", "remote-secret"));

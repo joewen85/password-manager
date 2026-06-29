@@ -135,6 +135,7 @@ class VaultSyncEngine(
             remote = remotePayload.snapshot,
             entries = mergeResult.entries,
             localHasChanges = settings.hasLocalChanges,
+            conflictStrategy = settings.conflictStrategy,
         )
 
         if (mergedSnapshot == remotePayload.snapshot) {
@@ -192,17 +193,38 @@ class VaultSyncEngine(
         remote: VaultSnapshot,
         entries: List<VaultEntry>,
         localHasChanges: Boolean,
+        conflictStrategy: SyncSettingsConflictStrategy,
     ): VaultSnapshot {
         val latestSnapshot = if (local.updatedAt >= remote.updatedAt) local else remote
         val activeEntries = entries.filterNot { it.isDeleted }
-        val baseCategories = if (localHasChanges) local.categories else remote.categories
-        val baseCategoryTemplates = if (localHasChanges) local.categoryTemplates else remote.categoryTemplates
+        val keepBothTaxonomy = conflictStrategy == SyncSettingsConflictStrategy.KEEP_BOTH
+        val baseCategories = if (keepBothTaxonomy) {
+            local.categories + remote.categories
+        } else if (localHasChanges) {
+            local.categories
+        } else {
+            remote.categories
+        }
+        val baseCategoryTemplates = if (keepBothTaxonomy) {
+            preferredTemplates(local, remote, localHasChanges)
+        } else if (localHasChanges) {
+            local.categoryTemplates
+        } else {
+            remote.categoryTemplates
+        }
         val categories = mergeTaxonomy(
             base = baseCategories,
             entries = activeEntries.map { it.payload.category } + baseCategoryTemplates.map { it.category },
         )
+        val baseTags = if (keepBothTaxonomy) {
+            local.tags + remote.tags
+        } else if (localHasChanges) {
+            local.tags
+        } else {
+            remote.tags
+        }
         val tags = mergeTaxonomy(
-            base = if (localHasChanges) local.tags else remote.tags,
+            base = baseTags,
             entries = activeEntries.flatMap { it.payload.tags },
         )
         val categoryTemplates = mergeCategoryTemplates(
@@ -222,6 +244,17 @@ class VaultSyncEngine(
             updatedAt = maxOf(local.updatedAt, remote.updatedAt),
         )
     }
+
+    private fun preferredTemplates(
+        local: VaultSnapshot,
+        remote: VaultSnapshot,
+        localHasChanges: Boolean,
+    ): List<CategoryTemplate> =
+        if (localHasChanges) {
+            local.categoryTemplates + remote.categoryTemplates
+        } else {
+            remote.categoryTemplates + local.categoryTemplates
+        }
 
     private fun mergeTaxonomy(base: List<String>, entries: List<String>): List<String> =
         (base + entries)

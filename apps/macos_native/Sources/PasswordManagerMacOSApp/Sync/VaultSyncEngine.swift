@@ -135,7 +135,8 @@ struct VaultSyncEngine: Sendable {
             local: localSnapshot,
             remote: remotePayload.snapshot,
             entries: mergeResult.entries,
-            localHasChanges: settings.hasLocalChanges
+            localHasChanges: settings.hasLocalChanges,
+            conflictStrategy: settings.conflictStrategy
         )
 
         if mergedSnapshot == remotePayload.snapshot {
@@ -204,18 +205,27 @@ struct VaultSyncEngine: Sendable {
         local: VaultSnapshot,
         remote: VaultSnapshot,
         entries: [VaultEntry],
-        localHasChanges: Bool
+        localHasChanges: Bool,
+        conflictStrategy: SyncSettingsConflictStrategy
     ) -> VaultSnapshot {
         let latestSnapshot = local.updatedAt >= remote.updatedAt ? local : remote
         let activeEntries = entries.filter { !$0.isDeleted }
-        let baseCategories = localHasChanges ? local.categories : remote.categories
-        let baseCategoryTemplates = localHasChanges ? local.categoryTemplates : remote.categoryTemplates
+        let keepBothTaxonomy = conflictStrategy == .keepBoth
+        let baseCategories = keepBothTaxonomy
+            ? local.categories + remote.categories
+            : (localHasChanges ? local.categories : remote.categories)
+        let baseCategoryTemplates = keepBothTaxonomy
+            ? preferredTemplates(local: local, remote: remote, localHasChanges: localHasChanges)
+            : (localHasChanges ? local.categoryTemplates : remote.categoryTemplates)
         let categories = mergeTaxonomy(
             base: baseCategories,
             values: activeEntries.map(\.payload.category) + baseCategoryTemplates.map(\.category)
         )
+        let baseTags = keepBothTaxonomy
+            ? local.tags + remote.tags
+            : (localHasChanges ? local.tags : remote.tags)
         let tags = mergeTaxonomy(
-            base: localHasChanges ? local.tags : remote.tags,
+            base: baseTags,
             values: activeEntries.flatMap(\.payload.tags)
         )
         let categoryTemplates = mergeCategoryTemplates(
@@ -234,6 +244,16 @@ struct VaultSyncEngine: Sendable {
             lastBackupStatus: latestSnapshot.lastBackupStatus,
             updatedAt: max(local.updatedAt, remote.updatedAt)
         )
+    }
+
+    private func preferredTemplates(
+        local: VaultSnapshot,
+        remote: VaultSnapshot,
+        localHasChanges: Bool
+    ) -> [CategoryTemplate] {
+        localHasChanges
+            ? local.categoryTemplates + remote.categoryTemplates
+            : remote.categoryTemplates + local.categoryTemplates
     }
 
     private func mergeTaxonomy(base: [String], values: [String]) -> [String] {
