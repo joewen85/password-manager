@@ -67,9 +67,9 @@ fi
 
 app_scope_file="$APP_DIR/AppScope/app.json5"
 if grep -Eq "\"bundleName\"[[:space:]]*:[[:space:]]*\"$EXPECTED_BUNDLE_NAME\"" "$app_scope_file"; then
-  ok "Harmony bundleName matches Android production applicationId: $EXPECTED_BUNDLE_NAME"
+  ok "Harmony bundleName matches Android production applicationId and contains no hyphen: $EXPECTED_BUNDLE_NAME"
 else
-  fail "Harmony bundleName must be $EXPECTED_BUNDLE_NAME, not an example identifier"
+  fail "Harmony bundleName must be $EXPECTED_BUNDLE_NAME, not an example or hyphenated identifier"
   status=1
 fi
 

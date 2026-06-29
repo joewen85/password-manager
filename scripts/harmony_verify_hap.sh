@@ -92,8 +92,22 @@ with open(module_path, "r", encoding="utf-8") as handle:
 def fail(message: str) -> None:
     raise SystemExit(message)
 
+identifier_pattern = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+")
+
+def require_identifier(value: object, label: str) -> None:
+    if not isinstance(value, str) or not value:
+        fail(f"{label} must be a non-empty string")
+    if "-" in value:
+        fail(f"{label} must not contain '-'")
+    if not identifier_pattern.fullmatch(value):
+        fail(f"{label} must be a dot-separated platform identifier, got {value!r}")
+
+require_identifier(expected_bundle, "expected bundleName")
+
 summary_app = pack.get("summary", {}).get("app", {})
-if summary_app.get("bundleName") != expected_bundle:
+summary_bundle = summary_app.get("bundleName")
+require_identifier(summary_bundle, "pack.info bundleName")
+if summary_bundle != expected_bundle:
     fail(f"pack.info bundleName must be {expected_bundle}")
 
 version = summary_app.get("version", {})
@@ -103,7 +117,9 @@ if not isinstance(version.get("name"), str) or not re.fullmatch(r"\d+(?:\.\d+){0
     fail("pack.info version.name must be one to three dot-separated integers")
 
 module_app = module.get("app", {})
-if module_app.get("bundleName") != expected_bundle:
+module_bundle = module_app.get("bundleName")
+require_identifier(module_bundle, "module.json app.bundleName")
+if module_bundle != expected_bundle:
     fail(f"module.json app.bundleName must be {expected_bundle}")
 if module_app.get("vendor") != expected_vendor:
     fail(f"module.json app.vendor must be {expected_vendor}")

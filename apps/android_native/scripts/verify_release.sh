@@ -28,6 +28,7 @@ AAB="app/build/outputs/bundle/release/app-release.aab"
 
 python3 - <<'PY'
 from pathlib import Path
+import re
 import sys
 import xml.etree.ElementTree as ET
 
@@ -35,11 +36,43 @@ manifest_path = Path("app/build/intermediates/merged_manifest/release/processRel
 if not manifest_path.exists():
     raise SystemExit(f"Missing merged release manifest: {manifest_path}")
 
+expected_application_id = "life.devops.passwordmanager"
+identifier_pattern = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+")
+
+def require_identifier(value, label):
+    if not isinstance(value, str) or not value:
+        raise SystemExit(f"{label} must be a non-empty string")
+    if "-" in value:
+        raise SystemExit(f"{label} must not contain '-'")
+    if not identifier_pattern.fullmatch(value):
+        raise SystemExit(f"{label} must be a dot-separated platform identifier, got {value!r}")
+
+build_gradle = Path("app/build.gradle.kts").read_text(encoding="utf-8")
+namespace_match = re.search(r'^\s*namespace\s*=\s*"([^"]+)"', build_gradle, re.MULTILINE)
+application_id_match = re.search(r'^\s*applicationId\s*=\s*"([^"]+)"', build_gradle, re.MULTILINE)
+if namespace_match is None:
+    raise SystemExit("Missing Android namespace in app/build.gradle.kts")
+if application_id_match is None:
+    raise SystemExit("Missing Android applicationId in app/build.gradle.kts")
+
+namespace = namespace_match.group(1)
+application_id = application_id_match.group(1)
+require_identifier(namespace, "Android namespace")
+require_identifier(application_id, "Android applicationId")
+if namespace != expected_application_id:
+    raise SystemExit(f"Android namespace must be {expected_application_id}, got {namespace}")
+if application_id != expected_application_id:
+    raise SystemExit(f"Android applicationId must be {expected_application_id}, got {application_id}")
+
 ns = "{http://schemas.android.com/apk/res/android}"
 root = ET.parse(manifest_path).getroot()
 permissions = [node.attrib.get(ns + "name") for node in root.findall("uses-permission")]
-expected_permissions = ["android.permission.INTERNET"]
-if permissions != expected_permissions:
+expected_permissions = [
+    "android.permission.INTERNET",
+    "android.permission.USE_BIOMETRIC",
+    "android.permission.USE_FINGERPRINT",
+]
+if sorted(permissions) != sorted(expected_permissions):
     raise SystemExit(f"Unexpected permissions: {permissions!r}")
 
 application = root.find("application")
@@ -73,6 +106,10 @@ if launcher is None:
 if launcher.attrib.get(ns + "exported") != "true":
     raise SystemExit("Launcher activity must remain exported=true")
 
+launcher_name = launcher.attrib.get(ns + "name")
+if launcher_name and "-" in launcher_name:
+    raise SystemExit("Launcher activity name must not contain '-'")
+
 for icon_path in [
     Path("app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"),
     Path("app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml"),
@@ -85,6 +122,7 @@ for icon_path in [
 if not Path("app/src/main/res/drawable/launcher_monochrome.xml").exists():
     raise SystemExit("Missing launcher_monochrome.xml")
 
+print("applicationId=", application_id)
 print("permissions=", permissions)
 print("allowBackup=", application.attrib.get(ns + "allowBackup"))
 print("launcherExported=", launcher.attrib.get(ns + "exported"))

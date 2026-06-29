@@ -26,7 +26,7 @@
 - 已新增 Keystore-wrapped sync secret file store，并支持将 `webdavPassword`、presigned download/upload URL 从普通 `SyncSettings` 中 redacted 后再落盘；JVM 测试使用 fake cipher 验证不会持久化明文 secret，并覆盖普通配置文件无明文 secret、`VaultStore` 重新加载同步设置。
 - 已新增 Android instrumented test：`AndroidKeystoreSyncSecretStoreInstrumentedTest`，用于在真实 device/emulator 上验证 Android Keystore wrapping 后的 sync secret 文件不包含明文 secret。
 - 同步设置 UI 已接入 `VaultStore` 和 Keystore-wrapped secret store；provider 选择会只展示对应的 WebDAV/NAS WebDAV 或 S3 presigned URL 字段，避免在未配置 provider 时暴露无关输入。手动同步入口已连接 `SyncClientFactory` 与 `VaultSyncEngine`，可上传本地 payload、应用合并结果并持久化 revision/status/logs。
-- Manifest 只声明 `INTERNET` normal permission 用于 WebDAV/S3 同步，并保持 `android:allowBackup="false"`；权限和 Google Play Data safety 披露基线见 `docs/PERMISSIONS_AND_PRIVACY.md`。
+- Release merged manifest 只声明 `INTERNET`、`USE_BIOMETRIC` 与 `USE_FINGERPRINT` normal permissions，并保持 `android:allowBackup="false"`；权限和 Google Play Data safety 披露基线见 `docs/PERMISSIONS_AND_PRIVACY.md`。
 - Adaptive launcher icon 已包含 foreground、background、round icon 和 Android 13+ themed icon 所需的 monochrome layer。
 - Debug APK 已在 `Medium_Phone_API_36.1` AVD（Android 16 / API 36）上完成安装和启动冒烟验证；launcher activity 解析为 `.MainActivity`，首屏 UI tree 显示 `Initialize Vault`、主密码/确认密码输入框和 `Create Vault`。
 - Debug APK、未签名 release AAB、androidTest APK 构建、release manifest 处理、release verification 脚本、JVM 测试和 Keystore-backed key wrapping instrumentation test 已通过。本次设备级验证使用 `Medium_Phone_API_36.1` AVD（Android 16 / API 36）。生产发布前仍需完成 upload key 签名校验、真实 WebDAV/S3 端到端服务验证和生产 UI polish。
@@ -84,7 +84,7 @@ chmod +x ./gradlew
 ./scripts/verify_release.sh
 ```
 
-该脚本会使用 JDK 21+、禁用 Gradle daemon、启用 Kotlin in-process 编译，运行 JVM 测试、Debug APK 构建、androidTest APK 构建、Release AAB 构建和 release manifest 处理，然后检查 merged manifest 权限、`allowBackup=false`、launcher activity、adaptive icon / round icon / monochrome themed icon 资源。未配置 Play upload key 时，脚本会明确报告 AAB 为 unsigned。配置 upload key 后，可设置 `EXPECTED_RELEASE_CERT_SHA256` 校验签名证书指纹；设置 `REQUIRE_SIGNED_RELEASE=true` 可让 unsigned AAB 直接失败。
+该脚本会使用 JDK 21+、禁用 Gradle daemon、启用 Kotlin in-process 编译，运行 JVM 测试、Debug APK 构建、androidTest APK 构建、Release AAB 构建和 release manifest 处理，然后检查 Android `namespace` / `applicationId` 是无横杠点分发布标识、merged manifest 权限、`allowBackup=false`、launcher activity、adaptive icon / round icon / monochrome themed icon 资源。未配置 Play upload key 时，脚本会明确报告 AAB 为 unsigned。配置 upload key 后，可设置 `EXPECTED_RELEASE_CERT_SHA256` 校验签名证书指纹；设置 `REQUIRE_SIGNED_RELEASE=true` 可让 unsigned AAB 直接失败。
 
 运行设备启动冒烟验证：
 
@@ -149,7 +149,9 @@ chmod +x ./gradlew
 当前 manifest 最小权限基线：
 
 - `android.permission.INTERNET`: normal permission，用于 WebDAV、NAS WebDAV 和 S3 presigned URL 手动同步。
-- 无外部存储、相机、麦克风、定位、通讯录、日历、短信、电话、附近设备、生物识别或通知权限。
+- `android.permission.USE_BIOMETRIC`: normal permission，用于本机生物识别解锁。
+- `android.permission.USE_FINGERPRINT`: 由 `androidx.biometric` 合入 release manifest，用于旧 Android 版本的生物识别兼容。
+- 无外部存储、相机、麦克风、定位、通讯录、日历、短信、电话、附近设备或通知权限。
 - `android:allowBackup="false"`，避免系统云备份复制本地加密 vault、备份和 sync secret 文件。
 
 完整披露和 Play Data safety 建议见：
@@ -268,9 +270,9 @@ docs/PERMISSIONS_AND_PRIVACY.md
 - [x] 设备布局冒烟脚本已提供，可重复验证 compact/expanded 宽度阈值两侧的基础布局切换、截图和目标 app crash buffer。
 - [x] Release AAB 构建配置支持可选 Play upload key 签名。
 - [x] 未提供签名属性时，release AAB 可作为未签名 artifact 构建用于 CI 编译验证。
-- [x] 本地 release verification 脚本会使用 JDK 21+ 串联测试、构建、manifest 权限、`allowBackup=false`、launcher activity、launcher icon 资源检查，并可用 `EXPECTED_RELEASE_CERT_SHA256` 校验 Play upload certificate 指纹。
+- [x] 本地 release verification 脚本会使用 JDK 21+ 串联测试、构建、无横杠 `namespace` / `applicationId`、manifest 权限、`allowBackup=false`、launcher activity、launcher icon 资源检查，并可用 `EXPECTED_RELEASE_CERT_SHA256` 校验 Play upload certificate 指纹。
 - [x] Instrumented test APK 构建通过，包含 Android Keystore sync secret wrapping 设备验证用例。
-- [x] Release manifest 处理通过，并声明 `INTERNET` normal permission 以支持真实远端同步。
+- [x] Release manifest 处理通过，并声明 `INTERNET`、`USE_BIOMETRIC` 与 `USE_FINGERPRINT` normal permissions 以支持真实远端同步和本机生物识别解锁。
 - [x] Adaptive launcher icon 包含 foreground、background、round icon 和 Android 13+ themed icon 的 monochrome layer。
 - [x] JVM 测试覆盖 crypto 往返、TOTP 验证、credential/server/service/tombstone payload 的 JSON 快照往返、service account 表单解析、Dart fixture 兼容性，以及 fold-aware layout policy。
 - [x] TOTP 解锁验证与 Flutter auth package 默认参数一致：SHA1、30 秒周期、6 位数字、+/-1 时间窗口。
@@ -317,7 +319,7 @@ This directory contains the native Android application target, used to build And
 - A Keystore-wrapped sync secret file store has been added. `webdavPassword` and presigned download/upload URLs can be redacted from normal `SyncSettings` before plaintext storage; JVM tests use a fake cipher to verify the secret file does not contain plaintext secrets, normal config files have no plaintext secrets, and `VaultStore` reloads sync settings.
 - An Android instrumented test, `AndroidKeystoreSyncSecretStoreInstrumentedTest`, now verifies on a real device/emulator that the Android Keystore-wrapped sync secret file does not contain plaintext secrets.
 - Sync settings UI is wired through `VaultStore` and the Keystore-wrapped secret store. Provider selection only shows the relevant WebDAV/NAS WebDAV or S3 presigned URL fields, so unconfigured providers do not expose irrelevant inputs. The manual sync entry point now connects `SyncClientFactory` with `VaultSyncEngine`, uploads local payloads, applies merge results, and persists revision/status/logs.
-- The manifest declares only the `INTERNET` normal permission for WebDAV/S3 sync and keeps `android:allowBackup="false"`; the permissions and Google Play Data safety disclosure baseline is documented in `docs/PERMISSIONS_AND_PRIVACY.md`.
+- The release merged manifest declares only the `INTERNET`, `USE_BIOMETRIC`, and `USE_FINGERPRINT` normal permissions and keeps `android:allowBackup="false"`; the permissions and Google Play Data safety disclosure baseline is documented in `docs/PERMISSIONS_AND_PRIVACY.md`.
 - The adaptive launcher icon includes foreground, background, round icon, and the monochrome layer required for Android 13+ themed icons.
 - Debug APK install and launch smoke validation passed on the `Medium_Phone_API_36.1` AVD (Android 16 / API 36). The launcher activity resolves to `.MainActivity`, and the first-screen UI tree shows `Initialize Vault`, master password / confirmation fields, and `Create Vault`.
 - Debug APK, unsigned release AAB, androidTest APK build, release manifest processing, the release verification script, JVM tests, and the Keystore-backed key wrapping instrumentation test pass. The device-level validation used the `Medium_Phone_API_36.1` AVD (Android 16 / API 36). Before production release, upload-key signing verification, real WebDAV/S3 end-to-end service validation, and production UI polish must still be completed.
@@ -440,7 +442,7 @@ Use at least one foldable emulator profile and one tablet profile before every A
 Current minimal manifest baseline:
 
 - `android.permission.INTERNET`: normal permission for WebDAV, NAS WebDAV, and S3 presigned URL manual sync.
-- No external storage, camera, microphone, location, contacts, calendar, SMS, phone, nearby-device, biometric, or notification permissions.
+- No external storage, camera, microphone, location, contacts, calendar, SMS, phone, nearby-device, or notification permissions. `USE_BIOMETRIC` and the `androidx.biometric` legacy `USE_FINGERPRINT` compatibility permission are declared for local biometric unlock.
 - `android:allowBackup="false"` prevents system cloud backup from copying local encrypted vault, backup, and sync secret files.
 
 Full disclosure and Play Data safety guidance:
@@ -561,9 +563,9 @@ docs/PERMISSIONS_AND_PRIVACY.md
 - [x] Light and night color resources are defined, and the app follows the system dark/light mode by default.
 - [x] Release AAB build configuration supports optional Play upload key signing.
 - [x] Release AAB builds as an unsigned artifact for CI compile verification when signing properties are absent.
-- [x] Local release verification script gates tests, builds, manifest permissions, `allowBackup=false`, launcher activity, launcher icon resources, and can validate the Play upload certificate fingerprint with `EXPECTED_RELEASE_CERT_SHA256`.
+- [x] Local release verification script gates tests, builds, hyphen-free `namespace` / `applicationId`, manifest permissions, `allowBackup=false`, launcher activity, launcher icon resources, and can validate the Play upload certificate fingerprint with `EXPECTED_RELEASE_CERT_SHA256`.
 - [x] Instrumented test APK builds and includes the Android Keystore sync secret wrapping device validation case.
-- [x] Release manifest processing passes and declares the `INTERNET` normal permission for real remote sync.
+- [x] Release manifest processing passes and declares the `INTERNET`, `USE_BIOMETRIC`, and `USE_FINGERPRINT` normal permissions for real remote sync and local biometric unlock.
 - [x] Adaptive launcher icon includes foreground, background, round icon, and Android 13+ themed icon monochrome layer.
 - [x] JVM tests cover crypto round trip, TOTP verification, JSON snapshot round trip for credential/server/service/tombstone payloads, service account form parsing, Dart fixture compatibility, and fold-aware layout policy.
 - [x] TOTP unlock verification matches the Flutter auth package defaults: SHA1, 30-second period, 6 digits, and +/-1 time window.

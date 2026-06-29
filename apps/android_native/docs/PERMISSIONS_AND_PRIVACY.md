@@ -6,15 +6,16 @@
 
 ### Manifest 权限
 
-当前 manifest 只声明一个 Android normal permission：
+当前 release merged manifest 只声明三个 Android normal permissions：
 
 - `android.permission.INTERNET`: 用于 WebDAV、NAS WebDAV 和 S3 presigned URL 手动同步。Android 不会为该 normal permission 弹出运行时授权对话框。
+- `android.permission.USE_BIOMETRIC`: 用于本机生物识别解锁。应用只在用户主动启用生物识别解锁或点击生物识别解锁入口时调用系统生物识别确认。
+- `android.permission.USE_FINGERPRINT`: 由 `androidx.biometric` 合入 release manifest，用于旧 Android 版本的生物识别兼容。
 
 当前未声明：
 
 - 外部存储读写权限。
 - 相机、麦克风、定位、通讯录、日历、短信、电话、附近设备权限。
-- 生物识别权限。
 - 通知权限。
 
 ### 数据存储
@@ -71,15 +72,16 @@ This file records the current permissions, data storage, and Google Play Data sa
 
 ### Manifest Permissions
 
-The current manifest declares one Android normal permission:
+The release merged manifest declares three Android normal permissions:
 
 - `android.permission.INTERNET`: used for WebDAV, NAS WebDAV, and S3 presigned URL manual sync. Android does not show a runtime prompt for this normal permission.
+- `android.permission.USE_BIOMETRIC`: used for local biometric unlock. The app invokes system biometric confirmation only when the user enables biometric unlock or taps the biometric unlock entry point.
+- `android.permission.USE_FINGERPRINT`: merged from `androidx.biometric` for biometric compatibility on older Android versions.
 
 The current manifest does not declare:
 
 - External storage read/write permissions.
 - Camera, microphone, location, contacts, calendar, SMS, phone, or nearby-device permissions.
-- Biometric permissions.
 - Notification permission.
 
 ### Data Storage

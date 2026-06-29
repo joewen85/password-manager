@@ -191,7 +191,7 @@ hdc list targets
 - [x] 已实现单条、分类、全库 JSON 导出。
 - [x] 已实现单条/分类 JSON 导入、预览和冲突策略。
 - [x] 已配置生产 bundleName/vendor metadata，并与 Android applicationId 对齐为 `life.devops.passwordmanager`。
-- [x] `harmony_preflight.sh` 和 HAP 构建脚本会校验生产 metadata，防止回退到 example 包名。
+- [x] `harmony_preflight.sh` 和 HAP 构建脚本会校验生产 metadata 与无横杠 bundleName，防止回退到 example 或非法包名。
 - [x] HAP verifier 会结构化校验生产 metadata/权限，并区分 unsigned 与 signed 产物。
 - [x] 权限声明保持最小化，目前声明 `ohos.permission.INTERNET` 与 `ohos.permission.ACCESS_BIOMETRIC`。
 - [x] 已提供 DevEco 编译、签名、真机验证、权限隐私、加密兼容回归文档。
@@ -404,7 +404,7 @@ Official entry points:
 - [x] Item, category, and full-vault JSON export are implemented.
 - [x] Item/category JSON import, preview, and conflict strategies are implemented.
 - [x] Production bundleName/vendor metadata is configured and aligned with the Android applicationId as `life.devops.passwordmanager`.
-- [x] `harmony_preflight.sh` and the HAP build script verify production metadata so example package names cannot regress.
+- [x] `harmony_preflight.sh` and the HAP build script verify production metadata and a hyphen-free bundleName so example or invalid package names cannot regress.
 - [x] The HAP verifier structurally validates production metadata/permissions and distinguishes unsigned from signed artifacts.
 - [x] Permission declaration is minimized to `ohos.permission.INTERNET` and `ohos.permission.ACCESS_BIOMETRIC`.
 - [x] DevEco build, signing, device validation, permissions/privacy, and crypto compatibility regression docs exist.

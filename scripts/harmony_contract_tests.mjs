@@ -20,6 +20,7 @@ const expectedPermissions = [
   'ohos.permission.ACCESS_BIOMETRIC',
   'ohos.permission.INTERNET',
 ];
+const platformIdentifierPattern = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
 
 let failures = 0;
 
@@ -64,9 +65,16 @@ function assertMatches(text, pattern, message) {
   assert(pattern.test(text), `${message} (${pattern})`);
 }
 
+function assertPlatformIdentifier(value, label) {
+  assert(typeof value === 'string' && value.length > 0, `${label} is present`);
+  assert(!value.includes('-'), `${label} does not contain '-'`);
+  assert(platformIdentifierPattern.test(value), `${label} is a dot-separated platform identifier`);
+}
+
 function checkReleaseMetadata() {
   const app = parseJson5(files.appScope).app;
   assert(app.bundleName === expectedBundleName, `Harmony bundleName is ${expectedBundleName}`);
+  assertPlatformIdentifier(app.bundleName, 'Harmony bundleName');
   assert(app.vendor === expectedVendor, `Harmony vendor is ${expectedVendor}`);
   assert(Number.isInteger(app.versionCode) && app.versionCode > 0, 'Harmony versionCode is a positive integer');
   assert(/^\d+\.\d+\.\d+([-.+][A-Za-z0-9.-]+)?$/.test(app.versionName), 'Harmony versionName is semver-like');
