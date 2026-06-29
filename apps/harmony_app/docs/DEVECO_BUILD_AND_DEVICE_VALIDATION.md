@@ -27,12 +27,18 @@
 
 预检通过后再进入 DevEco 编译。
 
+推荐在发布前直接执行一键 release gate；默认会串联 preflight、清理旧产物、unsigned `assembleHap` 和 HAP metadata/signature 校验：
+
+```bash
+./scripts/harmony_verify_release.sh
+```
+
 ## 3.1 当前命令行构建结果（2026-05-27）
 
 已在本仓库执行：
 
 ```bash
-./scripts/harmony_build_hap.sh
+./scripts/harmony_verify_release.sh
 ```
 
 结果：
@@ -46,11 +52,15 @@
 如需直接命令行生成 signed HAP，执行：
 
 ```bash
-./scripts/harmony_build_signed_hap.sh
+./scripts/harmony_verify_release.sh --signed
 ```
 
 首次执行会自动生成 `apps/harmony_app/signing/signing.env` 模板；填写后再次执行即可。
-脚本会清理旧 HAP 产物，并要求 signed HAP 通过 `hap-sign-tool verify-app` 验签。
+脚本会先跑 unsigned gate，再生成 signed HAP，并要求 signed HAP 通过 `hap-sign-tool verify-app` 验签。只跑 signed gate 时可使用：
+
+```bash
+./scripts/harmony_verify_release.sh --skip-unsigned --signed
+```
 
 详见：`docs/SIGNING_SETUP.md`
 
@@ -88,6 +98,12 @@ hdc list targets
 ```
 
 安装后可在设备桌面直接启动 App。
+
+如需把 signed 构建与安装/启动 smoke 串在同一 release gate 中执行：
+
+```bash
+./scripts/harmony_verify_release.sh --signed --smoke
+```
 
 ## 6. 冒烟测试用例（真机）
 

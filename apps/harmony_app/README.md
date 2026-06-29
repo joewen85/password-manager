@@ -49,6 +49,12 @@
 ./scripts/harmony_preflight.sh
 ```
 
+推荐的一键发布门禁默认执行 preflight、清理旧产物、unsigned build 和 HAP 校验：
+
+```bash
+./scripts/harmony_verify_release.sh
+```
+
 ### 开发
 
 在 DevEco Studio 中打开：
@@ -62,9 +68,7 @@ apps/harmony_app
 命令行未签名构建：
 
 ```bash
-./scripts/harmony_preflight.sh
-rm -rf apps/harmony_app/entry/build
-./scripts/harmony_build_hap.sh default
+./scripts/harmony_verify_release.sh
 ```
 
 产物通常位于：
@@ -135,12 +139,10 @@ apps/harmony_app/signing/signing.env
 构建 signed HAP：
 
 ```bash
-./scripts/harmony_preflight.sh
-rm -rf apps/harmony_app/entry/build
-./scripts/harmony_build_signed_hap.sh
+./scripts/harmony_verify_release.sh --signed
 ```
 
-`harmony_build_signed_hap.sh` 会清理旧 HAP 产物并要求新生成的 HAP 通过 `hap-sign-tool verify-app` 验签，避免残留 unsigned HAP 被误判为可安装 signed 包。
+`harmony_verify_release.sh --signed` 会先跑 unsigned gate，再生成 signed HAP 并要求新产物通过 `hap-sign-tool verify-app` 验签；如需只跑 signed gate，可使用 `--skip-unsigned --signed`。外部签名 env 仍可通过 `--env-file /absolute/path/to/signing.env` 传入。
 
 ### 真机安装
 
@@ -161,9 +163,7 @@ hdc list targets
 安装后优先运行安装/启动 smoke：
 
 ```bash
-./scripts/harmony_device_smoke.sh \
-  apps/harmony_app/entry/build/default/outputs/default/entry-default-signed.hap \
-  life.devops.passwordmanager
+./scripts/harmony_verify_release.sh --signed --smoke
 ```
 
 该脚本会在连接设备上执行安装、`aa start -b` 启动、抓取 `hilog` 中的首屏启动信号，并在结束后卸载包。然后按 `docs/DEVECO_BUILD_AND_DEVICE_VALIDATION.md` 执行真机冒烟回归，并使用 `docs/DEVICE_VALIDATION_RESULT_TEMPLATE.md` 记录结果。
@@ -201,6 +201,7 @@ hdc list targets
 - [x] 已配置生产 bundleName/vendor metadata，并与 Android applicationId 对齐为 `life.devops.passwordmanager`。
 - [x] `harmony_preflight.sh` 和 HAP 构建脚本会校验生产 metadata 与无横杠 bundleName，防止回退到 example 或非法包名。
 - [x] HAP verifier 会结构化校验生产 metadata/权限，并区分 unsigned 与 signed 产物。
+- [x] 已提供一键发布门禁脚本，串联 preflight、unsigned/signed build、HAP verify 和可选真机 smoke。
 - [x] 权限声明保持最小化，目前声明 `ohos.permission.INTERNET` 与 `ohos.permission.ACCESS_BIOMETRIC`。
 - [x] 已提供 DevEco 编译、签名、真机验证、权限隐私、加密兼容回归文档。
 - [x] 已提供安装/启动 smoke 脚本，会在连接设备上安装、启动、抓取首屏日志并卸载 HAP。
@@ -271,6 +272,12 @@ Local preflight:
 ./scripts/harmony_preflight.sh
 ```
 
+The recommended one-command release gate runs preflight, clears stale build outputs, then performs unsigned build and HAP verification by default:
+
+```bash
+./scripts/harmony_verify_release.sh
+```
+
 ### Develop
 
 Open this directory in DevEco Studio:
@@ -284,9 +291,7 @@ Select the `entry` module, then run or build the HAP.
 Unsigned command-line build:
 
 ```bash
-./scripts/harmony_preflight.sh
-rm -rf apps/harmony_app/entry/build
-./scripts/harmony_build_hap.sh default
+./scripts/harmony_verify_release.sh
 ```
 
 The artifact is usually generated at:
@@ -357,12 +362,10 @@ Or use an external env file:
 Build a signed HAP:
 
 ```bash
-./scripts/harmony_preflight.sh
-rm -rf apps/harmony_app/entry/build
-./scripts/harmony_build_signed_hap.sh
+./scripts/harmony_verify_release.sh --signed
 ```
 
-`harmony_build_signed_hap.sh` clears stale HAP outputs and requires the newly generated HAP to pass `hap-sign-tool verify-app`, preventing an old unsigned HAP from being treated as an installable signed package.
+`harmony_verify_release.sh --signed` runs the unsigned gate first, then builds the signed HAP and requires the new artifact to pass `hap-sign-tool verify-app`. Use `--skip-unsigned --signed` to run only the signed gate. External signing env files are still supported with `--env-file /absolute/path/to/signing.env`.
 
 ### Device Install
 
@@ -415,6 +418,7 @@ Official entry points:
 - [x] Production bundleName/vendor metadata is configured and aligned with the Android applicationId as `life.devops.passwordmanager`.
 - [x] `harmony_preflight.sh` and the HAP build script verify production metadata and a hyphen-free bundleName so example or invalid package names cannot regress.
 - [x] The HAP verifier structurally validates production metadata/permissions and distinguishes unsigned from signed artifacts.
+- [x] A one-command release gate now chains preflight, unsigned/signed builds, HAP verification, and optional device smoke.
 - [x] Permission declaration is minimized to `ohos.permission.INTERNET` and `ohos.permission.ACCESS_BIOMETRIC`.
 - [x] DevEco build, signing, device validation, permissions/privacy, and crypto compatibility regression docs exist.
 - [ ] Signed HAP is generated with release signing materials.
