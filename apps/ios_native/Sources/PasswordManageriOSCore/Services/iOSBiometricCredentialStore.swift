@@ -3,7 +3,9 @@ import LocalAuthentication
 import Security
 
 struct iOSBiometricCredentialStore: Sendable {
-    private let service = "com.example.password-manager.native.ios.biometric-unlock"
+    static let keychainService = "life.dev-ops.passwordmanager.biometric-unlock"
+
+    private let service = Self.keychainService
     private let account = "master-password"
 
     func canAuthenticate() -> Bool {
