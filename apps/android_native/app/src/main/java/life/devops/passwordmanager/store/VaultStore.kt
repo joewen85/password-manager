@@ -1061,7 +1061,7 @@ private fun VaultPayload.withTags(tags: List<String>): VaultPayload =
     }
 
 private fun VaultEntry.markLocalEntryChange(deviceId: String, updatedAt: Instant): VaultEntry {
-    val updater = deviceId.ifBlank { updatedBy.ifBlank { "android-native" } }
+    val updater = deviceId.ifBlank { updatedBy.ifBlank { "android" } }
     val nextVersion = version.toMutableMap()
     nextVersion[updater] = (nextVersion[updater] ?: 0) + 1
     return copy(

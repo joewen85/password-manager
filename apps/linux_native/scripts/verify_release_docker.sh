@@ -87,10 +87,6 @@ docker run --rm \
       CXX="$CONTAINER_CXX" \
       OPENSSL_PREFIX=/usr \
       CXXFLAGS="-std=c++17 -Wall -Wextra -Wpedantic -O2 -DNDEBUG"
-    make test \
-      CXX="$CONTAINER_CXX" \
-      OPENSSL_PREFIX=/usr \
-      CXXFLAGS="-std=c++17 -Wall -Wextra -Wpedantic -O2 -DNDEBUG"
 
     file build/password-manager-linux | tee /tmp/password-manager-linux.file
     grep -Eq "ELF .* executable|ELF .* pie executable" /tmp/password-manager-linux.file
@@ -101,7 +97,18 @@ docker run --rm \
 
     ./build/password-manager-linux self-test
 
+    make clean
+    make test \
+      CXX="$CONTAINER_CXX" \
+      OPENSSL_PREFIX=/usr \
+      CXXFLAGS="-std=c++17 -Wall -Wextra -Wpedantic -O2"
+
     if command -v apt-get >/dev/null 2>&1; then
+      make clean
+      make \
+        CXX="$CONTAINER_CXX" \
+        OPENSSL_PREFIX=/usr \
+        CXXFLAGS="-std=c++17 -Wall -Wextra -Wpedantic -O2 -DNDEBUG"
       make package-deb \
         CXX="$CONTAINER_CXX" \
         OPENSSL_PREFIX=/usr \

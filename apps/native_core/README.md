@@ -26,6 +26,15 @@ cd ../windows_native && make test
 cd ../linux_native && make test
 ```
 
+Run the Windows/Linux native release gates from the repository root:
+
+```bash
+./scripts/verify_desktop_native.sh
+```
+
+Add `--linux-docker` to include the Linux Docker userspace and `.deb`
+install/uninstall gate.
+
 The CLI sync command supports WebDAV, S3-compatible presigned URLs, Tencent COS,
 and Aliyun OSS object transport. Tencent COS and Aliyun OSS require access key,
 secret key, and bucket values at runtime; sync state stores remote fingerprints

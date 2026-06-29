@@ -74,6 +74,14 @@ msbuild PasswordManagerWindows.vcxproj /p:Configuration=Release /p:Platform=x64
 python3 scripts/verify_release_contract.py
 ```
 
+运行本机可验证的 Windows native release gate：
+
+```bash
+./scripts/verify_release.sh
+```
+
+该脚本会先构建 portable shared core release binary 并执行 CLI `self-test`，再执行启用 `assert` 的 C++ core tests、共享 CLI smoke 和 Visual Studio / MSBuild release contract verifier；它不替代 Windows 实机 MSBuild、签名或干净 VM 安装验证。
+
 ### 本地功能验证
 
 当前 portable core 验证：
@@ -208,10 +216,10 @@ msbuild PasswordManagerWindows.vcxproj /p:Configuration=Release /p:Platform=x64
 发布前先运行本机 contract gate：
 
 ```bash
-python3 scripts/verify_release_contract.py
+./scripts/verify_release.sh
 ```
 
-该脚本校验 `vcpkg.json`、`VcpkgEnableManifest`、`x64-windows` triplet、Release 运行库/安全选项、OpenSSL/libcurl 链接项、`PasswordManagerWindows.manifest`、`VERSIONINFO` 版本资源和 README 清单；它不替代 Windows 实机 MSBuild、签名或干净 VM 安装验证。
+该 release gate 会先构建并测试 portable shared core，再校验 `vcpkg.json`、`VcpkgEnableManifest`、`x64-windows` triplet、Release 运行库/安全选项、OpenSSL/libcurl 链接项、`PasswordManagerWindows.manifest`、`VERSIONINFO` 版本资源和 README 清单；它不替代 Windows 实机 MSBuild、签名或干净 VM 安装验证。
 
 发布前需要：
 
@@ -260,6 +268,7 @@ Release notes 只能描述已经验证的能力；当前不能把完整 GUI、GU
 - [x] Windows/Linux 原生端共用 `apps/native_core`，避免 core 双写偏差。
 - [x] `vcpkg.json` 声明 Visual Studio / MSBuild release 依赖 OpenSSL 和 libcurl。
 - [x] 应用 manifest 和 `VERSIONINFO` 版本资源已配置，并纳入本机 release contract gate。
+- [x] `scripts/verify_release.sh` 串联 portable shared core release binary 构建、CLI `self-test`、启用 `assert` 的 C++/CLI smoke 和 Windows release contract verifier。
 - [x] `scripts/verify_release_contract.py` 会验证 Release|x64、vcpkg manifest、shared core 引用、运行库/安全选项、OpenSSL/libcurl 链接合同、应用 manifest 和 `VERSIONINFO` 版本资源。
 - [x] Portable core 使用 PBKDF2-SHA256 + AES-256-GCM。
 - [x] C++ 测试覆盖加密 envelope、错误密码拒绝、snapshot 反序列化、encrypted vault 文件读回、TOTP、entry 过滤、集合重建和 version-vector merge。
@@ -351,6 +360,14 @@ Verify the Visual Studio / MSBuild release contract on the current machine; this
 ```bash
 python3 scripts/verify_release_contract.py
 ```
+
+Run the locally verifiable Windows native release gate:
+
+```bash
+./scripts/verify_release.sh
+```
+
+The script builds the portable shared core release binary and runs CLI `self-test`, then runs assertion-enabled C++ core tests, shared CLI smoke, and the Visual Studio / MSBuild release contract verifier. It does not replace Windows-host MSBuild, signing, or clean-VM installation validation.
 
 ### Local Feature Verification
 
@@ -461,10 +478,10 @@ msbuild PasswordManagerWindows.vcxproj /p:Configuration=Release /p:Platform=x64
 Run the local contract gate before release:
 
 ```bash
-python3 scripts/verify_release_contract.py
+./scripts/verify_release.sh
 ```
 
-The script verifies `vcpkg.json`, `VcpkgEnableManifest`, the `x64-windows` triplet, Release runtime/security settings, OpenSSL/libcurl link entries, `PasswordManagerWindows.manifest`, `VERSIONINFO` version resources, and the README checklist. It does not replace Windows-host MSBuild, signing, or clean-VM installation validation.
+The release gate first builds and tests the portable shared core, then verifies `vcpkg.json`, `VcpkgEnableManifest`, the `x64-windows` triplet, Release runtime/security settings, OpenSSL/libcurl link entries, `PasswordManagerWindows.manifest`, `VERSIONINFO` version resources, and the README checklist. It does not replace Windows-host MSBuild, signing, or clean-VM installation validation.
 
 Before release:
 
@@ -512,6 +529,7 @@ Release notes must only describe verified capabilities. Do not list full GUI, GU
 - [x] Win32 app skeleton and Visual Studio `.vcxproj` are added.
 - [x] `vcpkg.json` declares OpenSSL and libcurl for Visual Studio / MSBuild release dependency restoration.
 - [x] The application manifest and `VERSIONINFO` version resources are configured and covered by the local release contract gate.
+- [x] `scripts/verify_release.sh` chains the portable shared core release binary build, CLI `self-test`, assertion-enabled C++/CLI smoke coverage, and Windows release contract verifier.
 - [x] `scripts/verify_release_contract.py` verifies Release|x64, vcpkg manifest mode, shared core references, runtime/security settings, OpenSSL/libcurl link contract, the application manifest, and `VERSIONINFO` version resources.
 - [x] Portable core uses PBKDF2-SHA256 + AES-256-GCM.
 - [x] C++ tests cover encrypted envelope, wrong-password rejection, TOTP, entry filtering, collection rebuilding, and version-vector merge.

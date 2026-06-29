@@ -11,6 +11,9 @@ APP_BUNDLE="$ROOT_DIR/build/Release-iphonesimulator/PasswordManageriOS.app"
 ARCHIVE_PATH="$ROOT_DIR/build/PasswordManageriOS.xcarchive"
 ARCHIVE_APP="$ARCHIVE_PATH/Products/Applications/PasswordManageriOS.app"
 REQUIRE_SIGNED_ARCHIVE="${IOS_REQUIRE_SIGNED_ARCHIVE:-false}"
+MARKETING_VERSION="${IOS_MARKETING_VERSION:-${MARKETING_VERSION:-0.1.0}}"
+BUILD_NUMBER="${IOS_BUILD_NUMBER:-${BUILD_NUMBER:-1}}"
+EXPECTED_SIGNING_CERT_SHA256="${IOS_EXPECTED_SIGNING_CERT_SHA256:-}"
 
 fail() {
   printf '[FAIL] %s\n' "$1" >&2
@@ -47,7 +50,49 @@ require_plist_nonempty() {
   [[ -n "$actual" ]] || fail "$key must not be empty"
 }
 
+normalize_sha256() {
+  printf '%s' "$1" | tr -d '[:space:]:' | tr '[:lower:]' '[:upper:]'
+}
+
+validate_versions() {
+  if [[ ! "$MARKETING_VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+    fail "IOS_MARKETING_VERSION must be one to three dot-separated integers, got '$MARKETING_VERSION'"
+  fi
+
+  if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+    fail "IOS_BUILD_NUMBER must be one to three dot-separated integers, got '$BUILD_NUMBER'"
+  fi
+
+  if [[ -n "$EXPECTED_SIGNING_CERT_SHA256" && "$REQUIRE_SIGNED_ARCHIVE" != "true" ]]; then
+    fail "IOS_EXPECTED_SIGNING_CERT_SHA256 requires IOS_REQUIRE_SIGNED_ARCHIVE=true"
+  fi
+}
+
+verify_signing_certificate_sha256() {
+  local app_bundle="$1"
+  local expected_sha
+  local actual_sha
+  local cert_dir
+  local cert_path
+
+  expected_sha="$(normalize_sha256 "$EXPECTED_SIGNING_CERT_SHA256")"
+  [[ -n "$expected_sha" ]] || return 0
+
+  cert_dir="$(mktemp -d /tmp/password-manager-ios-codesign-cert.XXXXXX)"
+  (cd "$cert_dir" && codesign -d --extract-certificates "$app_bundle" >/dev/null 2>&1) ||
+    fail "Could not extract signing certificate from $app_bundle"
+  cert_path="$cert_dir/codesign0"
+  require_file "$cert_path"
+
+  actual_sha="$(openssl x509 -inform DER -in "$cert_path" -noout -fingerprint -sha256 | awk -F= '{print $2}')"
+  actual_sha="$(normalize_sha256 "$actual_sha")"
+  [[ "$actual_sha" == "$expected_sha" ]] ||
+    fail "Signing certificate SHA-256 mismatch: expected $EXPECTED_SIGNING_CERT_SHA256, got $actual_sha"
+  ok "Signing certificate SHA-256 matches IOS_EXPECTED_SIGNING_CERT_SHA256"
+}
+
 cd "$ROOT_DIR"
+validate_versions
 
 require_file "$PROJECT/project.pbxproj"
 require_file "$PRIVACY_MANIFEST"
@@ -83,12 +128,16 @@ ok "App icon catalog has required iPhone/iPad PNGs"
 
 swift test
 
+"$ROOT_DIR/scripts/verify_ui_smoke.sh"
+
 rm -rf "$APP_BUNDLE"
 xcodebuild build \
   -project "$PROJECT" \
   -target PasswordManageriOS \
   -configuration Release \
   -sdk iphonesimulator \
+  MARKETING_VERSION="$MARKETING_VERSION" \
+  CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
   CODE_SIGNING_ALLOWED=NO
 
 require_file "$APP_BUNDLE/Info.plist"
@@ -98,8 +147,8 @@ require_file "$APP_BUNDLE/Assets.car"
 require_plist_value "$APP_BUNDLE/Info.plist" "CFBundleIdentifier" "life.devops.passwordmanager"
 require_plist_value "$APP_BUNDLE/Info.plist" "CFBundleDisplayName" "Password Manager"
 require_plist_value "$APP_BUNDLE/Info.plist" "NSFaceIDUsageDescription" "Use Face ID to unlock Password Manager on this device."
-require_plist_value "$APP_BUNDLE/Info.plist" "CFBundleShortVersionString" "0.1.0"
-require_plist_value "$APP_BUNDLE/Info.plist" "CFBundleVersion" "1"
+require_plist_value "$APP_BUNDLE/Info.plist" "CFBundleShortVersionString" "$MARKETING_VERSION"
+require_plist_value "$APP_BUNDLE/Info.plist" "CFBundleVersion" "$BUILD_NUMBER"
 
 if ! grep -q "NSPrivacyAccessedAPICategoryUserDefaults" "$APP_BUNDLE/PrivacyInfo.xcprivacy"; then
   fail "Built app privacy manifest is missing UserDefaults disclosure"
@@ -127,6 +176,8 @@ case "$REQUIRE_SIGNED_ARCHIVE" in
     [[ -n "${IOS_DEVELOPMENT_TEAM:-}" ]] || fail "IOS_DEVELOPMENT_TEAM is required when IOS_REQUIRE_SIGNED_ARCHIVE=true"
     archive_args+=(
       DEVELOPMENT_TEAM="$IOS_DEVELOPMENT_TEAM"
+      MARKETING_VERSION="$MARKETING_VERSION"
+      CURRENT_PROJECT_VERSION="$BUILD_NUMBER"
       CODE_SIGNING_ALLOWED=YES
     )
     if [[ -n "${IOS_CODE_SIGN_IDENTITY:-}" ]]; then
@@ -140,7 +191,11 @@ case "$REQUIRE_SIGNED_ARCHIVE" in
     fi
     ;;
   false)
-    archive_args+=(CODE_SIGNING_ALLOWED=NO)
+    archive_args+=(
+      MARKETING_VERSION="$MARKETING_VERSION"
+      CURRENT_PROJECT_VERSION="$BUILD_NUMBER"
+      CODE_SIGNING_ALLOWED=NO
+    )
     warn "Building unsigned generic iOS archive; set IOS_REQUIRE_SIGNED_ARCHIVE=true to require Apple signing"
     ;;
   *)
@@ -159,15 +214,15 @@ require_file "$ARCHIVE_PATH/dSYMs/PasswordManageriOS.app.dSYM/Contents/Info.plis
 
 require_plist_value "$ARCHIVE_PATH/Info.plist" "ApplicationProperties:ApplicationPath" "Applications/PasswordManageriOS.app"
 require_plist_value "$ARCHIVE_PATH/Info.plist" "ApplicationProperties:CFBundleIdentifier" "life.devops.passwordmanager"
-require_plist_value "$ARCHIVE_PATH/Info.plist" "ApplicationProperties:CFBundleShortVersionString" "0.1.0"
-require_plist_value "$ARCHIVE_PATH/Info.plist" "ApplicationProperties:CFBundleVersion" "1"
+require_plist_value "$ARCHIVE_PATH/Info.plist" "ApplicationProperties:CFBundleShortVersionString" "$MARKETING_VERSION"
+require_plist_value "$ARCHIVE_PATH/Info.plist" "ApplicationProperties:CFBundleVersion" "$BUILD_NUMBER"
 require_plist_value "$ARCHIVE_PATH/Info.plist" "ApplicationProperties:Architectures:0" "arm64"
 
 require_plist_value "$ARCHIVE_APP/Info.plist" "CFBundleIdentifier" "life.devops.passwordmanager"
 require_plist_value "$ARCHIVE_APP/Info.plist" "CFBundleDisplayName" "Password Manager"
 require_plist_value "$ARCHIVE_APP/Info.plist" "NSFaceIDUsageDescription" "Use Face ID to unlock Password Manager on this device."
-require_plist_value "$ARCHIVE_APP/Info.plist" "CFBundleShortVersionString" "0.1.0"
-require_plist_value "$ARCHIVE_APP/Info.plist" "CFBundleVersion" "1"
+require_plist_value "$ARCHIVE_APP/Info.plist" "CFBundleShortVersionString" "$MARKETING_VERSION"
+require_plist_value "$ARCHIVE_APP/Info.plist" "CFBundleVersion" "$BUILD_NUMBER"
 
 if ! lipo -info "$ARCHIVE_APP/PasswordManageriOS" | grep -q "arm64"; then
   fail "Archived app binary must include arm64"
@@ -184,6 +239,7 @@ if [[ "$REQUIRE_SIGNED_ARCHIVE" == "true" ]]; then
   codesign --verify --deep --strict --verbose=2 "$ARCHIVE_APP"
   require_plist_nonempty "$ARCHIVE_PATH/Info.plist" "ApplicationProperties:SigningIdentity"
   require_plist_value "$ARCHIVE_PATH/Info.plist" "ApplicationProperties:Team" "$IOS_DEVELOPMENT_TEAM"
+  verify_signing_certificate_sha256 "$ARCHIVE_APP"
   ok "Signed iOS archive passed codesign verification"
 else
   if codesign --verify --deep --strict "$ARCHIVE_APP" >/dev/null 2>&1; then

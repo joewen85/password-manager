@@ -61,11 +61,13 @@
 ### 4. 测试
 - macOS/Linux：`./scripts/test_all.sh`
 - Windows：`powershell -ExecutionPolicy Bypass -File .\\scripts\\test_all.ps1`
+- Windows/Linux 原生端：`./scripts/verify_desktop_native.sh`
 
 ### 4.1 测试可行性说明（macOS）
 - **全量共享包测试** 需要 `dart` 命令。
 - 如果提示 `dart: command not found`，说明尚未安装 Dart SDK 或未正确配置 PATH。
 - 原生端构建、设备冒烟和发布验证请按对应 app 目录 README 执行。
+- Windows/Linux 原生端本机 release gate 会构建共享 C++ release binary、运行 CLI `self-test` 和启用 `assert` 的 core/CLI smoke，并校验 Windows release contract 与 Linux host binary 依赖；Linux 真实 userspace 和 `.deb` 安装验证可通过 `./scripts/verify_desktop_native.sh --linux-docker` 追加执行。
 
 ### 4.2 Android 打包发布（APK / AAB）
 1) 进入原生 Android 目录：
@@ -108,6 +110,7 @@
 ### 5. 全量测试（推荐）
 - macOS/Linux：`./scripts/test_all.sh`
 - Windows：`powershell -ExecutionPolicy Bypass -File .\\scripts\\test_all.ps1`
+- Windows/Linux 原生端：`./scripts/verify_desktop_native.sh`
 
 ### 6. 仅 Dart 包测试
 - macOS/Linux：`./scripts/test_dart_only.sh`

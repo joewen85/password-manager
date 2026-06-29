@@ -20,6 +20,10 @@ ok() {
   printf '[OK] %s\n' "$1"
 }
 
+warn() {
+  printf '[WARN] %s\n' "$1"
+}
+
 cleanup() {
   if [[ "$CREATED_SIMULATOR" == "true" && -n "${SIM_UDID:-}" ]]; then
     xcrun simctl shutdown "$SIM_UDID" >/dev/null 2>&1 || true
@@ -126,6 +130,12 @@ ok "Installed $BUNDLE_ID into simulator"
 xcrun simctl appinfo "$SIM_UDID" "$BUNDLE_ID" >/dev/null
 ok "simctl appinfo confirms the app is installed"
 
+print_launch_artifacts() {
+  printf 'Launch stdout: %s\n' "$LAUNCH_STDOUT" >&2
+  printf 'Launch stderr: %s\n' "$LAUNCH_STDERR" >&2
+  printf 'Launch screenshot: %s\n' "$SCREENSHOT" >&2
+}
+
 rm -f "$LAUNCH_STDOUT" "$LAUNCH_STDERR"
 launch_output="$(
   xcrun simctl launch \
@@ -134,10 +144,16 @@ launch_output="$(
     --stderr="$LAUNCH_STDERR" \
     "$SIM_UDID" \
     "$BUNDLE_ID" 2>&1
-)" || fail "Failed to launch $BUNDLE_ID: $launch_output"
+)" || {
+  print_launch_artifacts
+  fail "Failed to launch $BUNDLE_ID: $launch_output"
+}
 printf '%s\n' "$launch_output"
 app_pid="$(printf '%s\n' "$launch_output" | awk -F': ' -v bundle="$BUNDLE_ID" '$1 == bundle { print $2; exit }')"
-[[ "$app_pid" =~ ^[0-9]+$ ]] || fail "Unable to read launched app pid from simctl output"
+[[ "$app_pid" =~ ^[0-9]+$ ]] || {
+  print_launch_artifacts
+  fail "Unable to read launched app pid from simctl output: $launch_output"
+}
 sleep 2
 if ps -p "$app_pid" >/dev/null 2>&1; then
   ok "Launched app process is visible on the host"

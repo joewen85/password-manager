@@ -107,9 +107,9 @@ data class CategoryTemplate(
                 .distinctBy { it.name.trim().lowercase() }
 
         private fun stableFieldId(name: String): String =
-            "template-${name.trim().lowercase().replace(Regex("""[^a-z0-9\u4e00-\u9fa5]+"""), "-")}"
-                .trim('-')
-                .ifBlank { UUID.nameUUIDFromBytes(name.toByteArray()).toString() }
+            "template_${name.trim().lowercase().replace(Regex("""[^a-z0-9\u4e00-\u9fa5]+"""), "_")}"
+                .trim('_')
+                .ifBlank { UUID.nameUUIDFromBytes(name.toByteArray()).toString().replace("-", "") }
 
         private fun CategoryTypePreset?.orEmptyFields(): List<String> =
             this?.fields ?: emptyList()
@@ -156,7 +156,7 @@ data class VaultEntry(
     val createdAt: Instant = Instant.now(),
     val updatedAt: Instant = Instant.now(),
     val version: Map<String, Int> = emptyMap(),
-    val updatedBy: String = "android-native",
+    val updatedBy: String = "android",
     val isDeleted: Boolean = false,
     val deletedAt: Instant? = null,
 )

@@ -73,17 +73,26 @@ xcrun simctl launch booted life.devops.passwordmanager
 ./scripts/verify_release.sh
 ```
 
-该脚本会运行 SwiftPM 测试、Release simulator build、simulator 安装/启动 smoke，并创建 `build/PasswordManageriOS.xcarchive` 的 generic iOS archive；默认使用 `CODE_SIGNING_ALLOWED=NO` 做本机 archive 内容校验，不声称已完成 Apple 签名。配置 Apple Developer Team 后，可强制签名 archive：
+该脚本会运行 SwiftPM 测试、首屏 UI test smoke、Release simulator build、simulator 安装/启动 smoke，并创建 `build/PasswordManageriOS.xcarchive` 的 generic iOS archive；默认使用 `CODE_SIGNING_ALLOWED=NO` 做本机 archive 内容校验，不声称已完成 Apple 签名。版本号可通过 `IOS_MARKETING_VERSION` 和 `IOS_BUILD_NUMBER` 覆盖，默认仍是 `0.1.0` / `1`：
+
+```bash
+IOS_MARKETING_VERSION=1.0.0 \
+IOS_BUILD_NUMBER=100 \
+./scripts/verify_release.sh
+```
+
+配置 Apple Developer Team 后，可强制签名 archive，并可用 `IOS_EXPECTED_SIGNING_CERT_SHA256` 校验签名证书 SHA-256 指纹：
 
 ```bash
 IOS_REQUIRE_SIGNED_ARCHIVE=true \
 IOS_DEVELOPMENT_TEAM=ABCDE12345 \
 IOS_CODE_SIGN_IDENTITY="Apple Distribution" \
+IOS_EXPECTED_SIGNING_CERT_SHA256="0123456789ABCDEF..." \
 IOS_ALLOW_PROVISIONING_UPDATES=true \
 ./scripts/verify_release.sh
 ```
 
-simulator smoke 默认创建临时 iPhone simulator，安装 `build/Release-iphonesimulator/PasswordManageriOS.app`，通过 `simctl appinfo` 确认安装，再启动 `life.devops.passwordmanager`，并保存启动截图到 `build/simulator-smoke/launch.png`。如需复用指定模拟器，可设置 `IOS_SIMULATOR_UDID=<udid>`。
+`./scripts/verify_ui_smoke.sh` 默认创建临时 iPhone simulator，运行 `PasswordManageriOSUITests`，断言启动后出现 `Initialize Vault` 或 `Unlock Vault`、`Master password` 输入框以及对应主操作按钮。`verify_simulator_smoke.sh` 默认创建临时 iPhone simulator，安装 `build/Release-iphonesimulator/PasswordManageriOS.app`，通过 `simctl appinfo` 确认安装，再启动 `life.devops.passwordmanager`，并保存启动截图到 `build/simulator-smoke/launch.png`。如需复用指定模拟器，可分别设置 `IOS_UI_TEST_SIMULATOR_UDID=<udid>` 或 `IOS_SIMULATOR_UDID=<udid>`。
 
 ### 本地功能验证
 
@@ -100,6 +109,7 @@ simulator smoke 默认创建临时 iPhone simulator，安装 `build/Release-ipho
 - WebDAV / S3 presigned URL remote sync transport 行为。
 - 同步设置 redaction、secret store 生命周期和普通配置文件无明文 sync secrets。
 - 同步合并和 `VaultStore.syncNow(client:)` 写回流程。
+- iOS 首屏启动 UI smoke：初始化/解锁标题、主密码输入框和主操作按钮。
 
 已在 iPhone 17 Pro simulator 启动验证初始 `Initialize Vault` 界面。真机和发布候选环境仍需手动验证：
 
@@ -137,7 +147,7 @@ xcodebuild archive \
   -archivePath build/PasswordManageriOS.xcarchive
 ```
 
-本地无签名 archive contract 可由 release gate 自动执行；上传候选包必须设置 `IOS_REQUIRE_SIGNED_ARCHIVE=true`，并在 Apple signing 通过后再进入 Validate archive / TestFlight。
+本地无签名 archive contract 可由 release gate 自动执行；上传候选包必须设置 `IOS_REQUIRE_SIGNED_ARCHIVE=true`，并建议同时设置 `IOS_EXPECTED_SIGNING_CERT_SHA256` 固定签名证书指纹，在 Apple signing 通过后再进入 Validate archive / TestFlight。
 
 ### TestFlight / App Store 上架
 
@@ -251,17 +261,26 @@ Run the local release gate:
 ./scripts/verify_release.sh
 ```
 
-The script runs SwiftPM tests, a Release simulator build, simulator install/launch smoke, and creates `build/PasswordManageriOS.xcarchive` as a generic iOS archive. By default it uses `CODE_SIGNING_ALLOWED=NO` for local archive content validation and does not claim Apple signing is complete. After configuring an Apple Developer Team, require a signed archive with:
+The script runs SwiftPM tests, a first-screen UI test smoke, a Release simulator build, simulator install/launch smoke, and creates `build/PasswordManageriOS.xcarchive` as a generic iOS archive. By default it uses `CODE_SIGNING_ALLOWED=NO` for local archive content validation and does not claim Apple signing is complete. Override the version with `IOS_MARKETING_VERSION` and `IOS_BUILD_NUMBER`; defaults remain `0.1.0` / `1`:
+
+```bash
+IOS_MARKETING_VERSION=1.0.0 \
+IOS_BUILD_NUMBER=100 \
+./scripts/verify_release.sh
+```
+
+After configuring an Apple Developer Team, require a signed archive and optionally gate the signing certificate SHA-256 fingerprint with `IOS_EXPECTED_SIGNING_CERT_SHA256`:
 
 ```bash
 IOS_REQUIRE_SIGNED_ARCHIVE=true \
 IOS_DEVELOPMENT_TEAM=ABCDE12345 \
 IOS_CODE_SIGN_IDENTITY="Apple Distribution" \
+IOS_EXPECTED_SIGNING_CERT_SHA256="0123456789ABCDEF..." \
 IOS_ALLOW_PROVISIONING_UPDATES=true \
 ./scripts/verify_release.sh
 ```
 
-The simulator smoke creates a temporary iPhone simulator by default, installs `build/Release-iphonesimulator/PasswordManageriOS.app`, verifies the installation with `simctl appinfo`, launches `life.devops.passwordmanager`, and writes a launch screenshot to `build/simulator-smoke/launch.png`. Set `IOS_SIMULATOR_UDID=<udid>` to reuse a specific simulator.
+`./scripts/verify_ui_smoke.sh` creates a temporary iPhone simulator by default, runs `PasswordManageriOSUITests`, and asserts that launch shows `Initialize Vault` or `Unlock Vault`, the `Master password` field, and the matching primary action. `verify_simulator_smoke.sh` creates a temporary iPhone simulator by default, installs `build/Release-iphonesimulator/PasswordManageriOS.app`, verifies the installation with `simctl appinfo`, launches `life.devops.passwordmanager`, and writes a launch screenshot to `build/simulator-smoke/launch.png`. Set `IOS_UI_TEST_SIMULATOR_UDID=<udid>` or `IOS_SIMULATOR_UDID=<udid>` to reuse a specific simulator.
 
 ### Local Feature Verification
 
@@ -278,6 +297,7 @@ The current automated scope covers:
 - WebDAV / S3 presigned URL remote sync transport behavior.
 - Sync settings redaction, secret-store lifecycle, and no plaintext sync secrets in normal config files.
 - Sync merge and `VaultStore.syncNow(client:)` writeback flow.
+- iOS first-screen launch UI smoke: setup/unlock title, master-password field, and primary action.
 
 The initial `Initialize Vault` screen has been launched on an iPhone 17 Pro simulator. Device and release-candidate environments still need manual verification:
 
@@ -315,7 +335,7 @@ xcodebuild archive \
   -archivePath build/PasswordManageriOS.xcarchive
 ```
 
-The unsigned local archive contract is run by the release gate. Upload candidates must set `IOS_REQUIRE_SIGNED_ARCHIVE=true` and pass Apple signing before Validate archive / TestFlight.
+The unsigned local archive contract is run by the release gate. Upload candidates must set `IOS_REQUIRE_SIGNED_ARCHIVE=true`, should also set `IOS_EXPECTED_SIGNING_CERT_SHA256` to pin the signing certificate fingerprint, and must pass Apple signing before Validate archive / TestFlight.
 
 ### TestFlight / App Store Submission
 

@@ -109,6 +109,12 @@ function checkCryptoContract() {
   assertMatches(crypto, /version:\s*1,\s*\n\s*};/, 'Encrypted payload version remains 1');
 }
 
+function checkTemplateIdContract() {
+  const controller = read(files.controller);
+  assertIncludes(controller, 'return `template_${output.length > 0 ? output : nextId()}`;', 'Harmony field template IDs use underscores');
+  assertIncludes(controller, 'return `${ts}_${rand}`;', 'Harmony generated fallback IDs use underscores');
+}
+
 function checkTotpContract() {
   const totp = read(files.totp);
   assertMatches(totp, /periodSeconds:\s*30,/, 'TOTP period is 30 seconds');
@@ -149,6 +155,7 @@ function main() {
   }
   checkReleaseMetadata();
   checkCryptoContract();
+  checkTemplateIdContract();
   checkTotpContract();
   checkPersistenceAndSyncSecrecy();
   checkSyncSettingsContract();

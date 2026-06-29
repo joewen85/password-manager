@@ -9,11 +9,24 @@
 /* Begin PBXBuildFile section */
 		PMI0000000000000000000019 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = PMI000000000000000000001A /* Assets.xcassets */; };
 		PMI0000000000000000000010 /* PasswordManageriOSCore in Frameworks */ = {isa = PBXBuildFile; productRef = PMI000000000000000000000F /* PasswordManageriOSCore */; };
+		PMI0000000000000000000020 /* PasswordManageriOSLaunchUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = PMI0000000000000000000021 /* PasswordManageriOSLaunchUITests.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		PMI000000000000000000002A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = PMI0000000000000000000009 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = PMI0000000000000000000006;
+			remoteInfo = PasswordManageriOS;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		PMI0000000000000000000003 /* PasswordManageriOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PasswordManageriOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		PMI000000000000000000001A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = PasswordManageriOS/Assets.xcassets; sourceTree = "<group>"; };
+		PMI0000000000000000000021 /* PasswordManageriOSLaunchUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasswordManageriOSLaunchUITests.swift; sourceTree = "<group>"; };
+		PMI0000000000000000000022 /* PasswordManageriOSUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PasswordManageriOSUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -48,6 +61,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		PMI0000000000000000000023 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -55,6 +75,7 @@
 			isa = PBXGroup;
 			children = (
 				PMI0000000000000000000004 /* PasswordManageriOS */,
+				PMI0000000000000000000024 /* PasswordManageriOSUITests */,
 				PMI000000000000000000001A /* Assets.xcassets */,
 				PMI0000000000000000000002 /* Products */,
 			);
@@ -64,8 +85,17 @@
 			isa = PBXGroup;
 			children = (
 				PMI0000000000000000000003 /* PasswordManageriOS.app */,
+				PMI0000000000000000000022 /* PasswordManageriOSUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		PMI0000000000000000000024 /* PasswordManageriOSUITests */ = {
+			isa = PBXGroup;
+			children = (
+				PMI0000000000000000000021 /* PasswordManageriOSLaunchUITests.swift */,
+			);
+			path = PasswordManageriOSUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -94,6 +124,24 @@
 			productReference = PMI0000000000000000000003 /* PasswordManageriOS.app */;
 			productType = "com.apple.product-type.application";
 		};
+		PMI0000000000000000000025 /* PasswordManageriOSUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = PMI000000000000000000002B /* Build configuration list for PBXNativeTarget "PasswordManageriOSUITests" */;
+			buildPhases = (
+				PMI0000000000000000000026 /* Sources */,
+				PMI0000000000000000000023 /* Frameworks */,
+				PMI0000000000000000000027 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				PMI0000000000000000000028 /* PBXTargetDependency */,
+			);
+			name = PasswordManageriOSUITests;
+			productName = PasswordManageriOSUITests;
+			productReference = PMI0000000000000000000022 /* PasswordManageriOSUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -106,6 +154,10 @@
 				TargetAttributes = {
 					PMI0000000000000000000006 = {
 						CreatedOnToolsVersion = 26.4;
+					};
+					PMI0000000000000000000025 = {
+						CreatedOnToolsVersion = 26.4;
+						TestTargetID = PMI0000000000000000000006;
 					};
 				};
 			};
@@ -126,6 +178,7 @@
 			projectRoot = "";
 			targets = (
 				PMI0000000000000000000006 /* PasswordManageriOS */,
+				PMI0000000000000000000025 /* PasswordManageriOSUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -139,6 +192,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		PMI0000000000000000000027 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -149,7 +209,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		PMI0000000000000000000026 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				PMI0000000000000000000020 /* PasswordManageriOSLaunchUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		PMI0000000000000000000028 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = PMI0000000000000000000006 /* PasswordManageriOS */;
+			targetProxy = PMI000000000000000000002A /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		PMI0000000000000000000014 /* Debug */ = {
@@ -337,6 +413,44 @@
 			};
 			name = Release;
 		};
+		PMI000000000000000000002C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "life.devops.passwordmanager.uitests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = PasswordManageriOS;
+			};
+			name = Debug;
+		};
+		PMI000000000000000000002D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "life.devops.passwordmanager.uitests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = PasswordManageriOS;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -354,6 +468,15 @@
 			buildConfigurations = (
 				PMI0000000000000000000016 /* Debug */,
 				PMI0000000000000000000017 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		PMI000000000000000000002B /* Build configuration list for PBXNativeTarget "PasswordManageriOSUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				PMI000000000000000000002C /* Debug */,
+				PMI000000000000000000002D /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

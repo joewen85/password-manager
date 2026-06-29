@@ -14,6 +14,18 @@ class VaultModelImportTest {
     }
 
     @Test
+    fun vaultEntryDefaultsUpdatedByWithoutHyphen() {
+        val entry = VaultEntry(
+            label = "Credential",
+            type = VaultEntryType.CREDENTIAL,
+            payload = VaultPayload.Credential(CredentialPayload()),
+        )
+
+        assertEquals("android", entry.updatedBy)
+        assertFalse(entry.updatedBy.contains('-'))
+    }
+
+    @Test
     fun importMatchKeyUsesTypeLabelAndCategoryOnly() {
         val baseEntry = VaultEntry(
             id = "original",

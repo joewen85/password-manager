@@ -2297,16 +2297,16 @@ function stableFieldId(name: string): string {
       (char >= 'a' && char <= 'z') ||
       (char >= '0' && char <= '9') ||
       (char >= '\u4e00' && char <= '\u9fa5');
-    output += keep ? char : '-';
+    output += keep ? char : '_';
   }
-  output = output.replace(/-+/g, '-');
-  while (output.startsWith('-')) {
+  output = output.replace(/_+/g, '_');
+  while (output.startsWith('_')) {
     output = output.substring(1);
   }
-  while (output.endsWith('-')) {
+  while (output.endsWith('_')) {
     output = output.substring(0, output.length - 1);
   }
-  return `template-${output.length > 0 ? output : nextId()}`;
+  return `template_${output.length > 0 ? output : nextId()}`;
 }
 
 function normalizeCategoryTemplates(
@@ -2578,7 +2578,7 @@ function normalizeServiceAccounts(accounts: ServiceAccount[] | undefined): Servi
 function nextId(): string {
   const ts = Date.now().toString(36);
   const rand = Math.floor(Math.random() * 1_000_000_000).toString(36);
-  return `${ts}-${rand}`;
+  return `${ts}_${rand}`;
 }
 
 function putCanonicalEntry(entries: Map<string, VaultEntry>, entry: VaultEntry): void {

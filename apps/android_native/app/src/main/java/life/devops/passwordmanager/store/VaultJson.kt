@@ -204,7 +204,7 @@ object VaultJson {
             createdAt = optInstant("createdAt") ?: Instant.now(),
             updatedAt = optInstant("updatedAt") ?: Instant.now(),
             version = optJSONObject("version").toIntMap(),
-            updatedBy = optString("updatedBy", "android-native"),
+            updatedBy = optString("updatedBy", "android"),
             isDeleted = optBoolean("isDeleted", false),
             deletedAt = optInstant("deletedAt"),
         )
@@ -356,7 +356,7 @@ object VaultJson {
 
     private fun JSONObject.toFieldTemplate(): FieldTemplate =
         FieldTemplate(
-            id = optString("id").ifBlank { UUID.randomUUID().toString() },
+            id = optString("id").ifBlank { UUID.randomUUID().toString().replace("-", "") },
             name = optString("name"),
         )
 

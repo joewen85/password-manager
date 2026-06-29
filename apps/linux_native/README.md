@@ -75,8 +75,20 @@ make OPENSSL_PREFIX=/usr
 ./scripts/verify_release_docker.sh
 ```
 
-该脚本会把 `apps/linux_native` 与 `apps/native_core` 只读挂载进容器，复制到容器内临时工作区，然后安装发行版 OpenSSL/libcurl 开发包，执行 release flags 构建、`make test`、ELF/动态库检查和 CLI `self-test`。可通过 `LINUX_RELEASE_DOCKER_IMAGE` 覆盖发行版镜像。
+该脚本会把 `apps/linux_native` 与 `apps/native_core` 只读挂载进容器，复制到容器内临时工作区，然后安装发行版 OpenSSL/libcurl 开发包，执行 release binary 构建、ELF/动态库检查、CLI `self-test` 和启用 `assert` 的 `make test`。可通过 `LINUX_RELEASE_DOCKER_IMAGE` 覆盖发行版镜像。
 在 apt-based 镜像中，它还会执行 `make package-deb`，安装生成的 `.deb`，从 `/usr/bin/password-manager-linux` 运行 `self-test`，再卸载包确认命令被移除。
+
+运行当前机器可验证的 Linux native release gate：
+
+```bash
+./scripts/verify_release.sh
+```
+
+该脚本会先构建 release binary 并执行 CLI `self-test`，再执行启用 `assert` 的 C++ core tests 和共享 CLI smoke，并检查当前宿主机 binary 与 OpenSSL/libcurl 的链接。若需要同时执行真实 Linux userspace 和 `.deb` 安装/卸载验证：
+
+```bash
+./scripts/verify_release.sh --docker
+```
 
 ### 本地功能验证
 
@@ -216,7 +228,7 @@ sudo ./scripts/verify_install_deb.sh dist/password-manager-linux_0.1.0_amd64.deb
 发布候选必须先通过容器化 Linux release gate：
 
 ```bash
-./scripts/verify_release_docker.sh
+./scripts/verify_release.sh --docker
 ```
 
 ### Linux 分发 / 上架
@@ -261,6 +273,7 @@ Release notes 只能描述已经验证的能力；当前不能把 GUI、GUI 同�
 - [x] terminal-native smoke-test CLI 可构建。
 - [x] Windows/Linux 共用 terminal-native CLI，支持加密 vault 初始化、stdin 主密码输入、TOTP vault 解锁强制校验、状态读取、分类模板持久化、条目新增/搜索/查看/软删除。
 - [x] Windows/Linux 共用 terminal-native CLI 支持 WebDAV、S3 presigned URL、腾讯云 COS、阿里云 OSS 远端对象同步。
+- [x] `scripts/verify_release.sh` 串联 release binary 构建、CLI `self-test`、启用 `assert` 的 C++/CLI smoke 和宿主机 binary 依赖检查。
 - [x] Ubuntu Docker release gate 可在真实 Linux userspace 中构建、测试并校验 ELF/动态库。
 - [x] CLI `.deb` 包可构建，并在 Ubuntu Docker release gate 中完成安装、`self-test` 和卸载验证。
 - [ ] GTK/Qt/libadwaita GUI 完成。
@@ -347,7 +360,19 @@ Run the Linux release gate inside an Ubuntu container:
 ./scripts/verify_release_docker.sh
 ```
 
-The script read-only mounts `apps/linux_native` and `apps/native_core`, copies them into a temporary container workspace, installs distribution OpenSSL/libcurl development packages, runs a release-flags build, `make test`, ELF/dependency checks, and the CLI `self-test`. On apt-based images, it also runs `make package-deb`, installs the generated `.deb`, runs `self-test` from `/usr/bin/password-manager-linux`, and uninstalls the package. Override the distro image with `LINUX_RELEASE_DOCKER_IMAGE` when needed.
+The script read-only mounts `apps/linux_native` and `apps/native_core`, copies them into a temporary container workspace, installs distribution OpenSSL/libcurl development packages, runs a release binary build, ELF/dependency checks, the CLI `self-test`, and assertion-enabled `make test`. On apt-based images, it also runs `make package-deb`, installs the generated `.deb`, runs `self-test` from `/usr/bin/password-manager-linux`, and uninstalls the package. Override the distro image with `LINUX_RELEASE_DOCKER_IMAGE` when needed.
+
+Run the Linux native release gate that is available on the current host:
+
+```bash
+./scripts/verify_release.sh
+```
+
+The script builds the release binary and runs CLI `self-test`, then runs assertion-enabled C++ core tests and shared CLI smoke, and checks the current host binary links OpenSSL/libcurl. To also run real Linux userspace and `.deb` install/uninstall validation:
+
+```bash
+./scripts/verify_release.sh --docker
+```
 
 ### Local Feature Verification
 
@@ -462,7 +487,7 @@ sudo ./scripts/verify_install_deb.sh dist/password-manager-linux_0.1.0_amd64.deb
 Release candidates must pass the containerized Linux release gate first:
 
 ```bash
-./scripts/verify_release_docker.sh
+./scripts/verify_release.sh --docker
 ```
 
 ### Linux Distribution / Submission
@@ -506,6 +531,7 @@ Release notes must only describe verified capabilities. Do not list GUI, GUI syn
 - [x] Terminal-native smoke-test CLI builds.
 - [x] Shared Windows/Linux terminal-native CLI supports encrypted vault initialization, stdin master password input, TOTP-protected vault enforcement, status reads, category template persistence, and entry add/search/view/soft-delete.
 - [x] Shared Windows/Linux terminal-native CLI supports WebDAV, S3 presigned URL, Tencent COS, and Aliyun OSS remote object sync.
+- [x] `scripts/verify_release.sh` chains the release binary build, CLI `self-test`, assertion-enabled C++/CLI smoke coverage, and host binary dependency inspection.
 - [x] Ubuntu Docker release gate builds, tests, and verifies ELF/dependencies in a real Linux userspace.
 - [x] CLI `.deb` package builds and is install-tested, self-tested, and uninstalled in the Ubuntu Docker release gate.
 - [ ] GTK/Qt/libadwaita GUI is complete.

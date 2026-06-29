@@ -23,6 +23,7 @@ class VaultStoreTaxonomyTemplateTest {
 
             val template = assertNotNull(store.categoryTemplate("Private"))
             assertEquals(listOf("名称", "备注"), template.fields.map { it.name })
+            assertTrue(template.fields.none { it.id.contains('-') })
         } finally {
             directory.deleteRecursively()
         }
@@ -49,6 +50,7 @@ class VaultStoreTaxonomyTemplateTest {
             val template = assertNotNull(store.categoryTemplate("Infra"))
             assertEquals(listOf("名称", "备注", "IP地址", "端口", "关联账号"), template.fields.map { it.name })
             assertEquals(listOf("Owner" to "SRE"), store.listEntries().single { it.id == entry.id }.customFields.map { it.name to it.value })
+            assertTrue(template.fields.none { it.id.contains('-') })
         } finally {
             directory.deleteRecursively()
         }
@@ -65,6 +67,7 @@ class VaultStoreTaxonomyTemplateTest {
 
             val template = assertNotNull(store.categoryTemplate("Infra"))
             assertEquals(listOf("名称", "备注", "IP地址", "端口", "关联账号", "Owner"), template.fields.map { it.name })
+            assertTrue(template.fields.none { it.id.contains('-') })
         } finally {
             directory.deleteRecursively()
         }
@@ -81,6 +84,7 @@ class VaultStoreTaxonomyTemplateTest {
 
             val template = assertNotNull(store.categoryTemplate("Ops"))
             assertEquals(listOf("名称", "备注", "IP地址", "端口", "Owner"), template.fields.map { it.name })
+            assertTrue(template.fields.none { it.id.contains('-') })
         } finally {
             directory.deleteRecursively()
         }

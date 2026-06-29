@@ -180,6 +180,38 @@ class VaultJsonTest {
         assertEquals(emptyList(), decoded.categoryTemplates)
         assertEquals(emptyList(), credential.value.accounts)
         assertEquals(emptyList(), server.value.accounts)
+        assertEquals("android", decoded.entries.first { it.type == VaultEntryType.CREDENTIAL }.updatedBy)
+        assertEquals("android", decoded.entries.first { it.type == VaultEntryType.SERVER }.updatedBy)
+    }
+
+    @Test
+    fun categoryTemplatesDecodeBlankFieldIdsWithoutHyphen() {
+        val raw = JSONObject()
+            .put(
+                "categoryTemplates",
+                org.json.JSONArray(
+                    listOf(
+                        JSONObject()
+                            .put("category", "Infra")
+                            .put(
+                                "fields",
+                                org.json.JSONArray(
+                                    listOf(
+                                        JSONObject().put("id", "").put("name", "名称"),
+                                        JSONObject().put("name", "备注"),
+                                    )
+                                )
+                            ),
+                    )
+                )
+            )
+            .toString()
+
+        val decoded = VaultJson.decodeSnapshot(raw)
+        val fields = decoded.categoryTemplates.single().fields
+
+        assertEquals(listOf("名称", "备注"), fields.map { it.name })
+        assertTrue(fields.none { it.id.contains('-') })
     }
 
     @Test
