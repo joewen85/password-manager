@@ -4,8 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_DIR="$ROOT_DIR/apps/harmony_app"
 PRODUCT="${1:-default}"
-EXPECTED_BUNDLE_NAME="life.devops.passwordmanager"
-EXPECTED_VENDOR="DevOps Life"
 
 source "$ROOT_DIR/scripts/harmony_env.sh"
 
@@ -56,18 +54,7 @@ if [[ -z "$hap_path" ]]; then
   exit 1
 fi
 
-if unzip -p "$hap_path" pack.info | grep -q "\"bundleName\":\"$EXPECTED_BUNDLE_NAME\""; then
-  echo "[OK] HAP pack.info bundleName=$EXPECTED_BUNDLE_NAME"
-else
-  echo "[FAIL] HAP pack.info must contain bundleName=$EXPECTED_BUNDLE_NAME"
-  exit 1
-fi
-
-if unzip -p "$hap_path" module.json | grep -q "\"vendor\":\"$EXPECTED_VENDOR\""; then
-  echo "[OK] HAP module.json vendor=$EXPECTED_VENDOR"
-else
-  echo "[FAIL] HAP module.json must contain vendor=$EXPECTED_VENDOR"
-  exit 1
-fi
+EXPECTED_SIGNATURE="${HARMONY_EXPECT_HAP_SIGNATURE:-unsigned}" \
+  "$ROOT_DIR/scripts/harmony_verify_hap.sh" "$hap_path"
 
 echo "[OK] Build command finished"

@@ -42,7 +42,8 @@
 
 说明：
 - 该脚本会临时写入签名配置到 `apps/harmony_app/build-profile.json5`，构建结束后自动恢复原文件。
-- 内部调用 `./scripts/harmony_build_hap.sh default` 完成打包。
+- 内部会清理旧 HAP 产物，再调用 `./scripts/harmony_build_hap.sh default` 完成打包。
+- signed 构建会要求新 HAP 通过 `hap-sign-tool verify-app` 验签；如果只生成了 unsigned HAP 或残留旧产物，脚本会失败。
 
 ## 4. 产物检查
 
@@ -51,6 +52,13 @@
 `apps/harmony_app/entry/build/default/outputs/default/`
 
 若签名成功，目录中应出现 `signed` 命名的 HAP。
+
+可单独复核 signed 产物：
+
+```bash
+./scripts/harmony_verify_hap.sh --expect-signature signed \
+  apps/harmony_app/entry/build/default/outputs/default/entry-default-signed.hap
+```
 
 ## 5. 安装验证
 

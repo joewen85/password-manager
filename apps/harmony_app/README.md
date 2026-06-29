@@ -19,6 +19,7 @@
 - 已完成权限最小化声明：`ohos.permission.INTERNET`、`ohos.permission.ACCESS_BIOMETRIC`。
 - 已提供权限/隐私清单、签名指南、DevEco 编译与真机验证手册，以及 Flutter 旧数据到 Harmony 端的加密兼容回归清单。
 - 当前命令行预检与 `assembleHap` 已验证通过，产物为 `entry-default-unsigned.hap`。
+- HAP 构建链路会通过 `scripts/harmony_verify_hap.sh` 结构化校验 `pack.info` / `module.json` 的生产 bundleName、vendor、版本和权限；unsigned 构建会拒绝误签名包，signed 构建会要求 Harmony `hap-sign-tool` 验签通过。
 - 生产发布前仍需完成 signed HAP 生成、真机回归、真实同步服务兼容验证、权限/隐私最终核查和 AppGallery 上架核查。
 
 ### 目录说明
@@ -70,6 +71,13 @@ rm -rf apps/harmony_app/entry/build
 
 ```text
 apps/harmony_app/entry/build/default/outputs/default/entry-default-unsigned.hap
+```
+
+单独验证 HAP metadata 和签名状态：
+
+```bash
+./scripts/harmony_verify_hap.sh --expect-signature unsigned \
+  apps/harmony_app/entry/build/default/outputs/default/entry-default-unsigned.hap
 ```
 
 ### 本地功能验证
@@ -132,6 +140,8 @@ rm -rf apps/harmony_app/entry/build
 ./scripts/harmony_build_signed_hap.sh
 ```
 
+`harmony_build_signed_hap.sh` 会清理旧 HAP 产物并要求新生成的 HAP 通过 `hap-sign-tool verify-app` 验签，避免残留 unsigned HAP 被误判为可安装 signed 包。
+
 ### 真机安装
 
 确认设备：
@@ -182,6 +192,7 @@ hdc list targets
 - [x] 已实现单条/分类 JSON 导入、预览和冲突策略。
 - [x] 已配置生产 bundleName/vendor metadata，并与 Android applicationId 对齐为 `life.devops.passwordmanager`。
 - [x] `harmony_preflight.sh` 和 HAP 构建脚本会校验生产 metadata，防止回退到 example 包名。
+- [x] HAP verifier 会结构化校验生产 metadata/权限，并区分 unsigned 与 signed 产物。
 - [x] 权限声明保持最小化，目前声明 `ohos.permission.INTERNET` 与 `ohos.permission.ACCESS_BIOMETRIC`。
 - [x] 已提供 DevEco 编译、签名、真机验证、权限隐私、加密兼容回归文档。
 - [ ] signed HAP 已用发布签名材料生成。
@@ -195,7 +206,7 @@ hdc list targets
 
 ### 当前验证结论
 
-- 命令行预检与 `assembleHap` 已通过，当前产物为 `entry-default-unsigned.hap`；HAP 内 `pack.info` 的 bundleName 与 `module.json` 的 vendor 已通过脚本校验。
+- 命令行预检与 `assembleHap` 已通过，当前产物为 `entry-default-unsigned.hap`；HAP 内 `pack.info` / `module.json` 的生产 metadata、权限和 unsigned 状态已通过脚本校验。
 - 生物识别解锁代码已通过 ArkTS 编译；真机上的 Face/Fingerprint/HUKS token 流程仍需安装 signed HAP 后验证。
 - 当前环境 `hdc` 曾可用，但设备列表为空，尚不能执行安装与真机回归。
 - 当前签名配置仍缺少 `HARMONY_SIGN_PROFILE` 与 `HARMONY_SIGN_CERTPATH`，无法生成可安装 signed HAP。
@@ -221,6 +232,7 @@ This directory contains the native HarmonyOS 6 application target, used to build
 - Permission declaration is minimized to `ohos.permission.INTERNET` and `ohos.permission.ACCESS_BIOMETRIC`.
 - Documentation exists for permissions/privacy review, signing, DevEco build and device validation, and Flutter-to-Harmony crypto compatibility regression.
 - Command-line preflight and `assembleHap` have passed and produced `entry-default-unsigned.hap`.
+- The HAP build flow runs `scripts/harmony_verify_hap.sh` to validate production bundleName, vendor, version, and permissions from `pack.info` / `module.json`; unsigned builds reject accidentally signed artifacts, and signed builds require Harmony `hap-sign-tool` verification to pass.
 - Signed HAP generation, device regression, real sync-service compatibility validation, final permissions/privacy review, and AppGallery submission validation remain required before production release.
 
 ### Directory Layout
@@ -272,6 +284,13 @@ The artifact is usually generated at:
 
 ```text
 apps/harmony_app/entry/build/default/outputs/default/entry-default-unsigned.hap
+```
+
+Verify HAP metadata and signature state directly:
+
+```bash
+./scripts/harmony_verify_hap.sh --expect-signature unsigned \
+  apps/harmony_app/entry/build/default/outputs/default/entry-default-unsigned.hap
 ```
 
 ### Local Feature Verification
@@ -334,6 +353,8 @@ rm -rf apps/harmony_app/entry/build
 ./scripts/harmony_build_signed_hap.sh
 ```
 
+`harmony_build_signed_hap.sh` clears stale HAP outputs and requires the newly generated HAP to pass `hap-sign-tool verify-app`, preventing an old unsigned HAP from being treated as an installable signed package.
+
 ### Device Install
 
 Check devices:
@@ -384,6 +405,7 @@ Official entry points:
 - [x] Item/category JSON import, preview, and conflict strategies are implemented.
 - [x] Production bundleName/vendor metadata is configured and aligned with the Android applicationId as `life.devops.passwordmanager`.
 - [x] `harmony_preflight.sh` and the HAP build script verify production metadata so example package names cannot regress.
+- [x] The HAP verifier structurally validates production metadata/permissions and distinguishes unsigned from signed artifacts.
 - [x] Permission declaration is minimized to `ohos.permission.INTERNET` and `ohos.permission.ACCESS_BIOMETRIC`.
 - [x] DevEco build, signing, device validation, permissions/privacy, and crypto compatibility regression docs exist.
 - [ ] Signed HAP is generated with release signing materials.
@@ -397,7 +419,7 @@ Official entry points:
 
 ### Current Verification Status
 
-- Command-line preflight and `assembleHap` have passed, with `entry-default-unsigned.hap` recorded as the current artifact; the HAP `pack.info` bundleName and `module.json` vendor are verified by script.
+- Command-line preflight and `assembleHap` have passed, with `entry-default-unsigned.hap` recorded as the current artifact; the HAP `pack.info` / `module.json` production metadata, permissions, and unsigned state are verified by script.
 - Biometric unlock code has passed ArkTS compilation; the device Face/Fingerprint/HUKS token flow still requires signed-HAP installation validation.
 - `hdc` was previously available in the local environment, but the device list was empty, so install and device regression could not be run.
 - Signing config is still missing `HARMONY_SIGN_PROFILE` and `HARMONY_SIGN_CERTPATH`, so an installable signed HAP cannot be generated yet.

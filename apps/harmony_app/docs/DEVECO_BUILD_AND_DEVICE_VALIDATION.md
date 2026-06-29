@@ -38,6 +38,7 @@
 结果：
 - `assembleHap` 成功
 - 产物路径：`apps/harmony_app/entry/build/default/outputs/default/entry-default-unsigned.hap`
+- 构建脚本已校验 HAP 的生产 bundleName、vendor、版本、权限和 unsigned 签名状态
 - 提示：当前未配置 `signingConfig`，需要在 DevEco 配置签名后生成可安装包
 
 ## 3.2 签名构建（命令行）
@@ -49,6 +50,7 @@
 ```
 
 首次执行会自动生成 `apps/harmony_app/signing/signing.env` 模板；填写后再次执行即可。
+脚本会清理旧 HAP 产物，并要求 signed HAP 通过 `hap-sign-tool verify-app` 验签。
 
 详见：`docs/SIGNING_SETUP.md`
 

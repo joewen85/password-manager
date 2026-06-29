@@ -206,6 +206,7 @@ cat >"$BUILD_PROFILE" <<EOF
 EOF
 
 info "Running signed assembleHap build"
-"$ROOT_DIR/scripts/harmony_build_hap.sh" default
+rm -rf "$APP_DIR/entry/build"
+HARMONY_EXPECT_HAP_SIGNATURE=signed "$ROOT_DIR/scripts/harmony_build_hap.sh" default
 
 info "Signed build flow completed (build-profile restored)"
