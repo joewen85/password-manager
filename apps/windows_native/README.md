@@ -8,15 +8,17 @@
 
 - 当前切片是 C++17 + Win32 的 Windows 原生起点。
 - `src/win32_app.cpp` 提供最小 Win32 window skeleton，供后续接入真实 UI。
-- `PasswordManagerWindows.vcxproj` 提供 Visual Studio / MSBuild 项目骨架。
+- `PasswordManagerWindows.vcxproj` 提供 Visual Studio / MSBuild 项目骨架，并声明 vcpkg manifest、Release 运行库/安全选项和 OpenSSL/libcurl 链接合同。
 - 可移植 core 复用 `apps/native_core` 的 C++17 + OpenSSL 路径，当前可在本机用 clang 构建和测试。
 - 已实现可测试核心：PBKDF2-SHA256、AES-256-GCM encrypted vault envelope、TOTP、entry model、搜索/过滤、分类/标签集合、JSON snapshot 序列化/反序列化、encrypted vault 文件读写、version-vector merge。
 - CLI 入口支持初始化、`--password-stdin` 主密码输入、TOTP vault 解锁强制校验、解锁状态检查、分类模板持久化、credential/server/service 条目新增、搜索列表、单条查看、软删除、本地 encrypted envelope 备份/恢复、明文 snapshot 导出/导入、TOTP、WebDAV / S3 presigned URL / 腾讯云 COS / 阿里云 OSS 远端对象同步和 self-test，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
-- 当前尚未实现完整 Win32/WinUI 3/WPF 图形界面，也尚未实现 Windows Credential Manager / DPAPI 集成、GUI 同步入口和 Visual Studio 工程的生产 libcurl 打包配置。
+- 当前尚未实现完整 Win32/WinUI 3/WPF 图形界面，也尚未实现 Windows Credential Manager / DPAPI 集成、GUI 同步入口、Windows 实机 MSBuild 构建验证和干净 Windows VM 运行时依赖验证。
 
 ### 目录说明
 
 - `PasswordManagerWindows.vcxproj`: Visual Studio C++ Win32 app project skeleton，并引用共享 `vault_core` / `vault_cli` 源文件。
+- `vcpkg.json`: Visual Studio / MSBuild release 依赖 manifest，声明 OpenSSL 和 libcurl。
+- `scripts/verify_release_contract.py`: 本机可运行的 Windows release contract verifier，解析 `.vcxproj` / `vcpkg.json` / README。
 - `Makefile`: 非 Windows 环境下验证 portable core 的构建和测试入口。
 - `src/win32_app.cpp`: 最小 Win32 window app。
 - `src/main.cpp`: Windows native CLI entrypoint。
@@ -32,8 +34,7 @@ Windows 实机开发：
 - Windows 10/11。
 - Visual Studio 2022，安装 Desktop development with C++ workload。
 - Windows 10/11 SDK。
-- OpenSSL 3 for Windows，或后续替换为 CNG/BCrypt 原生实现。
-- libcurl for Windows，并在 Visual Studio / MSBuild release 工程中配置 include/lib/runtime DLL 打包。
+- vcpkg 已接入 Visual Studio / MSBuild integration，工程通过 `VcpkgEnableManifest` 和 `x64-windows` triplet 恢复 OpenSSL 3 与 libcurl。
 - WiX Toolset 或 MSIX Packaging Tool，用于安装包。
 
 当前本机验证：
@@ -42,6 +43,7 @@ Windows 实机开发：
 - GNU Make。
 - OpenSSL 3 headers/libs，默认路径 `/opt/homebrew/opt/openssl@3`。
 - libcurl headers/libs，可通过 `curl-config` 被 Makefile 自动发现。
+- Python 3，用于运行 Windows release contract verifier。
 
 ### 开发
 
@@ -65,6 +67,12 @@ msbuild PasswordManagerWindows.vcxproj /p:Configuration=Release /p:Platform=x64
 ```
 
 或在 Visual Studio 中打开 `PasswordManagerWindows.vcxproj` 后选择 `Release|x64` 构建。
+
+在当前机器验证 Visual Studio / MSBuild release contract，不会冒充 Windows `.exe` 已构建：
+
+```bash
+python3 scripts/verify_release_contract.py
+```
 
 ### 本地功能验证
 
@@ -197,6 +205,14 @@ Visual Studio / MSBuild release build：
 msbuild PasswordManagerWindows.vcxproj /p:Configuration=Release /p:Platform=x64
 ```
 
+发布前先运行本机 contract gate：
+
+```bash
+python3 scripts/verify_release_contract.py
+```
+
+该脚本校验 `vcpkg.json`、`VcpkgEnableManifest`、`x64-windows` triplet、Release 运行库/安全选项、OpenSSL/libcurl 链接项和 README 清单；它不替代 Windows 实机 MSBuild、签名或干净 VM 安装验证。
+
 发布前需要：
 
 1. 设置应用名称、版本号、公司名、图标和 manifest。
@@ -242,6 +258,8 @@ Release notes 只能描述已经验证的能力；当前不能把完整 GUI、GU
 - [x] README 说明开发、发布构建、Windows 分发/上架步骤。
 - [x] Win32 app skeleton 和 Visual Studio `.vcxproj` 已添加。
 - [x] Windows/Linux 原生端共用 `apps/native_core`，避免 core 双写偏差。
+- [x] `vcpkg.json` 声明 Visual Studio / MSBuild release 依赖 OpenSSL 和 libcurl。
+- [x] `scripts/verify_release_contract.py` 会验证 Release|x64、vcpkg manifest、shared core 引用、运行库/安全选项和 OpenSSL/libcurl 链接合同。
 - [x] Portable core 使用 PBKDF2-SHA256 + AES-256-GCM。
 - [x] C++ 测试覆盖加密 envelope、错误密码拒绝、snapshot 反序列化、encrypted vault 文件读回、TOTP、entry 过滤、集合重建和 version-vector merge。
 - [x] portable smoke-test CLI 可在当前机器构建。
@@ -252,7 +270,7 @@ Release notes 只能描述已经验证的能力；当前不能把完整 GUI、GU
 - [ ] 完整 CRUD、导入导出、备份恢复 GUI 完成。
 - [ ] Windows Credential Manager / DPAPI / CNG 密钥保护完成。
 - [ ] GUI 远端同步入口完成。
-- [ ] Visual Studio / MSBuild 工程完成生产 libcurl 链接、运行库打包和干净 Windows VM 验证。
+- [ ] Windows 实机 MSBuild 构建验证和干净 Windows VM 运行时依赖验证完成。
 - [ ] `.exe` 代码签名完成。
 - [ ] MSIX/MSI/winget 至少一种安装包完成安装验证。
 - [ ] Microsoft Store 或企业分发审核通过。
@@ -267,15 +285,17 @@ This directory contains the native Windows application target, used to build Win
 
 - The current slice is a C++17 + Win32 native Windows starting point.
 - `src/win32_app.cpp` provides a minimal Win32 window skeleton for future real UI work.
-- `PasswordManagerWindows.vcxproj` provides a Visual Studio / MSBuild project scaffold.
+- `PasswordManagerWindows.vcxproj` provides a Visual Studio / MSBuild project scaffold with a vcpkg manifest, Release runtime/security settings, and OpenSSL/libcurl link contract.
 - The portable core uses the shared `apps/native_core` C++17 + OpenSSL path and can currently be built and tested locally with clang.
 - Testable core is implemented: PBKDF2-SHA256, AES-256-GCM encrypted vault envelope, TOTP, entry model, search/filtering, category/tag collection rebuilding, JSON snapshot serialization/deserialization, encrypted vault file read/write, and version-vector merge.
 - The CLI supports initialization, `--password-stdin` master password input, TOTP-protected vault enforcement, unlock status checks, persisted category templates, credential/server/service entry add, search/list, single-entry view, soft delete, local encrypted envelope backup/restore, plaintext snapshot export/import, TOTP, WebDAV / S3 presigned URL / Tencent COS / Aliyun OSS remote object sync, and self-test through shared `apps/native_core/src/vault_cli.cpp`.
-- Full Win32/WinUI 3/WPF GUI, Windows Credential Manager / DPAPI integration, GUI sync entry points, and production Visual Studio libcurl packaging are not implemented yet.
+- Full Win32/WinUI 3/WPF GUI, Windows Credential Manager / DPAPI integration, GUI sync entry points, Windows-host MSBuild validation, and clean Windows VM runtime dependency validation are not implemented yet.
 
 ### Directory Layout
 
 - `PasswordManagerWindows.vcxproj`: Visual Studio C++ Win32 app project skeleton with shared `vault_core` / `vault_cli` source references.
+- `vcpkg.json`: Visual Studio / MSBuild release dependency manifest for OpenSSL and libcurl.
+- `scripts/verify_release_contract.py`: locally runnable Windows release contract verifier for `.vcxproj` / `vcpkg.json` / README.
 - `Makefile`: build and test entry point for the portable core outside Windows.
 - `src/win32_app.cpp`: minimal Win32 window app.
 - `src/main.cpp`: Windows native CLI entrypoint.
@@ -291,8 +311,7 @@ Windows device development:
 - Windows 10/11.
 - Visual Studio 2022 with the Desktop development with C++ workload.
 - Windows 10/11 SDK.
-- OpenSSL 3 for Windows, or later replacement with native CNG/BCrypt.
-- libcurl for Windows with include/lib/runtime DLL packaging configured in the Visual Studio / MSBuild release project.
+- vcpkg integrated with Visual Studio / MSBuild; the project restores OpenSSL 3 and libcurl through `VcpkgEnableManifest` and the `x64-windows` triplet.
 - WiX Toolset or MSIX Packaging Tool for installers.
 
 Current local verification:
@@ -301,6 +320,7 @@ Current local verification:
 - GNU Make.
 - OpenSSL 3 headers/libs, defaulting to `/opt/homebrew/opt/openssl@3`.
 - libcurl headers/libs discoverable by the Makefile through `curl-config`.
+- Python 3 for the Windows release contract verifier.
 
 ### Develop
 
@@ -324,6 +344,12 @@ msbuild PasswordManagerWindows.vcxproj /p:Configuration=Release /p:Platform=x64
 ```
 
 Or open `PasswordManagerWindows.vcxproj` in Visual Studio and build `Release|x64`.
+
+Verify the Visual Studio / MSBuild release contract on the current machine; this does not claim that a Windows `.exe` has been built:
+
+```bash
+python3 scripts/verify_release_contract.py
+```
 
 ### Local Feature Verification
 
@@ -431,6 +457,14 @@ Visual Studio / MSBuild release build:
 msbuild PasswordManagerWindows.vcxproj /p:Configuration=Release /p:Platform=x64
 ```
 
+Run the local contract gate before release:
+
+```bash
+python3 scripts/verify_release_contract.py
+```
+
+The script verifies `vcpkg.json`, `VcpkgEnableManifest`, the `x64-windows` triplet, Release runtime/security settings, OpenSSL/libcurl link entries, and the README checklist. It does not replace Windows-host MSBuild, signing, or clean-VM installation validation.
+
 Before release:
 
 1. Configure app name, version, company name, icon, and manifest.
@@ -475,6 +509,8 @@ Release notes must only describe verified capabilities. Do not list full GUI, GU
 - [x] README provides Chinese and English versions.
 - [x] README documents development, release build, Windows distribution/submission steps.
 - [x] Win32 app skeleton and Visual Studio `.vcxproj` are added.
+- [x] `vcpkg.json` declares OpenSSL and libcurl for Visual Studio / MSBuild release dependency restoration.
+- [x] `scripts/verify_release_contract.py` verifies Release|x64, vcpkg manifest mode, shared core references, runtime/security settings, and OpenSSL/libcurl link contract.
 - [x] Portable core uses PBKDF2-SHA256 + AES-256-GCM.
 - [x] C++ tests cover encrypted envelope, wrong-password rejection, TOTP, entry filtering, collection rebuilding, and version-vector merge.
 - [x] Portable smoke-test CLI builds on the current machine.
@@ -485,7 +521,7 @@ Release notes must only describe verified capabilities. Do not list full GUI, GU
 - [ ] Full CRUD, import/export, and backup/restore GUI is complete.
 - [ ] Windows Credential Manager / DPAPI / CNG key protection is complete.
 - [ ] GUI remote sync entry points are complete.
-- [ ] Visual Studio / MSBuild production libcurl linking, runtime packaging, and clean Windows VM validation are complete.
+- [ ] Windows-host MSBuild validation and clean Windows VM runtime dependency validation are complete.
 - [ ] `.exe` code signing is complete.
 - [ ] At least one MSIX/MSI/winget installer is install-tested.
 - [ ] Microsoft Store or enterprise distribution review is approved.
