@@ -2404,14 +2404,14 @@ struct Index {
           });
       }
       if (this.categoryDraftCustomFields.length === 0) {
-        Text('暂无自定义字段')
+        Text('字段默认只有名称和备注，点 + 添加自定义字段')
           .fontSize(12)
           .fontColor(UI_MUTED);
       }
       ForEach(this.categoryDraftCustomFields, (field: CustomField) => {
-        Row({ space: 8 }) {
+        Column({ space: 8 }) {
           TextInput({ placeholder: '字段名称', text: field.name })
-            .layoutWeight(1)
+            .width('100%')
             .height(48)
             .backgroundColor(UI_SURFACE_ALT)
             .border({ width: 1, color: UI_STROKE })
@@ -2420,19 +2420,25 @@ struct Index {
             .onChange((value: string) => {
               this.updateCategoryDraftCustomFieldName(field.id, value);
             });
-          Text('删除')
-            .height(36)
-            .padding({ left: 10, right: 10 })
-            .fontSize(13)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(UI_DANGER)
-            .textAlign(TextAlign.Center)
-            .backgroundColor(UI_DANGER_SURFACE)
-            .borderRadius(999)
-            .onClick(() => {
-              this.removeCategoryDraftCustomField(field.id);
-            });
+          Row({ space: 8 }) {
+            Text('删除')
+              .height(36)
+              .padding({ left: 10, right: 10 })
+              .fontSize(13)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(UI_DANGER)
+              .textAlign(TextAlign.Center)
+              .backgroundColor(UI_DANGER_SURFACE)
+              .borderRadius(999)
+              .onClick(() => {
+                this.removeCategoryDraftCustomField(field.id);
+              });
+          }
         }
+        .padding(10)
+        .backgroundColor(UI_SURFACE_ALT)
+        .border({ width: 1, color: UI_STROKE })
+        .borderRadius(12);
       }, (field: CustomField) => field.id);
     }
   }
@@ -2441,7 +2447,7 @@ struct Index {
   private CustomFieldsEditor() {
     Column({ space: 6 }) {
       Row() {
-        Text(this.editingEntryId.length > 0 ? '自定义字段' : '字段').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
+        Text('字段').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
         Blank();
         Text('+')
           .width(42)
@@ -2458,26 +2464,24 @@ struct Index {
           });
       }
       if (this.draftCustomFields.length === 0) {
-        Text(this.editingEntryId.length > 0 ? '未添加自定义字段' : '暂无字段')
+        Text('字段默认只有名称和备注，点 + 添加自定义字段')
           .fontSize(12)
           .fontColor(UI_MUTED);
       }
       ForEach(this.draftCustomFields, (field: CustomField) => {
-        Row({ space: 8 }) {
-          if (this.editingEntryId.length > 0 || field.name.trim().length === 0) {
-            TextInput({ placeholder: '字段名称', text: field.name })
-              .layoutWeight(1)
-              .height(48)
-              .backgroundColor(UI_SURFACE_ALT)
-              .border({ width: 1, color: UI_STROKE })
-              .borderRadius(12)
-              .padding({ left: 14, right: 14 })
-              .onChange((value: string) => {
-                this.updateDraftCustomFieldName(field.id, value);
-              });
-          }
-          TextInput({ placeholder: this.editingEntryId.length > 0 ? '字段值' : field.name.trim().length > 0 ? field.name : '字段值', text: field.value })
-            .layoutWeight(1)
+        Column({ space: 8 }) {
+          TextInput({ placeholder: '字段名称', text: field.name })
+            .width('100%')
+            .height(48)
+            .backgroundColor(UI_SURFACE_ALT)
+            .border({ width: 1, color: UI_STROKE })
+            .borderRadius(12)
+            .padding({ left: 14, right: 14 })
+            .onChange((value: string) => {
+              this.updateDraftCustomFieldName(field.id, value);
+            });
+          TextInput({ placeholder: '字段值', text: field.value })
+            .width('100%')
             .height(48)
             .backgroundColor(UI_SURFACE_ALT)
             .border({ width: 1, color: UI_STROKE })
@@ -2499,6 +2503,10 @@ struct Index {
               this.removeDraftCustomField(field.id);
             });
         }
+        .padding(10)
+        .backgroundColor(UI_SURFACE_ALT)
+        .border({ width: 1, color: UI_STROKE })
+        .borderRadius(12);
       }, (field: CustomField) => field.id);
     }
   }

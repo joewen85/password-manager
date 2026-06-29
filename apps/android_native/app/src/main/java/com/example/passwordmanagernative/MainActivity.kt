@@ -1064,13 +1064,31 @@ class MainActivity : FragmentActivity() {
         )
         val form = formRoot()
         val payloadFields = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val customFieldsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val fieldsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val label = input(text(R.string.label_field)).apply { setText(draft.label) }
         var selectedEntryType = draft.type
         var selectedCategory = draft.category
         val selectedTags = draft.tags.toMutableSet()
         val customFields = draft.customFields.toMutableList()
-        lateinit var renderCustomFields: () -> Unit
+        fun removeDraftCustomField(fieldId: String) {
+            customFields.removeAll { it.id == fieldId }
+        }
+        fun updateDraftCustomFieldName(fieldId: String, name: String) {
+            val index = customFields.indexOfFirst { it.id == fieldId }
+            if (index >= 0) {
+                customFields[index] = customFields[index].copy(name = name)
+            }
+        }
+        fun updateDraftCustomFieldValue(fieldId: String, value: String) {
+            val index = customFields.indexOfFirst { it.id == fieldId }
+            if (index >= 0) {
+                customFields[index] = customFields[index].copy(value = value)
+            }
+        }
+        fun addDraftCustomField() {
+            customFields += CustomField()
+        }
+        lateinit var renderFields: () -> Unit
         lateinit var categoryPicker: TextView
         categoryPicker = selectBoxText(categoryDisplayName(selectedCategory)) {
             showCategorySelectionDialog(selectedCategory) { selected ->
@@ -1078,7 +1096,7 @@ class MainActivity : FragmentActivity() {
                 categoryPicker.text = categoryDisplayName(selectedCategory)
                 if (isCreating) {
                     customFields.replaceWithTemplate(store.categoryTemplate(selectedCategory))
-                    renderCustomFields()
+                    renderFields()
                 }
             }
         }
@@ -1168,41 +1186,36 @@ class MainActivity : FragmentActivity() {
                 }.also { payloadFields.addView(it, matchWrap(top = dp(10))) }
             }
         }
-        renderCustomFields = {
-            customFieldsContainer.removeAllViews()
-            customFieldsContainer.addView(sectionTitle(text(if (isCreating) R.string.fields else R.string.custom_fields)), matchWrap(top = dp(14)))
+        renderFields = {
+            fieldsContainer.removeAllViews()
+            fieldsContainer.addView(sectionTitle(text(R.string.fields)), matchWrap(top = dp(14)))
             if (customFields.isEmpty()) {
-                customFieldsContainer.addView(label(text(R.string.no_custom_fields), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(8)))
+                fieldsContainer.addView(label(text(R.string.no_custom_fields), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(8)))
             }
-            customFields.forEachIndexed { index, field ->
-                val valueInput = input(text(R.string.custom_field_value)).apply { setText(field.value) }
-                customFieldsContainer.addView(LinearLayout(this).apply {
+            customFields.forEach { field ->
+                fieldsContainer.addView(LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     background = rounded(uiColor(R.color.ui_surface_alt), dp(12), uiColor(R.color.ui_stroke))
                     setPadding(dp(12), dp(12), dp(12), dp(12))
-                    if (isCreating && field.name.isNotBlank()) {
-                        valueInput.hint = field.name
-                        addView(valueInput, matchWrap())
-                    } else {
-                        val nameInput = input(text(R.string.custom_field_name)).apply { setText(field.name) }
-                        addView(nameInput, matchWrap())
-                        addView(valueInput, matchWrap(top = dp(8)))
-                        nameInput.addTextChangedListener(SimpleTextWatcher { value ->
-                            customFields[index] = customFields[index].copy(name = value)
-                        })
-                    }
+                    val nameInput = input(text(R.string.custom_field_name)).apply { setText(field.name) }
+                    val valueInput = input(text(R.string.custom_field_value)).apply { setText(field.value) }
+                    addView(nameInput, matchWrap())
+                    addView(valueInput, matchWrap(top = dp(8)))
                     addView(actionButton(text(R.string.delete), primary = false, compact = true) {
-                        customFields.removeAt(index)
-                        renderCustomFields()
+                        removeDraftCustomField(field.id)
+                        renderFields()
                     }, wrapWrap(top = dp(8)))
+                    nameInput.addTextChangedListener(SimpleTextWatcher { value ->
+                        updateDraftCustomFieldName(field.id, value)
+                    })
                     valueInput.addTextChangedListener(SimpleTextWatcher { value ->
-                        customFields[index] = customFields[index].copy(value = value)
+                        updateDraftCustomFieldValue(field.id, value)
                     })
                 }, matchWrap(top = dp(8)))
             }
-            customFieldsContainer.addView(actionButton(text(R.string.add_custom_field), primary = false) {
-                customFields += CustomField()
-                renderCustomFields()
+            fieldsContainer.addView(actionButton(text(R.string.add_custom_field), primary = false) {
+                addDraftCustomField()
+                renderFields()
             }, matchWrap(top = dp(10)))
         }
         form.addView(formTitle(if (entry == null) text(R.string.new_entry) else text(R.string.edit_entry)))
@@ -1215,12 +1228,12 @@ class MainActivity : FragmentActivity() {
         if (!isCreating) {
             form.addView(payloadFields)
         }
-        form.addView(customFieldsContainer)
+        form.addView(fieldsContainer)
         renderTypeChips()
         if (!isCreating) {
             rebuildPayloadFields(selectedEntryType)
         }
-        renderCustomFields()
+        renderFields()
         val dialog = AlertDialog.Builder(this)
             .setView(ScrollView(this).apply { addView(form) })
             .setPositiveButton(text(R.string.save), null)

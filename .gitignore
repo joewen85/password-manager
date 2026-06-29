@@ -42,3 +42,6 @@ apps/harmony_app/local.properties
 
 signing.env
 .gitnexus
+AGENTS.md
+CLAUDE.md
+.claude/

@@ -58,20 +58,10 @@ struct EntryEditorView: View {
                 Section("Overview") {
                     TextField("Label", text: $draft.label)
 
-                    if entry != nil {
-                        Picker("Type", selection: $draft.type) {
-                            ForEach(VaultEntryType.allCases) { type in
-                                Label(type.title, systemImage: type.systemImage)
-                                    .tag(type)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                    }
-
-                    CategorySelectField(
-                        selectedCategory: $draft.category,
-                        categories: availableCategories,
-                        onCreateCategory: createCategory
+                CategorySelectField(
+                    selectedCategory: $draft.category,
+                    categories: availableCategories,
+                    onCreateCategory: createCategory
                     )
 
                     if let taxonomyMessage {
@@ -89,20 +79,16 @@ struct EntryEditorView: View {
                     )
                 }
 
-                if entry == nil {
-                    TemplateFieldsEditor(fields: $draft.customFields)
-                } else {
-                    switch draft.type {
-                    case .credential:
-                        CredentialEditor(payload: $draft.credential)
-                    case .server:
-                        ServerEditor(payload: $draft.server)
-                    case .service:
-                        ServiceEditor(payload: $draft.service)
-                    }
-
-                    CustomFieldsEditor(fields: $draft.customFields)
+                switch draft.type {
+                case .credential:
+                    CredentialEditor(payload: $draft.credential)
+                case .server:
+                    ServerEditor(payload: $draft.server)
+                case .service:
+                    ServiceEditor(payload: $draft.service)
                 }
+
+                TemplateFieldsEditor(fields: $draft.customFields)
             }
             .formStyle(.grouped)
             .padding()
@@ -361,18 +347,7 @@ private struct TemplateFieldsEditor: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach($fields) { $field in
-                    if field.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        HStack(alignment: .top, spacing: 8) {
-                            TextField("Field Name", text: $field.name)
-                            TextField("Field Value", text: $field.value, axis: .vertical)
-                            removeButton(field.id)
-                        }
-                    } else {
-                        HStack(alignment: .top, spacing: 8) {
-                            TextField(field.name, text: $field.value, axis: .vertical)
-                            removeButton(field.id)
-                        }
-                    }
+                    CustomFieldRow(field: $field, showsValue: true, remove: { remove(field.id) })
                 }
             }
 
@@ -388,15 +363,6 @@ private struct TemplateFieldsEditor: View {
 
     private func remove(_ id: UUID) {
         fields.removeAll { $0.id == id }
-    }
-
-    private func removeButton(_ id: UUID) -> some View {
-        Button(role: .destructive) {
-            remove(id)
-        } label: {
-            Label("Remove Field", systemImage: "trash")
-        }
-        .labelStyle(.iconOnly)
     }
 }
 
@@ -415,15 +381,7 @@ private struct CategoryTemplateFieldNameEditor: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach($fields) { $field in
-                    HStack(alignment: .top, spacing: 8) {
-                        TextField("Field Name", text: $field.name)
-                        Button(role: .destructive) {
-                            remove(field.id)
-                        } label: {
-                            Label("Remove Field", systemImage: "trash")
-                        }
-                        .labelStyle(.iconOnly)
-                    }
+                    CustomFieldRow(field: $field, showsValue: false, remove: { remove(field.id) })
                 }
             }
 
@@ -440,6 +398,46 @@ private struct CategoryTemplateFieldNameEditor: View {
 
     private func remove(_ id: UUID) {
         fields.removeAll { $0.id == id }
+    }
+}
+
+private struct CustomFieldRow: View {
+    @Binding var field: CustomField
+    var showsValue: Bool = true
+    var remove: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                TextField("Field Name", text: $field.name)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 140)
+                Spacer(minLength: 0)
+                Button(role: .destructive, action: remove) {
+                    Label("Remove Field", systemImage: "trash")
+                }
+                .labelStyle(.iconOnly)
+                .help("Remove Field")
+            }
+            if showsValue {
+                TextField("Field Value", text: $field.value, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .padding(.top, 2)
+            } else {
+                Text("Name first, then value.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(uiColor: .secondarySystemBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+        )
     }
 }
 
@@ -584,6 +582,7 @@ private struct SearchCreationField: View {
 
 private struct CredentialEditor: View {
     @Binding var payload: CredentialPayload
+    @Binding var customFields: [CustomField]
 
     var body: some View {
         Section("Fields") {
@@ -594,14 +593,24 @@ private struct CredentialEditor: View {
             TextField("Access Key", text: $payload.accessKey)
             SecureField("Secret Key", text: $payload.secretKey)
             TextField("Notes", text: $payload.notes, axis: .vertical)
-        }
 
+            if !customFields.isEmpty {
+                ForEach($customFields) { $field in
+                    CustomFieldRow(field: $field, remove: { removeCustomField(field.id) })
+                }
+            }
+        }
         AccountsEditor(accounts: $payload.accounts, title: "Accounts", emptyText: "No accounts.")
+    }
+
+    private func removeCustomField(_ id: UUID) {
+        customFields.removeAll { $0.id == id }
     }
 }
 
 private struct ServerEditor: View {
     @Binding var payload: ServerPayload
+    @Binding var customFields: [CustomField]
 
     var body: some View {
         Section("Fields") {
@@ -618,14 +627,25 @@ private struct ServerEditor: View {
             TextField("Operating System", text: $payload.operatingSystem)
             TextField("Location", text: $payload.location)
             TextField("Notes", text: $payload.notes, axis: .vertical)
+
+            if !customFields.isEmpty {
+                ForEach($customFields) { $field in
+                    CustomFieldRow(field: $field, remove: { removeCustomField(field.id) })
+                }
+            }
         }
 
         AccountsEditor(accounts: $payload.accounts, title: "Accounts", emptyText: "No accounts.")
+    }
+
+    private func removeCustomField(_ id: UUID) {
+        customFields.removeAll { $0.id == id }
     }
 }
 
 private struct ServiceEditor: View {
     @Binding var payload: ServicePayload
+    @Binding var customFields: [CustomField]
 
     var body: some View {
         Section("Fields") {
@@ -641,9 +661,19 @@ private struct ServiceEditor: View {
                 set: { payload.serverIds = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } }
             ))
             TextField("Notes", text: $payload.notes, axis: .vertical)
+
+            if !customFields.isEmpty {
+                ForEach($customFields) { $field in
+                    CustomFieldRow(field: $field, remove: { removeCustomField(field.id) })
+                }
+            }
         }
 
         AccountsEditor(accounts: $payload.accounts, title: "Service Accounts", emptyText: "No service accounts.")
+    }
+
+    private func removeCustomField(_ id: UUID) {
+        customFields.removeAll { $0.id == id }
     }
 }
 
@@ -659,11 +689,11 @@ private struct AccountsEditor: View {
                     .foregroundStyle(.secondary)
             }
 
-            ForEach(accounts.indices, id: \.self) { index in
+            ForEach($accounts) { $account in
                 AccountEditor(
-                    account: $accounts[index],
-                    title: "Account \(index + 1)",
-                    remove: { removeAccount(at: index) }
+                    account: $account,
+                    title: accountTitle(for: account.id),
+                    remove: { removeAccount(id: account.id) }
                 )
             }
 
@@ -677,9 +707,13 @@ private struct AccountsEditor: View {
         accounts.append(ServiceAccount())
     }
 
-    private func removeAccount(at index: Int) {
-        guard accounts.indices.contains(index) else { return }
-        accounts.remove(at: index)
+    private func removeAccount(id: UUID) {
+        accounts.removeAll { $0.id == id }
+    }
+
+    private func accountTitle(for id: UUID) -> String {
+        let index = accounts.firstIndex { $0.id == id } ?? 0
+        return "Account \(index + 1)"
     }
 }
 
