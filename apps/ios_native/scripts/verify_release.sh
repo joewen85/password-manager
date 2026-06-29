@@ -109,6 +109,7 @@ if ! grep -q "CA92.1" "$APP_BUNDLE/PrivacyInfo.xcprivacy"; then
 fi
 
 ok "Release simulator build includes Info.plist, privacy manifest, and Assets.car"
+"$ROOT_DIR/scripts/verify_simulator_smoke.sh" "$APP_BUNDLE"
 
 rm -rf "$ARCHIVE_PATH"
 

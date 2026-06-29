@@ -10,7 +10,7 @@
 - 当前切片复用并迁移 macOS 原生端已验证的 Swift 核心：数据模型、本地加密持久化、TOTP、导入导出、备份、同步设置、远端同步 transport、同步合并和同步引擎。
 - SwiftUI 视图已放入 `PasswordManageriOSCore`，并提供 `PasswordManageriOSAppRoot` 作为 Xcode iOS app target 的根视图。
 - 当前包含 SwiftPM 可测试核心模块和 `PasswordManageriOS.xcodeproj` 原生 app target。
-- 已配置 Debug/Release build configuration、bundle identifier、生成式 launch screen、asset catalog、空 entitlements、包含 UserDefaults required-reason 声明的 privacy manifest，以及本机可运行的 Release simulator + generic iOS archive contract gate。生产发布前仍需配置 Apple Developer Team/signing、真机验证和 App Store Connect 验证。
+- 已配置 Debug/Release build configuration、bundle identifier、生成式 launch screen、asset catalog、空 entitlements、包含 UserDefaults required-reason 声明的 privacy manifest，以及本机可运行的 Release simulator build/install/launch smoke + generic iOS archive contract gate。生产发布前仍需配置 Apple Developer Team/signing、真机验证和 App Store Connect 验证。
 - 本目录不依赖已移除的 Flutter iOS 工程。
 
 ### 目录说明
@@ -73,7 +73,7 @@ xcrun simctl launch booted life.devops.passwordmanager
 ./scripts/verify_release.sh
 ```
 
-该脚本会运行 SwiftPM 测试、Release simulator build，并创建 `build/PasswordManageriOS.xcarchive` 的 generic iOS archive；默认使用 `CODE_SIGNING_ALLOWED=NO` 做本机 archive 内容校验，不声称已完成 Apple 签名。配置 Apple Developer Team 后，可强制签名 archive：
+该脚本会运行 SwiftPM 测试、Release simulator build、simulator 安装/启动 smoke，并创建 `build/PasswordManageriOS.xcarchive` 的 generic iOS archive；默认使用 `CODE_SIGNING_ALLOWED=NO` 做本机 archive 内容校验，不声称已完成 Apple 签名。配置 Apple Developer Team 后，可强制签名 archive：
 
 ```bash
 IOS_REQUIRE_SIGNED_ARCHIVE=true \
@@ -82,6 +82,8 @@ IOS_CODE_SIGN_IDENTITY="Apple Distribution" \
 IOS_ALLOW_PROVISIONING_UPDATES=true \
 ./scripts/verify_release.sh
 ```
+
+simulator smoke 默认创建临时 iPhone simulator，安装 `build/Release-iphonesimulator/PasswordManageriOS.app`，通过 `simctl appinfo` 确认安装，再启动 `life.devops.passwordmanager`，并保存启动截图到 `build/simulator-smoke/launch.png`。如需复用指定模拟器，可设置 `IOS_SIMULATOR_UDID=<udid>`。
 
 ### 本地功能验证
 
@@ -166,6 +168,7 @@ xcodebuild archive \
 - [x] Xcode iOS app target 已创建。
 - [x] iOS bundle id、生成式 launch screen、空 entitlements、app icon asset 和 UserDefaults privacy manifest 已配置。
 - [x] iOS simulator build/run 已验证。
+- [x] 本地 release gate 可在 iOS simulator 中安装并启动 Release app，确认 bundle id、安装状态和启动截图。
 - [x] 本地 release gate 会生成 generic iOS archive，并校验 arm64 app、Info.plist、privacy manifest、Assets.car 和 dSYM。
 - [ ] Apple Developer Team、release signing、真机安装和 App Store/TestFlight 上传验证已完成。
 - [ ] iOS 真机安装和基础回归已验证。
@@ -185,7 +188,7 @@ This directory contains the native iOS application target, used to build iOS-nat
 - The current slice migrates the already-verified Swift core from the native macOS target: data models, local encrypted persistence, TOTP, import/export, backup, sync settings, remote sync transport, sync merge, and sync engine.
 - SwiftUI views are included in `PasswordManageriOSCore`, and `PasswordManageriOSAppRoot` is used as the root view for the Xcode iOS app target.
 - The current form includes a SwiftPM-tested core module and a `PasswordManageriOS.xcodeproj` native app target.
-- Debug/Release build configurations, bundle identifier, generated launch screen, asset catalog, empty entitlements, a privacy manifest with the UserDefaults required-reason disclosure, and a locally runnable Release simulator + generic iOS archive contract gate are configured. Production release still needs Apple Developer Team/signing, device validation, and App Store Connect validation.
+- Debug/Release build configurations, bundle identifier, generated launch screen, asset catalog, empty entitlements, a privacy manifest with the UserDefaults required-reason disclosure, and a locally runnable Release simulator build/install/launch smoke + generic iOS archive contract gate are configured. Production release still needs Apple Developer Team/signing, device validation, and App Store Connect validation.
 - This directory does not depend on the removed Flutter iOS project.
 
 ### Directory Layout
@@ -248,7 +251,7 @@ Run the local release gate:
 ./scripts/verify_release.sh
 ```
 
-The script runs SwiftPM tests, a Release simulator build, and creates `build/PasswordManageriOS.xcarchive` as a generic iOS archive. By default it uses `CODE_SIGNING_ALLOWED=NO` for local archive content validation and does not claim Apple signing is complete. After configuring an Apple Developer Team, require a signed archive with:
+The script runs SwiftPM tests, a Release simulator build, simulator install/launch smoke, and creates `build/PasswordManageriOS.xcarchive` as a generic iOS archive. By default it uses `CODE_SIGNING_ALLOWED=NO` for local archive content validation and does not claim Apple signing is complete. After configuring an Apple Developer Team, require a signed archive with:
 
 ```bash
 IOS_REQUIRE_SIGNED_ARCHIVE=true \
@@ -257,6 +260,8 @@ IOS_CODE_SIGN_IDENTITY="Apple Distribution" \
 IOS_ALLOW_PROVISIONING_UPDATES=true \
 ./scripts/verify_release.sh
 ```
+
+The simulator smoke creates a temporary iPhone simulator by default, installs `build/Release-iphonesimulator/PasswordManageriOS.app`, verifies the installation with `simctl appinfo`, launches `life.devops.passwordmanager`, and writes a launch screenshot to `build/simulator-smoke/launch.png`. Set `IOS_SIMULATOR_UDID=<udid>` to reuse a specific simulator.
 
 ### Local Feature Verification
 
@@ -341,6 +346,7 @@ Official entry points:
 - [x] Xcode iOS app target is created.
 - [x] iOS bundle id, generated launch screen, empty entitlements, app icon asset, and UserDefaults privacy manifest are configured.
 - [x] iOS simulator build/run is verified.
+- [x] The local release gate installs and launches the Release app in an iOS simulator, verifying the bundle id, installation state, and launch screenshot.
 - [x] The local release gate creates a generic iOS archive and verifies the arm64 app, Info.plist, privacy manifest, Assets.car, and dSYM.
 - [ ] Apple Developer Team, release signing, device installation, and App Store/TestFlight upload validation are complete.
 - [ ] iOS device install and baseline regression are verified.
