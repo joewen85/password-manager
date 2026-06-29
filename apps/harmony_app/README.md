@@ -158,7 +158,15 @@ hdc list targets
   life.devops.passwordmanager
 ```
 
-然后按 `docs/DEVECO_BUILD_AND_DEVICE_VALIDATION.md` 执行真机冒烟回归，并使用 `docs/DEVICE_VALIDATION_RESULT_TEMPLATE.md` 记录结果。
+安装后优先运行安装/启动 smoke：
+
+```bash
+./scripts/harmony_device_smoke.sh \
+  apps/harmony_app/entry/build/default/outputs/default/entry-default-signed.hap \
+  life.devops.passwordmanager
+```
+
+该脚本会在连接设备上执行安装、`aa start -b` 启动、抓取 `hilog` 中的首屏启动信号，并在结束后卸载包。然后按 `docs/DEVECO_BUILD_AND_DEVICE_VALIDATION.md` 执行真机冒烟回归，并使用 `docs/DEVICE_VALIDATION_RESULT_TEMPLATE.md` 记录结果。
 
 ### AppGallery 上架
 
@@ -195,6 +203,7 @@ hdc list targets
 - [x] HAP verifier 会结构化校验生产 metadata/权限，并区分 unsigned 与 signed 产物。
 - [x] 权限声明保持最小化，目前声明 `ohos.permission.INTERNET` 与 `ohos.permission.ACCESS_BIOMETRIC`。
 - [x] 已提供 DevEco 编译、签名、真机验证、权限隐私、加密兼容回归文档。
+- [x] 已提供安装/启动 smoke 脚本，会在连接设备上安装、启动、抓取首屏日志并卸载 HAP。
 - [ ] signed HAP 已用发布签名材料生成。
 - [ ] signed HAP 已安装到 HarmonyOS 6 真机。
 - [ ] 真机冒烟回归完成并记录到结果模板。
