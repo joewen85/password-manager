@@ -215,6 +215,8 @@ export class VaultController {
   private lastUnlockError: string = '';
   private unlocked: boolean = false;
   private syncInProgress: boolean = false;
+  private syncRequestedAgain: boolean = false;
+  private localChangeRevision: number = 0;
   private lastAutoSyncAttemptAt: number = 0;
 
   constructor(store: VaultStore, crypto: VaultCryptoService, syncContext: Context | null = null) {
@@ -476,24 +478,35 @@ export class VaultController {
   async syncNow(): Promise<void> {
     this.ensureUnlocked();
     if (this.syncInProgress) {
-      return;
-    }
-
-    const localSettings = this.snapshot.syncSettings;
-    if (localSettings.providerType === SyncProviderType.NONE) {
-      this.recordSyncStatus('skipped', '未配置同步', localSettings.lastSyncRevision);
-      await this.persist(false);
-      return;
-    }
-
-    const client = this.buildSyncClient(localSettings);
-    if (client === null) {
-      this.recordSyncStatus('error', '同步配置不完整', localSettings.lastSyncRevision);
-      await this.persist(false);
+      this.syncRequestedAgain = true;
       return;
     }
 
     this.syncInProgress = true;
+    try {
+      do {
+        this.syncRequestedAgain = false;
+        const localSettings = this.snapshot.syncSettings;
+        if (localSettings.providerType === SyncProviderType.NONE) {
+          this.recordSyncStatus('skipped', '未配置同步', localSettings.lastSyncRevision);
+          await this.persist(false);
+          return;
+        }
+        const client = this.buildSyncClient(localSettings);
+        if (client === null) {
+          this.recordSyncStatus('error', '同步配置不完整', localSettings.lastSyncRevision);
+          await this.persist(false);
+          return;
+        }
+        await this.performSyncOnce(client, localSettings);
+      } while (this.syncRequestedAgain);
+    } finally {
+      this.syncInProgress = false;
+    }
+  }
+
+  private async performSyncOnce(client: RemoteSyncClient, localSettings: SyncSettings): Promise<void> {
+    const revisionAtStart = this.localChangeRevision;
     try {
       let mergedPayload = deepCopyRuntimePayload(this.snapshot);
       let remoteRevision = localSettings.lastSyncRevision;
@@ -545,7 +558,15 @@ export class VaultController {
               uploadPayload.syncSettings,
               mergedMasterKey,
             );
+            if (this.localRevisionChangedSince(revisionAtStart)) {
+              this.syncRequestedAgain = true;
+              return;
+            }
             const upload = await client.upload(payload);
+            if (this.localRevisionChangedSince(revisionAtStart)) {
+              this.syncRequestedAgain = true;
+              return;
+            }
             if (upload.statusCode < 200 || upload.statusCode >= 300) {
               this.recordSyncStatus(
                 'error',
@@ -553,6 +574,10 @@ export class VaultController {
                 localSettings.lastSyncRevision,
               );
               await this.persist(false);
+              return;
+            }
+            if (this.localRevisionChangedSince(revisionAtStart)) {
+              this.syncRequestedAgain = true;
               return;
             }
             this.snapshot = uploadPayload;
@@ -616,7 +641,15 @@ export class VaultController {
         mergedMasterKey,
       );
 
+      if (this.localRevisionChangedSince(revisionAtStart)) {
+        this.syncRequestedAgain = true;
+        return;
+      }
       const upload = await client.upload(payload);
+      if (this.localRevisionChangedSince(revisionAtStart)) {
+        this.syncRequestedAgain = true;
+        return;
+      }
       if (upload.statusCode < 200 || upload.statusCode >= 300) {
         this.snapshot = mergedPayload;
         this.masterKeyRecord = mergedMasterKey;
@@ -629,6 +662,10 @@ export class VaultController {
         return;
       }
 
+      if (this.localRevisionChangedSince(revisionAtStart)) {
+        this.syncRequestedAgain = true;
+        return;
+      }
       this.snapshot = uploadPayload;
       this.masterKeyRecord = mergedMasterKey;
       const uploadedFingerprint = await this.safeRemoteFingerprint(client);
@@ -646,8 +683,6 @@ export class VaultController {
         this.snapshot.syncSettings.lastSyncRevision,
       );
       await this.persist(false);
-    } finally {
-      this.syncInProgress = false;
     }
   }
 
@@ -1567,6 +1602,7 @@ export class VaultController {
       throw new Error('Session key is missing');
     }
     if (markLocalChange) {
+      this.recordLocalMutationForSync();
       this.snapshot.syncSettings.hasLocalChanges = true;
     }
     this.snapshot = sanitizeRuntimePayload(this.snapshot);
@@ -1584,6 +1620,17 @@ export class VaultController {
       updatedAt: this.snapshot.updatedAt,
     };
     await this.store.writeEnvelope(envelope);
+  }
+
+  private recordLocalMutationForSync(): void {
+    this.localChangeRevision += 1;
+    if (this.syncInProgress) {
+      this.syncRequestedAgain = true;
+    }
+  }
+
+  private localRevisionChangedSince(revision: number): boolean {
+    return this.localChangeRevision !== revision;
   }
 
   private async persistUnlockGuardOnly(): Promise<void> {

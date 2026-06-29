@@ -16,6 +16,9 @@ import com.example.passwordmanagernative.sync.VaultSyncEngine
 import com.example.passwordmanagernative.sync.VaultSyncPayload
 import java.io.File
 import java.time.Instant
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -244,6 +247,82 @@ class VaultStoreSyncTest {
     }
 
     @Test
+    fun syncNowIgnoresStaleResultWhenLocalCategoryChangesDuringSync() {
+        val directory = createTempDirectory("PasswordManagerAndroidVaultStoreSyncRaceCategoryTests").toFile()
+        try {
+            val syncRepository = SyncSettingsRepository(
+                settingsFile = File(directory, "sync_settings.json"),
+                secretStore = InMemorySyncSecretStore(),
+            )
+            val now = Instant.parse("2027-01-15T08:00:00Z")
+            val engine = VaultSyncEngine(clock = { now })
+            val repository = FileVaultRepository(directory)
+            val store = VaultStore(
+                repository = repository,
+                syncSettingsRepository = syncRepository,
+                syncEngine = engine,
+            )
+            assertTrue(store.setupMasterPassword("test-password", "test-password"))
+            val settings = SyncSettings.defaults(deviceId = "android-device").copy(
+                providerType = SyncProviderType.WEBDAV,
+                webdavUrl = "https://dav.example.com/root",
+                webdavPath = "/vault.json",
+                conflictStrategy = SyncSettingsConflictStrategy.KEEP_BOTH,
+                lastSyncRevision = 2,
+            )
+            store.updateSyncSettings(settings)
+            assertTrue(store.addCategory("test"))
+            val staleRemote = VaultSnapshot(
+                entries = emptyList(),
+                categories = listOf("test"),
+                categoryTemplates = listOf(CategoryTemplate(category = "test")),
+                tags = emptyList(),
+                updatedAt = Instant.parse("2027-01-15T08:01:00Z"),
+            )
+            val remotePayload = engine.encodePayload(
+                VaultSyncPayload(
+                    exportedAt = now,
+                    deviceId = "remote-device",
+                    revision = 3,
+                    snapshot = staleRemote,
+                )
+            )
+            val client = BlockingVaultStoreSyncFakeClient(
+                downloads = ArrayDeque(
+                    listOf(
+                        RemoteSyncResult(payload = remotePayload, statusCode = 200),
+                        RemoteSyncResult(payload = remotePayload, statusCode = 200),
+                    )
+                ),
+                uploadStatusCodes = ArrayDeque(listOf(200)),
+            )
+            val syncFailure = AtomicReference<Throwable?>(null)
+            val syncThread = Thread {
+                runCatching { store.syncNow(client) }
+                    .onFailure { syncFailure.set(it) }
+            }
+
+            syncThread.start()
+            assertTrue(client.waitForDownloadAttempt())
+            assertTrue(store.deleteCategory("test"))
+            client.releaseDownload()
+            syncThread.join(5_000)
+
+            assertFalse(syncThread.isAlive)
+            syncFailure.get()?.let { throw AssertionError("Sync thread failed", it) }
+            assertEquals(emptyList(), store.categories())
+            assertEquals(null, store.categoryTemplate("test"))
+            assertEquals(1, client.uploadedPayloads.size)
+            val uploaded = assertNotNull(engine.decodePayload(client.uploadedPayloads.single()))
+            assertEquals(4, uploaded.revision)
+            assertEquals(emptyList(), uploaded.snapshot.categories)
+            assertEquals(emptyList(), uploaded.snapshot.categoryTemplates)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun clearAllDataRequiresMasterPasswordAndKeepsVaultUsable() {
         val directory = createTempDirectory("PasswordManagerAndroidClearDataTests").toFile()
         try {
@@ -300,6 +379,48 @@ private class VaultStoreSyncFakeClient(
     override fun upload(payload: String): RemoteSyncResult {
         uploadedPayloads += payload
         val statusCode = if (uploadStatusCodes.isEmpty()) 200 else uploadStatusCodes.removeFirst()
+        return RemoteSyncResult(payload = null, statusCode = statusCode)
+    }
+}
+
+private class BlockingVaultStoreSyncFakeClient(
+    private val downloads: ArrayDeque<RemoteSyncResult>,
+    private val uploadStatusCodes: ArrayDeque<Int>,
+) : RemoteSyncClient {
+    val uploadedPayloads = mutableListOf<String>()
+    private val firstDownloadStarted = CountDownLatch(1)
+    private val releaseFirstDownload = CountDownLatch(1)
+    private var downloadCount = 0
+
+    fun waitForDownloadAttempt(): Boolean =
+        firstDownloadStarted.await(2, TimeUnit.SECONDS)
+
+    fun releaseDownload() {
+        releaseFirstDownload.countDown()
+    }
+
+    override fun download(): RemoteSyncResult {
+        val shouldBlock = synchronized(this) {
+            val isFirstDownload = downloadCount == 0
+            downloadCount += 1
+            isFirstDownload
+        }
+        if (shouldBlock) {
+            firstDownloadStarted.countDown()
+            if (!releaseFirstDownload.await(2, TimeUnit.SECONDS)) {
+                return RemoteSyncResult(payload = null, statusCode = 408)
+            }
+        }
+        return synchronized(this) {
+            if (downloads.isEmpty()) RemoteSyncResult(payload = null, statusCode = 404) else downloads.removeFirst()
+        }
+    }
+
+    override fun upload(payload: String): RemoteSyncResult {
+        val statusCode = synchronized(this) {
+            uploadedPayloads += payload
+            if (uploadStatusCodes.isEmpty()) 200 else uploadStatusCodes.removeFirst()
+        }
         return RemoteSyncResult(payload = null, statusCode = statusCode)
     }
 }

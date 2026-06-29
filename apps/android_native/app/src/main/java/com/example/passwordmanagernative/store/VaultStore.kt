@@ -24,6 +24,7 @@ import com.example.passwordmanagernative.sync.SyncLogEntry
 import com.example.passwordmanagernative.sync.SyncProviderType
 import com.example.passwordmanagernative.sync.SyncSettings
 import com.example.passwordmanagernative.sync.SyncSettingsRepository
+import com.example.passwordmanagernative.sync.VaultSyncCancelledException
 import com.example.passwordmanagernative.sync.VaultSyncEngine
 import com.example.passwordmanagernative.sync.VaultSyncEngineResult
 import java.time.Instant
@@ -73,6 +74,12 @@ class VaultStore(
     private val manualCategories = mutableSetOf<String>()
     private val categoryTemplates = mutableMapOf<String, CategoryTemplate>()
     private val manualTags = mutableSetOf<String>()
+    @Volatile
+    private var isSyncing = false
+    @Volatile
+    private var syncRequestedAgain = false
+    @Volatile
+    private var localChangeRevision = 0
 
     init {
         loadSyncSettings()
@@ -83,6 +90,7 @@ class VaultStore(
         }
     }
 
+    @Synchronized
     fun setupMasterPassword(password: String, confirmation: String): Boolean {
         if (password.isBlank() || password != confirmation) {
             statusMessage = "Master password is empty or confirmation does not match."
@@ -106,6 +114,7 @@ class VaultStore(
         }
     }
 
+    @Synchronized
     fun unlock(password: String, totpCode: String = ""): Boolean {
         val record = masterKeyRecord ?: run {
             statusMessage = "No vault has been initialized."
@@ -149,6 +158,7 @@ class VaultStore(
         }
     }
 
+    @Synchronized
     fun lock() {
         isUnlocked = false
         masterPassword = ""
@@ -175,6 +185,7 @@ class VaultStore(
             .toList()
     }
 
+    @Synchronized
     fun upsert(draft: EntryDraft, editingId: String? = null): VaultEntry {
         val now = Instant.now()
         val normalizedTags = draft.tags.map { it.trim() }.filter { it.isNotEmpty() }
@@ -215,6 +226,7 @@ class VaultStore(
         return entry
     }
 
+    @Synchronized
     fun delete(id: String) {
         val index = entries.indexOfFirst { it.id == id }
         if (index < 0) return
@@ -258,6 +270,7 @@ class VaultStore(
     fun addCategory(category: String, preset: CategoryTypePreset?, customFieldNames: List<String>): Boolean =
         addCategory(category, CategoryTemplate.fieldsForPreset(preset, customFieldNames))
 
+    @Synchronized
     fun addCategory(category: String, fields: List<FieldTemplate>): Boolean {
         val normalized = category.trim()
         if (normalized.isBlank()) {
@@ -278,6 +291,7 @@ class VaultStore(
         return true
     }
 
+    @Synchronized
     fun applyCategoryPreset(category: String, preset: CategoryTypePreset): Boolean {
         val normalized = category.trim()
         if (normalized.isBlank()) {
@@ -296,9 +310,11 @@ class VaultStore(
         return true
     }
 
+    @Synchronized
     fun addTag(tag: String): Boolean =
         addTaxonomyValue(tag, manualTags, "Tag added.", "Tag already exists.")
 
+    @Synchronized
     fun renameCategory(oldValue: String, newValue: String): Boolean {
         val oldNormalized = oldValue.trim()
         val newNormalized = newValue.trim()
@@ -331,6 +347,7 @@ class VaultStore(
         return true
     }
 
+    @Synchronized
     fun deleteCategory(category: String): Boolean {
         val normalized = category.trim()
         if (normalized.isBlank()) {
@@ -362,6 +379,7 @@ class VaultStore(
         return true
     }
 
+    @Synchronized
     fun renameTag(oldValue: String, newValue: String): Boolean {
         val oldNormalized = oldValue.trim()
         val newNormalized = newValue.trim()
@@ -395,6 +413,7 @@ class VaultStore(
         return true
     }
 
+    @Synchronized
     fun deleteTag(tag: String): Boolean {
         val normalized = tag.trim()
         if (normalized.isBlank()) {
@@ -426,36 +445,80 @@ class VaultStore(
     }
 
     fun syncNow() {
+        if (!beginSyncIfPossible()) {
+            return
+        }
         val client = syncClientFactory.makeClient(syncSettings)
         if (client == null) {
+            isSyncing = false
             syncStatus = "Not configured"
             statusMessage = "Configure a sync provider before syncing."
             persistUnlockedSnapshot(markLocalChange = false)
             return
         }
-        syncNow(client)
+        performSyncLoop(client)
     }
 
     fun syncNow(client: RemoteSyncClient) {
-        if (!isUnlocked) {
-            statusMessage = "Unlock the vault before syncing."
+        if (!beginSyncIfPossible()) {
             return
         }
-        runCatching {
-            saveSnapshot()
-            syncStatus = "Syncing..."
-            statusMessage = "Sync started."
-            val result = syncEngine.synchronize(
-                localSnapshot = currentSnapshot(),
-                settings = syncSettings,
-                client = client,
-            )
-            applySyncResult(result)
-        }.onFailure {
-            recordSyncFailure(it)
+        performSyncLoop(client)
+    }
+
+    private fun performSyncLoop(client: RemoteSyncClient) {
+        try {
+            do {
+                syncRequestedAgain = false
+                val revisionAtStart = localChangeRevision
+                runCatching {
+                    val syncInput = synchronized(this) {
+                        saveSnapshot()
+                        syncStatus = "Syncing..."
+                        statusMessage = "Sync started."
+                        currentSnapshot() to syncSettings
+                    }
+                    val result = syncEngine.synchronize(
+                        localSnapshot = syncInput.first,
+                        settings = syncInput.second,
+                        client = client,
+                        shouldCancelUpload = { localChangeRevision != revisionAtStart },
+                    )
+                    synchronized(this) {
+                        if (localChangeRevision != revisionAtStart) {
+                            syncRequestedAgain = true
+                        } else {
+                            applySyncResult(result)
+                        }
+                    }
+                }.onFailure {
+                    if (it is VaultSyncCancelledException) {
+                        syncRequestedAgain = true
+                    } else {
+                        recordSyncFailure(it)
+                    }
+                }
+            } while (syncRequestedAgain)
+        } finally {
+            isSyncing = false
         }
     }
 
+    @Synchronized
+    private fun beginSyncIfPossible(): Boolean {
+        if (isSyncing) {
+            syncRequestedAgain = true
+            return false
+        }
+        if (!isUnlocked) {
+            statusMessage = "Unlock the vault before syncing."
+            return false
+        }
+        isSyncing = true
+        return true
+    }
+
+    @Synchronized
     fun updateSyncSettings(settings: SyncSettings) {
         runCatching {
             val updated = settings.copy(hasLocalChanges = syncSettings.hasLocalChanges)
@@ -473,6 +536,7 @@ class VaultStore(
         }
     }
 
+    @Synchronized
     fun runBackup() {
         if (!isUnlocked) {
             statusMessage = "Unlock the vault before running backup."
@@ -503,6 +567,7 @@ class VaultStore(
             emptyList()
         }
 
+    @Synchronized
     fun restoreLatestBackup() {
         if (!isUnlocked) {
             statusMessage = "Unlock the vault before restoring backup."
@@ -525,6 +590,7 @@ class VaultStore(
         }
     }
 
+    @Synchronized
     fun restoreBackup(fileName: String) {
         if (!isUnlocked) {
             statusMessage = "Unlock the vault before restoring backup."
@@ -653,6 +719,7 @@ class VaultStore(
         }
     }
 
+    @Synchronized
     fun importSnapshot(fileName: String) {
         if (!isUnlocked) {
             statusMessage = "Unlock the vault before importing."
@@ -669,6 +736,7 @@ class VaultStore(
         }
     }
 
+    @Synchronized
     fun importSnapshotJson(raw: String): Boolean {
         if (!isUnlocked) {
             statusMessage = "Unlock the vault before importing."
@@ -686,6 +754,7 @@ class VaultStore(
         }.getOrDefault(false)
     }
 
+    @Synchronized
     fun importScopedExport(fileName: String, strategy: ImportConflictStrategy) {
         if (!isUnlocked) {
             statusMessage = "Unlock the vault before importing."
@@ -705,6 +774,7 @@ class VaultStore(
         }
     }
 
+    @Synchronized
     fun importScopedExportJson(raw: String, strategy: ImportConflictStrategy): Boolean {
         if (!isUnlocked) {
             statusMessage = "Unlock the vault before importing."
@@ -725,16 +795,19 @@ class VaultStore(
         }.getOrDefault(false)
     }
 
+    @Synchronized
     fun setRequireTotp(required: Boolean) {
         requireTotp = required
         persistUnlockedSnapshot()
     }
 
+    @Synchronized
     fun setTotpSecret(secret: String) {
         totpSecret = secret.trim()
         persistUnlockedSnapshot()
     }
 
+    @Synchronized
     fun clearAllData(password: String): Boolean {
         if (!isUnlocked) {
             statusMessage = "Unlock the vault before clearing data."
@@ -943,7 +1016,12 @@ class VaultStore(
         }
     }
 
+    @Synchronized
     private fun markLocalChangesForSync() {
+        localChangeRevision += 1
+        if (isSyncing) {
+            syncRequestedAgain = true
+        }
         if (syncSettings.hasLocalChanges) {
             return
         }

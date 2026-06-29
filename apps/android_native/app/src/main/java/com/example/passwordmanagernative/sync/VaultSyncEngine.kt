@@ -47,6 +47,7 @@ data class VaultSyncEngineResult(
 )
 
 class VaultSyncEngineException(message: String) : Exception(message)
+class VaultSyncCancelledException : Exception("Sync was cancelled because local data changed.")
 
 class VaultSyncEngine(
     private val clock: () -> Instant = { Instant.now() },
@@ -56,6 +57,7 @@ class VaultSyncEngine(
         localSnapshot: VaultSnapshot,
         settings: SyncSettings,
         client: RemoteSyncClient,
+        shouldCancelUpload: () -> Boolean = { false },
     ): VaultSyncEngineResult {
         val remoteMetadata = client.metadata()
         val remoteFingerprint = remoteMetadata.fingerprint
@@ -81,7 +83,7 @@ class VaultSyncEngine(
         )
         val remotePayload = decodePayload(download.payload)
         if (remotePayload == null) {
-            upload(localPayload, client)
+            upload(localPayload, client, shouldCancelUpload)
             return result(
                 snapshot = localSnapshot,
                 settings = settings,
@@ -100,7 +102,7 @@ class VaultSyncEngine(
         if (settings.hasLocalChanges && remotePayload.revision <= settings.lastSyncRevision) {
             val nextRevision = settings.lastSyncRevision + 1
             val uploadPayload = localPayload.copy(revision = nextRevision)
-            upload(uploadPayload, client)
+            upload(uploadPayload, client, shouldCancelUpload)
             return result(
                 snapshot = localSnapshot,
                 settings = settings,
@@ -159,6 +161,7 @@ class VaultSyncEngine(
                 snapshot = mergedSnapshot,
             ),
             client,
+            shouldCancelUpload,
         )
         return result(
             snapshot = mergedSnapshot,
@@ -181,7 +184,14 @@ class VaultSyncEngine(
             .getOrElse { throw VaultSyncEngineException("Remote sync payload is invalid.") }
     }
 
-    private fun upload(payload: VaultSyncPayload, client: RemoteSyncClient) {
+    private fun upload(
+        payload: VaultSyncPayload,
+        client: RemoteSyncClient,
+        shouldCancelUpload: () -> Boolean,
+    ) {
+        if (shouldCancelUpload()) {
+            throw VaultSyncCancelledException()
+        }
         val upload = client.upload(encodePayload(payload))
         if (upload.statusCode !in 200..299) {
             throw VaultSyncEngineException("Sync upload failed with status ${upload.statusCode}.")

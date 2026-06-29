@@ -17,6 +17,9 @@ final class VaultStore {
     private(set) var totpSecret = ""
     private(set) var syncSettings = SyncSettings.defaults()
 
+    private var isSyncing = false
+    private var syncRequestedAgain = false
+    private var localChangeRevision = 0
     private var masterPassword = ""
     private var masterKeyRecord: MasterKeyRecord?
     private var activeVaultKey: Data?
@@ -60,7 +63,7 @@ final class VaultStore {
             hasMasterKey = true
             isUnlocked = true
             seedInitialCollectionsIfNeeded()
-            try markLocalChangesForSync()
+            try recordLocalMutationForSync()
             try saveSnapshot()
             statusMessage = "Vault initialized and encrypted locally."
             return true
@@ -190,7 +193,7 @@ final class VaultStore {
             loadEnvelopeMetadata()
             try loadSnapshot(key: key)
             lastBackupStatus = "Restored backup: \(backupURL.lastPathComponent)"
-            try markLocalChangesForSync()
+            try recordLocalMutationForSync()
             try saveSnapshot()
             statusMessage = lastBackupStatus
         } catch {
@@ -229,7 +232,7 @@ final class VaultStore {
             syncStatus = snapshot.syncStatus
             lastBackupStatus = snapshot.lastBackupStatus
             rebuildCollections()
-            try markLocalChangesForSync()
+            try recordLocalMutationForSync()
             try saveSnapshot()
             statusMessage = "Imported \(entries.filter { !$0.isDeleted }.count) active entries."
         } catch {
@@ -327,7 +330,7 @@ final class VaultStore {
             let result = applyImportedEntries(importedEntries, strategy: strategy)
             rebuildCollections()
             if result.created > 0 || result.updated > 0 {
-                try markLocalChangesForSync()
+                try recordLocalMutationForSync()
             }
             try saveSnapshot()
             statusMessage = "Imported \(result.created) created, \(result.updated) updated, \(result.skipped) skipped."
@@ -337,35 +340,78 @@ final class VaultStore {
     }
 
     func syncNow() {
+        guard beginSyncIfPossible() else { return }
         guard let client = syncClientFactory.makeClient(settings: syncSettings) else {
+            isSyncing = false
             syncStatus = "Not configured"
             statusMessage = "Configure a sync provider before syncing."
             persistUnlockedSnapshot(markLocalChange: false)
             return
         }
         Task {
-            await syncNow(client: client)
+            await performSyncLoop(client: client)
         }
     }
 
     func syncNow(client: RemoteSyncClient) async {
+        guard beginSyncIfPossible() else { return }
+        await performSyncLoop(client: client)
+    }
+
+    private func beginSyncIfPossible() -> Bool {
+        if isSyncing {
+            syncRequestedAgain = true
+            return false
+        }
         guard isUnlocked else {
             statusMessage = "Unlock the vault before syncing."
-            return
+            return false
         }
-        do {
-            try saveSnapshot()
-            syncStatus = "Syncing..."
-            statusMessage = "Sync started."
-            let result = try await syncEngine.synchronize(
-                localSnapshot: currentSnapshot(),
-                settings: syncSettings,
-                client: client
-            )
-            try applySyncResult(result)
-        } catch {
-            recordSyncFailure(error)
-        }
+        isSyncing = true
+        return true
+    }
+
+    private func performSyncLoop(client: RemoteSyncClient) async {
+        defer { isSyncing = false }
+
+        repeat {
+            syncRequestedAgain = false
+            let revisionAtStart = localChangeRevision
+            do {
+                try saveSnapshot()
+                syncStatus = "Syncing..."
+                statusMessage = "Sync started."
+                let result = try await syncEngine.synchronize(
+                    localSnapshot: currentSnapshot(),
+                    settings: syncSettings,
+                    client: client,
+                    shouldCancelUpload: { [weak self] in
+                        await MainActor.run {
+                            self?.localChangeRevision != revisionAtStart
+                        }
+                    }
+                )
+                guard revisionAtStart == localChangeRevision else {
+                    syncRequestedAgain = true
+                    continue
+                }
+                try applySyncResult(result)
+            } catch {
+                if let syncError = error as? VaultSyncEngineError, syncError == .syncCancelled {
+                    syncRequestedAgain = true
+                    continue
+                }
+                recordSyncFailure(error)
+            }
+        } while syncRequestedAgain
+    }
+
+    func hasSyncInProgressForTesting() -> Bool {
+        isSyncing
+    }
+
+    func syncWasRequestedAgainForTesting() -> Bool {
+        syncRequestedAgain
     }
 
     func updateSyncSettings(_ settings: SyncSettings) {
@@ -576,13 +622,21 @@ final class VaultStore {
         guard isUnlocked else { return }
         do {
             if markLocalChange {
-                try markLocalChangesForSync()
+                try recordLocalMutationForSync()
             }
             try saveSnapshot()
             statusMessage = "Vault saved at \(DateFormatter.shortDateTime.string(from: Date()))"
         } catch {
             statusMessage = error.localizedDescription
         }
+    }
+
+    private func recordLocalMutationForSync() throws {
+        localChangeRevision += 1
+        if isSyncing {
+            syncRequestedAgain = true
+        }
+        try markLocalChangesForSync()
     }
 
     private func markLocalChangesForSync() throws {

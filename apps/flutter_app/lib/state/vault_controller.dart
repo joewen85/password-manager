@@ -70,6 +70,8 @@ class VaultController extends ChangeNotifier {
   static const bool _enablePerfLogs =
       bool.fromEnvironment('PASSWORD_MANAGER_PERF_LOGS');
   bool _syncInProgress = false;
+  bool _syncRequestedAgain = false;
+  int _localChangeRevision = 0;
   Timer? _syncTimer;
   Timer? _syncDebounceTimer;
   Timer? _resumeSyncTimer;
@@ -621,7 +623,7 @@ class VaultController extends ChangeNotifier {
   }
 
   Future<void> syncNow({bool notifyProgress = false}) async {
-    if (!_isUnlocked || _syncInProgress) {
+    if (!_isUnlocked) {
       return;
     }
     if (_syncSettings.providerType == SyncProviderType.none) {
@@ -631,15 +633,17 @@ class VaultController extends ChangeNotifier {
     if (!_appIsActive && !notifyProgress) {
       return;
     }
+    if (_syncInProgress) {
+      _syncRequestedAgain = true;
+      return;
+    }
     if (notifyProgress) {
       _syncInProgress = true;
       _syncStartedAt = DateTime.now();
       _notifyListeners();
       try {
-        await _runWithNotificationsSuppressed(
-          () async => _performSync(),
-          autoFlush: false,
-        );
+        await _runWithNotificationsSuppressed(_performSyncLoop,
+            autoFlush: false);
       } finally {
         _syncInProgress = false;
         _syncStartedAt = null;
@@ -652,13 +656,20 @@ class VaultController extends ChangeNotifier {
       _syncStartedAt = DateTime.now();
       _notifyListeners();
       try {
-        await _performSync();
+        await _performSyncLoop();
       } finally {
         _syncInProgress = false;
         _syncStartedAt = null;
         _notifyListeners();
       }
     });
+  }
+
+  Future<void> _performSyncLoop() async {
+    do {
+      _syncRequestedAgain = false;
+      await _performSync();
+    } while (_syncRequestedAgain);
   }
 
   @visibleForTesting
@@ -685,6 +696,7 @@ class VaultController extends ChangeNotifier {
       for (var attempt = 1; attempt <= maxAttempts; attempt++) {
         final timings = <String, Duration>{};
         final overall = Stopwatch()..start();
+        final revisionAtStart = _localChangeRevision;
         final localPayload = await _buildSyncPayload();
         timings['local'] = overall.elapsed;
         final downloadWatch = Stopwatch()..start();
@@ -713,11 +725,22 @@ class VaultController extends ChangeNotifier {
         );
         timings['merge'] = mergeWatch.elapsed;
         if (mergeResult.shouldApply) {
+          if (_localRevisionChangedSince(revisionAtStart)) {
+            _syncRequestedAgain = true;
+            return;
+          }
           final applyWatch = Stopwatch()..start();
-          await _applySyncPayload(mergeResult.payload);
+          await _applySyncPayload(
+            mergeResult.payload,
+            revisionAtStart: revisionAtStart,
+          );
           timings['apply'] = applyWatch.elapsed;
         }
         if (!mergeResult.shouldUpload) {
+          if (_localRevisionChangedSince(revisionAtStart)) {
+            _syncRequestedAgain = true;
+            return;
+          }
           await _appendSyncLog(
             _formatSyncTimings(
               timings,
@@ -738,9 +761,17 @@ class VaultController extends ChangeNotifier {
           await _recordSyncStatus('success', message);
           return;
         }
+        if (_localRevisionChangedSince(revisionAtStart)) {
+          _syncRequestedAgain = true;
+          return;
+        }
         final uploadWatch = Stopwatch()..start();
         final uploadResult = await client.upload(mergeResult.payload);
         timings['upload'] = uploadWatch.elapsed;
+        if (_localRevisionChangedSince(revisionAtStart)) {
+          _syncRequestedAgain = true;
+          return;
+        }
         if (uploadResult.statusCode < 200 || uploadResult.statusCode >= 300) {
           await _appendSyncLog(
             _formatSyncTimings(
@@ -763,6 +794,10 @@ class VaultController extends ChangeNotifier {
         if (!_isSuccessfulDownloadStatus(verify.statusCode) ||
             verify.payload == null ||
             verify.payload!.trim().isEmpty) {
+          if (_localRevisionChangedSince(revisionAtStart)) {
+            _syncRequestedAgain = true;
+            return;
+          }
           await _appendSyncLog(
             _formatSyncTimings(
               timings,
@@ -781,6 +816,10 @@ class VaultController extends ChangeNotifier {
         final verifyPayload = verify.payload!;
         final verifyRevision = _decodePayload(verifyPayload).revision;
         if (verifyRevision == mergeResult.revision) {
+          if (_localRevisionChangedSince(revisionAtStart)) {
+            _syncRequestedAgain = true;
+            return;
+          }
           await _appendSyncLog(
             _formatSyncTimings(
               timings,
@@ -953,8 +992,13 @@ class VaultController extends ChangeNotifier {
   Future<void> clearAllEntries() async {
     _ensureUnlocked();
     final items = await _vaultService.listAll(masterPassword: _masterPassword!);
+    var changed = false;
     for (final item in items) {
-      await _softDeleteItem(item);
+      final tombstone = await _softDeleteItem(item);
+      changed = changed || tombstone != null;
+    }
+    if (changed) {
+      _recordLocalMutationForSync();
     }
     await reloadWithOptions(eagerDecrypt: false);
     _scheduleSyncSoon();
@@ -2130,7 +2174,7 @@ class VaultController extends ChangeNotifier {
     }
     final updated = [..._metadata.tags, trimmed]..sort();
     _metadata = _withUpdatedTags(updated);
-    await _saveMetadata();
+    await _saveMetadata(markLocalChange: true);
     _scheduleSyncSoon();
     _notifyListeners();
   }
@@ -2146,7 +2190,7 @@ class VaultController extends ChangeNotifier {
     }
     final updated = [..._metadata.categories, trimmed]..sort();
     _metadata = _withUpdatedCategories(updated);
-    await _saveMetadata();
+    await _saveMetadata(markLocalChange: true);
     _scheduleSyncSoon();
     _notifyListeners();
   }
@@ -2164,7 +2208,7 @@ class VaultController extends ChangeNotifier {
       ..sort();
     if (!listEquals(updatedTags, _metadata.tags)) {
       _metadata = _withUpdatedTags(updatedTags);
-      await _saveMetadata();
+      await _saveMetadata(markLocalChange: true);
     }
     await _replaceTagInEntries(oldTag, trimmed);
     await reload();
@@ -2184,7 +2228,7 @@ class VaultController extends ChangeNotifier {
       ..sort();
     if (!listEquals(updatedCategories, _metadata.categories)) {
       _metadata = _withUpdatedCategories(updatedCategories);
-      await _saveMetadata();
+      await _saveMetadata(markLocalChange: true);
     }
     await _replaceCategoryInEntries(oldCategory, trimmed);
     await reload();
@@ -2197,7 +2241,7 @@ class VaultController extends ChangeNotifier {
       ..sort();
     if (!listEquals(updatedTags, _metadata.tags)) {
       _metadata = _withUpdatedTags(updatedTags);
-      await _saveMetadata();
+      await _saveMetadata(markLocalChange: true);
     }
     await _removeTagFromEntries(tag);
     await reload();
@@ -2212,7 +2256,7 @@ class VaultController extends ChangeNotifier {
       ..sort();
     if (!listEquals(updatedCategories, _metadata.categories)) {
       _metadata = _withUpdatedCategories(updatedCategories);
-      await _saveMetadata();
+      await _saveMetadata(markLocalChange: true);
     }
     await _removeCategoryFromEntries(category);
     await reload();
@@ -2222,7 +2266,7 @@ class VaultController extends ChangeNotifier {
   Future<void> updateSortOrder(VaultSortOrder order) async {
     _ensureUnlocked();
     _metadata = _metadata.copyWith(sortOrder: order);
-    await _saveMetadata();
+    await _saveMetadata(markLocalChange: true);
     _scheduleSyncSoon();
     _notifyListeners();
   }
@@ -2358,9 +2402,12 @@ class VaultController extends ChangeNotifier {
     } catch (_) {}
   }
 
-  Future<void> _saveMetadata() async {
+  Future<void> _saveMetadata({bool markLocalChange = false}) async {
     final record = await _encryptMetadataRecord(_metadata);
     await _vaultMetadataStore.save(record);
+    if (markLocalChange) {
+      _recordLocalMutationForSync();
+    }
   }
 
   Future<VaultMetadata?> _decryptMetadataRecord(
@@ -2946,7 +2993,10 @@ class VaultController extends ChangeNotifier {
     );
   }
 
-  Future<void> _applySyncPayload(String payload) async {
+  Future<void> _applySyncPayload(
+    String payload, {
+    required int revisionAtStart,
+  }) async {
     final decoded = _decodePayload(payload);
     final upgradedRecords = <VaultItemRecord>[];
     for (var index = 0; index < decoded.records.length; index++) {
@@ -2984,8 +3034,16 @@ class VaultController extends ChangeNotifier {
         ),
       );
     }
+    if (_localRevisionChangedSince(revisionAtStart)) {
+      _syncRequestedAgain = true;
+      return;
+    }
     await _vaultService.saveRecords(upgradedRecords);
     if (decoded.metadataRecord != null) {
+      if (_localRevisionChangedSince(revisionAtStart)) {
+        _syncRequestedAgain = true;
+        return;
+      }
       await _vaultMetadataStore.save(decoded.metadataRecord!);
       final decodedMeta = await _decryptMetadataRecord(decoded.metadataRecord!);
       if (decodedMeta != null) {
@@ -3499,7 +3557,19 @@ class VaultController extends ChangeNotifier {
       }
     }
     _setEntryViews(updatedViews);
+    _recordLocalMutationForSync();
     _notifyListeners(allowWhileSuppressed: forceNotify);
+  }
+
+  void _recordLocalMutationForSync() {
+    _localChangeRevision += 1;
+    if (_syncInProgress) {
+      _syncRequestedAgain = true;
+    }
+  }
+
+  bool _localRevisionChangedSince(int revision) {
+    return _localChangeRevision != revision;
   }
 
   void _setEntryViews(List<VaultEntryView> views) {

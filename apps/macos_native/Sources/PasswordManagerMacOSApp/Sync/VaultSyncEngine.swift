@@ -20,6 +20,7 @@ enum VaultSyncEngineError: LocalizedError, Equatable, Sendable {
     case downloadFailed(Int)
     case uploadFailed(Int)
     case invalidRemotePayload
+    case syncCancelled
 
     var errorDescription: String? {
         switch self {
@@ -29,6 +30,8 @@ enum VaultSyncEngineError: LocalizedError, Equatable, Sendable {
             "Sync upload failed with status \(statusCode)."
         case .invalidRemotePayload:
             "Remote sync payload is invalid."
+        case .syncCancelled:
+            "Sync was cancelled because local data changed."
         }
     }
 }
@@ -49,7 +52,8 @@ struct VaultSyncEngine: Sendable {
         localSnapshot: VaultSnapshot,
         settings: SyncSettings,
         client: RemoteSyncClient,
-        remotePayloadDecoder: (@Sendable (String?) throws -> VaultSyncPayload?)? = nil
+        remotePayloadDecoder: (@Sendable (String?) throws -> VaultSyncPayload?)? = nil,
+        shouldCancelUpload: @Sendable () async -> Bool = { false }
     ) async throws -> VaultSyncEngineResult {
         let remoteMetadata = await client.metadata()
         let remoteFingerprint = remoteMetadata.fingerprint
@@ -77,7 +81,7 @@ struct VaultSyncEngine: Sendable {
         )
 
         guard let remotePayload = try decodePayload(download.payload, fallbackDecoder: remotePayloadDecoder) else {
-            try await upload(localPayload, with: client)
+            try await upload(localPayload, with: client, shouldCancelUpload: shouldCancelUpload)
             return result(
                 snapshot: localSnapshot,
                 settings: settings,
@@ -101,7 +105,7 @@ struct VaultSyncEngine: Sendable {
                 revision: nextRevision,
                 snapshot: localSnapshot
             )
-            try await upload(uploadPayload, with: client)
+            try await upload(uploadPayload, with: client, shouldCancelUpload: shouldCancelUpload)
             return result(
                 snapshot: localSnapshot,
                 settings: settings,
@@ -158,7 +162,7 @@ struct VaultSyncEngine: Sendable {
             revision: mergedRevision,
             snapshot: mergedSnapshot
         )
-        try await upload(payload, with: client)
+        try await upload(payload, with: client, shouldCancelUpload: shouldCancelUpload)
         return result(
             snapshot: mergedSnapshot,
             settings: settings,
@@ -194,7 +198,14 @@ struct VaultSyncEngine: Sendable {
         }
     }
 
-    private func upload(_ payload: VaultSyncPayload, with client: RemoteSyncClient) async throws {
+    private func upload(
+        _ payload: VaultSyncPayload,
+        with client: RemoteSyncClient,
+        shouldCancelUpload: @Sendable () async -> Bool
+    ) async throws {
+        guard await !shouldCancelUpload() else {
+            throw VaultSyncEngineError.syncCancelled
+        }
         let upload = await client.upload(try encodePayload(payload))
         guard upload.statusCode >= 200 && upload.statusCode < 300 else {
             throw VaultSyncEngineError.uploadFailed(upload.statusCode)

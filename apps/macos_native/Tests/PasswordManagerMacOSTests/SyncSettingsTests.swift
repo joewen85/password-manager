@@ -641,6 +641,73 @@ struct SyncSettingsTests {
         #expect(reloadedStore.categories == [])
         #expect(reloadedStore.categoryTemplates == [])
     }
+
+    @MainActor
+    @Test("VaultStore ignores stale sync result when local category changes during sync")
+    func vaultStoreIgnoresStaleSyncResultWhenLocalCategoryChangesDuringSync() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManagerMacOSVaultStoreSyncRaceCategoryTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let secretStore = InMemorySyncSecretStore()
+        let syncRepository = try SyncSettingsRepository(baseDirectory: directory, secretStore: secretStore)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(
+            repository: repository,
+            syncSettingsRepository: syncRepository,
+            syncEngine: engine
+        )
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+        var settings = SyncSettings.defaults(deviceId: "mac-device")
+        settings.providerType = .webdav
+        settings.webdavUrl = "https://dav.example.com/root"
+        settings.webdavPath = "/vault.json"
+        settings.conflictStrategy = .keepBoth
+        settings.lastSyncRevision = 2
+        store.updateSyncSettings(settings)
+        #expect(store.addCategory("test"))
+
+        let staleRemote = VaultSnapshot(
+            entries: [],
+            categories: ["test"],
+            categoryTemplates: [CategoryTemplate(category: "test")],
+            tags: [],
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_100)
+        )
+        let remotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 3,
+                snapshot: staleRemote
+            )
+        )
+        let client = BlockingVaultStoreSyncFakeClient(
+            downloads: [
+                RemoteSyncResult(payload: remotePayload, statusCode: 200),
+                RemoteSyncResult(payload: remotePayload, statusCode: 200)
+            ],
+            uploadStatusCodes: [200]
+        )
+
+        async let syncTask: Void = store.syncNow(client: client)
+        await client.waitForDownloadAttempt()
+        #expect(store.hasSyncInProgressForTesting())
+        #expect(store.deleteCategory("test"))
+        #expect(store.syncWasRequestedAgainForTesting())
+        client.releaseDownload()
+        await syncTask
+
+        #expect(store.categories == [])
+        #expect(store.categoryTemplates == [])
+        #expect(client.uploadedPayloads.count == 1)
+        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.first))
+        #expect(uploaded.revision == 4)
+        #expect(uploaded.snapshot.categories == [])
+        #expect(uploaded.snapshot.categoryTemplates == [])
+    }
 }
 
 private func syncSettingsHTTPResult(url: URL, statusCode: Int, body: String = "") -> (Data, HTTPURLResponse) {
@@ -690,5 +757,98 @@ private final class VaultStoreSyncFakeClient: RemoteSyncClient, @unchecked Senda
         uploadedPayloads.append(payload)
         let statusCode = uploadStatusCodes.isEmpty ? 200 : uploadStatusCodes.removeFirst()
         return RemoteSyncResult(payload: nil, statusCode: statusCode)
+    }
+}
+
+private final class BlockingVaultStoreSyncFakeClient: RemoteSyncClient, @unchecked Sendable {
+    private let lock = NSLock()
+    private var downloads: [RemoteSyncResult]
+    private var uploadStatusCodes: [Int]
+    private var firstDownloadStarted = false
+    private var shouldReleaseFirstDownload = false
+    private var firstDownloadContinuations: [CheckedContinuation<Void, Never>] = []
+    private var releaseContinuations: [CheckedContinuation<Void, Never>] = []
+    private(set) var uploadedPayloads: [String] = []
+
+    init(downloads: [RemoteSyncResult], uploadStatusCodes: [Int]) {
+        self.downloads = downloads
+        self.uploadStatusCodes = uploadStatusCodes
+    }
+
+    func waitForDownloadAttempt() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if firstDownloadStarted {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                firstDownloadContinuations.append(continuation)
+                lock.unlock()
+            }
+        }
+    }
+
+    func releaseDownload() {
+        lock.lock()
+        shouldReleaseFirstDownload = true
+        let continuations = releaseContinuations
+        releaseContinuations.removeAll()
+        lock.unlock()
+        continuations.forEach { $0.resume() }
+    }
+
+    func download() async -> RemoteSyncResult {
+        let shouldWait = markDownloadStarted()
+        if shouldWait {
+            await waitForRelease()
+        }
+        return nextDownloadResult()
+    }
+
+    func upload(_ payload: String) async -> RemoteSyncResult {
+        RemoteSyncResult(payload: nil, statusCode: recordUploadAndStatus(payload))
+    }
+
+    private func nextDownloadResult() -> RemoteSyncResult {
+        lock.lock()
+        let result = downloads.isEmpty ? RemoteSyncResult(payload: nil, statusCode: 404) : downloads.removeFirst()
+        lock.unlock()
+        return result
+    }
+
+    private func recordUploadAndStatus(_ payload: String) -> Int {
+        lock.lock()
+        uploadedPayloads.append(payload)
+        let statusCode = uploadStatusCodes.isEmpty ? 200 : uploadStatusCodes.removeFirst()
+        lock.unlock()
+        return statusCode
+    }
+
+    private func markDownloadStarted() -> Bool {
+        lock.lock()
+        if firstDownloadStarted {
+            lock.unlock()
+            return false
+        }
+        firstDownloadStarted = true
+        let continuations = firstDownloadContinuations
+        firstDownloadContinuations.removeAll()
+        let shouldWait = !shouldReleaseFirstDownload
+        lock.unlock()
+        continuations.forEach { $0.resume() }
+        return shouldWait
+    }
+
+    private func waitForRelease() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if shouldReleaseFirstDownload {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                releaseContinuations.append(continuation)
+                lock.unlock()
+            }
+        }
     }
 }
