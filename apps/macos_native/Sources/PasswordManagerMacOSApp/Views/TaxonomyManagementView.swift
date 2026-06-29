@@ -9,6 +9,7 @@ struct TaxonomyManagementView: View {
     @State private var newValue = ""
     @State private var categoryCustomFields: [CustomField] = []
     @State private var renameRequest: TaxonomyEditRequest?
+    @State private var fieldEditRequest: CategoryFieldsEditRequest?
     @State private var deleteRequest: TaxonomyEditRequest?
 
     private var values: [String] {
@@ -64,6 +65,19 @@ struct TaxonomyManagementView: View {
                                 .labelStyle(.iconOnly)
                                 .help("Rename")
 
+                                if selectedKind == .category {
+                                    Button {
+                                        fieldEditRequest = CategoryFieldsEditRequest(
+                                            category: value,
+                                            fields: editableFields(for: value)
+                                        )
+                                    } label: {
+                                        Label(L10n.t("Fields"), systemImage: "square.and.pencil")
+                                    }
+                                    .labelStyle(.iconOnly)
+                                    .help(L10n.t("Fields"))
+                                }
+
                                 Button(role: .destructive) {
                                     deleteRequest = TaxonomyEditRequest(kind: selectedKind, value: value)
                                 } label: {
@@ -81,6 +95,17 @@ struct TaxonomyManagementView: View {
                                     renameRequest = TaxonomyEditRequest(kind: selectedKind, value: value)
                                 } label: {
                                     Label("Rename", systemImage: "pencil")
+                                }
+
+                                if selectedKind == .category {
+                                    Button {
+                                        fieldEditRequest = CategoryFieldsEditRequest(
+                                            category: value,
+                                            fields: editableFields(for: value)
+                                        )
+                                    } label: {
+                                        Label(L10n.t("Fields"), systemImage: "square.and.pencil")
+                                    }
                                 }
 
                                 Button(role: .destructive) {
@@ -124,6 +149,12 @@ struct TaxonomyManagementView: View {
             }
             .frame(width: 420, height: 180)
         }
+        .sheet(item: $fieldEditRequest) { request in
+            CategoryFieldsEditView(store: store, request: request) {
+                onChange()
+            }
+            .frame(width: 460, height: 360)
+        }
         .alert(item: $deleteRequest) { request in
             Alert(
                 title: Text(request.kind.deleteTitle),
@@ -134,6 +165,16 @@ struct TaxonomyManagementView: View {
                 secondaryButton: .cancel()
             )
         }
+    }
+
+    private func editableFields(for category: String) -> [CustomField] {
+        let fields = store.categoryTemplates
+            .first { $0.category.compare(category, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }?
+            .fields ?? CategoryTemplate.defaultCategoryFields()
+        return fields
+            .map(\.name)
+            .filter { $0.compare("名称", options: [.caseInsensitive, .diacriticInsensitive]) != .orderedSame }
+            .map { CustomField(name: $0) }
     }
 
     private var isAddDisabled: Bool {
@@ -234,6 +275,58 @@ private struct TaxonomyEditRequest: Identifiable {
     let value: String
 
     var id: String { "\(kind.rawValue)|\(value)" }
+}
+
+private struct CategoryFieldsEditRequest: Identifiable {
+    let category: String
+    let fields: [CustomField]
+
+    var id: String { category }
+}
+
+private struct CategoryFieldsEditView: View {
+    @Bindable var store: VaultStore
+    let category: String
+    var onSaved: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var fields: [CustomField]
+
+    init(store: VaultStore, request: CategoryFieldsEditRequest, onSaved: @escaping () -> Void) {
+        self.store = store
+        self.category = request.category
+        self.onSaved = onSaved
+        _fields = State(initialValue: request.fields)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(category) {
+                    CategoryTemplateFieldNameEditor(fields: $fields)
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle(L10n.t("Fields"))
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(L10n.t("Cancel")) {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(L10n.t("Save"), action: save)
+                        .buttonStyle(.borderedProminent)
+                }
+            }
+        }
+    }
+
+    private func save() {
+        guard store.updateCategoryTemplate(category, customFieldNames: fields.map(\.name)) else { return }
+        onSaved()
+        dismiss()
+    }
 }
 
 private enum TaxonomyKind: String, CaseIterable, Identifiable {

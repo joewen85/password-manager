@@ -813,7 +813,7 @@ struct CategoryTemplateFieldNameEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(L10n.t("Custom Fields"))
+            Text(L10n.t("Fields"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -822,13 +822,18 @@ struct CategoryTemplateFieldNameEditor: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                ForEach($fields) { $field in
+                ForEach(fields.indices, id: \.self) { index in
                     HStack(spacing: 8) {
-                        TextField(L10n.t("Field Name"), text: $field.name)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(minWidth: 160)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(L10n.t("Field Name"))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            TextField(L10n.t("Field Name"), text: $fields[index].name)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(minWidth: 160)
+                        }
                         Button(role: .destructive) {
-                            remove(field.id)
+                            remove(at: index)
                         } label: {
                             Label(L10n.t("Remove Field"), systemImage: "trash")
                         }
@@ -858,8 +863,9 @@ struct CategoryTemplateFieldNameEditor: View {
         fields.append(CustomField())
     }
 
-    private func remove(_ id: UUID) {
-        fields.removeAll { $0.id == id }
+    private func remove(at index: Int) {
+        guard fields.indices.contains(index) else { return }
+        fields.remove(at: index)
     }
 }
 

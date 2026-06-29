@@ -76,7 +76,7 @@
 "Create a tag without opening the entry editor." = "Create a tag without opening the entry editor.";
 "Field Shortcuts" = "Field Shortcuts";
 "Add %@ fields" = "Add %@ fields";
-"New categories use only Name and Notes until you add custom fields." = "New categories use only Name and Notes until you add custom fields.";
+"New categories use only Name and Notes until you add custom fields." = "New categories use only Name and Notes until you add fields.";
 "Cancel" = "Cancel";
 "Save" = "Save";
 "This clears all entries, categories, tags, and vault security settings. This does not change the master password." = "This clears all entries, categories, tags, and vault security settings. This does not change the master password.";
@@ -210,9 +210,9 @@
 "Export Selected" = "Export Selected";
 "Select fields to export. Export all keeps the complete entry; export selected writes only checked fields." = "Select fields to export. Export all keeps the complete entry; export selected writes only checked fields.";
 "Selected Fields: %d" = "Selected Fields: %d";
-"Custom Fields" = "Custom Fields";
-"Custom Field" = "Custom Field";
-"No custom fields." = "No custom fields.";
+"Custom Fields" = "Fields";
+"Custom Field" = "Field";
+"No custom fields." = "No fields.";
 "Field Name" = "Field Name";
 "Field Value" = "Field Value";
 "Remove Field" = "Remove Field";

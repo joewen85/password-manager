@@ -277,6 +277,27 @@ final class VaultStore {
         return true
     }
 
+    func updateCategoryTemplate(_ category: String, customFieldNames: [String]) -> Bool {
+        let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            statusMessage = "Value is required."
+            return false
+        }
+        guard let canonicalCategory = categories.first(where: { $0.caseInsensitiveEquals(normalized) }) else {
+            statusMessage = "Category not found."
+            return false
+        }
+
+        upsertCategoryTemplate(
+            category: canonicalCategory,
+            fields: CategoryTemplate.fields(for: nil, customFieldNames: customFieldNames)
+        )
+        rebuildCollections()
+        persistUnlockedSnapshot()
+        statusMessage = "Category updated."
+        return true
+    }
+
     func deleteCategory(_ category: String) -> Bool {
         let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else {

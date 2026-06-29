@@ -119,4 +119,48 @@ struct VaultStoreTaxonomyTests {
         #expect(store.addCategory("Ops", preset: nil, customFieldNames: ["IP地址", "端口", "Owner", "ip地址", ""]))
         #expect(store.categoryTemplates.first { $0.category == "Ops" }?.fields.map(\.name) == ["名称", "备注", "IP地址", "端口", "Owner"])
     }
+
+    @MainActor
+    @Test("Category template updates persist and reconfigure saved entry fields")
+    func categoryTemplateUpdatesPersistAndReconfigureSavedEntryFields() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManagerMacOSCategoryTemplateUpdateTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(
+            repository: repository,
+            syncSettingsRepository: nil
+        )
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+
+        #expect(store.addCategory("Ops", preset: nil, customFieldNames: ["Owner"]))
+        let initialTemplate = try #require(store.categoryTemplates.first { $0.category == "Ops" })
+
+        var draft = EntryDraft(category: "Ops", templateFields: initialTemplate.fields)
+        draft.label = "Deploy"
+        draft.customFields[0].value = "keep this note"
+        draft.customFields[1].value = "alice"
+        store.upsert(draft, editing: nil)
+
+        #expect(store.updateCategoryTemplate("ops", customFieldNames: ["Endpoint", "备注", "endpoint", ""]))
+        let updatedTemplate = try #require(store.categoryTemplates.first { $0.category == "Ops" })
+        #expect(updatedTemplate.fields.map(\.name) == ["名称", "备注", "Endpoint"])
+
+        let savedEntry = try #require(store.entries.first)
+        var editDraft = EntryDraft(entry: savedEntry)
+        editDraft.configureTemplateFields(updatedTemplate.fields)
+
+        #expect(editDraft.customFields.map(\.name) == ["备注", "Endpoint"])
+        #expect(editDraft.customFields.first { $0.name == "备注" }?.value == "keep this note")
+        #expect(editDraft.customFields.first { $0.name == "Endpoint" }?.value == "")
+        #expect(editDraft.customFields.contains { $0.name == "Owner" } == false)
+
+        let reloadedStore = VaultStore(
+            repository: repository,
+            syncSettingsRepository: nil
+        )
+        #expect(reloadedStore.unlock(password: "test-password"))
+        #expect(reloadedStore.categoryTemplates.first { $0.category == "Ops" }?.fields.map(\.name) == ["名称", "备注", "Endpoint"])
+    }
 }

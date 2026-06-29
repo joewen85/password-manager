@@ -29,13 +29,16 @@ struct DetailView: View {
                             OverviewFieldsView(entry: entry)
                         }
 
-                        DetailSection(title: "Fields") {
-                            PayloadFieldsView(payload: entry.payload)
-                        }
-
-                        if !entry.customFields.isEmpty {
-                            DetailSection(title: "Custom Fields") {
-                                CustomFieldsView(fields: entry.customFields)
+                        if entry.payload.hasDisplayFields || !entry.customFields.isEmpty {
+                            DetailSection(title: "Fields") {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    if entry.payload.hasDisplayFields {
+                                        PayloadFieldsView(payload: entry.payload)
+                                    }
+                                    if !entry.customFields.isEmpty {
+                                        CustomFieldsView(fields: entry.customFields)
+                                    }
+                                }
                             }
                         }
                     }
@@ -255,5 +258,46 @@ private extension Array where Element == ServiceAccount {
             return "\(account.username): \(account.password)\(suffix)"
         }
         .joined(separator: "\n")
+    }
+}
+
+private extension VaultPayload {
+    var hasDisplayFields: Bool {
+        switch self {
+        case .credential(let payload):
+            payload.accounts.isEmpty == false
+                || payload.username.hasDisplayValue
+                || payload.password.hasDisplayValue
+                || payload.token.hasDisplayValue
+                || payload.appId.hasDisplayValue
+                || payload.accessKey.hasDisplayValue
+                || payload.secretKey.hasDisplayValue
+                || payload.notes.hasDisplayValue
+        case .server(let payload):
+            payload.accounts.isEmpty == false
+                || payload.name.hasDisplayValue
+                || payload.ipAddress.hasDisplayValue
+                || payload.port.hasDisplayValue
+                || payload.username.hasDisplayValue
+                || payload.password.hasDisplayValue
+                || payload.basicConfig.hasDisplayValue
+                || payload.operatingSystem.hasDisplayValue
+                || payload.location.hasDisplayValue
+                || payload.notes.hasDisplayValue
+        case .service(let payload):
+            payload.accounts.isEmpty == false
+                || payload.name.hasDisplayValue
+                || payload.connectionAddress.hasDisplayValue
+                || payload.connectionPort.hasDisplayValue
+                || (payload.accountId?.hasDisplayValue ?? false)
+                || payload.serverIds.contains { $0.hasDisplayValue }
+                || payload.notes.hasDisplayValue
+        }
+    }
+}
+
+private extension String {
+    var hasDisplayValue: Bool {
+        !trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }

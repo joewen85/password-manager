@@ -79,7 +79,7 @@ struct EntryEditorView: View {
                     )
                 }
 
-                if entry == nil {
+                if usesTemplateFields {
                     TemplateFieldsEditor(fields: $draft.customFields)
                 } else {
                     switch draft.payload {
@@ -131,7 +131,15 @@ struct EntryEditorView: View {
     private func resetDraft(from entry: VaultEntry?) {
         let nextDraft: EntryDraft
         if let entry {
-            nextDraft = EntryDraft(entry: entry)
+            var draft = EntryDraft(entry: entry)
+            if Self.shouldUseTemplateFields(
+                for: draft,
+                isCreating: false,
+                in: categoryTemplates
+            ), let fields = Self.categoryTemplateFields(for: draft.category, in: categoryTemplates) {
+                draft.configureTemplateFields(fields)
+            }
+            nextDraft = draft
         } else {
             var draft = EntryDraft()
             draft.category = initialCategory.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -179,21 +187,46 @@ struct EntryEditorView: View {
         preset: CategoryTypePreset? = nil,
         customFieldNames: [String] = []
     ) {
-        guard entry == nil else { return }
         let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
         let fields: [FieldTemplate]
         if preset != nil || !customFieldNames.isEmpty {
             fields = CategoryTemplate.fields(for: preset, customFieldNames: customFieldNames)
+        } else if let templateFields = Self.categoryTemplateFields(for: normalized, in: categoryTemplates) {
+            fields = templateFields
+        } else if entry == nil {
+            fields = CategoryTemplate.defaultCategoryFields()
         } else {
-            fields = Self.templateFields(for: normalized, in: categoryTemplates)
+            return
         }
         draft.configureTemplateFields(fields)
     }
 
+    private var usesTemplateFields: Bool {
+        Self.shouldUseTemplateFields(
+            for: draft,
+            isCreating: entry == nil,
+            in: categoryTemplates
+        )
+    }
+
+    private static func shouldUseTemplateFields(
+        for draft: EntryDraft,
+        isCreating: Bool,
+        in templates: [CategoryTemplate]
+    ) -> Bool {
+        guard !isCreating else { return true }
+        guard categoryTemplateFields(for: draft.category, in: templates) != nil else { return false }
+        return !draft.customFields.isEmpty || !draft.payload.hasLegacyEditorValues
+    }
+
     private static func templateFields(for category: String, in templates: [CategoryTemplate]) -> [FieldTemplate] {
+        categoryTemplateFields(for: category, in: templates)
+            ?? CategoryTemplate.defaultCategoryFields()
+    }
+
+    private static func categoryTemplateFields(for category: String, in templates: [CategoryTemplate]) -> [FieldTemplate]? {
         let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
         return templates.first { $0.category.caseInsensitiveCompare(normalized) == .orderedSame }?.fields
-            ?? CategoryTemplate.defaultCategoryFields()
     }
 }
 
@@ -543,13 +576,13 @@ private struct CustomFieldsEditor: View {
     @Binding var fields: [CustomField]
 
     var body: some View {
-        Section(L10n.t("Custom Fields")) {
+        Section(L10n.t("Fields")) {
             if fields.isEmpty {
                 Text(L10n.t("No custom fields."))
                     .foregroundStyle(.secondary)
             } else {
-                ForEach($fields) { $field in
-                    CustomFieldRow(field: $field, showsValue: true, remove: { remove(field.id) })
+                ForEach(fields.indices, id: \.self) { index in
+                    CustomFieldRow(field: $fields[index], showsValue: true, remove: { remove(at: index) })
                 }
             }
 
@@ -563,8 +596,9 @@ private struct CustomFieldsEditor: View {
         fields.append(CustomField())
     }
 
-    private func remove(_ id: UUID) {
-        fields.removeAll { $0.id == id }
+    private func remove(at index: Int) {
+        guard fields.indices.contains(index) else { return }
+        fields.remove(at: index)
     }
 }
 
@@ -577,8 +611,8 @@ private struct TemplateFieldsEditor: View {
                 Text(L10n.t("No custom fields."))
                     .foregroundStyle(.secondary)
             } else {
-                ForEach($fields) { $field in
-                    CustomFieldRow(field: $field, showsValue: true, remove: { remove(field.id) })
+                ForEach(fields.indices, id: \.self) { index in
+                    CustomFieldRow(field: $fields[index], showsValue: true, remove: { remove(at: index) })
                 }
             }
 
@@ -592,8 +626,9 @@ private struct TemplateFieldsEditor: View {
         fields.append(CustomField())
     }
 
-    private func remove(_ id: UUID) {
-        fields.removeAll { $0.id == id }
+    private func remove(at index: Int) {
+        guard fields.indices.contains(index) else { return }
+        fields.remove(at: index)
     }
 }
 
@@ -630,9 +665,14 @@ private struct CustomFieldRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                TextField(L10n.t("Field Name"), text: $field.name)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(minWidth: 160)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(L10n.t("Field Name"))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    TextField(L10n.t("Field Name"), text: $field.name)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(minWidth: 160)
+                }
                 Spacer()
                 Button(role: .destructive, action: remove) {
                     Label(L10n.t("Remove Field"), systemImage: "trash")
@@ -642,8 +682,14 @@ private struct CustomFieldRow: View {
             }
 
             if showsValue {
-                TextField(L10n.t("Field Value"), text: $field.value, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
+                Divider()
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(L10n.t("Field Value"))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    TextField(L10n.t("Field Value"), text: $field.value, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                }
             }
         }
         .padding(10)
@@ -655,5 +701,46 @@ private struct CustomFieldRow: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
         )
+    }
+}
+
+private extension VaultPayload {
+    var hasLegacyEditorValues: Bool {
+        switch self {
+        case .credential(let payload):
+            payload.accounts.isEmpty == false
+                || payload.username.hasEditorValue
+                || payload.password.hasEditorValue
+                || payload.token.hasEditorValue
+                || payload.appId.hasEditorValue
+                || payload.accessKey.hasEditorValue
+                || payload.secretKey.hasEditorValue
+                || payload.notes.hasEditorValue
+        case .server(let payload):
+            payload.accounts.isEmpty == false
+                || payload.name.hasEditorValue
+                || payload.ipAddress.hasEditorValue
+                || payload.port.hasEditorValue
+                || payload.username.hasEditorValue
+                || payload.password.hasEditorValue
+                || payload.basicConfig.hasEditorValue
+                || payload.operatingSystem.hasEditorValue
+                || payload.location.hasEditorValue
+                || payload.notes.hasEditorValue
+        case .service(let payload):
+            payload.accounts.isEmpty == false
+                || payload.name.hasEditorValue
+                || payload.connectionAddress.hasEditorValue
+                || payload.connectionPort.hasEditorValue
+                || (payload.accountId?.hasEditorValue ?? false)
+                || payload.serverIds.contains { $0.hasEditorValue }
+                || payload.notes.hasEditorValue
+        }
+    }
+}
+
+private extension String {
+    var hasEditorValue: Bool {
+        !trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
