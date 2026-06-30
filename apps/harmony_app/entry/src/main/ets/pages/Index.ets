@@ -1,4 +1,5 @@
 import { Context } from '@kit.AbilityKit';
+import display from '@ohos.display';
 import picker from '@ohos.file.picker';
 import fs from '@ohos.file.fs';
 import {
@@ -32,8 +33,11 @@ import {
 } from '../src/sync/SyncTypes';
 
 type DraftType = 'credential' | 'server' | 'service';
-type ActivePanel = 'home' | 'settings' | 'category' | 'tag';
+type ActivePanel = 'home' | 'category' | 'tag';
+type TopOverlayPanel = 'none' | 'create' | 'settings' | 'more' | 'categoryCreate' | 'tagCreate';
 const MAX_UNLOCK_ATTEMPTS: number = 5;
+const WIDE_LAYOUT_MIN_WIDTH: number = 720;
+const EXPANDED_LAYOUT_MIN_WIDTH: number = 960;
 const UI_BACKGROUND: string = '#F4F6F8';
 const UI_SURFACE: string = '#FFFFFF';
 const UI_SURFACE_ALT: string = '#F8FAFC';
@@ -101,6 +105,9 @@ struct Index {
   private hostContext: Context | null = null;
   private searchInputController: TextInputController = new TextInputController();
   private entryListScroller: Scroller = new Scroller();
+  private foldStatusChangeHandler: (status: display.FoldStatus) => void = (_status: display.FoldStatus) => {
+    this.updateFoldableState();
+  };
   private autoSyncTimerId: number = -1;
   private idleLockTimerId: number = -1;
   private lastActivityAt: number = Date.now();
@@ -110,8 +117,12 @@ struct Index {
   @State private hasMasterKey: boolean = false;
   @State private unlocked: boolean = false;
   @State private activePanel: ActivePanel = 'home';
-  @State private actionPanelVisible: boolean = false;
+  @State private topOverlayPanel: TopOverlayPanel = 'none';
   @State private entryEditorVisible: boolean = false;
+  @State private viewportWidth: number = 0;
+  @State private viewportHeight: number = 0;
+  @State private foldableDevice: boolean = false;
+  @State private currentFoldStatus: number = 0;
 
   @State private password: string = '';
   @State private confirmPassword: string = '';
@@ -219,12 +230,14 @@ struct Index {
     this.ready = true;
     this.configureAutoSyncTimer();
     this.configureIdleLockTimer();
+    this.configureFoldableState();
     this.scheduleBiometricUnlockPrompt();
   }
 
   aboutToDisappear(): void {
     this.stopAutoSyncTimer();
     this.stopIdleLockTimer();
+    this.stopFoldableState();
   }
 
   build() {
@@ -339,41 +352,68 @@ struct Index {
 
   @Builder
   private VaultView() {
-    Column({ space: 10 }) {
-      this.HeaderSection();
-      if (this.actionPanelVisible) {
-        this.ActionPanel();
-      }
-      if (this.activePanel === 'settings') {
-        this.SettingsPage();
-      } else if (this.activePanel === 'category') {
-        Scroll() {
-          this.CategorySection();
-        }
-        .layoutWeight(1)
-        .width('100%');
-      } else if (this.activePanel === 'tag') {
-        Scroll() {
-          this.TagSection();
-        }
-        .layoutWeight(1)
-        .width('100%');
-      } else {
-        this.StatusSummary();
-        if (this.entryEditorVisible) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column({ space: 10 }) {
+        this.HeaderSection();
+        if (this.activePanel === 'category') {
           Scroll() {
-            this.NewEntrySection();
+            this.CategorySection();
+          }
+          .layoutWeight(1)
+          .width('100%');
+        } else if (this.activePanel === 'tag') {
+          Scroll() {
+            this.TagSection();
           }
           .layoutWeight(1)
           .width('100%');
         } else {
-          this.FilterSection();
-          this.EntryListSection();
+          this.HomeContent();
         }
+      }
+      .width('100%')
+      .height('100%');
+
+      if (this.topOverlayPanel !== 'none') {
+        this.FloatingPanelScrim();
+        this.FloatingPanel();
       }
     }
     .width('100%')
-    .height('100%');
+    .height('100%')
+    .onAreaChange((_oldValue: Area, newValue: Area) => {
+      this.updateViewportSize(newValue);
+    });
+  }
+
+  @Builder
+  private HomeContent() {
+    if (this.useWideLayout() && !this.entryEditorVisible) {
+      Row({ space: 12 }) {
+        Column({ space: 10 }) {
+          this.StatusSummary();
+          this.FilterSection();
+        }
+        .height('100%')
+        .width(this.useExpandedLayout() ? '34%' : '40%')
+        .constraintSize({ minWidth: 280, maxWidth: 430 });
+        this.EntryListSection();
+      }
+      .layoutWeight(1)
+      .width('100%');
+    } else {
+      this.StatusSummary();
+      if (this.entryEditorVisible) {
+        Scroll() {
+          this.NewEntrySection();
+        }
+        .layoutWeight(1)
+        .width('100%');
+      } else {
+        this.FilterSection();
+        this.EntryListSection();
+      }
+    }
   }
 
   @Builder
@@ -395,23 +435,21 @@ struct Index {
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start);
       Blank();
-      this.ToolbarButton('+', true, () => {
-        this.beginCreateEntry();
+      this.ToolbarIconButton('+', '添加', true, () => {
+        this.openTopOverlay('create');
       });
-      this.ToolbarButton(this.syncBusy ? '...' : '同步', false, () => {
+      this.ToolbarIconButton(this.syncBusy ? '...' : '↻', '同步', false, () => {
         if (!this.syncBusy) {
           this.onSyncNow();
         }
       });
-      this.ToolbarButton('设置', false, () => {
-        this.activePanel = 'settings';
-        this.entryEditorVisible = false;
-        this.actionPanelVisible = false;
+      this.ToolbarIconButton('⚙', '设置', this.topOverlayPanel === 'settings', () => {
+        this.openTopOverlay('settings');
       });
-      this.ToolbarButton('更多', false, () => {
-        this.actionPanelVisible = !this.actionPanelVisible;
+      this.ToolbarIconButton('⋮', '更多', this.topOverlayPanel === 'more', () => {
+        this.openTopOverlay('more');
       });
-      this.ToolbarButton('锁定', false, () => {
+      this.ToolbarIconButton('锁', '锁定', false, () => {
         this.lockVault();
       });
     }
@@ -420,76 +458,198 @@ struct Index {
   }
 
   @Builder
-  private ToolbarButton(label: string, accent: boolean, action: () => void) {
-    Text(label)
-      .fontSize(label.length > 2 ? 11 : (label.length > 1 ? 12 : 18))
+  private ToolbarIconButton(icon: string, label: string, accent: boolean, action: () => void) {
+    Text(icon)
+      .fontSize(icon.length > 1 ? 13 : 20)
       .fontWeight(FontWeight.Bold)
       .fontColor(accent ? UI_ACCENT : UI_TEXT)
+      .width(44)
       .height(44)
-      .constraintSize({ minWidth: 40 })
-      .padding({ left: label.length > 1 ? 8 : 10, right: label.length > 1 ? 8 : 10 })
       .textAlign(TextAlign.Center)
-      .backgroundColor(UI_SURFACE)
-      .border({ width: 1, color: UI_STROKE })
+      .backgroundColor(accent ? UI_SELECTED : UI_SURFACE)
+      .border({ width: 1, color: accent ? UI_ACCENT : UI_STROKE })
       .borderRadius(14)
+      .accessibilityText(label)
       .onClick(action);
   }
 
   @Builder
-  private ActionPanel() {
-    Column({ space: 10 }) {
-      Row() {
-        Text('快捷操作')
-          .fontSize(14)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(UI_TEXT);
-        Blank();
-        this.SmallGhostButton('关闭', () => {
-          this.actionPanelVisible = false;
-        });
-      }
-      Flex({ wrap: FlexWrap.Wrap }) {
-        this.ActionChip('设置', false, () => {
-          this.activePanel = 'settings';
-          this.entryEditorVisible = false;
-          this.actionPanelVisible = false;
-        });
-        this.ActionChip('分类管理', false, () => {
-          this.activePanel = 'category';
-          this.entryEditorVisible = false;
-          this.actionPanelVisible = false;
-        });
-        this.ActionChip('标签管理', false, () => {
-          this.activePanel = 'tag';
-          this.entryEditorVisible = false;
-          this.actionPanelVisible = false;
-        });
-        this.ActionChip('导入条目', false, () => {
-          this.onImportEntry();
-          this.actionPanelVisible = false;
-        });
-        this.ActionChip('导出数据', false, () => {
-          this.onExportVault();
-          this.actionPanelVisible = false;
-        });
-      }
-    }
-    .width('100%')
-    .padding(14)
-    .backgroundColor(UI_SURFACE)
-    .border({ width: 1, color: UI_STROKE })
-    .borderRadius(18);
+  private FloatingPanelScrim() {
+    Column() {}
+      .width('100%')
+      .height('100%')
+      .backgroundColor('rgba(24, 31, 42, 0.16)')
+      .zIndex(8)
+      .onClick(() => {
+        this.closeTopOverlay();
+      });
   }
 
   @Builder
-  private ActionChip(label: string, primary: boolean, action: () => void) {
+  private FloatingPanel() {
+    Column({ space: 10 }) {
+      if (this.topOverlayPanel === 'create') {
+        this.CreateOverlayPanel();
+      } else if (this.topOverlayPanel === 'settings') {
+        this.SettingsOverlayPanel();
+      } else if (this.topOverlayPanel === 'more') {
+        this.MoreOverlayPanel();
+      } else if (this.topOverlayPanel === 'categoryCreate') {
+        this.CategoryCreateOverlayPanel();
+      } else if (this.topOverlayPanel === 'tagCreate') {
+        this.TagCreateOverlayPanel();
+      }
+    }
+    .width(this.floatingPanelWidth())
+    .constraintSize({ maxHeight: this.floatingPanelMaxHeight() })
+    .padding(14)
+    .backgroundColor(UI_SURFACE)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(18)
+    .position({ x: this.floatingPanelX(), y: 56 })
+    .zIndex(9);
+  }
+
+  @Builder
+  private FloatingPanelHeader(title: string) {
+    Row() {
+      Text(title)
+        .fontSize(16)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_TEXT);
+      Blank();
+      this.SmallGhostButton('关闭', () => {
+        this.closeTopOverlay();
+      });
+    }
+    .width('100%');
+  }
+
+  @Builder
+  private CreateOverlayPanel() {
+    Column({ space: 10 }) {
+      this.FloatingPanelHeader('添加');
+      this.OverlayActionButton('新建条目', true, () => {
+        this.beginCreateEntry();
+      });
+      this.OverlayActionButton('创建分类', false, () => {
+        this.prepareCreateCategoryOverlay('');
+      });
+      this.OverlayActionButton('创建标签', false, () => {
+        this.prepareCreateTagOverlay('');
+      });
+    }
+    .width('100%');
+  }
+
+  @Builder
+  private SettingsOverlayPanel() {
+    Column({ space: 10 }) {
+      this.FloatingPanelHeader('设置');
+      Scroll() {
+        Column({ space: 12 }) {
+          this.SecuritySection();
+          this.SyncSection();
+          this.DeviceSection();
+        }
+        .width('100%')
+        .padding({ bottom: 4 });
+      }
+      .width('100%')
+      .height(this.settingsPanelScrollHeight());
+    }
+    .width('100%');
+  }
+
+  @Builder
+  private MoreOverlayPanel() {
+    Column({ space: 10 }) {
+      this.FloatingPanelHeader('更多');
+      this.OverlayActionButton('导出数据', false, () => {
+        this.onExportVault();
+        this.closeTopOverlay();
+      });
+      this.OverlayActionButton('导入条目', false, () => {
+        this.onImportEntry();
+        this.closeTopOverlay();
+      });
+      this.OverlayActionButton('导入分类', false, () => {
+        this.onImportCategory();
+        this.closeTopOverlay();
+      });
+      this.OverlayActionButton('分类管理', false, () => {
+        this.openMainPanel('category');
+      });
+      this.OverlayActionButton('标签管理', false, () => {
+        this.openMainPanel('tag');
+      });
+      this.OverlayActionButton('设置', false, () => {
+        this.openTopOverlay('settings');
+      });
+    }
+    .width('100%');
+  }
+
+  @Builder
+  private CategoryCreateOverlayPanel() {
+    Column({ space: 10 }) {
+      this.FloatingPanelHeader('创建分类');
+      TextInput({ placeholder: '分类名称（必填）', text: $$this.categoryDraft })
+        .width('100%')
+        .height(48)
+        .backgroundColor(UI_SURFACE_ALT)
+        .border({ width: 1, color: UI_STROKE })
+        .borderRadius(12)
+        .padding({ left: 14, right: 14 });
+      Text('快捷字段')
+        .fontSize(12)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_MUTED);
+      Flex({ wrap: FlexWrap.Wrap }) {
+        this.ChoiceChip('服务器', false, () => {
+          this.addCategoryDraftShortcutFields(CategoryTypePreset.SERVER);
+        });
+        this.ChoiceChip('服务', false, () => {
+          this.addCategoryDraftShortcutFields(CategoryTypePreset.SERVICE);
+        });
+        this.ChoiceChip('账号', false, () => {
+          this.addCategoryDraftShortcutFields(CategoryTypePreset.ACCOUNT);
+        });
+      }
+      this.CategoryDraftCustomFieldsEditor();
+      this.PrimaryTextButton('保存分类', () => {
+        this.onAddCategoryFromOverlay();
+      });
+    }
+    .width('100%');
+  }
+
+  @Builder
+  private TagCreateOverlayPanel() {
+    Column({ space: 10 }) {
+      this.FloatingPanelHeader('创建标签');
+      TextInput({ placeholder: '标签名称（必填）', text: $$this.tagDraft })
+        .width('100%')
+        .height(48)
+        .backgroundColor(UI_SURFACE_ALT)
+        .border({ width: 1, color: UI_STROKE })
+        .borderRadius(12)
+        .padding({ left: 14, right: 14 });
+      this.PrimaryTextButton('保存标签', () => {
+        this.onAddTagFromOverlay();
+      });
+    }
+    .width('100%');
+  }
+
+  @Builder
+  private OverlayActionButton(label: string, primary: boolean, action: () => void) {
     Text(label)
-      .fontSize(13)
+      .fontSize(14)
       .fontWeight(FontWeight.Bold)
       .fontColor(primary ? '#FFFFFF' : UI_TEXT)
-      .height(40)
-      .padding({ left: 14, right: 14 })
-      .margin({ right: 8, bottom: 8 })
+      .height(44)
+      .width('100%')
       .textAlign(TextAlign.Center)
       .backgroundColor(primary ? UI_ACCENT : UI_SURFACE_ALT)
       .border({ width: 1, color: primary ? UI_ACCENT : UI_STROKE })
@@ -528,32 +688,6 @@ struct Index {
     .backgroundColor(UI_SURFACE_ALT)
     .border({ width: 1, color: UI_STROKE })
     .borderRadius(14);
-  }
-
-  @Builder
-  private SettingsPage() {
-    Scroll() {
-      Column({ space: 12 }) {
-        Row() {
-          Text('设置')
-            .fontSize(22)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(UI_TEXT);
-          Blank();
-          this.SmallGhostButton('返回', () => {
-            this.activePanel = 'home';
-          });
-        }
-
-        this.SecuritySection();
-        this.SyncSection();
-        this.DeviceSection();
-      }
-      .width('100%')
-      .padding({ bottom: 18 });
-    }
-    .layoutWeight(1)
-    .width('100%');
   }
 
   @Builder
@@ -1067,14 +1201,12 @@ struct Index {
           this.entryEditorVisible = false;
         });
       }
-      if (this.editingEntryId.length > 0) {
-        Text('条目类型').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
+      Text('条目类型').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
 
-        Flex({ wrap: FlexWrap.Wrap }) {
-          this.EntryTypeChip('账号', 'credential');
-          this.EntryTypeChip('服务器', 'server');
-          this.EntryTypeChip('服务', 'service');
-        }
+      Flex({ wrap: FlexWrap.Wrap }) {
+        this.EntryTypeChip('账号', 'credential');
+        this.EntryTypeChip('服务器', 'server');
+        this.EntryTypeChip('服务', 'service');
       }
 
       TextInput({ placeholder: '名称（必填）', text: $$this.draftLabel })
@@ -1088,7 +1220,7 @@ struct Index {
       this.EntryCategorySelect();
       this.EntryTagMultiSelect();
 
-      if (this.editingEntryId.length > 0 && this.draftType === 'credential') {
+      if (this.draftType === 'credential') {
         TextInput({ placeholder: '用户名', text: $$this.draftCredentialUsername })
           .width('100%')
           .height(48)
@@ -1107,7 +1239,7 @@ struct Index {
         this.AccountsEditor('账号列表');
       }
 
-      if (this.editingEntryId.length > 0 && this.draftType === 'server') {
+      if (this.draftType === 'server') {
         TextInput({ placeholder: '服务器名称', text: $$this.draftServerName })
           .width('100%')
           .height(48)
@@ -1132,7 +1264,7 @@ struct Index {
         this.AccountsEditor('服务器账号');
       }
 
-      if (this.editingEntryId.length > 0 && this.draftType === 'service') {
+      if (this.draftType === 'service') {
         TextInput({ placeholder: '服务名称', text: $$this.draftServiceName })
           .width('100%')
           .height(48)
@@ -1921,17 +2053,37 @@ struct Index {
   }
 
   private async onAddTag(): Promise<void> {
-    if (this.tagDraft.trim().length === 0) {
+    const tag = this.tagDraft.trim();
+    if (tag.length === 0) {
+      this.toast('请输入标签名称');
       return;
     }
-    await this.controller().addTag(this.tagDraft);
+    if (this.tags.some((existing: string) => existing.toLowerCase() === tag.toLowerCase())) {
+      this.toast('标签已存在');
+      return;
+    }
+    await this.controller().addTag(tag);
     this.tagDraft = '';
     this.refreshData();
+    this.toast('标签已保存');
+  }
+
+  private async onAddTagFromOverlay(): Promise<void> {
+    const draft = this.tagDraft.trim();
+    await this.onAddTag();
+    if (draft.length > 0 && this.tagDraft.trim().length === 0) {
+      this.closeTopOverlay();
+    }
   }
 
   private async onAddCategory(): Promise<void> {
     const category = this.categoryDraft.trim();
     if (category.length === 0) {
+      this.toast('请输入分类名称');
+      return;
+    }
+    if (this.categories.some((existing: string) => existing.toLowerCase() === category.toLowerCase())) {
+      this.toast('分类已存在');
       return;
     }
     const customFieldNames = this.categoryDraftCustomFieldNames();
@@ -1940,6 +2092,15 @@ struct Index {
     this.categoryDraftCustomFields = [];
     this.categoryRenameSource = '';
     this.refreshData();
+    this.toast('分类已保存');
+  }
+
+  private async onAddCategoryFromOverlay(): Promise<void> {
+    const draft = this.categoryDraft.trim();
+    await this.onAddCategory();
+    if (draft.length > 0 && this.categoryDraft.trim().length === 0) {
+      this.closeTopOverlay();
+    }
   }
 
   private async onApplyCategoryPreset(category: string, preset: CategoryTypePreset): Promise<void> {
@@ -2793,6 +2954,131 @@ struct Index {
     }
   }
 
+  private openTopOverlay(panel: TopOverlayPanel): void {
+    if (this.topOverlayPanel === panel) {
+      this.closeTopOverlay();
+      return;
+    }
+    if (panel === 'create') {
+      this.categoryRenameSource = '';
+    }
+    this.topOverlayPanel = panel;
+  }
+
+  private closeTopOverlay(): void {
+    this.topOverlayPanel = 'none';
+  }
+
+  private openMainPanel(panel: ActivePanel): void {
+    this.activePanel = panel;
+    this.entryEditorVisible = false;
+    this.exportEntryId = '';
+    this.closeTopOverlay();
+  }
+
+  private prepareCreateCategoryOverlay(initialValue: string): void {
+    this.categoryDraft = initialValue;
+    this.categoryRenameSource = '';
+    this.categoryDraftCustomFields = [];
+    this.topOverlayPanel = 'categoryCreate';
+  }
+
+  private prepareCreateTagOverlay(initialValue: string): void {
+    this.tagDraft = initialValue;
+    this.topOverlayPanel = 'tagCreate';
+  }
+
+  private updateViewportSize(area: Area): void {
+    this.viewportWidth = this.lengthToNumber(area.width);
+    this.viewportHeight = this.lengthToNumber(area.height);
+  }
+
+  private lengthToNumber(value: Length): number {
+    if (typeof value === 'number') {
+      return value;
+    }
+    const parsed = Number.parseFloat(`${value}`);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  private useWideLayout(): boolean {
+    const width = this.viewportWidth > 0 ? this.viewportWidth : 0;
+    return width >= WIDE_LAYOUT_MIN_WIDTH || this.hasExpandedFoldPosture();
+  }
+
+  private useExpandedLayout(): boolean {
+    const width = this.viewportWidth > 0 ? this.viewportWidth : 0;
+    return width >= EXPANDED_LAYOUT_MIN_WIDTH || this.hasExpandedFoldPosture();
+  }
+
+  private hasExpandedFoldPosture(): boolean {
+    return this.foldableDevice && (
+      this.currentFoldStatus === display.FoldStatus.FOLD_STATUS_EXPANDED ||
+      this.currentFoldStatus === display.FoldStatus.FOLD_STATUS_EXPANDED_WITH_SECOND_EXPANDED ||
+      this.currentFoldStatus === display.FoldStatus.FOLD_STATUS_EXPANDED_WITH_SECOND_HALF_FOLDED
+    );
+  }
+
+  private floatingPanelWidth(): string | number {
+    const width = this.viewportWidth;
+    if (width <= 0) {
+      return 320;
+    }
+    if (width < 420) {
+      return Math.max(width - 16, 240);
+    }
+    if (width < WIDE_LAYOUT_MIN_WIDTH) {
+      return Math.max(width - 32, 320);
+    }
+    return this.topOverlayPanel === 'settings' ? 520 : 360;
+  }
+
+  private floatingPanelWidthValue(): number {
+    const value = this.floatingPanelWidth();
+    return typeof value === 'number' ? value : 360;
+  }
+
+  private floatingPanelX(): number {
+    const width = this.viewportWidth > 0 ? this.viewportWidth : this.floatingPanelWidthValue() + 16;
+    return Math.max(width - this.floatingPanelWidthValue() - 8, 8);
+  }
+
+  private floatingPanelMaxHeight(): number {
+    const height = this.viewportHeight > 0 ? this.viewportHeight : 720;
+    return Math.max(height - 88, 320);
+  }
+
+  private settingsPanelScrollHeight(): number {
+    return this.floatingPanelMaxHeight() - 58;
+  }
+
+  private configureFoldableState(): void {
+    this.updateFoldableState();
+    try {
+      display.on('foldStatusChange', this.foldStatusChangeHandler);
+    } catch (error) {
+      console.info(`Fold status listener unavailable: ${error}`);
+    }
+  }
+
+  private stopFoldableState(): void {
+    try {
+      display.off('foldStatusChange', this.foldStatusChangeHandler);
+    } catch (error) {
+      console.info(`Fold status listener cleanup skipped: ${error}`);
+    }
+  }
+
+  private updateFoldableState(): void {
+    try {
+      this.foldableDevice = display.isFoldable();
+      this.currentFoldStatus = this.foldableDevice ? display.getFoldStatus() : 0;
+    } catch (error) {
+      this.foldableDevice = false;
+      this.currentFoldStatus = 0;
+    }
+  }
+
   private refreshUnlockGuardState(): void {
     const guard = this.controller().getUnlockGuardState();
     this.unlockFailedAttempts = guard.failedAttempts;
@@ -2950,14 +3236,14 @@ struct Index {
     this.applyCategoryTemplateToDraft(this.draftCategory);
     this.activePanel = 'home';
     this.entryEditorVisible = true;
-    this.actionPanelVisible = false;
+    this.closeTopOverlay();
   }
 
   private startEditEntry(entry: VaultEntry): void {
     this.clearEntryDraft();
     this.activePanel = 'home';
     this.entryEditorVisible = true;
-    this.actionPanelVisible = false;
+    this.closeTopOverlay();
     this.editingEntryId = entry.id;
     this.exportEntryId = '';
     this.draftLabel = entry.label;
@@ -3292,7 +3578,7 @@ struct Index {
     this.syncLogs = [];
     this.biometricAutoPrompted = false;
     this.activePanel = 'home';
-    this.actionPanelVisible = false;
+    this.closeTopOverlay();
     this.entryEditorVisible = false;
     this.clearEntryDraft();
     this.refreshUnlockGuardState();
