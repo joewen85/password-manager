@@ -1,13 +1,41 @@
 # 跨平台密码管理器
 
-一个跨平台密码管理器，用于保存用户名、密码、token、appid、access token、secret key。目标是构建安全、现代、可扩展的系统，覆盖 Windows、macOS、Linux、iOS、Android、HarmonyOS 6。
+![Password Manager 产品宣传海报](docs/assets/password-manager-product-poster.png)
 
-## 目标
-- 所有敏感数据使用 AES‑256 加密
-- 设备间自动同步（云 / NAS 支持）
-- 2FA（TOTP）账户访问
-- 加密备份
-- 开源技术栈、可维护架构
+Password Manager 是一款本地加密优先的跨平台密码保险库，用来集中保存用户名、密码、Token、App ID、Access Token、Secret Key、服务器凭据和服务账号等敏感信息。项目目标不是把秘密绑定到某一个云平台，而是在多端原生体验、可审计加密、可控同步和可维护架构之间取得平衡，让个人开发者、运维人员和小团队可以用同一套可信的数据契约管理凭据。
+
+## App 介绍
+
+这款应用围绕“一个保险库，多端一致使用”设计：敏感数据先在本机加密，再按用户选择同步到 WebDAV、NAS、S3 Presigned URL 或对象存储；主密码、TOTP、生物识别和失败锁定共同构成解锁防护；导入、导出和加密备份则保证凭据不会被单一设备或单一平台困住。
+
+它适合保存和管理：
+
+- 网站、后台、开发平台和 SaaS 账号。
+- API Token、Access Token、Secret Key、App ID 和服务凭据。
+- 服务器、数据库、服务账号、运维环境和团队共享的分类凭据。
+- 需要跨 Android、HarmonyOS、iOS、macOS、Windows 和 Linux 使用的本地优先密码库。
+
+## 核心能力
+
+- **本地加密保险库**：使用 PBKDF2-SHA256 派生密钥，并通过 AES-256-GCM 加密 vault payload；持久化文件不保存明文密码库字段。
+- **多类型 Secret 管理**：支持 credential、server、service 等条目类型，并提供分类、标签、搜索、过滤和软删除能力。
+- **多重解锁防护**：支持主密码、TOTP 二次验证、失败次数限制，以及已接入平台能力的生物识别解锁。
+- **可控同步**：围绕 WebDAV、NAS WebDAV、S3 Presigned URL 和对象存储设计同步接口、revision、冲突策略和同步日志。
+- **备份与迁移**：支持本地加密备份、快照 JSON 导入导出、单条或分类导入导出，以及冲突处理策略。
+- **跨端一致契约**：共享 Dart 包、Swift/Kotlin 原生实现和 C++ portable core 围绕同一数据模型、加密格式和同步语义演进。
+
+## 当前状态
+
+这是一个正在建设中的开源项目。共享核心能力与多端原生切片已经逐步落地，但不同平台的 UI 完整度、发布签名和真实设备验证进度不同，生产发布前仍需要完成对应平台的发布门禁、真实同步服务验证和商店审核材料。
+
+| 平台 | 当前进度 |
+| --- | --- |
+| Android 原生 | 已覆盖初始化/解锁、条目管理、TOTP、同步设置、导入导出、备份、折叠屏/大屏适配和 release gate。 |
+| HarmonyOS 6 原生 | 已完成 Stage 工程、离线 MVP、CryptoArchitectureKit 加密、TOTP、生物识别、同步状态机、导入导出和 HAP 校验链路。 |
+| macOS 原生 | 已有 SwiftUI app、Keychain/Touch ID 解锁、同步中心、备份中心、导入导出中心和本地打包验证。 |
+| iOS 原生 | 已建立 SwiftPM core 与 Xcode app target，复用已验证的 Swift 核心能力，并通过 simulator smoke 验证首屏。 |
+| Windows / Linux | 已有共享 C++17 core 和 terminal-native CLI，覆盖加密 vault、TOTP、CRUD、备份、导入导出和远端对象同步；图形界面仍在补齐。 |
+| 共享 packages | Dart `crypto`、`storage`、`sync`、`auth`、`backup`、`core` 包提供跨端契约和测试基线。 |
 
 ## 项目结构
 - `apps/android_native`: Android 原生应用
