@@ -2,8 +2,12 @@ package life.devops.passwordmanager.store
 
 import life.devops.passwordmanager.model.CategoryTemplate
 import life.devops.passwordmanager.model.CredentialPayload
+import life.devops.passwordmanager.model.EncryptedPayloadRecord
 import life.devops.passwordmanager.model.EntryDraft
+import life.devops.passwordmanager.model.ServiceAccount
+import life.devops.passwordmanager.model.VaultEntry
 import life.devops.passwordmanager.model.VaultEntryType
+import life.devops.passwordmanager.model.VaultPayload
 import life.devops.passwordmanager.model.VaultSnapshot
 import life.devops.passwordmanager.sync.InMemorySyncSecretStore
 import life.devops.passwordmanager.sync.RemoteSyncClient
@@ -14,7 +18,9 @@ import life.devops.passwordmanager.sync.SyncSettings
 import life.devops.passwordmanager.sync.SyncSettingsRepository
 import life.devops.passwordmanager.sync.VaultSyncEngine
 import life.devops.passwordmanager.sync.VaultSyncPayload
+import org.json.JSONObject
 import java.io.File
+import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -23,7 +29,6 @@ import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class VaultStoreSyncTest {
@@ -88,6 +93,9 @@ class VaultStoreSyncTest {
                     credential = CredentialPayload(
                         username = "sync@example.com",
                         password = "secret",
+                        accounts = listOf(ServiceAccount(username = "ops", password = "account-secret")),
+                        token = "sync-token",
+                        secretKey = "sync-secret-key",
                     ),
                 )
             )
@@ -105,7 +113,16 @@ class VaultStoreSyncTest {
             store.syncNow(client)
 
             assertEquals(1, client.uploadedPayloads.size)
-            val uploaded = assertNotNull(engine.decodePayload(client.uploadedPayloads.single()))
+            val rawUpload = client.uploadedPayloads.single()
+            assertFalse(rawUpload.contains("Sync Login"))
+            assertFalse(rawUpload.contains("sync@example.com"))
+            assertFalse(rawUpload.contains("secret"))
+            assertFalse(rawUpload.contains("account-secret"))
+            assertFalse(rawUpload.contains("sync-token"))
+            assertFalse(rawUpload.contains("sync-secret-key"))
+            assertTrue(rawUpload.contains("encryptedVault"))
+            assertFalse(rawUpload.contains("\"snapshot\""))
+            val uploaded = decodeEncryptedSyncPayload(rawUpload, repository)
             assertEquals("android-device", uploaded.deviceId)
             assertTrue(uploaded.snapshot.entries.any { it.label == "Sync Login" })
             assertEquals("success", store.syncSettings.lastSyncStatus)
@@ -121,6 +138,144 @@ class VaultStoreSyncTest {
             assertEquals("success", reloadedStore.syncSettings.lastSyncStatus)
             assertTrue(reloadedStore.syncStatus.contains("Synced 1 items"))
             assertTrue(reloadedStore.listEntries().any { it.label == "Sync Login" })
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun syncNowAppliesEncryptedRemoteSnapshot() {
+        val directory = createTempDirectory("PasswordManagerAndroidVaultStoreEncryptedRemoteSyncTests").toFile()
+        try {
+            val syncRepository = SyncSettingsRepository(
+                settingsFile = File(directory, "sync_settings.json"),
+                secretStore = InMemorySyncSecretStore(),
+            )
+            val now = Instant.parse("2027-01-15T08:00:00Z")
+            val engine = VaultSyncEngine(clock = { now })
+            val repository = FileVaultRepository(directory)
+            val store = VaultStore(
+                repository = repository,
+                syncSettingsRepository = syncRepository,
+                syncEngine = engine,
+            )
+            assertTrue(store.setupMasterPassword("test-password", "test-password"))
+            val settings = SyncSettings.defaults(deviceId = "android-device").copy(
+                providerType = SyncProviderType.WEBDAV,
+                webdavUrl = "https://dav.example.com/root",
+                webdavPath = "/vault.json",
+            )
+            store.updateSyncSettings(settings)
+            val remoteSnapshot = VaultSnapshot(
+                entries = listOf(
+                    VaultEntry(
+                        label = "Remote Login",
+                        type = VaultEntryType.CREDENTIAL,
+                        payload = VaultPayload.Credential(
+                            CredentialPayload(
+                                username = "remote@example.com",
+                                password = "remote-secret",
+                                token = "remote-token",
+                                secretKey = "remote-secret-key",
+                            )
+                        ),
+                        updatedAt = Instant.parse("2027-01-15T08:01:00Z"),
+                        version = mapOf("remote-device" to 1),
+                        updatedBy = "remote-device",
+                    )
+                ),
+                updatedAt = Instant.parse("2027-01-15T08:01:00Z"),
+            )
+            val remotePayload = encodeEncryptedSyncPayload(
+                VaultSyncPayload(
+                    exportedAt = now,
+                    deviceId = "remote-device",
+                    revision = 1,
+                    snapshot = remoteSnapshot,
+                ),
+                repository = repository,
+            )
+            val client = VaultStoreSyncFakeClient(
+                downloads = ArrayDeque(listOf(RemoteSyncResult(payload = remotePayload, statusCode = 200))),
+                uploadStatusCodes = ArrayDeque(listOf(200)),
+            )
+
+            store.syncNow(client)
+
+            assertTrue(store.listEntries().any { it.label == "Remote Login" })
+            assertFalse(remotePayload.contains("remote-secret"))
+            assertTrue(remotePayload.contains("encryptedVault"))
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun syncNowRewritesLegacyPlaintextRemoteWhenNoMergeUploadIsNeeded() {
+        val directory = createTempDirectory("PasswordManagerAndroidVaultStoreLegacyPlaintextRemoteSyncTests").toFile()
+        try {
+            val syncRepository = SyncSettingsRepository(
+                settingsFile = File(directory, "sync_settings.json"),
+                secretStore = InMemorySyncSecretStore(),
+            )
+            val now = Instant.parse("2027-01-15T08:00:00Z")
+            val engine = VaultSyncEngine(clock = { now })
+            val repository = FileVaultRepository(directory)
+            val store = VaultStore(
+                repository = repository,
+                syncSettingsRepository = syncRepository,
+                syncEngine = engine,
+            )
+            assertTrue(store.setupMasterPassword("test-password", "test-password"))
+            val settings = SyncSettings.defaults(deviceId = "android-device").copy(
+                providerType = SyncProviderType.WEBDAV,
+                webdavUrl = "https://dav.example.com/root",
+                webdavPath = "/vault.json",
+            )
+            store.updateSyncSettings(settings)
+            store.syncNow(
+                VaultStoreSyncFakeClient(
+                    downloads = ArrayDeque(listOf(RemoteSyncResult(payload = null, statusCode = 404))),
+                    uploadStatusCodes = ArrayDeque(listOf(200)),
+                )
+            )
+            val remoteSnapshot = VaultSnapshot(
+                entries = listOf(
+                    VaultEntry(
+                        label = "Legacy Remote Login",
+                        type = VaultEntryType.CREDENTIAL,
+                        payload = VaultPayload.Credential(
+                            CredentialPayload(username = "legacy@example.com", password = "legacy-secret")
+                        ),
+                        updatedAt = Instant.parse("2027-01-15T08:01:00Z"),
+                        version = mapOf("remote-device" to 1),
+                        updatedBy = "remote-device",
+                    )
+                ),
+                updatedAt = Instant.parse("2027-01-15T08:01:00Z"),
+            )
+            val legacyRemotePayload = engine.encodePayload(
+                VaultSyncPayload(
+                    exportedAt = now,
+                    deviceId = "remote-device",
+                    revision = 2,
+                    snapshot = remoteSnapshot,
+                )
+            )
+            val client = VaultStoreSyncFakeClient(
+                downloads = ArrayDeque(listOf(RemoteSyncResult(payload = legacyRemotePayload, statusCode = 200))),
+                uploadStatusCodes = ArrayDeque(listOf(200)),
+            )
+
+            store.syncNow(client)
+
+            assertTrue(store.listEntries().any { it.label == "Legacy Remote Login" })
+            assertEquals(1, client.uploadedPayloads.size)
+            val migrated = decodeEncryptedSyncPayload(client.uploadedPayloads.single(), repository)
+            assertEquals(2, migrated.revision)
+            assertTrue(migrated.snapshot.entries.any { it.label == "Legacy Remote Login" })
+            assertFalse(client.uploadedPayloads.single().contains("legacy-secret"))
+            assertTrue(client.uploadedPayloads.single().contains("encryptedVault"))
         } finally {
             directory.deleteRecursively()
         }
@@ -160,7 +315,7 @@ class VaultStoreSyncTest {
             assertEquals(listOf("test"), store.categories())
             assertEquals("test", store.categoryTemplate("test")?.category)
             assertEquals(listOf("名称", "备注"), store.categoryTemplate("test")?.fields?.map { it.name })
-            val uploaded = assertNotNull(engine.decodePayload(client.uploadedPayloads.single()))
+            val uploaded = decodeEncryptedSyncPayload(client.uploadedPayloads.single(), repository)
             assertEquals(listOf("test"), uploaded.snapshot.categories)
             assertEquals(listOf("test"), uploaded.snapshot.categoryTemplates.map { it.category })
 
@@ -228,7 +383,7 @@ class VaultStoreSyncTest {
 
             assertEquals(emptyList(), store.categories())
             assertEquals(null, store.categoryTemplate("test"))
-            val uploaded = assertNotNull(engine.decodePayload(client.uploadedPayloads.single()))
+            val uploaded = decodeEncryptedSyncPayload(client.uploadedPayloads.single(), repository)
             assertEquals(4, uploaded.revision)
             assertEquals(emptyList(), uploaded.snapshot.categories)
             assertEquals(emptyList(), uploaded.snapshot.categoryTemplates)
@@ -313,7 +468,7 @@ class VaultStoreSyncTest {
             assertEquals(emptyList(), store.categories())
             assertEquals(null, store.categoryTemplate("test"))
             assertEquals(1, client.uploadedPayloads.size)
-            val uploaded = assertNotNull(engine.decodePayload(client.uploadedPayloads.single()))
+            val uploaded = decodeEncryptedSyncPayload(client.uploadedPayloads.single(), repository)
             assertEquals(4, uploaded.revision)
             assertEquals(emptyList(), uploaded.snapshot.categories)
             assertEquals(emptyList(), uploaded.snapshot.categoryTemplates)
@@ -365,6 +520,63 @@ class VaultStoreSyncTest {
             directory.deleteRecursively()
         }
     }
+}
+
+private fun decodeEncryptedSyncPayload(
+    rawPayload: String,
+    repository: FileVaultRepository,
+    password: String = "test-password",
+): VaultSyncPayload {
+    val json = JSONObject(rawPayload)
+    val encryptedJson = json.getJSONObject("encryptedVault")
+    val encryptedVault = EncryptedPayloadRecord(
+        ciphertext = encryptedJson.getString("ciphertext"),
+        nonce = encryptedJson.getString("nonce"),
+        mac = encryptedJson.getString("mac"),
+        version = encryptedJson.optInt("version", 1),
+    )
+    val masterKeyRecord = checkNotNull(repository.loadEnvelope()?.masterKeyRecord)
+    val crypto = AndroidVaultCrypto()
+    val key = crypto.verify(password, masterKeyRecord)
+    val snapshot = VaultJson.decodeSnapshot(
+        String(crypto.decrypt(encryptedVault, key), StandardCharsets.UTF_8)
+    )
+    return VaultSyncPayload(
+        version = json.optInt("version", 1),
+        exportedAt = Instant.parse(json.getString("exportedAt")),
+        deviceId = json.optString("deviceId"),
+        revision = json.optInt("revision", 0),
+        snapshot = snapshot,
+    )
+}
+
+private fun encodeEncryptedSyncPayload(
+    payload: VaultSyncPayload,
+    repository: FileVaultRepository,
+    password: String = "test-password",
+): String {
+    val masterKeyRecord = checkNotNull(repository.loadEnvelope()?.masterKeyRecord)
+    val crypto = AndroidVaultCrypto()
+    val key = crypto.verify(password, masterKeyRecord)
+    val encryptedVault = crypto.encrypt(
+        VaultJson.encodeSnapshot(payload.snapshot).toByteArray(StandardCharsets.UTF_8),
+        key,
+    )
+    return JSONObject()
+        .put("version", payload.version)
+        .put("exportedAt", payload.exportedAt.toString())
+        .put("deviceId", payload.deviceId)
+        .put("revision", payload.revision)
+        .put("masterKeyRecord", JSONObject.NULL)
+        .put(
+            "encryptedVault",
+            JSONObject()
+                .put("ciphertext", encryptedVault.ciphertext)
+                .put("nonce", encryptedVault.nonce)
+                .put("mac", encryptedVault.mac)
+                .put("version", encryptedVault.version)
+        )
+        .toString()
 }
 
 private class VaultStoreSyncFakeClient(

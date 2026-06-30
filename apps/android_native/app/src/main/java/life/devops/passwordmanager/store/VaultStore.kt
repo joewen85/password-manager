@@ -18,6 +18,7 @@ import life.devops.passwordmanager.model.VaultPersistenceEnvelope
 import life.devops.passwordmanager.model.VaultSnapshot
 import life.devops.passwordmanager.model.copyForImport
 import life.devops.passwordmanager.model.importMatchKey
+import life.devops.passwordmanager.sync.EncryptedRemoteSyncClient
 import life.devops.passwordmanager.sync.RemoteSyncClient
 import life.devops.passwordmanager.sync.SyncClientFactory
 import life.devops.passwordmanager.sync.SyncLogEntry
@@ -26,13 +27,22 @@ import life.devops.passwordmanager.sync.SyncSettings
 import life.devops.passwordmanager.sync.SyncSettingsRepository
 import life.devops.passwordmanager.sync.VaultSyncCancelledException
 import life.devops.passwordmanager.sync.VaultSyncEngine
+import life.devops.passwordmanager.sync.VaultSyncEngineException
 import life.devops.passwordmanager.sync.VaultSyncEngineResult
+import life.devops.passwordmanager.sync.VaultSyncPayload
 import java.time.Instant
 
 data class BackupInfo(
     val fileName: String,
     val sizeBytes: Long,
     val modifiedAt: Instant,
+)
+
+private data class SyncLoopInput(
+    val snapshot: VaultSnapshot,
+    val settings: SyncSettings,
+    val vaultKey: ByteArray,
+    val masterKeyRecord: MasterKeyRecord?,
 )
 
 class VaultStore(
@@ -476,14 +486,46 @@ class VaultStore(
                         saveSnapshot()
                         syncStatus = "Syncing..."
                         statusMessage = "Sync started."
-                        currentSnapshot() to syncSettings
+                        val key = activeVaultKey?.copyOf()
+                            ?: throw IllegalStateException("Vault encryption key is missing.")
+                        SyncLoopInput(
+                            snapshot = currentSnapshot(),
+                            settings = syncSettings,
+                            vaultKey = key,
+                            masterKeyRecord = masterKeyRecord,
+                        )
                     }
+                    val encryptedClient = EncryptedRemoteSyncClient(
+                        delegate = client,
+                        crypto = crypto,
+                        vaultKey = syncInput.vaultKey,
+                        masterKeyRecord = syncInput.masterKeyRecord,
+                        includeMasterKeyRecord = syncInput.settings.syncMasterKey,
+                    )
                     val result = syncEngine.synchronize(
-                        localSnapshot = syncInput.first,
-                        settings = syncInput.second,
-                        client = client,
+                        localSnapshot = syncInput.snapshot,
+                        settings = syncInput.settings,
+                        client = encryptedClient,
                         shouldCancelUpload = { localChangeRevision != revisionAtStart },
                     )
+                    if (encryptedClient.downloadedPlaintextRemote && !result.uploaded) {
+                        if (localChangeRevision != revisionAtStart) {
+                            throw VaultSyncCancelledException()
+                        }
+                        val migration = encryptedClient.upload(
+                            syncEngine.encodePayload(
+                                VaultSyncPayload(
+                                    exportedAt = Instant.now(),
+                                    deviceId = syncInput.settings.deviceId,
+                                    revision = result.settings.lastSyncRevision,
+                                    snapshot = result.snapshot,
+                                )
+                            )
+                        )
+                        if (migration.statusCode !in 200..299) {
+                            throw VaultSyncEngineException("Sync upload failed with status ${migration.statusCode}.")
+                        }
+                    }
                     synchronized(this) {
                         if (localChangeRevision != revisionAtStart) {
                             syncRequestedAgain = true

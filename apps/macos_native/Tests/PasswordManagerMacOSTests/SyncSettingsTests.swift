@@ -427,6 +427,9 @@ struct SyncSettingsTests {
         draft.label = "Sync Login"
         draft.credential.username = "sync@example.com"
         draft.credential.password = "secret"
+        draft.credential.accounts = [ServiceAccount(username: "ops", password: "account-secret")]
+        draft.credential.token = "sync-token"
+        draft.credential.secretKey = "sync-secret-key"
         store.upsert(draft, editing: nil)
         var settings = SyncSettings.defaults(deviceId: "mac-device")
         settings.providerType = .webdav
@@ -441,7 +444,16 @@ struct SyncSettingsTests {
         await store.syncNow(client: client)
 
         #expect(client.uploadedPayloads.count == 1)
-        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.first))
+        let rawUpload = try #require(client.uploadedPayloads.first)
+        #expect(!rawUpload.contains("Sync Login"))
+        #expect(!rawUpload.contains("sync@example.com"))
+        #expect(!rawUpload.contains("secret"))
+        #expect(!rawUpload.contains("account-secret"))
+        #expect(!rawUpload.contains("sync-token"))
+        #expect(!rawUpload.contains("sync-secret-key"))
+        #expect(rawUpload.contains("encryptedVault"))
+        #expect(!rawUpload.contains("\"snapshot\""))
+        let uploaded = try decodeEncryptedSyncPayload(rawUpload, repository: repository)
         #expect(uploaded.deviceId == "mac-device")
         #expect(uploaded.snapshot.entries.contains { $0.label == "Sync Login" })
         #expect(store.syncSettings.lastSyncStatus == "success")
@@ -457,6 +469,136 @@ struct SyncSettingsTests {
         #expect(reloadedStore.syncSettings.lastSyncStatus == "success")
         #expect(reloadedStore.syncStatus.contains("Synced 1 items"))
         #expect(reloadedStore.entries.contains { $0.label == "Sync Login" })
+    }
+
+    @MainActor
+    @Test("VaultStore sync applies encrypted remote snapshot")
+    func vaultStoreSyncAppliesEncryptedRemoteSnapshot() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManagerMacOSVaultStoreEncryptedRemoteSyncTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let secretStore = InMemorySyncSecretStore()
+        let syncRepository = try SyncSettingsRepository(baseDirectory: directory, secretStore: secretStore)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(
+            repository: repository,
+            syncSettingsRepository: syncRepository,
+            syncEngine: engine
+        )
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+        var settings = SyncSettings.defaults(deviceId: "mac-device")
+        settings.providerType = .webdav
+        settings.webdavUrl = "https://dav.example.com/root"
+        settings.webdavPath = "/vault.json"
+        store.updateSyncSettings(settings)
+        let remoteSnapshot = VaultSnapshot(
+            entries: [
+                VaultEntry(
+                    label: "Remote Login",
+                    type: .credential,
+                    payload: .credential(CredentialPayload(
+                        username: "remote@example.com",
+                        password: "remote-secret",
+                        token: "remote-token",
+                        secretKey: "remote-secret-key"
+                    )),
+                    updatedAt: Date(timeIntervalSince1970: 1_800_000_100),
+                    version: ["remote-device": 1],
+                    updatedBy: "remote-device"
+                )
+            ],
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_100)
+        )
+        let remotePayload = try encodeEncryptedSyncPayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 1,
+                snapshot: remoteSnapshot
+            ),
+            repository: repository
+        )
+        let client = VaultStoreSyncFakeClient(
+            downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)],
+            uploadStatusCodes: [200]
+        )
+
+        await store.syncNow(client: client)
+
+        #expect(store.entries.contains { $0.label == "Remote Login" })
+        #expect(!remotePayload.contains("remote-secret"))
+        #expect(remotePayload.contains("encryptedVault"))
+    }
+
+    @MainActor
+    @Test("VaultStore rewrites legacy plaintext remote when no merge upload is needed")
+    func vaultStoreRewritesLegacyPlaintextRemoteWhenNoMergeUploadIsNeeded() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManagerMacOSVaultStoreLegacyPlaintextRemoteSyncTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let secretStore = InMemorySyncSecretStore()
+        let syncRepository = try SyncSettingsRepository(baseDirectory: directory, secretStore: secretStore)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(
+            repository: repository,
+            syncSettingsRepository: syncRepository,
+            syncEngine: engine
+        )
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+        var settings = SyncSettings.defaults(deviceId: "mac-device")
+        settings.providerType = .webdav
+        settings.webdavUrl = "https://dav.example.com/root"
+        settings.webdavPath = "/vault.json"
+        store.updateSyncSettings(settings)
+        await store.syncNow(client: VaultStoreSyncFakeClient(
+            downloads: [RemoteSyncResult(payload: nil, statusCode: 404)],
+            uploadStatusCodes: [200]
+        ))
+        let remoteSnapshot = VaultSnapshot(
+            entries: [
+                VaultEntry(
+                    label: "Legacy Remote Login",
+                    type: .credential,
+                    payload: .credential(CredentialPayload(
+                        username: "legacy@example.com",
+                        password: "legacy-secret"
+                    )),
+                    updatedAt: Date(timeIntervalSince1970: 1_800_000_100),
+                    version: ["remote-device": 1],
+                    updatedBy: "remote-device"
+                )
+            ],
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_100)
+        )
+        let legacyRemotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 2,
+                snapshot: remoteSnapshot
+            )
+        )
+        let client = VaultStoreSyncFakeClient(
+            downloads: [RemoteSyncResult(payload: legacyRemotePayload, statusCode: 200)],
+            uploadStatusCodes: [200]
+        )
+
+        await store.syncNow(client: client)
+
+        #expect(store.entries.contains { $0.label == "Legacy Remote Login" })
+        #expect(client.uploadedPayloads.count == 1)
+        let migrated = try decodeEncryptedSyncPayload(client.uploadedPayloads.first, repository: repository)
+        #expect(migrated.revision == 2)
+        #expect(migrated.snapshot.entries.contains { $0.label == "Legacy Remote Login" })
+        let rawUpload = try #require(client.uploadedPayloads.first)
+        #expect(!rawUpload.contains("legacy-secret"))
+        #expect(rawUpload.contains("encryptedVault"))
     }
 
     @MainActor
@@ -495,7 +637,7 @@ struct SyncSettingsTests {
         #expect(store.categoryTemplates.map(\.category) == ["test"])
         #expect(store.categoryTemplates.first?.fields.map(\.name) == ["名称", "备注"])
         #expect(store.syncSettings.conflictStrategy == .keepBoth)
-        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.first))
+        let uploaded = try decodeEncryptedSyncPayload(client.uploadedPayloads.first, repository: repository)
         #expect(uploaded.snapshot.categories == ["test"])
         #expect(uploaded.snapshot.categoryTemplates.map(\.category) == ["test"])
 
@@ -560,7 +702,7 @@ struct SyncSettingsTests {
         #expect(store.categories == ["test"])
         #expect(store.categoryTemplates.map(\.category) == ["test"])
         #expect(store.categoryTemplates.first?.fields.map(\.name) == ["名称", "备注"])
-        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.first))
+        let uploaded = try decodeEncryptedSyncPayload(client.uploadedPayloads.first, repository: repository)
         #expect(uploaded.revision == 3)
         #expect(uploaded.snapshot.categories == ["test"])
         #expect(uploaded.snapshot.categoryTemplates.map(\.category) == ["test"])
@@ -627,7 +769,7 @@ struct SyncSettingsTests {
 
         #expect(store.categories == [])
         #expect(store.categoryTemplates == [])
-        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.first))
+        let uploaded = try decodeEncryptedSyncPayload(client.uploadedPayloads.first, repository: repository)
         #expect(uploaded.revision == 4)
         #expect(uploaded.snapshot.categories == [])
         #expect(uploaded.snapshot.categoryTemplates == [])
@@ -703,11 +845,75 @@ struct SyncSettingsTests {
         #expect(store.categories == [])
         #expect(store.categoryTemplates == [])
         #expect(client.uploadedPayloads.count == 1)
-        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.first))
+        let uploaded = try decodeEncryptedSyncPayload(client.uploadedPayloads.first, repository: repository)
         #expect(uploaded.revision == 4)
         #expect(uploaded.snapshot.categories == [])
         #expect(uploaded.snapshot.categoryTemplates == [])
     }
+}
+
+private func decodeEncryptedSyncPayload(
+    _ rawPayload: String?,
+    repository: FileVaultRepository,
+    password: String = "test-password"
+) throws -> VaultSyncPayload {
+    let rawPayload = try #require(rawPayload)
+    let decoder = makeSyncPayloadDecoder()
+    let data = try #require(rawPayload.data(using: .utf8))
+    let envelope = try decoder.decode(TestEncryptedVaultSyncEnvelope.self, from: data)
+    let masterKeyRecord = try #require(try repository.loadEnvelope()?.masterKeyRecord)
+    let crypto = VaultCryptoService()
+    let key = try crypto.verify(password: password, record: masterKeyRecord)
+    let snapshot = try decoder.decode(VaultSnapshot.self, from: crypto.decrypt(envelope.encryptedVault, key: key))
+    return VaultSyncPayload(
+        version: envelope.version,
+        exportedAt: envelope.exportedAt,
+        deviceId: envelope.deviceId,
+        revision: envelope.revision,
+        snapshot: snapshot
+    )
+}
+
+private func encodeEncryptedSyncPayload(
+    _ payload: VaultSyncPayload,
+    repository: FileVaultRepository,
+    password: String = "test-password"
+) throws -> String {
+    let encoder = makeSyncPayloadEncoder()
+    let masterKeyRecord = try #require(try repository.loadEnvelope()?.masterKeyRecord)
+    let crypto = VaultCryptoService()
+    let key = try crypto.verify(password: password, record: masterKeyRecord)
+    let envelope = TestEncryptedVaultSyncEnvelope(
+        version: payload.version,
+        exportedAt: payload.exportedAt,
+        deviceId: payload.deviceId,
+        revision: payload.revision,
+        masterKeyRecord: nil,
+        encryptedVault: try crypto.encrypt(try encoder.encode(payload.snapshot), key: key)
+    )
+    return String(data: try encoder.encode(envelope), encoding: .utf8) ?? "{}"
+}
+
+private struct TestEncryptedVaultSyncEnvelope: Codable {
+    var version: Int
+    var exportedAt: Date
+    var deviceId: String
+    var revision: Int
+    var masterKeyRecord: MasterKeyRecord?
+    var encryptedVault: EncryptedPayloadRecord
+}
+
+private func makeSyncPayloadEncoder() -> JSONEncoder {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    encoder.dateEncodingStrategy = .iso8601
+    return encoder
+}
+
+private func makeSyncPayloadDecoder() -> JSONDecoder {
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    return decoder
 }
 
 private func syncSettingsHTTPResult(url: URL, statusCode: Int, body: String = "") -> (Data, HTTPURLResponse) {

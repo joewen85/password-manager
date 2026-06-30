@@ -702,10 +702,20 @@ final class VaultStore {
                     masterPassword: masterPassword,
                     crypto: crypto
                 )
+                guard let vaultKey = activeVaultKey else {
+                    throw VaultSyncEngineError.invalidRemotePayload
+                }
+                let encryptedClient = EncryptedRemoteSyncClient(
+                    delegate: client,
+                    crypto: crypto,
+                    vaultKey: vaultKey,
+                    masterKeyRecord: masterKeyRecord,
+                    includeMasterKeyRecord: syncSettings.syncMasterKey
+                )
                 let result = try await syncEngine.synchronize(
                     localSnapshot: currentSnapshot(),
                     settings: syncSettings,
-                    client: client,
+                    client: encryptedClient,
                     remotePayloadDecoder: flutterDecoder.decode,
                     shouldCancelUpload: { [weak self] in
                         await MainActor.run {
@@ -713,6 +723,22 @@ final class VaultStore {
                         }
                     }
                 )
+                if encryptedClient.downloadedPlaintextRemote, !result.uploaded {
+                    guard revisionAtStart == localChangeRevision else {
+                        syncRequestedAgain = true
+                        continue
+                    }
+                    let migrationPayload = VaultSyncPayload(
+                        exportedAt: Date(),
+                        deviceId: syncSettings.deviceId,
+                        revision: result.settings.lastSyncRevision,
+                        snapshot: result.snapshot
+                    )
+                    let migration = await encryptedClient.upload(try syncEngine.encodePayload(migrationPayload))
+                    guard migration.statusCode >= 200 && migration.statusCode < 300 else {
+                        throw VaultSyncEngineError.uploadFailed(migration.statusCode)
+                    }
+                }
                 guard revisionAtStart == localChangeRevision else {
                     syncRequestedAgain = true
                     continue
