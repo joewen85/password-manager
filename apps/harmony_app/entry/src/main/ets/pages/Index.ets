@@ -35,7 +35,7 @@ import {
 
 type DraftType = 'credential' | 'server' | 'service';
 type ActivePanel = 'home' | 'category' | 'tag';
-type TopOverlayPanel = 'none' | 'create' | 'settings' | 'more' | 'backup' | 'clearData' | 'categorySelect' | 'categoryCreate' | 'tagCreate';
+type TopOverlayPanel = 'none' | 'create' | 'settings' | 'more' | 'backup' | 'clearData' | 'categorySelect' | 'categoryCreate' | 'tagCreate' | 'entryEditor';
 const MAX_UNLOCK_ATTEMPTS: number = 5;
 const WIDE_LAYOUT_MIN_WIDTH: number = 720;
 const EXPANDED_LAYOUT_MIN_WIDTH: number = 960;
@@ -181,6 +181,7 @@ struct Index {
   @State private tagDraft: string = '';
   @State private categoryDraft: string = '';
   @State private categoryCreateReturnToEntry: boolean = false;
+  @State private categorySelectReturnToEntry: boolean = false;
   @State private categoryRenameSource: string = '';
   @State private categoryDraftCustomFields: CustomField[] = [];
   @State private clearDataPassword: string = '';
@@ -545,6 +546,8 @@ struct Index {
         this.CategoryCreateOverlayPanel();
       } else if (this.topOverlayPanel === 'tagCreate') {
         this.TagCreateOverlayPanel();
+      } else if (this.topOverlayPanel === 'entryEditor') {
+        this.EntryEditorOverlayPanel();
       }
     }
     .width(this.floatingPanelWidth())
@@ -1408,17 +1411,36 @@ struct Index {
   @Builder
   private NewEntrySection() {
     Column({ space: 10 }) {
-      Row() {
-        Text(this.editingEntryId.length > 0 ? '编辑条目' : '新建条目')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(UI_TEXT);
-        Blank();
-        this.SmallGhostButton('关闭', () => {
-          this.clearEntryDraft();
-          this.entryEditorVisible = false;
-        });
+      this.FloatingPanelHeader(this.editingEntryId.length > 0 ? '编辑条目' : '新建条目');
+      this.EntryEditorFormContent();
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(UI_SURFACE)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(18);
+  }
+
+  @Builder
+  private EntryEditorOverlayPanel() {
+    Column({ space: 10 }) {
+      this.FloatingPanelHeader(this.editingEntryId.length > 0 ? '编辑条目' : '新建条目');
+      Scroll() {
+        Column({ space: 10 }) {
+          this.EntryEditorFormContent();
+        }
+        .width('100%')
+        .padding({ bottom: 4 });
       }
+      .width('100%')
+      .height(this.entryEditorPanelScrollHeight());
+    }
+    .width('100%');
+  }
+
+  @Builder
+  private EntryEditorFormContent() {
+    Column({ space: 10 }) {
       Text('条目类型').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
 
       Flex({ wrap: FlexWrap.Wrap }) {
@@ -1534,11 +1556,7 @@ struct Index {
         this.onSaveEntry();
       });
     }
-    .width('100%')
-    .padding(16)
-    .backgroundColor(UI_SURFACE)
-    .border({ width: 1, color: UI_STROKE })
-    .borderRadius(18);
+    .width('100%');
   }
 
   @Builder
@@ -2367,6 +2385,7 @@ struct Index {
     this.clearEntryDraft();
     this.entryEditorVisible = false;
     this.activePanel = 'home';
+    this.topOverlayPanel = 'none';
     this.refreshData();
     this.toast('已保存');
   }
@@ -2510,8 +2529,9 @@ struct Index {
     if (draft.length > 0 && this.categoryDraft.trim().length === 0) {
       if (this.categoryCreateReturnToEntry) {
         this.selectDraftCategory(draft);
+        this.restoreEntryEditorOverlay();
+        return;
       }
-      this.categoryCreateReturnToEntry = false;
       this.closeTopOverlay();
     }
   }
@@ -3424,6 +3444,9 @@ struct Index {
       this.closeTopOverlay();
       return;
     }
+    if (this.topOverlayPanel === 'entryEditor') {
+      this.clearEntryDraft();
+    }
     if (panel === 'create') {
       this.categoryRenameSource = '';
     }
@@ -3434,7 +3457,34 @@ struct Index {
   }
 
   private closeTopOverlay(): void {
+    if (this.topOverlayPanel === 'none' && this.entryEditorVisible) {
+      this.clearEntryDraft();
+      this.entryEditorVisible = false;
+      return;
+    }
+    if (this.topOverlayPanel === 'entryEditor') {
+      this.clearEntryDraft();
+      this.entryEditorVisible = false;
+    }
+    if ((this.topOverlayPanel === 'categorySelect' || this.topOverlayPanel === 'categoryCreate') &&
+      (this.categorySelectReturnToEntry || this.categoryCreateReturnToEntry)) {
+      this.restoreEntryEditorOverlay();
+      return;
+    }
+    this.categorySelectReturnToEntry = false;
+    this.categoryCreateReturnToEntry = false;
     this.topOverlayPanel = 'none';
+  }
+
+  private restoreEntryEditorOverlay(): void {
+    this.categorySelectReturnToEntry = false;
+    this.categoryCreateReturnToEntry = false;
+    this.categoryRenameSource = '';
+    this.categoryDraft = '';
+    this.categoryDraftCustomFields = [];
+    this.entryEditorVisible = false;
+    this.activePanel = 'home';
+    this.topOverlayPanel = 'entryEditor';
   }
 
   private openMainPanel(panel: ActivePanel): void {
@@ -3447,6 +3497,7 @@ struct Index {
   private prepareCreateCategoryOverlay(initialValue: string, returnToEntry: boolean = false): void {
     this.categoryDraft = initialValue;
     this.categoryCreateReturnToEntry = returnToEntry;
+    this.categorySelectReturnToEntry = false;
     this.categoryRenameSource = '';
     this.categoryDraftCustomFields = [];
     this.topOverlayPanel = 'categoryCreate';
@@ -3459,6 +3510,7 @@ struct Index {
 
   private openCategorySelectOverlay(): void {
     this.draftCategorySearch = '';
+    this.categorySelectReturnToEntry = this.topOverlayPanel === 'entryEditor';
     this.topOverlayPanel = 'categorySelect';
   }
 
@@ -3509,6 +3561,9 @@ struct Index {
     if (width < WIDE_LAYOUT_MIN_WIDTH) {
       return Math.max(width - 32, 320);
     }
+    if (this.topOverlayPanel === 'entryEditor') {
+      return this.useExpandedLayout() ? 620 : 560;
+    }
     if (this.topOverlayPanel === 'settings') {
       return 520;
     }
@@ -3546,6 +3601,10 @@ struct Index {
   }
 
   private categoryCreatePanelScrollHeight(): number {
+    return Math.max(this.floatingPanelMaxHeight() - 58, 260);
+  }
+
+  private entryEditorPanelScrollHeight(): number {
     return Math.max(this.floatingPanelMaxHeight() - 58, 260);
   }
 
@@ -3808,15 +3867,15 @@ struct Index {
     this.applyCategoryTemplateToDraft(this.draftCategory);
     this.activePanel = 'home';
     this.selectedEntryId = '';
-    this.entryEditorVisible = true;
-    this.closeTopOverlay();
+    this.entryEditorVisible = false;
+    this.topOverlayPanel = 'entryEditor';
   }
 
   private startEditEntry(entry: VaultEntry): void {
     this.clearEntryDraft();
     this.activePanel = 'home';
-    this.entryEditorVisible = true;
-    this.closeTopOverlay();
+    this.entryEditorVisible = false;
+    this.topOverlayPanel = 'entryEditor';
     this.editingEntryId = entry.id;
     this.selectedEntryId = entry.id;
     this.exportEntryId = '';
