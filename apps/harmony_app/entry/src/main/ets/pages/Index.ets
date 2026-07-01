@@ -297,6 +297,9 @@ struct Index {
         .fontColor(UI_TEXT)
         .placeholderColor(UI_MUTED)
         .caretColor(UI_ACCENT)
+        .onFocus(() => {
+          this.scheduleKeyboardAvoidAreaSync();
+        })
         .border({ width: 1, color: UI_STROKE })
         .borderRadius(12)
         .padding({ left: 12, right: 12 });
@@ -310,6 +313,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 12, right: 12 });
@@ -324,6 +330,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 12, right: 12 });
@@ -740,6 +749,9 @@ struct Index {
         .fontColor(UI_TEXT)
         .placeholderColor(UI_MUTED)
         .caretColor(UI_ACCENT)
+        .onFocus(() => {
+          this.scheduleKeyboardAvoidAreaSync();
+        })
         .border({ width: 1, color: UI_STROKE })
         .borderRadius(12)
         .padding({ left: 14, right: 14 });
@@ -762,6 +774,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -846,6 +861,9 @@ struct Index {
             .fontColor(UI_TEXT)
             .placeholderColor(UI_MUTED)
             .caretColor(UI_ACCENT)
+            .onFocus(() => {
+              this.scheduleKeyboardAvoidAreaSync();
+            })
             .border({ width: 1, color: UI_STROKE })
             .borderRadius(12)
             .padding({ left: 14, right: 14 });
@@ -890,6 +908,9 @@ struct Index {
         .fontColor(UI_TEXT)
         .placeholderColor(UI_MUTED)
         .caretColor(UI_ACCENT)
+        .onFocus(() => {
+          this.scheduleKeyboardAvoidAreaSync();
+        })
         .border({ width: 1, color: UI_STROKE })
         .borderRadius(12)
         .padding({ left: 14, right: 14 });
@@ -1011,6 +1032,9 @@ struct Index {
         .fontColor(UI_TEXT)
         .placeholderColor(UI_MUTED)
         .caretColor(UI_ACCENT)
+        .onFocus(() => {
+          this.scheduleKeyboardAvoidAreaSync();
+        })
         .border({ width: 1, color: UI_STROKE })
         .borderRadius(12)
         .padding({ left: 14, right: 14 });
@@ -1040,6 +1064,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1057,6 +1084,9 @@ struct Index {
         .fontColor(UI_TEXT)
         .placeholderColor(UI_MUTED)
         .caretColor(UI_ACCENT)
+        .onFocus(() => {
+          this.scheduleKeyboardAvoidAreaSync();
+        })
         .border({ width: 1, color: UI_STROKE })
         .borderRadius(12)
         .padding({ left: 14, right: 14 });
@@ -1127,6 +1157,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1137,6 +1170,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1147,6 +1183,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1158,6 +1197,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1172,6 +1214,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1183,6 +1228,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1201,6 +1249,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1212,6 +1263,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1222,6 +1276,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1232,6 +1289,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1243,6 +1303,9 @@ struct Index {
             .fontColor(UI_TEXT)
             .placeholderColor(UI_MUTED)
             .caretColor(UI_ACCENT)
+            .onFocus(() => {
+              this.scheduleKeyboardAvoidAreaSync();
+            })
             .border({ width: 1, color: UI_STROKE })
             .borderRadius(12)
             .padding({ left: 14, right: 14 });
@@ -1254,6 +1317,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1264,6 +1330,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1286,6 +1355,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1440,6 +1512,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(14)
           .padding({ left: 14, right: 14 });
@@ -1519,6 +1594,9 @@ struct Index {
         .fontColor(UI_TEXT)
         .placeholderColor(UI_MUTED)
         .caretColor(UI_ACCENT)
+        .onFocus(() => {
+          this.scheduleKeyboardAvoidAreaSync();
+        })
         .border({ width: 1, color: UI_STROKE })
         .borderRadius(12)
         .padding({ left: 14, right: 14 });
@@ -1557,6 +1635,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1645,6 +1726,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -3017,6 +3101,9 @@ struct Index {
           .fontColor(UI_TEXT)
           .placeholderColor(UI_MUTED)
           .caretColor(UI_ACCENT)
+          .onFocus(() => {
+            this.scheduleKeyboardAvoidAreaSync();
+          })
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -3077,6 +3164,9 @@ struct Index {
             .fontColor(UI_TEXT)
             .placeholderColor(UI_MUTED)
             .caretColor(UI_ACCENT)
+            .onFocus(() => {
+              this.scheduleKeyboardAvoidAreaSync();
+            })
             .border({ width: 1, color: UI_STROKE })
             .borderRadius(12)
             .padding({ left: 14, right: 14 })
@@ -3127,6 +3217,9 @@ struct Index {
             .fontColor(UI_TEXT)
             .placeholderColor(UI_MUTED)
             .caretColor(UI_ACCENT)
+            .onFocus(() => {
+              this.scheduleKeyboardAvoidAreaSync();
+            })
             .border({ width: 1, color: UI_STROKE })
             .borderRadius(12)
             .padding({ left: 14, right: 14 })
@@ -3140,6 +3233,9 @@ struct Index {
             .fontColor(UI_TEXT)
             .placeholderColor(UI_MUTED)
             .caretColor(UI_ACCENT)
+            .onFocus(() => {
+              this.scheduleKeyboardAvoidAreaSync();
+            })
             .border({ width: 1, color: UI_STROKE })
             .borderRadius(12)
             .padding({ left: 14, right: 14 })
@@ -3484,6 +3580,9 @@ struct Index {
     if (this.shouldUpdateKeyboardBaselineViewportHeight(width, height, previousWidth)) {
       this.keyboardBaselineViewportHeight = height;
     }
+    if (this.appWindow !== null && this.inputFloatingPanelActive()) {
+      this.syncKeyboardAvoidArea(this.appWindow);
+    }
   }
 
   private shouldUpdateKeyboardBaselineViewportHeight(width: number, height: number, previousWidth: number): boolean {
@@ -3530,12 +3629,22 @@ struct Index {
   private syncKeyboardAvoidArea(currentWindow: window.Window): void {
     try {
       const avoidArea = currentWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_KEYBOARD);
-      if (avoidArea.visible) {
-        this.keyboardHeight = Math.max(0, avoidArea.bottomRect.height);
-      }
+      const keyboardHeight = Math.max(0, avoidArea.bottomRect.height);
+      this.keyboardHeight = avoidArea.visible || keyboardHeight > 0 ? keyboardHeight : 0;
     } catch (error) {
       console.error(`Keyboard avoid area unavailable: ${error}`);
     }
+  }
+
+  private scheduleKeyboardAvoidAreaSync(): void {
+    if (this.appWindow === null) {
+      return;
+    }
+    setTimeout(() => {
+      if (this.appWindow !== null) {
+        this.syncKeyboardAvoidArea(this.appWindow);
+      }
+    }, 80);
   }
 
   private lengthToNumber(value: Length): number {
@@ -3603,8 +3712,23 @@ struct Index {
       this.topOverlayPanel === 'settings';
   }
 
+  private inputFloatingPanelActive(): boolean {
+    return this.floatingPanelUsesAvailableHeight();
+  }
+
+  private viewportCompressedByKeyboard(): boolean {
+    if (!this.inputFloatingPanelActive() || this.keyboardBaselineViewportHeight <= 0 || this.viewportHeight <= 0) {
+      return false;
+    }
+    return this.keyboardBaselineViewportHeight - this.viewportHeight > KEYBOARD_BASELINE_DROP_GUARD;
+  }
+
+  private floatingPanelKeyboardMode(): boolean {
+    return this.keyboardVisible() || this.viewportCompressedByKeyboard();
+  }
+
   private floatingPanelY(): number {
-    if (this.keyboardVisible()) {
+    if (this.floatingPanelKeyboardMode()) {
       return 8;
     }
     if (this.viewportHeight > 0 && this.viewportHeight < 560) {
@@ -3614,7 +3738,7 @@ struct Index {
   }
 
   private floatingPanelBottomGap(): number {
-    return this.keyboardVisible() ? 8 : 32;
+    return this.floatingPanelKeyboardMode() ? 8 : 32;
   }
 
   private keyboardVisible(): boolean {
@@ -3622,13 +3746,17 @@ struct Index {
   }
 
   private effectiveKeyboardInset(): number {
-    if (this.keyboardHeight <= 0) {
+    if (!this.floatingPanelKeyboardMode()) {
       return 0;
     }
-    if (this.viewportAlreadyAvoidsKeyboard()) {
-      return 0;
+    if (this.keyboardHeight > 0) {
+      if (this.viewportAlreadyAvoidsKeyboard()) {
+        if (!this.floatingPanelUsesKeyboardBaselineHeight()) {
+          return 0;
+        }
+      }
     }
-    const height = this.viewportHeight > 0 ? this.viewportHeight : 720;
+    const height = this.floatingPanelLayoutHeight();
     return Math.min(this.remainingKeyboardOverlap(), Math.max(height - 220, 0));
   }
 
@@ -3636,12 +3764,15 @@ struct Index {
     if (this.keyboardHeight <= 0 || this.keyboardBaselineViewportHeight <= 0 || this.viewportHeight <= 0) {
       return false;
     }
-    return this.remainingKeyboardOverlap() <= KEYBOARD_INSET_TOLERANCE;
+    return this.keyboardHeight - this.viewportKeyboardShrink() <= KEYBOARD_INSET_TOLERANCE;
   }
 
   private remainingKeyboardOverlap(): number {
     if (this.keyboardHeight <= 0) {
-      return 0;
+      return this.viewportKeyboardShrink();
+    }
+    if (this.floatingPanelUsesKeyboardBaselineHeight()) {
+      return this.keyboardHeight;
     }
     return Math.max(this.keyboardHeight - this.viewportKeyboardShrink(), 0);
   }
@@ -3653,15 +3784,30 @@ struct Index {
     return Math.max(this.keyboardBaselineViewportHeight - this.viewportHeight, 0);
   }
 
-  private floatingPanelMaxHeight(): number {
+  private floatingPanelUsesKeyboardBaselineHeight(): boolean {
+    const height = this.viewportHeight > 0 ? this.viewportHeight : 0;
+    return this.floatingPanelKeyboardMode() &&
+      this.keyboardBaselineViewportHeight > 0 &&
+      this.keyboardBaselineViewportHeight > height;
+  }
+
+  private floatingPanelLayoutHeight(): number {
     const height = this.viewportHeight > 0 ? this.viewportHeight : 720;
+    if (this.floatingPanelUsesKeyboardBaselineHeight()) {
+      return this.keyboardBaselineViewportHeight;
+    }
+    return height;
+  }
+
+  private floatingPanelMaxHeight(): number {
+    const height = this.floatingPanelLayoutHeight();
     const availableHeight =
       height - this.floatingPanelY() - this.floatingPanelBottomGap() - this.effectiveKeyboardInset();
-    return Math.max(availableHeight, this.keyboardVisible() ? 140 : 320);
+    return Math.max(availableHeight, this.floatingPanelKeyboardMode() ? 140 : 320);
   }
 
   private settingsPanelScrollHeight(): number {
-    return Math.max(this.floatingPanelMaxHeight() - 58, this.keyboardVisible() ? 96 : 220);
+    return Math.max(this.floatingPanelMaxHeight() - 58, this.floatingPanelKeyboardMode() ? 96 : 220);
   }
 
   private backupListHeight(): number {
@@ -3673,11 +3819,11 @@ struct Index {
   }
 
   private categoryCreatePanelScrollHeight(): number {
-    return Math.max(this.floatingPanelMaxHeight() - 58, this.keyboardVisible() ? 120 : 260);
+    return Math.max(this.floatingPanelMaxHeight() - 58, this.floatingPanelKeyboardMode() ? 120 : 260);
   }
 
   private entryEditorPanelScrollHeight(): number {
-    return Math.max(this.floatingPanelMaxHeight() - 58, this.keyboardVisible() ? 120 : 260);
+    return Math.max(this.floatingPanelMaxHeight() - 58, this.floatingPanelKeyboardMode() ? 120 : 260);
   }
 
   private categoryDisplayName(category: string): string {

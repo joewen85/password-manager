@@ -280,10 +280,16 @@ function checkKeyboardAvoidanceContract() {
   assert(!page.includes('height > this.keyboardBaselineViewportHeight || this.keyboardHeight <= 0'), 'Harmony viewport baseline is not overwritten by a shrunken keyboard viewport');
   assertIncludes(page, 'private remainingKeyboardOverlap(): number', 'Harmony page subtracts only keyboard overlap not already covered by viewport resize');
   assertIncludes(page, 'return Math.min(this.remainingKeyboardOverlap(), Math.max(height - 220, 0));', 'Harmony floating panel height only subtracts remaining keyboard overlap');
+  assertIncludes(page, 'private viewportCompressedByKeyboard(): boolean', 'Harmony page treats a compressed input overlay viewport as keyboard mode');
+  assertIncludes(page, 'private floatingPanelKeyboardMode(): boolean', 'Harmony floating panels do not depend solely on keyboardHeight events');
+  assertIncludes(page, 'return this.keyboardVisible() || this.viewportCompressedByKeyboard();', 'Harmony keyboard mode falls back to viewport compression');
+  assertIncludes(page, 'this.syncKeyboardAvoidArea(this.appWindow);', 'Harmony page resyncs keyboard avoid area after viewport changes');
+  assertIncludes(page, 'this.scheduleKeyboardAvoidAreaSync();', 'Harmony input focus schedules keyboard avoid-area resync');
+  assertIncludes(page, '.onFocus(() => {', 'Harmony input fields resync keyboard avoid-area when focused');
   assertIncludes(page, 'private viewportAlreadyAvoidsKeyboard(): boolean', 'Harmony page detects when viewport already resized for keyboard');
   assertIncludes(page, 'if (this.viewportAlreadyAvoidsKeyboard())', 'Harmony page avoids subtracting keyboard height twice');
   assertIncludes(page, 'return this.keyboardHeight > 0;', 'Harmony page keeps keyboard-visible layout even when inset is already applied');
-  assertIncludes(page, 'this.keyboardVisible() ? 120 : 260', 'Harmony input-heavy panel scroll areas shrink for keyboard mode');
+  assertIncludes(page, 'this.floatingPanelKeyboardMode() ? 120 : 260', 'Harmony input-heavy panel scroll areas shrink for keyboard mode');
 }
 
 function main() {
