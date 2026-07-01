@@ -2,47 +2,47 @@
   "color": [
     {
       "name": "start_window_background",
-      "value": "#F4F6F0"
+      "value": "#101318"
     },
     {
       "name": "ui_background",
-      "value": "#F4F6F8"
+      "value": "#101318"
     },
     {
       "name": "ui_surface",
-      "value": "#FFFFFF"
+      "value": "#181D25"
     },
     {
       "name": "ui_surface_alt",
-      "value": "#F8FAFC"
+      "value": "#222A35"
     },
     {
       "name": "ui_text",
-      "value": "#181F2A"
+      "value": "#F4F7FB"
     },
     {
       "name": "ui_muted",
-      "value": "#636F80"
+      "value": "#A7B1C2"
     },
     {
       "name": "ui_stroke",
-      "value": "#DAE1EA"
+      "value": "#364252"
     },
     {
       "name": "ui_accent",
-      "value": "#245DC4"
+      "value": "#7AA8FF"
     },
     {
       "name": "ui_selected",
-      "value": "#E8F0FF"
+      "value": "#1E365F"
     },
     {
       "name": "ui_danger",
-      "value": "#B42318"
+      "value": "#FF8A80"
     },
     {
       "name": "ui_danger_surface",
-      "value": "#FFF1F0"
+      "value": "#3A1E20"
     }
   ]
 }

@@ -39,16 +39,16 @@ type TopOverlayPanel = 'none' | 'create' | 'settings' | 'more' | 'backup' | 'cle
 const MAX_UNLOCK_ATTEMPTS: number = 5;
 const WIDE_LAYOUT_MIN_WIDTH: number = 720;
 const EXPANDED_LAYOUT_MIN_WIDTH: number = 960;
-const UI_BACKGROUND: string = '#F4F6F8';
-const UI_SURFACE: string = '#FFFFFF';
-const UI_SURFACE_ALT: string = '#F8FAFC';
-const UI_TEXT: string = '#181F2A';
-const UI_MUTED: string = '#636F80';
-const UI_STROKE: string = '#DAE1EA';
-const UI_ACCENT: string = '#245DC4';
-const UI_SELECTED: string = '#E8F0FF';
-const UI_DANGER: string = '#B42318';
-const UI_DANGER_SURFACE: string = '#FFF1F0';
+const UI_BACKGROUND: Resource = $r('app.color.ui_background');
+const UI_SURFACE: Resource = $r('app.color.ui_surface');
+const UI_SURFACE_ALT: Resource = $r('app.color.ui_surface_alt');
+const UI_TEXT: Resource = $r('app.color.ui_text');
+const UI_MUTED: Resource = $r('app.color.ui_muted');
+const UI_STROKE: Resource = $r('app.color.ui_stroke');
+const UI_ACCENT: Resource = $r('app.color.ui_accent');
+const UI_SELECTED: Resource = $r('app.color.ui_selected');
+const UI_DANGER: Resource = $r('app.color.ui_danger');
+const UI_DANGER_SURFACE: Resource = $r('app.color.ui_danger_surface');
 
 interface SearchTerm {
   field: string;
@@ -818,7 +818,7 @@ struct Index {
             .borderRadius(12)
             .padding({ left: 14, right: 14 });
           if (!this.categoryCreateReturnToEntry) {
-            Text('快捷字段')
+            Text('字段快捷键')
               .fontSize(12)
               .fontWeight(FontWeight.Bold)
               .fontColor(UI_MUTED);
@@ -1638,7 +1638,7 @@ struct Index {
 
   @Builder
   private CategorySection() {
-    Column({ space: 10 }) {
+    Column({ space: 12 }) {
       Row() {
         Text('分类管理')
           .fontSize(22)
@@ -1658,39 +1658,19 @@ struct Index {
         });
       }
 
-      Row({ space: 8 }) {
-        TextInput({ placeholder: '新增分类', text: $$this.categoryDraft })
-          .layoutWeight(1)
+      Column({ space: 10 }) {
+        Text(this.categoryRenameSource.length > 0 ? `编辑分类: ${this.categoryRenameSource}` : '新增分类')
+          .fontSize(12)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_MUTED);
+        TextInput({ placeholder: '分类名称（必填）', text: $$this.categoryDraft })
+          .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
-        Text('添加')
-          .fontSize(13)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#FFFFFF')
-          .height(48)
-          .padding({ left: 16, right: 16 })
-          .textAlign(TextAlign.Center)
-          .backgroundColor(UI_ACCENT)
-          .borderRadius(12)
-          .onClick(() => this.onAddCategory());
-        Text(this.categoryRenameSource.length > 0 ? '保存' : '重命名')
-          .fontSize(13)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(UI_TEXT)
-          .height(48)
-          .padding({ left: 14, right: 14 })
-          .textAlign(TextAlign.Center)
-          .backgroundColor(UI_SURFACE_ALT)
-          .border({ width: 1, color: UI_STROKE })
-          .borderRadius(12)
-          .onClick(() => this.onRenameCategory());
-      }
-
-      if (this.categoryRenameSource.length === 0) {
-        Text('快捷字段')
+        Text('字段快捷键')
           .fontSize(12)
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_MUTED);
@@ -1706,83 +1686,40 @@ struct Index {
           });
         }
         this.CategoryDraftCustomFieldsEditor();
-      }
-
-      if (this.categoryRenameSource.length > 0) {
-        Row({ space: 8 }) {
-          Text(`当前重命名: ${this.categoryRenameSource}`)
-            .fontSize(12)
-            .fontColor(UI_MUTED);
-          Text('取消')
-            .fontSize(12)
-            .fontColor(UI_ACCENT)
-            .onClick(() => {
-              this.categoryRenameSource = '';
-              this.categoryDraft = '';
-              this.categoryDraftCustomFields = [];
-            });
-        }
-      }
-
-      if (this.categoryRenameSource.length > 0) {
-        Text('字段快捷键')
-          .fontSize(12)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(UI_MUTED);
-        Flex({ wrap: FlexWrap.Wrap }) {
-          this.ChoiceChip('服务器', this.categoryPresetSelected(this.categoryRenameSource, CategoryTypePreset.SERVER), () => {
-            this.onApplyCategoryPreset(this.categoryRenameSource, CategoryTypePreset.SERVER);
-          });
-          this.ChoiceChip('服务', this.categoryPresetSelected(this.categoryRenameSource, CategoryTypePreset.SERVICE), () => {
-            this.onApplyCategoryPreset(this.categoryRenameSource, CategoryTypePreset.SERVICE);
-          });
-          this.ChoiceChip('账号', this.categoryPresetSelected(this.categoryRenameSource, CategoryTypePreset.ACCOUNT), () => {
-            this.onApplyCategoryPreset(this.categoryRenameSource, CategoryTypePreset.ACCOUNT);
+        if (this.categoryRenameSource.length > 0) {
+          Row({ space: 8 }) {
+            Column() {
+              this.SecondaryTextButton('取消编辑', () => {
+                this.cancelCategoryEdit();
+              });
+            }
+            .layoutWeight(1);
+            Column() {
+              this.PrimaryTextButton('保存分类', () => {
+                this.onRenameCategory();
+              });
+            }
+            .layoutWeight(1);
+          }
+        } else {
+          this.PrimaryTextButton('添加分类', () => {
+            this.onAddCategory();
           });
         }
-        Text(`字段: ${this.templateFieldNames(this.categoryRenameSource).join(', ')}`)
-          .fontSize(12)
-          .fontColor(UI_MUTED)
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis });
       }
+      .width('100%')
+      .padding(12)
+      .backgroundColor(UI_SURFACE_ALT)
+      .border({ width: 1, color: UI_STROKE })
+      .borderRadius(14);
 
       if (this.categories.length > 0) {
-        Flex({ wrap: FlexWrap.Wrap }) {
+        Column({ space: 10 }) {
           ForEach(this.categories, (category: string) => {
-            Row({ space: 4 }) {
-              Text(category).fontSize(13);
-              Button('导出')
-                .fontSize(11)
-                .height(22)
-                .onClick(() => {
-                  this.onExportCategory(category);
-                });
-              Text('删除')
-                .fontSize(11)
-                .fontWeight(FontWeight.Bold)
-                .fontColor(UI_DANGER)
-                .height(24)
-                .padding({ left: 8, right: 8 })
-                .textAlign(TextAlign.Center)
-                .backgroundColor(UI_DANGER_SURFACE)
-                .borderRadius(999)
-                .onClick(() => {
-                  this.onDeleteCategory(category);
-                });
-            }
-            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .margin({ right: 6, bottom: 6 })
-            .backgroundColor(this.categoryRenameSource === category ? UI_SELECTED : UI_SURFACE_ALT)
-            .border({ width: 1, color: this.categoryRenameSource === category ? UI_ACCENT : UI_STROKE })
-            .borderRadius(999)
-            .onClick(() => {
-              this.categoryRenameSource = category;
-              this.categoryDraft = category;
-              this.categoryDraftCustomFields = [];
-            });
+            this.CategoryListRow(category);
           }, (category: string) => category);
         }
+        .width('100%');
       } else {
         Text('暂无分类')
           .fontSize(13)
@@ -1794,6 +1731,66 @@ struct Index {
     .backgroundColor(UI_SURFACE)
     .border({ width: 1, color: UI_STROKE })
     .borderRadius(18);
+  }
+
+  @Builder
+  private CategoryListRow(category: string) {
+    Column({ space: 8 }) {
+      Row({ space: 8 }) {
+        Text(category)
+          .fontSize(16)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_TEXT)
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis });
+        Text(`${this.categoryEntryCount(category)} 条`)
+          .fontSize(11)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.categoryRenameSource === category ? UI_ACCENT : UI_MUTED)
+          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+          .backgroundColor(this.categoryRenameSource === category ? UI_SELECTED : UI_SURFACE)
+          .border({ width: 1, color: this.categoryRenameSource === category ? UI_ACCENT : UI_STROKE })
+          .borderRadius(999);
+      }
+      Text(`字段: ${this.categoryFieldSummary(category)}`)
+        .fontSize(12)
+        .fontColor(UI_MUTED)
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis });
+      Row({ space: 8 }) {
+        this.CategoryRowActionButton('编辑', true, false, () => {
+          this.beginEditCategory(category);
+        });
+        this.CategoryRowActionButton('导出', false, false, () => {
+          this.onExportCategory(category);
+        });
+        this.CategoryRowActionButton('删除', false, true, () => {
+          this.onDeleteCategory(category);
+        });
+      }
+      .width('100%');
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(this.categoryRenameSource === category ? UI_SELECTED : UI_SURFACE_ALT)
+    .border({ width: 1, color: this.categoryRenameSource === category ? UI_ACCENT : UI_STROKE })
+    .borderRadius(14);
+  }
+
+  @Builder
+  private CategoryRowActionButton(label: string, primary: boolean, danger: boolean, action: () => void) {
+    Text(label)
+      .fontSize(12)
+      .fontWeight(FontWeight.Bold)
+      .fontColor(primary ? '#FFFFFF' : (danger ? UI_DANGER : UI_ACCENT))
+      .height(34)
+      .layoutWeight(1)
+      .textAlign(TextAlign.Center)
+      .backgroundColor(primary ? UI_ACCENT : (danger ? UI_DANGER_SURFACE : UI_SURFACE))
+      .border({ width: 1, color: primary ? UI_ACCENT : (danger ? UI_DANGER : UI_STROKE) })
+      .borderRadius(10)
+      .onClick(action);
   }
 
   @Builder
@@ -2555,24 +2552,30 @@ struct Index {
     const source = this.categoryRenameSource.trim();
     const target = this.categoryDraft.trim();
     if (source.length === 0) {
-      this.toast('请先点选一个分类再重命名');
+      this.toast('请先选择要编辑的分类');
       return;
     }
     if (target.length === 0) {
-      this.toast('请输入新的分类名称');
+      this.toast('请输入分类名称');
       return;
     }
-    await this.controller().renameCategory(source, target);
-    if (this.selectedCategory === source) {
+    if (this.categoryNameExistsBesides(source, target)) {
+      this.toast('分类已存在');
+      return;
+    }
+    if (source !== target) {
+      await this.controller().renameCategory(source, target);
+    }
+    await this.controller().saveCategoryTemplate(target, this.categoryDraftCustomFieldNames());
+    if (this.sameCategoryName(this.selectedCategory, source)) {
       this.selectedCategory = target;
     }
-    if (this.draftCategory.trim() === source) {
+    if (this.sameCategoryName(this.draftCategory, source)) {
       this.draftCategory = target;
     }
-    this.categoryRenameSource = '';
-    this.categoryDraft = '';
-    this.categoryDraftCustomFields = [];
+    this.cancelCategoryEdit();
     this.refreshData();
+    this.toast('分类已保存');
   }
 
   private async onDeleteTag(tag: string): Promise<void> {
@@ -2591,10 +2594,9 @@ struct Index {
     if (this.draftCategory.trim() === category) {
       this.draftCategory = '';
     }
-    if (this.categoryRenameSource === category) {
-      this.categoryRenameSource = '';
+    if (this.sameCategoryName(this.categoryRenameSource, category)) {
+      this.cancelCategoryEdit();
     }
-    this.categoryDraftCustomFields = [];
     this.refreshData();
   }
 
@@ -2714,6 +2716,73 @@ struct Index {
       (template: CategoryTemplate) => template.category.trim().toLowerCase() === clean,
     );
     return found === undefined ? null : found;
+  }
+
+  private beginEditCategory(category: string): void {
+    const clean = category.trim();
+    if (clean.length === 0) {
+      return;
+    }
+    this.categoryRenameSource = clean;
+    this.categoryDraft = clean;
+    this.categoryDraftCustomFields = this.categoryTemplateDraftFields(clean);
+  }
+
+  private cancelCategoryEdit(): void {
+    this.categoryRenameSource = '';
+    this.categoryDraft = '';
+    this.categoryDraftCustomFields = [];
+  }
+
+  private categoryTemplateDraftFields(category: string): CustomField[] {
+    const fields: CustomField[] = [];
+    const seen = new Set<string>();
+    this.templateFieldNames(category).forEach((fieldName: string) => {
+      const name = fieldName.trim();
+      const key = name.toLowerCase();
+      if (name.length === 0 || this.isBaseCategoryField(name) || seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      fields.push({
+        id: this.nextUiId(),
+        name: name,
+        value: '',
+      });
+    });
+    return fields;
+  }
+
+  private isBaseCategoryField(name: string): boolean {
+    const key = name.trim().toLowerCase();
+    return key === '名称' || key === '备注';
+  }
+
+  private categoryFieldSummary(category: string): string {
+    return this.templateFieldNames(category).join('、');
+  }
+
+  private categoryEntryCount(category: string): number {
+    const clean = category.trim().toLowerCase();
+    if (clean.length === 0) {
+      return 0;
+    }
+    return this.entries.filter((entry: VaultEntry) =>
+      !entry.isDeleted && this.entryCategory(entry).toLowerCase() === clean,
+    ).length;
+  }
+
+  private sameCategoryName(left: string, right: string): boolean {
+    return left.trim().toLowerCase() === right.trim().toLowerCase();
+  }
+
+  private categoryNameExistsBesides(source: string, target: string): boolean {
+    const sourceKey = source.trim().toLowerCase();
+    const targetKey = target.trim().toLowerCase();
+    return this.categories.some((category: string) => {
+      const key = category.trim().toLowerCase();
+      return key === targetKey && key !== sourceKey;
+    });
   }
 
   private async onSaveSyncSettings(): Promise<void> {
@@ -3033,28 +3102,12 @@ struct Index {
   @Builder
   private CategoryDraftCustomFieldsEditor() {
     Column({ space: 6 }) {
-      Row() {
-        Text('自定义字段')
-          .fontSize(12)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(UI_MUTED);
-        Blank();
-        Text('+')
-          .width(42)
-          .height(34)
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(UI_ACCENT)
-          .textAlign(TextAlign.Center)
-          .backgroundColor(UI_SURFACE_ALT)
-          .border({ width: 1, color: UI_STROKE })
-          .borderRadius(10)
-          .onClick(() => {
-            this.addCategoryDraftCustomField();
-          });
-      }
+      Text('自定义字段')
+        .fontSize(12)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_MUTED);
       if (this.categoryDraftCustomFields.length === 0) {
-        Text('字段默认只有名称和备注，点 + 添加自定义字段')
+        Text('字段默认只有名称和备注，可在下方添加自定义字段')
           .fontSize(12)
           .fontColor(UI_MUTED);
       }
@@ -3090,31 +3143,18 @@ struct Index {
         .border({ width: 1, color: UI_STROKE })
         .borderRadius(12);
       }, (field: CustomField) => field.id);
+      this.AddFieldButton('添加字段', () => {
+        this.addCategoryDraftCustomField();
+      });
     }
   }
 
   @Builder
   private CustomFieldsEditor() {
     Column({ space: 6 }) {
-      Row() {
-        Text('字段').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
-        Blank();
-        Text('+')
-          .width(42)
-          .height(34)
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(UI_ACCENT)
-          .textAlign(TextAlign.Center)
-          .backgroundColor(UI_SURFACE_ALT)
-          .border({ width: 1, color: UI_STROKE })
-          .borderRadius(10)
-          .onClick(() => {
-            this.addDraftCustomField();
-          });
-      }
+      Text('字段').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
       if (this.draftCustomFields.length === 0) {
-        Text('字段默认只有名称和备注，点 + 添加自定义字段')
+        Text('字段默认只有名称和备注，可在下方添加自定义字段')
           .fontSize(12)
           .fontColor(UI_MUTED);
       }
@@ -3158,7 +3198,36 @@ struct Index {
         .border({ width: 1, color: UI_STROKE })
         .borderRadius(12);
       }, (field: CustomField) => field.id);
+      this.AddFieldButton('添加字段', () => {
+        this.addDraftCustomField();
+      });
     }
+  }
+
+  @Builder
+  private AddFieldButton(label: string, action: () => void) {
+    Row({ space: 8 }) {
+      Text('+')
+        .width(28)
+        .height(28)
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_ACCENT)
+        .textAlign(TextAlign.Center)
+        .backgroundColor(UI_SELECTED)
+        .borderRadius(8);
+      Text(label)
+        .fontSize(14)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_ACCENT);
+    }
+    .height(44)
+    .width('100%')
+    .padding({ left: 12, right: 12 })
+    .backgroundColor(UI_SURFACE_ALT)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(12)
+    .onClick(action);
   }
 
   @Builder

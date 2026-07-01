@@ -14,6 +14,8 @@ const files = {
   controller: 'apps/harmony_app/entry/src/main/ets/src/service/VaultController.ets',
   syncTypes: 'apps/harmony_app/entry/src/main/ets/src/sync/SyncTypes.ets',
   indexPage: 'apps/harmony_app/entry/src/main/ets/pages/Index.ets',
+  baseColors: 'apps/harmony_app/entry/src/main/resources/base/element/color.json',
+  darkColors: 'apps/harmony_app/entry/src/main/resources/dark/element/color.json',
 };
 
 const expectedBundleName = 'life.devops.passwordmanager';
@@ -61,6 +63,12 @@ function assert(condition, message) {
 
 function assertIncludes(text, needle, message) {
   assert(text.includes(needle), `${message} (${needle})`);
+}
+
+function assertBefore(text, beforeNeedle, afterNeedle, message) {
+  const beforeIndex = text.indexOf(beforeNeedle);
+  const afterIndex = text.indexOf(afterNeedle);
+  assert(beforeIndex >= 0 && afterIndex >= 0 && beforeIndex < afterIndex, message);
 }
 
 function assertMatches(text, pattern, message) {
@@ -149,6 +157,29 @@ function checkSyncSettingsContract() {
   assertIncludes(syncTypes, 'return `${ts}_${rand}`;', 'Harmony generated device IDs use underscore separators');
 }
 
+function checkThemeResourcesContract() {
+  const requiredColorNames = [
+    'ui_background',
+    'ui_surface',
+    'ui_surface_alt',
+    'ui_text',
+    'ui_muted',
+    'ui_stroke',
+    'ui_accent',
+    'ui_selected',
+    'ui_danger',
+    'ui_danger_surface',
+  ];
+  const baseNames = new Set((parseJson5(files.baseColors).color ?? []).map((item) => item.name));
+  const darkNames = new Set((parseJson5(files.darkColors).color ?? []).map((item) => item.name));
+  const page = read(files.indexPage);
+  requiredColorNames.forEach((name) => {
+    assert(baseNames.has(name), `Light theme defines ${name}`);
+    assert(darkNames.has(name), `Dark theme defines ${name}`);
+    assertIncludes(page, `$r('app.color.${name}')`, `Harmony page uses ${name} resource`);
+  });
+}
+
 function checkEntryEditorUiContract() {
   const page = read(files.indexPage);
   assertMatches(
@@ -173,9 +204,39 @@ function checkEntryEditorUiContract() {
   );
   assertMatches(
     page,
-    /if\s*\(\s*!this\.categoryCreateReturnToEntry\s*\)\s*{\s*Text\('快捷字段'\)/s,
+    /if\s*\(\s*!this\.categoryCreateReturnToEntry\s*\)\s*{\s*Text\('字段快捷键'\)/s,
     'Harmony category creation from entry editor hides preset shortcut chips',
   );
+  const categoryDraftEditor = page.slice(
+    page.indexOf('private CategoryDraftCustomFieldsEditor()'),
+    page.indexOf('private CustomFieldsEditor()'),
+  );
+  assertBefore(
+    categoryDraftEditor,
+    'ForEach(this.categoryDraftCustomFields',
+    "this.AddFieldButton('添加字段'",
+    'Harmony category field add button appears after existing category fields',
+  );
+  const customFieldsEditor = page.slice(
+    page.indexOf('private CustomFieldsEditor()'),
+    page.indexOf('private AddFieldButton'),
+  );
+  assertBefore(
+    customFieldsEditor,
+    'ForEach(this.draftCustomFields',
+    "this.AddFieldButton('添加字段'",
+    'Harmony entry field add button appears after existing entry fields',
+  );
+}
+
+function checkCategoryManagementContract() {
+  const page = read(files.indexPage);
+  const controller = read(files.controller);
+  assertIncludes(page, 'private CategoryListRow(category: string)', 'Harmony category management uses row list items');
+  assertIncludes(page, 'this.beginEditCategory(category);', 'Harmony category rows expose edit action');
+  assertIncludes(page, 'this.categoryDraftCustomFields = this.categoryTemplateDraftFields(clean);', 'Harmony category edit loads existing template fields');
+  assertIncludes(page, 'await this.controller().saveCategoryTemplate(target, this.categoryDraftCustomFieldNames());', 'Harmony category save persists edited fields');
+  assertIncludes(controller, 'async saveCategoryTemplate(category: string, customFieldNames: string[] = []): Promise<void>', 'Harmony controller can save an existing category template');
 }
 
 function main() {
@@ -189,7 +250,9 @@ function main() {
   checkTotpContract();
   checkPersistenceAndSyncSecrecy();
   checkSyncSettingsContract();
+  checkThemeResourcesContract();
   checkEntryEditorUiContract();
+  checkCategoryManagementContract();
 
   if (failures > 0) {
     console.error(`[FAIL] Harmony contract tests failed: ${failures}`);

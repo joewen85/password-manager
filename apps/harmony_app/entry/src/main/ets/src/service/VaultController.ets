@@ -1089,6 +1089,17 @@ export class VaultController {
     await this.persist();
   }
 
+  async saveCategoryTemplate(category: string, customFieldNames: string[] = []): Promise<void> {
+    this.ensureUnlocked();
+    const clean = category.trim();
+    if (clean.length === 0) {
+      return;
+    }
+    this.mergeCategories([clean]);
+    this.upsertCategoryTemplate(clean, fieldsForCategoryPreset('', customFieldNames));
+    await this.persist();
+  }
+
   async renameTag(oldTag: string, newTag: string): Promise<void> {
     this.ensureUnlocked();
     const from = oldTag.trim();
