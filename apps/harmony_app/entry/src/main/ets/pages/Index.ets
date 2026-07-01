@@ -1384,11 +1384,11 @@ struct Index {
     Column({ space: 8 }) {
       if (this.categories.length > 0) {
         Flex({ wrap: FlexWrap.Wrap }) {
-          this.FilterPill('全部分类', this.selectedCategory.length === 0, () => {
+          this.FilterPill('全部分类', this.selectedCategory.trim().length === 0, () => {
             this.handleCategoryFilterSelection('');
           });
           ForEach(this.categories, (category: string) => {
-            this.FilterPill(category, this.selectedCategory === category, () => {
+            this.FilterPill(category, this.isFocusedCategory(category), () => {
               this.handleCategoryFilterSelection(category);
             });
           }, (category: string) => category);
@@ -1692,17 +1692,24 @@ struct Index {
         Text(`${this.categoryEntryCount(category)} 条`)
           .fontSize(11)
           .fontWeight(FontWeight.Bold)
-          .fontColor(this.categoryRenameSource === category ? UI_ACCENT : UI_MUTED)
+          .fontColor(this.isEditingCategory(category) || this.isFocusedCategory(category) ? UI_ACCENT : UI_MUTED)
           .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-          .backgroundColor(this.categoryRenameSource === category ? UI_SELECTED : UI_SURFACE)
-          .border({ width: 1, color: this.categoryRenameSource === category ? UI_ACCENT : UI_STROKE })
+          .backgroundColor(this.isEditingCategory(category) || this.isFocusedCategory(category) ? UI_SELECTED : UI_SURFACE)
+          .border({ width: 1, color: this.isEditingCategory(category) || this.isFocusedCategory(category) ? UI_ACCENT : UI_STROKE })
           .borderRadius(999);
       }
+      .width('100%')
+      .onClick(() => {
+        this.focusCategory(category);
+      });
       Text(`字段: ${this.categoryFieldSummary(category)}`)
         .fontSize(12)
         .fontColor(UI_MUTED)
         .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis });
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .onClick(() => {
+          this.focusCategory(category);
+        });
       Row({ space: 8 }) {
         this.CategoryRowActionButton('编辑', true, false, () => {
           this.beginEditCategory(category);
@@ -1718,8 +1725,8 @@ struct Index {
     }
     .width('100%')
     .padding(12)
-    .backgroundColor(this.categoryRenameSource === category ? UI_SELECTED : UI_SURFACE_ALT)
-    .border({ width: 1, color: this.categoryRenameSource === category ? UI_ACCENT : UI_STROKE })
+    .backgroundColor(this.isEditingCategory(category) || this.isFocusedCategory(category) ? UI_SELECTED : UI_SURFACE_ALT)
+    .border({ width: 1, color: this.isEditingCategory(category) || this.isFocusedCategory(category) ? UI_ACCENT : UI_STROKE })
     .borderRadius(14);
   }
 
@@ -2471,7 +2478,7 @@ struct Index {
 
   private async onDeleteCategory(category: string): Promise<void> {
     await this.controller().deleteCategory(category);
-    if (this.selectedCategory === category) {
+    if (this.sameCategoryName(this.selectedCategory, category)) {
       this.selectedCategory = '';
     }
     if (this.draftCategory.trim() === category) {
@@ -2666,6 +2673,37 @@ struct Index {
       const key = category.trim().toLowerCase();
       return key === targetKey && key !== sourceKey;
     });
+  }
+
+  private isEditingCategory(category: string): boolean {
+    return this.sameCategoryName(this.categoryRenameSource, category);
+  }
+
+  private isFocusedCategory(category: string): boolean {
+    const clean = category.trim();
+    if (clean.length === 0) {
+      return this.selectedCategory.trim().length === 0;
+    }
+    return this.sameCategoryName(this.selectedCategory, clean);
+  }
+
+  private currentFocusedCategory(): string {
+    const clean = this.selectedCategory.trim();
+    if (clean.length === 0) {
+      return '';
+    }
+    const matched = this.categories.find((category: string) => this.sameCategoryName(category, clean));
+    return matched ?? clean;
+  }
+
+  private focusCategory(category: string): void {
+    const clean = category.trim();
+    if (clean.length === 0) {
+      this.selectedCategory = '';
+      return;
+    }
+    const matched = this.categories.find((candidate: string) => this.sameCategoryName(candidate, clean));
+    this.selectedCategory = matched ?? clean;
   }
 
   private async onSaveSyncSettings(): Promise<void> {
@@ -3748,7 +3786,7 @@ struct Index {
 
   private beginCreateEntry(): void {
     this.clearEntryDraft();
-    this.draftCategory = this.selectedCategory;
+    this.draftCategory = this.currentFocusedCategory();
     this.applyCategoryTemplateToDraft(this.draftCategory);
     this.activePanel = 'home';
     this.selectedEntryId = '';
@@ -4467,11 +4505,11 @@ struct Index {
     onSelected: (category: string) => void
   ) {
     Flex({ wrap: FlexWrap.Wrap }) {
-      this.FilterPill('未分类', selectedCategory.length === 0, () => {
+      this.FilterPill('未分类', selectedCategory.trim().length === 0, () => {
         onSelected('');
       });
       ForEach(this.categories, (category: string) => {
-        this.FilterPill(category, selectedCategory === category, () => {
+        this.FilterPill(category, this.sameCategoryName(selectedCategory, category), () => {
           onSelected(category);
         });
       }, (category: string) => category);
@@ -4495,7 +4533,7 @@ struct Index {
   private handleCategoryFilterSelection(category: string): void {
     this.dismissSearchEditing();
     const clean = category.trim();
-    this.selectedCategory = this.selectedCategory === clean ? '' : clean;
+    this.focusCategory(clean);
   }
 
   private handleTagFilterSelection(tag: string): void {

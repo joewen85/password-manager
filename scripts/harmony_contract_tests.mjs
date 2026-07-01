@@ -257,6 +257,16 @@ function checkCategoryManagementContract() {
   assertIncludes(controller, 'async saveCategoryTemplate(category: string, customFieldNames: string[] = []): Promise<void>', 'Harmony controller can save an existing category template');
 }
 
+function checkCategoryFocusContract() {
+  const page = read(files.indexPage);
+  assertIncludes(page, 'this.FilterPill(category, this.isFocusedCategory(category)', 'Harmony category filter highlights the focused category');
+  assertIncludes(page, 'this.focusCategory(clean);', 'Harmony category filter selection focuses the requested category');
+  assertIncludes(page, 'this.draftCategory = this.currentFocusedCategory();', 'Harmony new entries inherit the focused category');
+  assertIncludes(page, 'private currentFocusedCategory(): string', 'Harmony page resolves the focused category before creating entries');
+  assertIncludes(page, 'private focusCategory(category: string): void', 'Harmony page has a single category focus state writer');
+  assertIncludes(page, 'this.focusCategory(category);', 'Harmony category management rows can focus a category');
+}
+
 function main() {
   for (const file of Object.values(files)) {
     const absolute = path.join(root, file);
@@ -273,6 +283,7 @@ function main() {
   checkEntryEditorUiContract();
   checkEntryDetailUiContract();
   checkCategoryManagementContract();
+  checkCategoryFocusContract();
 
   if (failures > 0) {
     console.error(`[FAIL] Harmony contract tests failed: ${failures}`);
