@@ -13,6 +13,7 @@ const files = {
   totp: 'apps/harmony_app/entry/src/main/ets/src/security/TotpService.ets',
   controller: 'apps/harmony_app/entry/src/main/ets/src/service/VaultController.ets',
   syncTypes: 'apps/harmony_app/entry/src/main/ets/src/sync/SyncTypes.ets',
+  indexPage: 'apps/harmony_app/entry/src/main/ets/pages/Index.ets',
 };
 
 const expectedBundleName = 'life.devops.passwordmanager';
@@ -148,6 +149,35 @@ function checkSyncSettingsContract() {
   assertIncludes(syncTypes, 'return `${ts}_${rand}`;', 'Harmony generated device IDs use underscore separators');
 }
 
+function checkEntryEditorUiContract() {
+  const page = read(files.indexPage);
+  assertMatches(
+    page,
+    /if\s*\(\s*this\.editingEntryId\.length\s*>\s*0\s*\)\s*{\s*Text\('条目类型'\)/s,
+    'Harmony new entry hides entry type selector until editing',
+  );
+  assertMatches(
+    page,
+    /if\s*\(\s*this\.editingEntryId\.length\s*>\s*0\s*&&\s*this\.draftType\s*===\s*'credential'\s*\)/,
+    'Harmony new credential does not show username, password, or account fields before editing',
+  );
+  assertMatches(
+    page,
+    /if\s*\(\s*this\.editingEntryId\.length\s*>\s*0\s*&&\s*this\.draftType\s*===\s*'server'\s*\)/,
+    'Harmony new server does not show server payload fields before editing',
+  );
+  assertMatches(
+    page,
+    /if\s*\(\s*this\.editingEntryId\.length\s*>\s*0\s*&&\s*this\.draftType\s*===\s*'service'\s*\)/,
+    'Harmony new service does not show service payload fields before editing',
+  );
+  assertMatches(
+    page,
+    /if\s*\(\s*!this\.categoryCreateReturnToEntry\s*\)\s*{\s*Text\('快捷字段'\)/s,
+    'Harmony category creation from entry editor hides preset shortcut chips',
+  );
+}
+
 function main() {
   for (const file of Object.values(files)) {
     const absolute = path.join(root, file);
@@ -159,6 +189,7 @@ function main() {
   checkTotpContract();
   checkPersistenceAndSyncSecrecy();
   checkSyncSettingsContract();
+  checkEntryEditorUiContract();
 
   if (failures > 0) {
     console.error(`[FAIL] Harmony contract tests failed: ${failures}`);

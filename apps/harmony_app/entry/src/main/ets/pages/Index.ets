@@ -817,20 +817,22 @@ struct Index {
             .border({ width: 1, color: UI_STROKE })
             .borderRadius(12)
             .padding({ left: 14, right: 14 });
-          Text('快捷字段')
-            .fontSize(12)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(UI_MUTED);
-          Flex({ wrap: FlexWrap.Wrap }) {
-            this.ChoiceChip('服务器', false, () => {
-              this.addCategoryDraftShortcutFields(CategoryTypePreset.SERVER);
-            });
-            this.ChoiceChip('服务', false, () => {
-              this.addCategoryDraftShortcutFields(CategoryTypePreset.SERVICE);
-            });
-            this.ChoiceChip('账号', false, () => {
-              this.addCategoryDraftShortcutFields(CategoryTypePreset.ACCOUNT);
-            });
+          if (!this.categoryCreateReturnToEntry) {
+            Text('快捷字段')
+              .fontSize(12)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(UI_MUTED);
+            Flex({ wrap: FlexWrap.Wrap }) {
+              this.ChoiceChip('服务器', false, () => {
+                this.addCategoryDraftShortcutFields(CategoryTypePreset.SERVER);
+              });
+              this.ChoiceChip('服务', false, () => {
+                this.addCategoryDraftShortcutFields(CategoryTypePreset.SERVICE);
+              });
+              this.ChoiceChip('账号', false, () => {
+                this.addCategoryDraftShortcutFields(CategoryTypePreset.ACCOUNT);
+              });
+            }
           }
           this.CategoryDraftCustomFieldsEditor();
           this.PrimaryTextButton('保存分类', () => {
@@ -1441,12 +1443,14 @@ struct Index {
   @Builder
   private EntryEditorFormContent() {
     Column({ space: 10 }) {
-      Text('条目类型').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
+      if (this.editingEntryId.length > 0) {
+        Text('条目类型').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
 
-      Flex({ wrap: FlexWrap.Wrap }) {
-        this.EntryTypeChip('账号', 'credential');
-        this.EntryTypeChip('服务器', 'server');
-        this.EntryTypeChip('服务', 'service');
+        Flex({ wrap: FlexWrap.Wrap }) {
+          this.EntryTypeChip('账号', 'credential');
+          this.EntryTypeChip('服务器', 'server');
+          this.EntryTypeChip('服务', 'service');
+        }
       }
 
       TextInput({ placeholder: '名称（必填）', text: $$this.draftLabel })
@@ -1460,7 +1464,7 @@ struct Index {
       this.EntryCategorySelect();
       this.EntryTagMultiSelect();
 
-      if (this.draftType === 'credential') {
+      if (this.editingEntryId.length > 0 && this.draftType === 'credential') {
         TextInput({ placeholder: '用户名', text: $$this.draftCredentialUsername })
           .width('100%')
           .height(48)
@@ -1479,7 +1483,7 @@ struct Index {
         this.AccountsEditor('账号列表');
       }
 
-      if (this.draftType === 'server') {
+      if (this.editingEntryId.length > 0 && this.draftType === 'server') {
         TextInput({ placeholder: '服务器名称', text: $$this.draftServerName })
           .width('100%')
           .height(48)
@@ -1504,7 +1508,7 @@ struct Index {
         this.AccountsEditor('服务器账号');
       }
 
-      if (this.draftType === 'service') {
+      if (this.editingEntryId.length > 0 && this.draftType === 'service') {
         TextInput({ placeholder: '服务名称', text: $$this.draftServiceName })
           .width('100%')
           .height(48)
