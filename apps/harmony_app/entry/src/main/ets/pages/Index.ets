@@ -289,19 +289,24 @@ struct Index {
     Column({ space: 12 }) {
       Text(this.hasMasterKey ? '解锁密码库' : '初始化密码库')
         .fontSize(26)
-        .fontWeight(FontWeight.Bold);
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_TEXT);
 
       Text(this.hasMasterKey && this.biometricUnlockEnabled && this.biometricUnlockAvailable && this.biometricFailureCount < 3
         ? '正在调用生物识别；失败 3 次后请输入主密码。'
         : (this.hasMasterKey ? '请输入主密码继续。' : '首次使用，请设置主密码。'))
         .fontSize(14)
-        .fontColor('#566060');
+        .fontColor(UI_MUTED);
 
       TextInput({ placeholder: '主密码', text: $$this.password })
         .type(InputType.Password)
         .width('100%')
         .height(48)
-        .backgroundColor('#FFFFFF')
+        .backgroundColor(UI_SURFACE_ALT)
+        .fontColor(UI_TEXT)
+        .placeholderColor(UI_MUTED)
+        .caretColor(UI_ACCENT)
+        .border({ width: 1, color: UI_STROKE })
         .borderRadius(12)
         .padding({ left: 12, right: 12 });
 
@@ -310,7 +315,11 @@ struct Index {
           .type(InputType.Password)
           .width('100%')
           .height(48)
-          .backgroundColor('#FFFFFF')
+          .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
+          .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 12, right: 12 });
       }
@@ -320,18 +329,22 @@ struct Index {
           .type(InputType.Number)
           .width('100%')
           .height(48)
-          .backgroundColor('#FFFFFF')
+          .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
+          .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 12, right: 12 });
 
         if (this.unlockRemainingSeconds > 0) {
           Text(`解锁暂时受限，请在 ${this.unlockRemainingSeconds} 秒后重试`)
             .fontSize(12)
-            .fontColor('#9A4D4D');
+            .fontColor(UI_DANGER);
         } else if (this.unlockFailedAttempts > 0) {
           Text(`剩余尝试次数 ${this.remainingUnlockAttempts()} 次`)
             .fontSize(12)
-            .fontColor('#9A4D4D');
+            .fontColor(UI_DANGER);
         }
       }
 
@@ -714,6 +727,9 @@ struct Index {
         .width('100%')
         .height(48)
         .backgroundColor(UI_SURFACE_ALT)
+        .fontColor(UI_TEXT)
+        .placeholderColor(UI_MUTED)
+        .caretColor(UI_ACCENT)
         .border({ width: 1, color: UI_STROKE })
         .borderRadius(12)
         .padding({ left: 14, right: 14 });
@@ -733,6 +749,9 @@ struct Index {
           .layoutWeight(1)
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -814,6 +833,9 @@ struct Index {
             .width('100%')
             .height(48)
             .backgroundColor(UI_SURFACE_ALT)
+            .fontColor(UI_TEXT)
+            .placeholderColor(UI_MUTED)
+            .caretColor(UI_ACCENT)
             .border({ width: 1, color: UI_STROKE })
             .borderRadius(12)
             .padding({ left: 14, right: 14 });
@@ -855,6 +877,9 @@ struct Index {
         .width('100%')
         .height(48)
         .backgroundColor(UI_SURFACE_ALT)
+        .fontColor(UI_TEXT)
+        .placeholderColor(UI_MUTED)
+        .caretColor(UI_ACCENT)
         .border({ width: 1, color: UI_STROKE })
         .borderRadius(12)
         .padding({ left: 14, right: 14 });
@@ -993,6 +1018,9 @@ struct Index {
         .width('100%')
         .height(48)
         .backgroundColor(UI_SURFACE_ALT)
+        .fontColor(UI_TEXT)
+        .placeholderColor(UI_MUTED)
+        .caretColor(UI_ACCENT)
         .border({ width: 1, color: UI_STROKE })
         .borderRadius(12)
         .padding({ left: 14, right: 14 });
@@ -1019,6 +1047,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1033,6 +1064,9 @@ struct Index {
         .width('100%')
         .height(48)
         .backgroundColor(UI_SURFACE_ALT)
+        .fontColor(UI_TEXT)
+        .placeholderColor(UI_MUTED)
+        .caretColor(UI_ACCENT)
         .border({ width: 1, color: UI_STROKE })
         .borderRadius(12)
         .padding({ left: 14, right: 14 });
@@ -1100,6 +1134,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1107,6 +1144,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1114,6 +1154,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1122,6 +1165,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1133,6 +1179,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1141,6 +1190,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1156,6 +1208,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1164,6 +1219,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1171,6 +1229,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1178,6 +1239,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1186,6 +1250,9 @@ struct Index {
             .width('100%')
             .height(48)
             .backgroundColor(UI_SURFACE_ALT)
+            .fontColor(UI_TEXT)
+            .placeholderColor(UI_MUTED)
+            .caretColor(UI_ACCENT)
             .border({ width: 1, color: UI_STROKE })
             .borderRadius(12)
             .padding({ left: 14, right: 14 });
@@ -1194,6 +1261,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1201,6 +1271,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1220,6 +1293,9 @@ struct Index {
           .layoutWeight(1)
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1371,6 +1447,9 @@ struct Index {
           .layoutWeight(1)
           .height(46)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(14)
           .padding({ left: 14, right: 14 });
@@ -1457,6 +1536,9 @@ struct Index {
         .width('100%')
         .height(48)
         .backgroundColor(UI_SURFACE_ALT)
+        .fontColor(UI_TEXT)
+        .placeholderColor(UI_MUTED)
+        .caretColor(UI_ACCENT)
         .border({ width: 1, color: UI_STROKE })
         .borderRadius(12)
         .padding({ left: 14, right: 14 });
@@ -1469,6 +1551,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1477,6 +1562,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1488,6 +1576,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1495,6 +1586,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1502,6 +1596,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1513,6 +1610,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1520,6 +1620,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1527,6 +1630,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1534,6 +1640,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1541,6 +1650,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1549,6 +1661,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1582,6 +1697,9 @@ struct Index {
           .layoutWeight(1)
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -1667,6 +1785,9 @@ struct Index {
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -3060,6 +3181,9 @@ struct Index {
           .layoutWeight(1)
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
+          .fontColor(UI_TEXT)
+          .placeholderColor(UI_MUTED)
+          .caretColor(UI_ACCENT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
@@ -3117,6 +3241,9 @@ struct Index {
             .width('100%')
             .height(48)
             .backgroundColor(UI_SURFACE_ALT)
+            .fontColor(UI_TEXT)
+            .placeholderColor(UI_MUTED)
+            .caretColor(UI_ACCENT)
             .border({ width: 1, color: UI_STROKE })
             .borderRadius(12)
             .padding({ left: 14, right: 14 })
@@ -3164,6 +3291,9 @@ struct Index {
             .width('100%')
             .height(48)
             .backgroundColor(UI_SURFACE_ALT)
+            .fontColor(UI_TEXT)
+            .placeholderColor(UI_MUTED)
+            .caretColor(UI_ACCENT)
             .border({ width: 1, color: UI_STROKE })
             .borderRadius(12)
             .padding({ left: 14, right: 14 })
@@ -3174,6 +3304,9 @@ struct Index {
             .width('100%')
             .height(48)
             .backgroundColor(UI_SURFACE_ALT)
+            .fontColor(UI_TEXT)
+            .placeholderColor(UI_MUTED)
+            .caretColor(UI_ACCENT)
             .border({ width: 1, color: UI_STROKE })
             .borderRadius(12)
             .padding({ left: 14, right: 14 })
@@ -3261,6 +3394,9 @@ struct Index {
             .width('100%')
             .height(48)
             .backgroundColor(UI_SURFACE_ALT)
+            .fontColor(UI_TEXT)
+            .placeholderColor(UI_MUTED)
+            .caretColor(UI_ACCENT)
             .border({ width: 1, color: UI_STROKE })
             .borderRadius(12)
             .padding({ left: 14, right: 14 })
@@ -3272,6 +3408,9 @@ struct Index {
             .width('100%')
             .height(48)
             .backgroundColor(UI_SURFACE_ALT)
+            .fontColor(UI_TEXT)
+            .placeholderColor(UI_MUTED)
+            .caretColor(UI_ACCENT)
             .border({ width: 1, color: UI_STROKE })
             .borderRadius(12)
             .padding({ left: 14, right: 14 })
@@ -3282,6 +3421,9 @@ struct Index {
             .width('100%')
             .height(48)
             .backgroundColor(UI_SURFACE_ALT)
+            .fontColor(UI_TEXT)
+            .placeholderColor(UI_MUTED)
+            .caretColor(UI_ACCENT)
             .border({ width: 1, color: UI_STROKE })
             .borderRadius(12)
             .padding({ left: 14, right: 14 })

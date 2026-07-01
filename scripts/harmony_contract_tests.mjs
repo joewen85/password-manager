@@ -180,6 +180,17 @@ function checkThemeResourcesContract() {
   });
 }
 
+function checkThemedTextInputContract() {
+  const page = read(files.indexPage);
+  const inputBlocks = page.match(/TextInput\([\s\S]*?;/g) ?? [];
+  assert(inputBlocks.length > 0, 'Harmony page contains TextInput controls');
+  inputBlocks.forEach((block, index) => {
+    assertIncludes(block, '.fontColor(UI_TEXT)', `TextInput ${index + 1} uses readable theme text color`);
+    assertIncludes(block, '.placeholderColor(UI_MUTED)', `TextInput ${index + 1} uses readable theme placeholder color`);
+    assertIncludes(block, '.caretColor(UI_ACCENT)', `TextInput ${index + 1} uses themed caret color`);
+  });
+}
+
 function checkEntryEditorUiContract() {
   const page = read(files.indexPage);
   assertMatches(
@@ -251,6 +262,7 @@ function main() {
   checkPersistenceAndSyncSecrecy();
   checkSyncSettingsContract();
   checkThemeResourcesContract();
+  checkThemedTextInputContract();
   checkEntryEditorUiContract();
   checkCategoryManagementContract();
 
