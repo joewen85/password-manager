@@ -80,6 +80,81 @@ else
   status=1
 fi
 
+if grep -R -En "快捷操作|ActionPanel|SettingsPage|showQuickActions|showSettingsPage" \
+  "$APP_DIR/entry/src/main/ets" >/tmp/harmony_old_ui_markers.txt 2>/dev/null; then
+  fail "Harmony source still contains old top-bar/settings UI markers"
+  sed 's/^/[INFO] /' /tmp/harmony_old_ui_markers.txt
+  status=1
+else
+  ok "Harmony source no longer contains old top-bar/settings UI markers"
+fi
+
+check_cached_bundle_name() {
+  local file="$1"
+  local label="$2"
+
+  if [[ ! -f "$file" ]]; then
+    warn "$label not found; DevEco may recreate it on next sync"
+    return
+  fi
+
+  if grep -q "com.example.passwordmanager" "$file"; then
+    fail "$label still references old bundleName com.example.passwordmanager"
+    status=1
+    return
+  fi
+
+  if grep -Eq "\"BUNDLE_NAME\"[[:space:]]*:[[:space:]]*\"$EXPECTED_BUNDLE_NAME\"" "$file"; then
+    ok "$label bundleName cache matches: $EXPECTED_BUNDLE_NAME"
+  elif grep -q "\"BUNDLE_NAME\"" "$file"; then
+    fail "$label has a BUNDLE_NAME that does not match $EXPECTED_BUNDLE_NAME"
+    status=1
+  else
+    warn "$label has no BUNDLE_NAME entry"
+  fi
+}
+
+check_cached_bundle_name "$APP_DIR/.idea/.deveco/project.cache.json" "DevEco project cache"
+check_cached_bundle_name "$APP_DIR/.hvigor/outputs/sync/output.json" "Hvigor sync cache"
+
+workspace_file="$APP_DIR/.idea/workspace.xml"
+if [[ -f "$workspace_file" ]]; then
+  selected_run_config="$(grep -Eo '<component name="RunManager" selected="[^"]+"' "$workspace_file" \
+    | sed -E 's/.*selected="([^"]+)"/\1/' \
+    | head -n 1 || true)"
+  if [[ "$selected_run_config" == *"Hot Reload"* ]]; then
+    fail "DevEco selected run configuration is Hot Reload; choose Application.entry / OpenHarmony App.entry"
+    status=1
+  elif [[ -n "$selected_run_config" ]]; then
+    ok "DevEco selected run configuration: $selected_run_config"
+  else
+    warn "DevEco selected run configuration not found in workspace.xml"
+  fi
+
+  if grep -q 'type="HotReLoadTask"' "$workspace_file"; then
+    warn "Hot Reload run configuration still exists; avoid it when validating full UI changes"
+  fi
+else
+  warn "DevEco workspace.xml not found; open apps/harmony_app in DevEco and sync the project"
+fi
+
+existing_hap="$(find "$APP_DIR/entry/build" -type f -name "*.hap" 2>/dev/null | head -n 1 || true)"
+if [[ -n "$existing_hap" ]]; then
+  if EXPECTED_SIGNATURE="${HARMONY_EXPECT_HAP_SIGNATURE:-unsigned}" \
+    "$ROOT_DIR/scripts/harmony_verify_hap.sh" "$existing_hap"; then
+    ok "Existing HAP metadata is current: $(relative_path "$existing_hap")"
+  else
+    fail "Existing HAP metadata is stale or invalid: $(relative_path "$existing_hap")"
+    status=1
+  fi
+else
+  warn "No existing HAP found under entry/build; run scripts/harmony_build_hap.sh default before device testing"
+fi
+
+if find "$APP_DIR" -maxdepth 1 -type d -name ".codex-cache-backup-*" | grep -q .; then
+  warn "Old Codex cache backup directory exists inside harmony_app; move it out before DevEco validation"
+fi
+
 check_cmd() {
   local cmd="$1"
   local name="$2"

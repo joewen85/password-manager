@@ -18,6 +18,7 @@ import {
   VaultEntryType
 } from '../src/model/VaultTypes';
 import {
+  BackupInfo,
   ImportConflictStrategy,
   ImportPreviewRecord,
   VaultController,
@@ -34,7 +35,7 @@ import {
 
 type DraftType = 'credential' | 'server' | 'service';
 type ActivePanel = 'home' | 'category' | 'tag';
-type TopOverlayPanel = 'none' | 'create' | 'settings' | 'more' | 'categoryCreate' | 'tagCreate';
+type TopOverlayPanel = 'none' | 'create' | 'settings' | 'more' | 'backup' | 'clearData' | 'categorySelect' | 'categoryCreate' | 'tagCreate';
 const MAX_UNLOCK_ATTEMPTS: number = 5;
 const WIDE_LAYOUT_MIN_WIDTH: number = 720;
 const EXPANDED_LAYOUT_MIN_WIDTH: number = 960;
@@ -169,6 +170,7 @@ struct Index {
   @State private searchQuery: string = '';
   @State private selectedCategory: string = '';
   @State private selectedTag: string = '';
+  @State private selectedEntryId: string = '';
   @State private entryListFirstVisibleIndex: number = 0;
 
   @State private entries: VaultEntry[] = [];
@@ -178,8 +180,12 @@ struct Index {
 
   @State private tagDraft: string = '';
   @State private categoryDraft: string = '';
+  @State private categoryCreateReturnToEntry: boolean = false;
   @State private categoryRenameSource: string = '';
   @State private categoryDraftCustomFields: CustomField[] = [];
+  @State private clearDataPassword: string = '';
+  @State private backups: BackupInfo[] = [];
+  @State private backupBusy: boolean = false;
 
   @State private draftType: DraftType = 'credential';
   @State private draftLabel: string = '';
@@ -203,6 +209,9 @@ struct Index {
   @State private draftServiceName: string = '';
   @State private draftServiceAddress: string = '';
   @State private draftServicePort: string = '';
+  @State private draftServiceAccountId: string = '';
+  @State private draftServiceServerIds: string = '';
+  @State private draftServiceNotes: string = '';
 
   async aboutToAppear(): Promise<void> {
     const crypto = new VaultCryptoService();
@@ -393,14 +402,16 @@ struct Index {
         Column({ space: 10 }) {
           this.StatusSummary();
           this.FilterSection();
+          this.EntryListSection();
         }
         .height('100%')
-        .width(this.useExpandedLayout() ? '34%' : '40%')
-        .constraintSize({ minWidth: 280, maxWidth: 430 });
-        this.EntryListSection();
+        .width(this.useExpandedLayout() ? '42%' : '46%')
+        .constraintSize({ minWidth: 320, maxWidth: 560 });
+        this.EntryDetailSection();
       }
       .layoutWeight(1)
-      .width('100%');
+      .width('100%')
+      .alignItems(VerticalAlign.Top);
     } else {
       this.StatusSummary();
       if (this.entryEditorVisible) {
@@ -418,7 +429,11 @@ struct Index {
 
   @Builder
   private HeaderSection() {
-    Row({ space: 4 }) {
+    Flex({
+      direction: FlexDirection.Row,
+      wrap: FlexWrap.Wrap,
+      alignItems: ItemAlign.Center,
+    }) {
       Column({ space: 4 }) {
         Text('密码管理器')
           .fontSize(20)
@@ -433,23 +448,23 @@ struct Index {
           .borderRadius(999);
       }
       .layoutWeight(1)
+      .constraintSize({ minWidth: 168 })
       .alignItems(HorizontalAlign.Start);
-      Blank();
       this.ToolbarIconButton('+', '添加', true, () => {
         this.openTopOverlay('create');
       });
-      this.ToolbarIconButton(this.syncBusy ? '...' : '↻', '同步', false, () => {
+      this.ToolbarIconButton(this.syncBusy ? '···' : '↻', '同步', false, () => {
         if (!this.syncBusy) {
           this.onSyncNow();
         }
       });
-      this.ToolbarIconButton('⚙', '设置', this.topOverlayPanel === 'settings', () => {
-        this.openTopOverlay('settings');
+      this.ToolbarIconButton('☁', '备份', this.topOverlayPanel === 'backup', () => {
+        this.openTopOverlay('backup');
       });
       this.ToolbarIconButton('⋮', '更多', this.topOverlayPanel === 'more', () => {
         this.openTopOverlay('more');
       });
-      this.ToolbarIconButton('锁', '锁定', false, () => {
+      this.ToolbarIconButton('▣', '锁定', false, () => {
         this.lockVault();
       });
     }
@@ -460,15 +475,16 @@ struct Index {
   @Builder
   private ToolbarIconButton(icon: string, label: string, accent: boolean, action: () => void) {
     Text(icon)
-      .fontSize(icon.length > 1 ? 13 : 20)
+      .fontSize(icon.length > 1 ? 13 : 21)
       .fontWeight(FontWeight.Bold)
       .fontColor(accent ? UI_ACCENT : UI_TEXT)
-      .width(44)
-      .height(44)
+      .width(this.toolbarIconSize())
+      .height(this.toolbarIconSize())
+      .margin({ left: 2 })
       .textAlign(TextAlign.Center)
       .backgroundColor(accent ? UI_SELECTED : UI_SURFACE)
       .border({ width: 1, color: accent ? UI_ACCENT : UI_STROKE })
-      .borderRadius(14)
+      .borderRadius(12)
       .accessibilityText(label)
       .onClick(action);
   }
@@ -494,6 +510,12 @@ struct Index {
         this.SettingsOverlayPanel();
       } else if (this.topOverlayPanel === 'more') {
         this.MoreOverlayPanel();
+      } else if (this.topOverlayPanel === 'backup') {
+        this.BackupOverlayPanel();
+      } else if (this.topOverlayPanel === 'clearData') {
+        this.ClearDataOverlayPanel();
+      } else if (this.topOverlayPanel === 'categorySelect') {
+        this.CategorySelectOverlayPanel();
       } else if (this.topOverlayPanel === 'categoryCreate') {
         this.CategoryCreateOverlayPanel();
       } else if (this.topOverlayPanel === 'tagCreate') {
@@ -533,7 +555,7 @@ struct Index {
         this.beginCreateEntry();
       });
       this.OverlayActionButton('创建分类', false, () => {
-        this.prepareCreateCategoryOverlay('');
+        this.prepareCreateCategoryOverlay('', false);
       });
       this.OverlayActionButton('创建标签', false, () => {
         this.prepareCreateTagOverlay('');
@@ -586,40 +608,211 @@ struct Index {
       this.OverlayActionButton('设置', false, () => {
         this.openTopOverlay('settings');
       });
+      this.OverlayActionButton('清空数据', false, () => {
+        this.openClearDataOverlay();
+      });
     }
     .width('100%');
   }
 
   @Builder
-  private CategoryCreateOverlayPanel() {
+  private BackupOverlayPanel() {
     Column({ space: 10 }) {
-      this.FloatingPanelHeader('创建分类');
-      TextInput({ placeholder: '分类名称（必填）', text: $$this.categoryDraft })
+      this.FloatingPanelHeader('备份');
+      Text('加密本地备份保存在应用私有存储中，并保留最近 5 个。')
+        .fontSize(13)
+        .fontColor(UI_MUTED);
+      this.OverlayActionButton(this.backupBusy ? '备份中...' : '立即创建备份', true, () => {
+        this.onRunBackup();
+      });
+      Text('可用备份')
+        .fontSize(12)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_ACCENT);
+      if (this.backups.length === 0) {
+        Text('尚未创建备份。')
+          .fontSize(13)
+          .fontColor(UI_MUTED);
+      } else {
+        Scroll() {
+          Column({ space: 8 }) {
+            ForEach(this.backups, (backup: BackupInfo) => {
+              this.BackupRow(backup);
+            }, (backup: BackupInfo) => backup.fileName);
+          }
+          .width('100%');
+        }
+        .width('100%')
+        .height(this.backupListHeight());
+      }
+    }
+    .width('100%');
+  }
+
+  @Builder
+  private BackupRow(backup: BackupInfo) {
+    Column({ space: 6 }) {
+      Text(backup.fileName)
+        .fontSize(13)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_TEXT)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%');
+      Text(`${this.formatBytes(backup.sizeBytes)} · ${this.formatBackupTime(backup.modifiedAt)}`)
+        .fontSize(12)
+        .fontColor(UI_MUTED)
+        .width('100%');
+      this.SecondaryTextButton('恢复此备份', () => {
+        this.onRestoreBackup(backup);
+      });
+    }
+    .width('100%')
+    .padding(10)
+    .backgroundColor(UI_SURFACE_ALT)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(12);
+  }
+
+  @Builder
+  private ClearDataOverlayPanel() {
+    Column({ space: 10 }) {
+      this.FloatingPanelHeader('清空数据');
+      Text('将清空所有条目、分类、标签和密码库安全设置。请输入创建时使用的主密码确认。')
+        .fontSize(13)
+        .fontColor(UI_MUTED);
+      TextInput({ placeholder: '主密码', text: $$this.clearDataPassword })
+        .type(InputType.Password)
         .width('100%')
         .height(48)
         .backgroundColor(UI_SURFACE_ALT)
         .border({ width: 1, color: UI_STROKE })
         .borderRadius(12)
         .padding({ left: 14, right: 14 });
-      Text('快捷字段')
-        .fontSize(12)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(UI_MUTED);
-      Flex({ wrap: FlexWrap.Wrap }) {
-        this.ChoiceChip('服务器', false, () => {
-          this.addCategoryDraftShortcutFields(CategoryTypePreset.SERVER);
-        });
-        this.ChoiceChip('服务', false, () => {
-          this.addCategoryDraftShortcutFields(CategoryTypePreset.SERVICE);
-        });
-        this.ChoiceChip('账号', false, () => {
-          this.addCategoryDraftShortcutFields(CategoryTypePreset.ACCOUNT);
-        });
-      }
-      this.CategoryDraftCustomFieldsEditor();
-      this.PrimaryTextButton('保存分类', () => {
-        this.onAddCategoryFromOverlay();
+      this.OverlayActionButton('确认清空', true, () => {
+        this.onClearDataConfirm();
       });
+    }
+    .width('100%');
+  }
+
+  @Builder
+  private CategorySelectOverlayPanel() {
+    Column({ space: 10 }) {
+      this.FloatingPanelHeader('分类');
+      Row({ space: 8 }) {
+        TextInput({ placeholder: '搜索分类', text: $$this.draftCategorySearch })
+          .layoutWeight(1)
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
+        Text('+')
+          .width(48)
+          .height(48)
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.canCreateDraftCategory() ? '#FFFFFF' : UI_MUTED)
+          .textAlign(TextAlign.Center)
+          .backgroundColor(this.canCreateDraftCategory() ? UI_ACCENT : UI_SURFACE_ALT)
+          .border({ width: 1, color: this.canCreateDraftCategory() ? UI_ACCENT : UI_STROKE })
+          .borderRadius(12)
+          .onClick(() => {
+            if (this.canCreateDraftCategory()) {
+              this.prepareCreateCategoryOverlay(this.draftCategorySearch.trim(), true);
+            }
+          });
+      }
+      Scroll() {
+        Column({ space: 8 }) {
+          if (this.showUncategorizedDraftCategory()) {
+            this.CategorySelectRow('', this.draftCategory.length === 0);
+          }
+          if (this.filteredDraftCategories().length > 0) {
+            ForEach(this.filteredDraftCategories(), (category: string) => {
+              this.CategorySelectRow(category, this.draftCategory === category);
+            }, (category: string) => category);
+          } else if (!this.showUncategorizedDraftCategory()) {
+            Text('没有匹配分类，可点击 + 创建。')
+              .fontSize(13)
+              .fontColor(UI_MUTED);
+          }
+        }
+        .width('100%');
+      }
+      .width('100%')
+      .height(this.categorySelectListHeight());
+    }
+    .width('100%');
+  }
+
+  @Builder
+  private CategorySelectRow(category: string, selected: boolean) {
+    Row({ space: 8 }) {
+      Text(this.categoryDisplayName(category))
+        .fontSize(14)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(selected ? '#FFFFFF' : UI_TEXT)
+        .layoutWeight(1)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis });
+      if (selected) {
+        Text('✓')
+          .fontSize(14)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#FFFFFF');
+      }
+    }
+    .height(44)
+    .width('100%')
+    .padding({ left: 14, right: 14 })
+    .backgroundColor(selected ? UI_ACCENT : UI_SURFACE_ALT)
+    .border({ width: 1, color: selected ? UI_ACCENT : UI_STROKE })
+    .borderRadius(12)
+    .onClick(() => {
+      this.selectDraftCategory(category);
+      this.closeTopOverlay();
+    });
+  }
+
+  @Builder
+  private CategoryCreateOverlayPanel() {
+    Column({ space: 10 }) {
+      this.FloatingPanelHeader('创建分类');
+      Scroll() {
+        Column({ space: 10 }) {
+          TextInput({ placeholder: '分类名称（必填）', text: $$this.categoryDraft })
+            .width('100%')
+            .height(48)
+            .backgroundColor(UI_SURFACE_ALT)
+            .border({ width: 1, color: UI_STROKE })
+            .borderRadius(12)
+            .padding({ left: 14, right: 14 });
+          Text('快捷字段')
+            .fontSize(12)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(UI_MUTED);
+          Flex({ wrap: FlexWrap.Wrap }) {
+            this.ChoiceChip('服务器', false, () => {
+              this.addCategoryDraftShortcutFields(CategoryTypePreset.SERVER);
+            });
+            this.ChoiceChip('服务', false, () => {
+              this.addCategoryDraftShortcutFields(CategoryTypePreset.SERVICE);
+            });
+            this.ChoiceChip('账号', false, () => {
+              this.addCategoryDraftShortcutFields(CategoryTypePreset.ACCOUNT);
+            });
+          }
+          this.CategoryDraftCustomFieldsEditor();
+          this.PrimaryTextButton('保存分类', () => {
+            this.onAddCategoryFromOverlay();
+          });
+        }
+        .width('100%');
+      }
+      .width('100%')
+      .height(this.categoryCreatePanelScrollHeight());
     }
     .width('100%');
   }
@@ -1286,7 +1479,28 @@ struct Index {
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
+        TextInput({ placeholder: '账号ID', text: $$this.draftServiceAccountId })
+          .width('100%')
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
+        TextInput({ placeholder: '服务器ID，用逗号分隔', text: $$this.draftServiceServerIds })
+          .width('100%')
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
         this.AccountsEditor('服务账号');
+        TextInput({ placeholder: '备注', text: $$this.draftServiceNotes })
+          .width('100%')
+          .height(48)
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 });
       }
 
       this.CustomFieldsEditor();
@@ -1643,8 +1857,11 @@ struct Index {
               .width('100%')
               .padding(14)
               .backgroundColor(UI_SURFACE_ALT)
-              .border({ width: 1, color: UI_STROKE })
-              .borderRadius(14);
+              .border({ width: 1, color: this.selectedEntryId === entry.id ? UI_ACCENT : UI_STROKE })
+              .borderRadius(14)
+              .onClick(() => {
+                this.selectedEntryId = entry.id;
+              });
             }
           }, (entry: VaultEntry) => entry.id);
         }
@@ -1661,6 +1878,162 @@ struct Index {
     .backgroundColor(UI_SURFACE)
     .border({ width: 1, color: UI_STROKE })
     .borderRadius(18);
+  }
+
+  @Builder
+  private EntryDetailSection() {
+    Column({ space: 10 }) {
+      Row() {
+        Text('条目详情')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_TEXT);
+        Blank();
+        if (this.selectedDetailEntry() !== null) {
+          Text(this.typeLabel((this.selectedDetailEntry() as VaultEntry).type))
+            .fontSize(11)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(UI_ACCENT)
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .backgroundColor(UI_SELECTED)
+            .borderRadius(999);
+        }
+      }
+
+      if (this.selectedDetailEntry() === null) {
+        Column({ space: 8 }) {
+          Text(this.filteredEntries().length === 0 ? '暂无可查看条目' : '选择左侧条目查看详情')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(UI_TEXT);
+          Text(this.filteredEntries().length === 0 ? '点左上角 + 创建第一个条目。' : '详情会固定显示在右侧，不再挤占列表位置。')
+            .fontSize(13)
+            .fontColor(UI_MUTED);
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center);
+      } else {
+        this.EntryDetailContent(this.selectedDetailEntry() as VaultEntry);
+      }
+    }
+    .layoutWeight(1)
+    .height('100%')
+    .padding(14)
+    .backgroundColor(UI_SURFACE)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(18);
+  }
+
+  @Builder
+  private EntryDetailContent(entry: VaultEntry) {
+    Scroll() {
+      Column({ space: 8 }) {
+        Text(entry.label)
+          .fontSize(22)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_TEXT)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis });
+        this.DetailValueRow('分类', this.entryCategory(entry) || '未分类');
+        this.DetailValueRow('标签', entry.tags.length > 0 ? entry.tags.join(', ') : '-');
+        this.EntryPayloadDetailRows(entry);
+        if (entry.customFields.length > 0) {
+          Text('自定义字段')
+            .fontSize(12)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(UI_MUTED)
+            .margin({ top: 4 });
+          ForEach(entry.customFields, (field: CustomField) => {
+            this.DetailValueRow(field.name.length > 0 ? field.name : '字段', field.value);
+          }, (field: CustomField) => field.id);
+        }
+        Row({ space: 8 }) {
+          Column() {
+            this.SecondaryTextButton('导出', () => {
+              this.toggleExportPanel(entry);
+            });
+          }
+          .layoutWeight(1);
+          Column() {
+            this.PrimaryTextButton('编辑', () => {
+              this.startEditEntry(entry);
+            });
+          }
+          .layoutWeight(1);
+        }
+        if (this.exportEntryId === entry.id) {
+          this.EntryExportPanel(entry);
+        }
+      }
+      .width('100%');
+    }
+    .layoutWeight(1)
+    .width('100%');
+  }
+
+  @Builder
+  private EntryPayloadDetailRows(entry: VaultEntry) {
+    if (entry.type === VaultEntryType.CREDENTIAL) {
+      this.CredentialPayloadDetailRows(entry.payload as CredentialPayload);
+    } else if (entry.type === VaultEntryType.SERVER) {
+      this.ServerPayloadDetailRows(entry.payload as ServerPayload);
+    } else {
+      this.ServicePayloadDetailRows(entry.payload as ServicePayload);
+    }
+  }
+
+  @Builder
+  private CredentialPayloadDetailRows(payload: CredentialPayload) {
+    this.DetailValueRow('用户名', payload.username ?? '');
+    this.DetailValueRow('账号数量', `${payload.accounts === undefined ? 0 : payload.accounts.length}`);
+    this.DetailValueRow('Token', payload.token ?? '');
+    this.DetailValueRow('App ID', payload.appId ?? '');
+    this.DetailValueRow('Access Key', payload.accessKey ?? '');
+    this.DetailValueRow('备注', payload.notes ?? '');
+  }
+
+  @Builder
+  private ServerPayloadDetailRows(payload: ServerPayload) {
+    this.DetailValueRow('服务器名称', payload.name ?? '');
+    this.DetailValueRow('IP地址', payload.ipAddress ?? '');
+    this.DetailValueRow('端口', payload.port ?? '');
+    this.DetailValueRow('账号数量', `${payload.accounts === undefined ? 0 : payload.accounts.length}`);
+    this.DetailValueRow('操作系统', payload.operatingSystem ?? '');
+    this.DetailValueRow('位置', payload.location ?? '');
+    this.DetailValueRow('备注', payload.notes ?? '');
+  }
+
+  @Builder
+  private ServicePayloadDetailRows(payload: ServicePayload) {
+    this.DetailValueRow('服务名称', payload.name ?? '');
+    this.DetailValueRow('连接地址', payload.connectionAddress ?? '');
+    this.DetailValueRow('端口', payload.connectionPort ?? '');
+    this.DetailValueRow('账号ID', payload.accountId ?? '');
+    this.DetailValueRow('服务器ID', (payload.serverIds ?? []).join(', '));
+    this.DetailValueRow('账号数量', `${payload.accounts === undefined ? 0 : payload.accounts.length}`);
+    this.DetailValueRow('备注', payload.notes ?? '');
+  }
+
+  @Builder
+  private DetailValueRow(label: string, value: string) {
+    Column({ space: 4 }) {
+      Text(label)
+        .fontSize(11)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_MUTED);
+      Text(value.trim().length > 0 ? value : '-')
+        .fontSize(14)
+        .fontColor(UI_TEXT)
+        .maxLines(3)
+        .textOverflow({ overflow: TextOverflow.Ellipsis });
+    }
+    .width('100%')
+    .padding(10)
+    .backgroundColor(UI_SURFACE_ALT)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(12);
   }
 
   @Builder
@@ -1772,6 +2145,14 @@ struct Index {
       throw new Error('VaultController not initialized');
     }
     return this.vaultController;
+  }
+
+  private selectedDetailEntry(): VaultEntry | null {
+    if (this.selectedEntryId.length === 0) {
+      return null;
+    }
+    const match = this.entries.find((entry: VaultEntry) => entry.id === this.selectedEntryId);
+    return match === undefined ? null : match;
   }
 
   private async onUnlockSubmit(): Promise<void> {
@@ -1943,10 +2324,10 @@ struct Index {
         name: this.draftServiceName.trim(),
         connectionAddress: this.draftServiceAddress.trim(),
         connectionPort: this.draftServicePort.trim(),
-        accountId: '',
-        serverIds: [],
+        accountId: this.draftServiceAccountId.trim(),
+        serverIds: this.parseCommaSeparatedValues(this.draftServiceServerIds),
         accounts: accounts,
-        notes: '',
+        notes: this.draftServiceNotes,
         tags: tags,
         category: category,
         customFields: customFields,
@@ -1967,6 +2348,9 @@ struct Index {
 
   private async onDeleteEntry(entryId: string): Promise<void> {
     await this.controller().deleteEntry(entryId);
+    if (this.selectedEntryId === entryId) {
+      this.selectedEntryId = '';
+    }
     this.refreshData();
   }
 
@@ -2099,6 +2483,10 @@ struct Index {
     const draft = this.categoryDraft.trim();
     await this.onAddCategory();
     if (draft.length > 0 && this.categoryDraft.trim().length === 0) {
+      if (this.categoryCreateReturnToEntry) {
+        this.selectDraftCategory(draft);
+      }
+      this.categoryCreateReturnToEntry = false;
       this.closeTopOverlay();
     }
   }
@@ -2159,6 +2547,87 @@ struct Index {
     }
     this.categoryDraftCustomFields = [];
     this.refreshData();
+  }
+
+  private async onClearDataConfirm(): Promise<void> {
+    const password = this.clearDataPassword;
+    if (password.trim().length === 0) {
+      this.toast('请输入主密码');
+      return;
+    }
+    const cleared = await this.controller().clearAllData(password);
+    if (!cleared) {
+      this.toast('主密码验证失败');
+      return;
+    }
+    const store = this.biometricCredentialStore;
+    if (store !== null) {
+      await store.clear();
+    }
+    this.selectedCategory = '';
+    this.selectedTag = '';
+    this.selectedEntryId = '';
+    this.searchQuery = '';
+    this.clearEntryDraft();
+    this.clearDataPassword = '';
+    this.entryEditorVisible = false;
+    this.activePanel = 'home';
+    this.closeTopOverlay();
+    this.refreshData();
+    this.refreshSecurityState();
+    this.refreshSyncState();
+    await this.refreshBiometricState();
+    this.toast('密码库数据已清空');
+  }
+
+  private async onRunBackup(): Promise<void> {
+    if (this.backupBusy) {
+      return;
+    }
+    this.backupBusy = true;
+    try {
+      const backup = await this.controller().runBackup();
+      this.refreshBackups();
+      this.toast(`备份已保存: ${backup.fileName}`);
+    } catch (error) {
+      this.toast(`备份失败: ${error}`);
+    } finally {
+      this.backupBusy = false;
+    }
+  }
+
+  private async onRestoreBackup(backup: BackupInfo): Promise<void> {
+    try {
+      const prompt = this.uiPromptAction();
+      const confirmation = await prompt.showDialog({
+        title: '恢复备份',
+        message: `恢复 ${backup.fileName}？当前密码库数据会被替换。`,
+        buttons: [
+          { text: '取消', color: '#666666' },
+          { text: '恢复', color: UI_ACCENT, primary: true },
+        ],
+      });
+      if (confirmation.index !== 1) {
+        return;
+      }
+      await this.controller().restoreBackup(backup.fileName);
+      this.selectedCategory = '';
+      this.selectedTag = '';
+      this.selectedEntryId = '';
+      this.searchQuery = '';
+      this.clearEntryDraft();
+      this.entryEditorVisible = false;
+      this.activePanel = 'home';
+      this.closeTopOverlay();
+      this.hasMasterKey = this.controller().hasMasterKey();
+      this.refreshData();
+      this.refreshSecurityState();
+      this.refreshSyncState();
+      this.refreshBackups();
+      this.toast('恢复完成');
+    } catch (error) {
+      this.toast(`恢复失败: ${error}`);
+    }
   }
 
   private categoryPresetSelected(category: string, preset: CategoryTypePreset): boolean {
@@ -2368,10 +2837,22 @@ struct Index {
     this.tags = this.controller().getTags();
     this.categories = this.controller().getCategories();
     this.categoryTemplates = this.controller().getCategoryTemplates();
+    if (this.selectedEntryId.length > 0 && !this.entries.some((entry: VaultEntry) => entry.id === this.selectedEntryId)) {
+      this.selectedEntryId = '';
+    }
     if (preserveEntryScroll) {
       setTimeout(() => {
         this.restoreEntryListAnchor(anchorEntryId);
       }, 0);
+    }
+  }
+
+  private refreshBackups(): void {
+    try {
+      this.backups = this.controller().listBackups();
+    } catch (error) {
+      this.backups = [];
+      console.error(`Load backups failed: ${error}`);
     }
   }
 
@@ -2407,75 +2888,34 @@ struct Index {
   private EntryCategorySelect() {
     Column({ space: 6 }) {
       Text('分类').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
-      if (this.draftCategory.length > 0) {
-        Row({ space: 6 }) {
-          Text(`已选: ${this.draftCategory}`)
-            .fontSize(12)
-            .fontColor(UI_ACCENT)
-            .layoutWeight(1);
-          Text('清除')
-            .fontSize(12)
-            .fontColor(UI_MUTED)
-            .onClick(() => {
-              this.draftCategory = '';
-              this.draftCategorySearch = '';
-            });
-        }
-      }
       Row({ space: 8 }) {
-        TextInput({ placeholder: '搜索分类', text: $$this.draftCategorySearch })
-          .layoutWeight(1)
+        Text(this.categoryDisplayName(this.draftCategory))
+          .fontSize(14)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_TEXT)
           .height(48)
+          .layoutWeight(1)
+          .padding({ left: 14, right: 14 })
+          .textAlign(TextAlign.Start)
           .backgroundColor(UI_SURFACE_ALT)
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
-          .padding({ left: 14, right: 14 });
-        Text('+')
-          .width(48)
-          .height(48)
-          .fontSize(20)
+          .onClick(() => {
+            this.openCategorySelectOverlay();
+          });
+        Text('选择')
+          .fontSize(13)
           .fontWeight(FontWeight.Bold)
-          .fontColor(this.canCreateDraftCategory() ? '#FFFFFF' : UI_MUTED)
+          .fontColor(UI_ACCENT)
+          .height(48)
+          .padding({ left: 14, right: 14 })
           .textAlign(TextAlign.Center)
-          .backgroundColor(this.canCreateDraftCategory() ? UI_ACCENT : UI_SURFACE_ALT)
-          .border({ width: 1, color: this.canCreateDraftCategory() ? UI_ACCENT : UI_STROKE })
+          .backgroundColor(UI_SURFACE_ALT)
+          .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .onClick(() => {
-            if (this.canCreateDraftCategory()) {
-              this.createDraftCategoryFromSearch();
-            }
+            this.openCategorySelectOverlay();
           });
-      }
-      if (this.canCreateDraftCategory()) {
-        Text('快捷字段')
-          .fontSize(12)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(UI_MUTED);
-        Flex({ wrap: FlexWrap.Wrap }) {
-          this.ChoiceChip('服务器', false, () => {
-            this.addCategoryDraftShortcutFields(CategoryTypePreset.SERVER);
-          });
-          this.ChoiceChip('服务', false, () => {
-            this.addCategoryDraftShortcutFields(CategoryTypePreset.SERVICE);
-          });
-          this.ChoiceChip('账号', false, () => {
-            this.addCategoryDraftShortcutFields(CategoryTypePreset.ACCOUNT);
-          });
-        }
-        this.CategoryDraftCustomFieldsEditor();
-      }
-      if (this.filteredDraftCategories().length > 0) {
-        Flex({ wrap: FlexWrap.Wrap }) {
-          ForEach(this.filteredDraftCategories(), (category: string) => {
-            this.FilterPill(category, this.draftCategory === category, () => {
-              this.selectDraftCategory(category);
-            });
-          }, (category: string) => category);
-        }
-      } else {
-        Text('没有匹配分类，可点 + 创建')
-          .fontSize(12)
-          .fontColor(UI_MUTED);
       }
     }
   }
@@ -2699,40 +3139,38 @@ struct Index {
       }
       ForEach(this.draftAccounts, (account: DraftAccount) => {
         Column({ space: 8 }) {
+          TextInput({ placeholder: '账号', text: account.username })
+            .width('100%')
+            .height(48)
+            .backgroundColor(UI_SURFACE_ALT)
+            .border({ width: 1, color: UI_STROKE })
+            .borderRadius(12)
+            .padding({ left: 14, right: 14 })
+            .onChange((value: string) => {
+              this.updateDraftAccountUsername(account.id, value);
+            });
+          TextInput({ placeholder: '密码', text: account.password })
+            .type(InputType.Password)
+            .width('100%')
+            .height(48)
+            .backgroundColor(UI_SURFACE_ALT)
+            .border({ width: 1, color: UI_STROKE })
+            .borderRadius(12)
+            .padding({ left: 14, right: 14 })
+            .onChange((value: string) => {
+              this.updateDraftAccountPassword(account.id, value);
+            });
+          TextInput({ placeholder: '备注', text: account.note })
+            .width('100%')
+            .height(48)
+            .backgroundColor(UI_SURFACE_ALT)
+            .border({ width: 1, color: UI_STROKE })
+            .borderRadius(12)
+            .padding({ left: 14, right: 14 })
+            .onChange((value: string) => {
+              this.updateDraftAccountNote(account.id, value);
+            });
           Row({ space: 8 }) {
-            TextInput({ placeholder: '账号', text: account.username })
-              .layoutWeight(1)
-              .height(48)
-              .backgroundColor(UI_SURFACE_ALT)
-              .border({ width: 1, color: UI_STROKE })
-              .borderRadius(12)
-              .padding({ left: 14, right: 14 })
-              .onChange((value: string) => {
-                this.updateDraftAccountUsername(account.id, value);
-              });
-            TextInput({ placeholder: '密码', text: account.password })
-              .type(InputType.Password)
-              .layoutWeight(1)
-              .height(48)
-              .backgroundColor(UI_SURFACE_ALT)
-              .border({ width: 1, color: UI_STROKE })
-              .borderRadius(12)
-              .padding({ left: 14, right: 14 })
-              .onChange((value: string) => {
-                this.updateDraftAccountPassword(account.id, value);
-              });
-          }
-          Row({ space: 8 }) {
-            TextInput({ placeholder: '备注', text: account.note })
-              .layoutWeight(1)
-              .height(48)
-              .backgroundColor(UI_SURFACE_ALT)
-              .border({ width: 1, color: UI_STROKE })
-              .borderRadius(12)
-              .padding({ left: 14, right: 14 })
-              .onChange((value: string) => {
-                this.updateDraftAccountNote(account.id, value);
-              });
             Text('删除')
               .height(36)
               .padding({ left: 10, right: 10 })
@@ -2750,9 +3188,11 @@ struct Index {
         .padding(10)
         .backgroundColor(UI_SURFACE_ALT)
         .border({ width: 1, color: UI_STROKE })
-        .borderRadius(12);
+        .borderRadius(12)
+        .width('100%');
       }, (account: DraftAccount) => account.id);
     }
+    .width('100%');
   }
 
   private async saveJsonExportFile(prefix: string, name: string, contents: string): Promise<string> {
@@ -2962,6 +3402,9 @@ struct Index {
     if (panel === 'create') {
       this.categoryRenameSource = '';
     }
+    if (panel === 'backup') {
+      this.refreshBackups();
+    }
     this.topOverlayPanel = panel;
   }
 
@@ -2976,8 +3419,9 @@ struct Index {
     this.closeTopOverlay();
   }
 
-  private prepareCreateCategoryOverlay(initialValue: string): void {
+  private prepareCreateCategoryOverlay(initialValue: string, returnToEntry: boolean = false): void {
     this.categoryDraft = initialValue;
+    this.categoryCreateReturnToEntry = returnToEntry;
     this.categoryRenameSource = '';
     this.categoryDraftCustomFields = [];
     this.topOverlayPanel = 'categoryCreate';
@@ -2986,6 +3430,16 @@ struct Index {
   private prepareCreateTagOverlay(initialValue: string): void {
     this.tagDraft = initialValue;
     this.topOverlayPanel = 'tagCreate';
+  }
+
+  private openCategorySelectOverlay(): void {
+    this.draftCategorySearch = '';
+    this.topOverlayPanel = 'categorySelect';
+  }
+
+  private openClearDataOverlay(): void {
+    this.clearDataPassword = '';
+    this.topOverlayPanel = 'clearData';
   }
 
   private updateViewportSize(area: Area): void {
@@ -3030,7 +3484,13 @@ struct Index {
     if (width < WIDE_LAYOUT_MIN_WIDTH) {
       return Math.max(width - 32, 320);
     }
-    return this.topOverlayPanel === 'settings' ? 520 : 360;
+    if (this.topOverlayPanel === 'settings') {
+      return 520;
+    }
+    if (this.topOverlayPanel === 'backup') {
+      return 420;
+    }
+    return 360;
   }
 
   private floatingPanelWidthValue(): number {
@@ -3050,6 +3510,47 @@ struct Index {
 
   private settingsPanelScrollHeight(): number {
     return this.floatingPanelMaxHeight() - 58;
+  }
+
+  private backupListHeight(): number {
+    return Math.min(this.floatingPanelMaxHeight() - 156, 380);
+  }
+
+  private categorySelectListHeight(): number {
+    return Math.min(this.floatingPanelMaxHeight() - 126, 360);
+  }
+
+  private categoryCreatePanelScrollHeight(): number {
+    return Math.max(this.floatingPanelMaxHeight() - 58, 260);
+  }
+
+  private categoryDisplayName(category: string): string {
+    return category.trim().length > 0 ? category : '未分类';
+  }
+
+  private toolbarIconSize(): number {
+    const width = this.viewportWidth;
+    if (width > 0 && width < 420) {
+      return 38;
+    }
+    return 44;
+  }
+
+  private formatBytes(bytes: number): string {
+    if (bytes < 1024) {
+      return `${bytes} B`;
+    }
+    if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`;
+    }
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  }
+
+  private formatBackupTime(timestamp: number): string {
+    if (timestamp <= 0) {
+      return '-';
+    }
+    return new Date(timestamp).toLocaleString();
   }
 
   private configureFoldableState(): void {
@@ -3112,11 +3613,15 @@ struct Index {
   private filteredDraftCategories(): string[] {
     const query = this.draftCategorySearch.trim().toLowerCase();
     if (query.length === 0) {
-      return this.categories.slice(0, 12);
+      return this.categories;
     }
     return this.categories
-      .filter((category: string) => category.toLowerCase().includes(query))
-      .slice(0, 12);
+      .filter((category: string) => category.toLowerCase().includes(query));
+  }
+
+  private showUncategorizedDraftCategory(): boolean {
+    const query = this.draftCategorySearch.trim().toLowerCase();
+    return query.length === 0 || '未分类'.toLowerCase().includes(query);
   }
 
   private canCreateDraftCategory(): boolean {
@@ -3228,6 +3733,9 @@ struct Index {
     this.draftServiceName = '';
     this.draftServiceAddress = '';
     this.draftServicePort = '';
+    this.draftServiceAccountId = '';
+    this.draftServiceServerIds = '';
+    this.draftServiceNotes = '';
   }
 
   private beginCreateEntry(): void {
@@ -3235,6 +3743,7 @@ struct Index {
     this.draftCategory = this.selectedCategory;
     this.applyCategoryTemplateToDraft(this.draftCategory);
     this.activePanel = 'home';
+    this.selectedEntryId = '';
     this.entryEditorVisible = true;
     this.closeTopOverlay();
   }
@@ -3245,6 +3754,7 @@ struct Index {
     this.entryEditorVisible = true;
     this.closeTopOverlay();
     this.editingEntryId = entry.id;
+    this.selectedEntryId = entry.id;
     this.exportEntryId = '';
     this.draftLabel = entry.label;
     this.draftCategory = this.entryCategory(entry);
@@ -3273,6 +3783,9 @@ struct Index {
     this.draftServiceName = payload.name ?? '';
     this.draftServiceAddress = payload.connectionAddress ?? '';
     this.draftServicePort = payload.connectionPort ?? '';
+    this.draftServiceAccountId = payload.accountId ?? '';
+    this.draftServiceServerIds = (payload.serverIds ?? []).join(', ');
+    this.draftServiceNotes = payload.notes ?? '';
     this.draftAccounts = this.copyAccounts(payload.accounts);
   }
 
@@ -3476,6 +3989,20 @@ struct Index {
         account.username.length > 0 ||
         account.password.trim().length > 0 ||
         account.note.trim().length > 0);
+  }
+
+  private parseCommaSeparatedValues(value: string): string[] {
+    const seen = new Set<string>();
+    const output: string[] = [];
+    value.split(',').forEach((item: string) => {
+      const clean = item.trim();
+      if (clean.length === 0 || seen.has(clean)) {
+        return;
+      }
+      seen.add(clean);
+      output.push(clean);
+    });
+    return output;
   }
 
   private copyAccounts(accounts: ServiceAccount[] | undefined): DraftAccount[] {

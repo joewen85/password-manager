@@ -1,4 +1,5 @@
 import { Context } from '@kit.AbilityKit';
+import fs from '@ohos.file.fs';
 import {
   CategoryTemplate,
   CategoryTypePreset,
@@ -88,6 +89,12 @@ interface ExportCategoryRecord {
   category: string;
   count: number;
   items: ExportItemRecord[];
+}
+
+export interface BackupInfo {
+  fileName: string;
+  sizeBytes: number;
+  modifiedAt: number;
 }
 
 interface SelectedExportItemRecord {
@@ -200,6 +207,9 @@ interface ServiceReferenceCarrier {
 const MAX_UNLOCK_ATTEMPTS: number = 5;
 const LOCKOUT_DURATION_MS: number = 5 * 60 * 1000;
 const AUTO_SYNC_SYNCING_STATUS: string = '同步中';
+const BACKUP_DIR_NAME: string = 'backups';
+const BACKUP_RETAIN_COUNT: number = 5;
+const BACKUP_FILE_PATTERN: RegExp = /^vault-\d{8}-\d{6}\.json$/;
 
 export class VaultController {
   private static readonly SCHEMA_VERSION: number = 1;
@@ -459,6 +469,123 @@ export class VaultController {
     this.snapshot = createEmptyPayload();
     this.syncInProgress = false;
     this.lastAutoSyncAttemptAt = 0;
+  }
+
+  listBackups(): BackupInfo[] {
+    const dir = this.backupDirectory();
+    if (dir.length === 0 || !pathExists(dir)) {
+      return [];
+    }
+    return fs.listFileSync(dir)
+      .filter((fileName: string) => BACKUP_FILE_PATTERN.test(fileName))
+      .map((fileName: string): BackupInfo => {
+        const path = `${dir}/${fileName}`;
+        const stat = fs.statSync(path);
+        return {
+          fileName,
+          sizeBytes: stat.size,
+          modifiedAt: stat.mtime * 1000,
+        };
+      })
+      .sort((left: BackupInfo, right: BackupInfo) => right.fileName.localeCompare(left.fileName));
+  }
+
+  async runBackup(): Promise<BackupInfo> {
+    this.ensureUnlocked();
+    await this.persist(false);
+    const dir = this.ensureBackupDirectory();
+    const envelope = await this.readEnvelope();
+    const fileName = `vault-${backupTimestamp()}.json`;
+    const path = `${dir}/${fileName}`;
+    this.writeTextFile(path, JSON.stringify(envelope));
+    this.pruneBackups();
+    const stat = fs.statSync(path);
+    return {
+      fileName,
+      sizeBytes: stat.size,
+      modifiedAt: stat.mtime * 1000,
+    };
+  }
+
+  async restoreBackup(fileName: string): Promise<void> {
+    this.ensureUnlocked();
+    const sessionKey = this.sessionKeyToken;
+    if (sessionKey === null) {
+      throw new Error('Session key is missing');
+    }
+    const clean = fileName.trim();
+    if (!BACKUP_FILE_PATTERN.test(clean)) {
+      throw new Error('备份文件名无效');
+    }
+    const dir = this.backupDirectory();
+    const path = `${dir}/${clean}`;
+    if (dir.length === 0 || !pathExists(path)) {
+      throw new Error('备份不存在');
+    }
+    const parsed = JSON.parse(fs.readTextSync(path)) as VaultPersistenceEnvelope;
+    this.masterKeyRecord = parsed.masterKeyRecord ?? null;
+    this.unlockGuard = normalizeUnlockGuardState(parsed.unlockGuard);
+    if (parsed.encryptedVault === null || parsed.encryptedVault === undefined) {
+      this.snapshot = createEmptyPayload();
+    } else {
+      try {
+        const plaintext = await this.crypto.decryptString(parsed.encryptedVault, sessionKey);
+        this.snapshot = sanitizeRuntimePayload(JSON.parse(plaintext) as VaultPayloadRecord);
+      } catch (error) {
+        throw new Error(`备份无法用当前主密码解密: ${error}`);
+      }
+    }
+    await this.persist();
+  }
+
+  private backupDirectory(): string {
+    if (this.syncContext === null) {
+      return '';
+    }
+    return `${this.syncContext.filesDir}/${BACKUP_DIR_NAME}`;
+  }
+
+  private ensureBackupDirectory(): string {
+    const dir = this.backupDirectory();
+    if (dir.length === 0) {
+      throw new Error('应用私有存储不可用');
+    }
+    if (!pathExists(dir)) {
+      fs.mkdirSync(dir, true);
+    }
+    return dir;
+  }
+
+  private writeTextFile(path: string, contents: string): void {
+    let file: fs.File | null = null;
+    try {
+      file = fs.openSync(
+        path,
+        fs.OpenMode.WRITE_ONLY | fs.OpenMode.CREATE | fs.OpenMode.TRUNC,
+      );
+      fs.writeSync(file.fd, contents, {
+        encoding: 'utf-8',
+      });
+    } finally {
+      if (file !== null) {
+        fs.closeSync(file);
+      }
+    }
+  }
+
+  private pruneBackups(): void {
+    const dir = this.backupDirectory();
+    if (dir.length === 0 || !pathExists(dir)) {
+      return;
+    }
+    const backups = this.listBackups();
+    backups.slice(BACKUP_RETAIN_COUNT).forEach((backup: BackupInfo) => {
+      try {
+        fs.unlinkSync(`${dir}/${backup.fileName}`);
+      } catch (error) {
+        console.error(`Prune backup failed: ${error}`);
+      }
+    });
   }
 
   async updateSyncSettings(settings: SyncSettings): Promise<void> {
@@ -906,6 +1033,22 @@ export class VaultController {
     target.updatedAt = now;
     (target as EntryCarrier).deletedAt = now;
     await this.persist();
+  }
+
+  async clearAllData(password: string): Promise<boolean> {
+    this.ensureUnlocked();
+    const verified = await this.verifyMasterPassword(password);
+    if (!verified) {
+      return false;
+    }
+    const currentSyncSettings = cloneSyncSettings(this.snapshot.syncSettings);
+    this.snapshot = createEmptyPayload();
+    const resetSyncSettings = defaultSyncSettings();
+    resetSyncSettings.deviceId = currentSyncSettings.deviceId;
+    resetSyncSettings.hasLocalChanges = true;
+    this.snapshot.syncSettings = resetSyncSettings;
+    await this.persist();
+    return true;
   }
 
   async addTag(tag: string): Promise<void> {
@@ -2579,6 +2722,24 @@ function nextId(): string {
   const ts = Date.now().toString(36);
   const rand = Math.floor(Math.random() * 1_000_000_000).toString(36);
   return `${ts}_${rand}`;
+}
+
+function backupTimestamp(date: Date = new Date()): string {
+  const year = date.getUTCFullYear().toString().padStart(4, '0');
+  const month = (date.getUTCMonth() + 1).toString().padStart(2, '0');
+  const day = date.getUTCDate().toString().padStart(2, '0');
+  const hour = date.getUTCHours().toString().padStart(2, '0');
+  const minute = date.getUTCMinutes().toString().padStart(2, '0');
+  const second = date.getUTCSeconds().toString().padStart(2, '0');
+  return `${year}${month}${day}-${hour}${minute}${second}`;
+}
+
+function pathExists(path: string): boolean {
+  try {
+    return fs.accessSync(path);
+  } catch (_error) {
+    return false;
+  }
 }
 
 function putCanonicalEntry(entries: Map<string, VaultEntry>, entry: VaultEntry): void {
