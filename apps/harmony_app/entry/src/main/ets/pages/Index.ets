@@ -530,35 +530,54 @@ struct Index {
 
   @Builder
   private FloatingPanel() {
-    Column({ space: 10 }) {
-      if (this.topOverlayPanel === 'create') {
-        this.CreateOverlayPanel();
-      } else if (this.topOverlayPanel === 'settings') {
-        this.SettingsOverlayPanel();
-      } else if (this.topOverlayPanel === 'more') {
-        this.MoreOverlayPanel();
-      } else if (this.topOverlayPanel === 'backup') {
-        this.BackupOverlayPanel();
-      } else if (this.topOverlayPanel === 'clearData') {
-        this.ClearDataOverlayPanel();
-      } else if (this.topOverlayPanel === 'categorySelect') {
-        this.CategorySelectOverlayPanel();
-      } else if (this.topOverlayPanel === 'categoryCreate') {
-        this.CategoryCreateOverlayPanel();
-      } else if (this.topOverlayPanel === 'tagCreate') {
-        this.TagCreateOverlayPanel();
-      } else if (this.topOverlayPanel === 'entryEditor') {
-        this.EntryEditorOverlayPanel();
+    if (this.floatingPanelUsesAvailableHeight()) {
+      Column({ space: 10 }) {
+        this.FloatingPanelContent();
       }
+      .width(this.floatingPanelWidth())
+      .height(this.floatingPanelMaxHeight())
+      .padding(14)
+      .backgroundColor(UI_SURFACE)
+      .border({ width: 1, color: UI_STROKE })
+      .borderRadius(18)
+      .position({ x: this.floatingPanelX(), y: this.floatingPanelY() })
+      .zIndex(9);
+    } else {
+      Column({ space: 10 }) {
+        this.FloatingPanelContent();
+      }
+      .width(this.floatingPanelWidth())
+      .constraintSize({ maxHeight: this.floatingPanelMaxHeight() })
+      .padding(14)
+      .backgroundColor(UI_SURFACE)
+      .border({ width: 1, color: UI_STROKE })
+      .borderRadius(18)
+      .position({ x: this.floatingPanelX(), y: this.floatingPanelY() })
+      .zIndex(9);
     }
-    .width(this.floatingPanelWidth())
-    .constraintSize({ maxHeight: this.floatingPanelMaxHeight() })
-    .padding(14)
-    .backgroundColor(UI_SURFACE)
-    .border({ width: 1, color: UI_STROKE })
-    .borderRadius(18)
-    .position({ x: this.floatingPanelX(), y: this.floatingPanelY() })
-    .zIndex(9);
+  }
+
+  @Builder
+  private FloatingPanelContent() {
+    if (this.topOverlayPanel === 'create') {
+      this.CreateOverlayPanel();
+    } else if (this.topOverlayPanel === 'settings') {
+      this.SettingsOverlayPanel();
+    } else if (this.topOverlayPanel === 'more') {
+      this.MoreOverlayPanel();
+    } else if (this.topOverlayPanel === 'backup') {
+      this.BackupOverlayPanel();
+    } else if (this.topOverlayPanel === 'clearData') {
+      this.ClearDataOverlayPanel();
+    } else if (this.topOverlayPanel === 'categorySelect') {
+      this.CategorySelectOverlayPanel();
+    } else if (this.topOverlayPanel === 'categoryCreate') {
+      this.CategoryCreateOverlayPanel();
+    } else if (this.topOverlayPanel === 'tagCreate') {
+      this.TagCreateOverlayPanel();
+    } else if (this.topOverlayPanel === 'entryEditor') {
+      this.EntryEditorOverlayPanel();
+    }
   }
 
   @Builder
@@ -3555,6 +3574,12 @@ struct Index {
   private floatingPanelX(): number {
     const width = this.viewportWidth > 0 ? this.viewportWidth : this.floatingPanelWidthValue() + 16;
     return Math.max(width - this.floatingPanelWidthValue() - 8, 8);
+  }
+
+  private floatingPanelUsesAvailableHeight(): boolean {
+    return this.topOverlayPanel === 'entryEditor' ||
+      this.topOverlayPanel === 'categoryCreate' ||
+      this.topOverlayPanel === 'settings';
   }
 
   private floatingPanelY(): number {

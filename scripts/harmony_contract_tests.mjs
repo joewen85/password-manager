@@ -273,6 +273,8 @@ function checkKeyboardAvoidanceContract() {
   assertIncludes(page, "currentWindow.on('keyboardHeightChange', this.keyboardHeightChangeHandler);", 'Harmony page listens for keyboard height changes');
   assertIncludes(page, "this.appWindow.off('keyboardHeightChange', this.keyboardHeightChangeHandler);", 'Harmony page unregisters keyboard height listener');
   assertIncludes(page, '.position({ x: this.floatingPanelX(), y: this.floatingPanelY() })', 'Harmony floating panels move when keyboard is visible');
+  assertIncludes(page, '.height(this.floatingPanelMaxHeight())', 'Harmony input-heavy floating panels fill available height instead of wrapping content');
+  assertIncludes(page, "this.topOverlayPanel === 'entryEditor'", 'Harmony entry editor floating panel uses available height');
   assertIncludes(page, 'height - this.floatingPanelY() - this.floatingPanelBottomGap() - this.effectiveKeyboardInset()', 'Harmony floating panel height avoids keyboard space');
   assertIncludes(page, 'private viewportAlreadyAvoidsKeyboard(): boolean', 'Harmony page detects when viewport already resized for keyboard');
   assertIncludes(page, 'if (this.viewportAlreadyAvoidsKeyboard())', 'Harmony page avoids subtracting keyboard height twice');
