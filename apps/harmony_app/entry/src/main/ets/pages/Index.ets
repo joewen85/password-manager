@@ -405,8 +405,8 @@ struct Index {
           this.EntryListSection();
         }
         .height('100%')
-        .width(this.useExpandedLayout() ? '42%' : '46%')
-        .constraintSize({ minWidth: 320, maxWidth: 560 });
+        .width(this.primaryPaneWidth())
+        .constraintSize({ minWidth: this.primaryPaneMinWidth(), maxWidth: this.primaryPaneMaxWidth() });
         this.EntryDetailSection();
       }
       .layoutWeight(1)
@@ -429,6 +429,28 @@ struct Index {
 
   @Builder
   private HeaderSection() {
+    if (this.useWideLayout() && this.activePanel === 'home' && !this.entryEditorVisible) {
+      Row() {
+        Column() {
+          this.HeaderToolbarContent();
+        }
+        .width(this.primaryPaneWidth())
+        .constraintSize({ minWidth: this.primaryPaneMinWidth(), maxWidth: this.primaryPaneMaxWidth() });
+        Blank();
+      }
+      .width('100%')
+      .padding({ left: 2, right: 2, top: 2, bottom: 2 });
+    } else {
+      Column() {
+        this.HeaderToolbarContent();
+      }
+      .width('100%')
+      .padding({ left: 2, right: 2, top: 2, bottom: 2 });
+    }
+  }
+
+  @Builder
+  private HeaderToolbarContent() {
     Flex({
       direction: FlexDirection.Row,
       wrap: FlexWrap.Wrap,
@@ -468,8 +490,7 @@ struct Index {
         this.lockVault();
       });
     }
-    .width('100%')
-    .padding({ left: 2, right: 2, top: 2, bottom: 2 });
+    .width('100%');
   }
 
   @Builder
@@ -3534,6 +3555,18 @@ struct Index {
       return 38;
     }
     return 44;
+  }
+
+  private primaryPaneMinWidth(): number {
+    return 320;
+  }
+
+  private primaryPaneMaxWidth(): number {
+    return this.useExpandedLayout() ? 560 : 430;
+  }
+
+  private primaryPaneWidth(): string | number {
+    return this.useExpandedLayout() ? '42%' : '46%';
   }
 
   private formatBytes(bytes: number): string {
