@@ -267,6 +267,16 @@ function checkCategoryFocusContract() {
   assertIncludes(page, 'this.focusCategory(category);', 'Harmony category management rows can focus a category');
 }
 
+function checkKeyboardAvoidanceContract() {
+  const page = read(files.indexPage);
+  assertIncludes(page, "import { window } from '@kit.ArkUI';", 'Harmony page can access window keyboard events');
+  assertIncludes(page, "currentWindow.on('keyboardHeightChange', this.keyboardHeightChangeHandler);", 'Harmony page listens for keyboard height changes');
+  assertIncludes(page, "this.appWindow.off('keyboardHeightChange', this.keyboardHeightChangeHandler);", 'Harmony page unregisters keyboard height listener');
+  assertIncludes(page, '.position({ x: this.floatingPanelX(), y: this.floatingPanelY() })', 'Harmony floating panels move when keyboard is visible');
+  assertIncludes(page, 'height - this.floatingPanelY() - this.floatingPanelBottomGap() - this.effectiveKeyboardInset()', 'Harmony floating panel height avoids keyboard space');
+  assertIncludes(page, 'this.keyboardVisible() ? 120 : 260', 'Harmony input-heavy panel scroll areas shrink for keyboard mode');
+}
+
 function main() {
   for (const file of Object.values(files)) {
     const absolute = path.join(root, file);
@@ -284,6 +294,7 @@ function main() {
   checkEntryDetailUiContract();
   checkCategoryManagementContract();
   checkCategoryFocusContract();
+  checkKeyboardAvoidanceContract();
 
   if (failures > 0) {
     console.error(`[FAIL] Harmony contract tests failed: ${failures}`);

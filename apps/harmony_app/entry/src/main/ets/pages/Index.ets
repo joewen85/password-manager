@@ -1,4 +1,5 @@
 import { Context } from '@kit.AbilityKit';
+import { window } from '@kit.ArkUI';
 import display from '@ohos.display';
 import picker from '@ohos.file.picker';
 import fs from '@ohos.file.fs';
@@ -98,6 +99,10 @@ struct Index {
   private hostContext: Context | null = null;
   private searchInputController: TextInputController = new TextInputController();
   private entryListScroller: Scroller = new Scroller();
+  private appWindow: window.Window | null = null;
+  private keyboardHeightChangeHandler: (height: number) => void = (height: number) => {
+    this.keyboardHeight = Math.max(0, height);
+  };
   private foldStatusChangeHandler: (status: display.FoldStatus) => void = (_status: display.FoldStatus) => {
     this.updateFoldableState();
   };
@@ -116,6 +121,7 @@ struct Index {
   @State private viewportHeight: number = 0;
   @State private foldableDevice: boolean = false;
   @State private currentFoldStatus: number = 0;
+  @State private keyboardHeight: number = 0;
 
   @State private password: string = '';
   @State private confirmPassword: string = '';
@@ -204,6 +210,9 @@ struct Index {
       this.vaultController = new VaultController(new InMemoryVaultStore(), crypto, this.hostContext);
       this.biometricCredentialStore = null;
     }
+    if (this.hostContext !== null) {
+      await this.bindKeyboardAvoidance(this.hostContext);
+    }
     await this.controller().initialize();
     this.hasMasterKey = this.controller().hasMasterKey();
     this.unlocked = this.controller().isUnlocked();
@@ -222,6 +231,7 @@ struct Index {
   }
 
   aboutToDisappear(): void {
+    this.unbindKeyboardAvoidance();
     this.stopAutoSyncTimer();
     this.stopIdleLockTimer();
     this.stopFoldableState();
@@ -546,7 +556,7 @@ struct Index {
     .backgroundColor(UI_SURFACE)
     .border({ width: 1, color: UI_STROKE })
     .borderRadius(18)
-    .position({ x: this.floatingPanelX(), y: 56 })
+    .position({ x: this.floatingPanelX(), y: this.floatingPanelY() })
     .zIndex(9);
   }
 
@@ -3447,6 +3457,41 @@ struct Index {
     this.viewportHeight = this.lengthToNumber(area.height);
   }
 
+  private async bindKeyboardAvoidance(context: Context): Promise<void> {
+    try {
+      this.unbindKeyboardAvoidance();
+      const currentWindow = await window.getLastWindow(context);
+      this.appWindow = currentWindow;
+      currentWindow.on('keyboardHeightChange', this.keyboardHeightChangeHandler);
+      this.syncKeyboardAvoidArea(currentWindow);
+    } catch (error) {
+      console.error(`Keyboard avoidance unavailable: ${error}`);
+    }
+  }
+
+  private unbindKeyboardAvoidance(): void {
+    if (this.appWindow !== null) {
+      try {
+        this.appWindow.off('keyboardHeightChange', this.keyboardHeightChangeHandler);
+      } catch (error) {
+        console.error(`Keyboard avoidance cleanup failed: ${error}`);
+      }
+    }
+    this.appWindow = null;
+    this.keyboardHeight = 0;
+  }
+
+  private syncKeyboardAvoidArea(currentWindow: window.Window): void {
+    try {
+      const avoidArea = currentWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_KEYBOARD);
+      if (avoidArea.visible) {
+        this.keyboardHeight = Math.max(0, avoidArea.bottomRect.height);
+      }
+    } catch (error) {
+      console.error(`Keyboard avoid area unavailable: ${error}`);
+    }
+  }
+
   private lengthToNumber(value: Length): number {
     if (typeof value === 'number') {
       return value;
@@ -3506,29 +3551,57 @@ struct Index {
     return Math.max(width - this.floatingPanelWidthValue() - 8, 8);
   }
 
+  private floatingPanelY(): number {
+    if (this.keyboardVisible()) {
+      return 8;
+    }
+    if (this.viewportHeight > 0 && this.viewportHeight < 560) {
+      return 12;
+    }
+    return 56;
+  }
+
+  private floatingPanelBottomGap(): number {
+    return this.keyboardVisible() ? 8 : 32;
+  }
+
+  private keyboardVisible(): boolean {
+    return this.effectiveKeyboardInset() > 0;
+  }
+
+  private effectiveKeyboardInset(): number {
+    if (this.keyboardHeight <= 0) {
+      return 0;
+    }
+    const height = this.viewportHeight > 0 ? this.viewportHeight : 720;
+    return Math.min(this.keyboardHeight, Math.max(height - 220, 0));
+  }
+
   private floatingPanelMaxHeight(): number {
     const height = this.viewportHeight > 0 ? this.viewportHeight : 720;
-    return Math.max(height - 88, 320);
+    const availableHeight =
+      height - this.floatingPanelY() - this.floatingPanelBottomGap() - this.effectiveKeyboardInset();
+    return Math.max(availableHeight, this.keyboardVisible() ? 140 : 320);
   }
 
   private settingsPanelScrollHeight(): number {
-    return this.floatingPanelMaxHeight() - 58;
+    return Math.max(this.floatingPanelMaxHeight() - 58, this.keyboardVisible() ? 96 : 220);
   }
 
   private backupListHeight(): number {
-    return Math.min(this.floatingPanelMaxHeight() - 156, 380);
+    return Math.max(Math.min(this.floatingPanelMaxHeight() - 156, 380), 96);
   }
 
   private categorySelectListHeight(): number {
-    return Math.min(this.floatingPanelMaxHeight() - 126, 360);
+    return Math.max(Math.min(this.floatingPanelMaxHeight() - 126, 360), 96);
   }
 
   private categoryCreatePanelScrollHeight(): number {
-    return Math.max(this.floatingPanelMaxHeight() - 58, 260);
+    return Math.max(this.floatingPanelMaxHeight() - 58, this.keyboardVisible() ? 120 : 260);
   }
 
   private entryEditorPanelScrollHeight(): number {
-    return Math.max(this.floatingPanelMaxHeight() - 58, 260);
+    return Math.max(this.floatingPanelMaxHeight() - 58, this.keyboardVisible() ? 120 : 260);
   }
 
   private categoryDisplayName(category: string): string {
