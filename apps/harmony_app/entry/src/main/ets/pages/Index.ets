@@ -487,7 +487,7 @@ struct Index {
         this.ToolbarIconButton('⋮', '更多', this.topOverlayPanel === 'more', () => {
           this.openTopOverlay('more');
         });
-        this.ToolbarIconButton('▣', '锁定', false, () => {
+        this.ToolbarIconButton('🔒', '锁定', false, () => {
           this.lockVault();
         });
       }
@@ -500,7 +500,7 @@ struct Index {
   @Builder
   private ToolbarIconButton(icon: string, label: string, accent: boolean, action: () => void) {
     Text(icon)
-      .fontSize(icon.length > 1 ? 13 : 21)
+      .fontSize(this.toolbarIconFontSize(icon))
       .fontWeight(FontWeight.Bold)
       .fontColor(accent ? UI_ACCENT : UI_TEXT)
       .width(this.toolbarIconSize())
@@ -3562,6 +3562,10 @@ struct Index {
       return 38;
     }
     return 44;
+  }
+
+  private toolbarIconFontSize(icon: string): number {
+    return icon === '···' ? 13 : 21;
   }
 
   private toolbarActionsMinWidth(): number {
