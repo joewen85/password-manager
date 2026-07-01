@@ -119,6 +119,7 @@ struct Index {
   @State private entryEditorVisible: boolean = false;
   @State private viewportWidth: number = 0;
   @State private viewportHeight: number = 0;
+  @State private keyboardBaselineViewportHeight: number = 0;
   @State private foldableDevice: boolean = false;
   @State private currentFoldStatus: number = 0;
   @State private keyboardHeight: number = 0;
@@ -3453,8 +3454,13 @@ struct Index {
   }
 
   private updateViewportSize(area: Area): void {
-    this.viewportWidth = this.lengthToNumber(area.width);
-    this.viewportHeight = this.lengthToNumber(area.height);
+    const width = this.lengthToNumber(area.width);
+    const height = this.lengthToNumber(area.height);
+    this.viewportWidth = width;
+    this.viewportHeight = height;
+    if (height > this.keyboardBaselineViewportHeight || this.keyboardHeight <= 0) {
+      this.keyboardBaselineViewportHeight = height;
+    }
   }
 
   private async bindKeyboardAvoidance(context: Context): Promise<void> {
@@ -3566,15 +3572,25 @@ struct Index {
   }
 
   private keyboardVisible(): boolean {
-    return this.effectiveKeyboardInset() > 0;
+    return this.keyboardHeight > 0;
   }
 
   private effectiveKeyboardInset(): number {
     if (this.keyboardHeight <= 0) {
       return 0;
     }
+    if (this.viewportAlreadyAvoidsKeyboard()) {
+      return 0;
+    }
     const height = this.viewportHeight > 0 ? this.viewportHeight : 720;
     return Math.min(this.keyboardHeight, Math.max(height - 220, 0));
+  }
+
+  private viewportAlreadyAvoidsKeyboard(): boolean {
+    if (this.keyboardHeight <= 0 || this.keyboardBaselineViewportHeight <= 0 || this.viewportHeight <= 0) {
+      return false;
+    }
+    return this.viewportHeight + this.keyboardHeight <= this.keyboardBaselineViewportHeight + 48;
   }
 
   private floatingPanelMaxHeight(): number {
