@@ -12,7 +12,6 @@ import {
   CustomField,
   SecuritySettings,
   ServerPayload,
-  ServiceAccount,
   ServicePayload,
   VaultEntry,
   VaultEntryType
@@ -89,13 +88,6 @@ interface EntryCategoryCarrier {
 interface ExportFieldOption {
   id: string;
   label: string;
-}
-
-interface DraftAccount {
-  id: string;
-  username: string;
-  password: string;
-  note: string;
 }
 
 @Entry
@@ -195,24 +187,9 @@ struct Index {
   @State private draftTagSearch: string = '';
   @State private draftSelectedTags: string[] = [];
   @State private draftCustomFields: CustomField[] = [];
-  @State private draftAccounts: DraftAccount[] = [];
   @State private editingEntryId: string = '';
   @State private exportEntryId: string = '';
   @State private exportSelectedFieldIds: string[] = [];
-
-  @State private draftCredentialUsername: string = '';
-  @State private draftCredentialPassword: string = '';
-
-  @State private draftServerName: string = '';
-  @State private draftServerIp: string = '';
-  @State private draftServerPort: string = '';
-
-  @State private draftServiceName: string = '';
-  @State private draftServiceAddress: string = '';
-  @State private draftServicePort: string = '';
-  @State private draftServiceAccountId: string = '';
-  @State private draftServiceServerIds: string = '';
-  @State private draftServiceNotes: string = '';
 
   async aboutToAppear(): Promise<void> {
     const crypto = new VaultCryptoService();
@@ -986,26 +963,6 @@ struct Index {
   }
 
   @Builder
-  private EntryTypeChip(label: string, type: DraftType) {
-    Text(label)
-      .fontSize(13)
-      .fontWeight(FontWeight.Bold)
-      .fontColor(this.draftType === type ? '#FFFFFF' : UI_TEXT)
-      .height(38)
-      .padding({ left: 14, right: 14 })
-      .margin({ right: 8, bottom: 8 })
-      .textAlign(TextAlign.Center)
-      .backgroundColor(this.draftType === type ? UI_ACCENT : UI_SURFACE_ALT)
-      .border({ width: 1, color: this.draftType === type ? UI_ACCENT : UI_STROKE })
-      .borderRadius(12)
-      .onClick(() => {
-        if (this.editingEntryId.length === 0) {
-          this.draftType = type;
-        }
-      });
-  }
-
-  @Builder
   private SecuritySection() {
     Column({ space: 10 }) {
       this.SectionTitle('安全');
@@ -1522,16 +1479,6 @@ struct Index {
   @Builder
   private EntryEditorFormContent() {
     Column({ space: 10 }) {
-      if (this.editingEntryId.length > 0) {
-        Text('条目类型').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
-
-        Flex({ wrap: FlexWrap.Wrap }) {
-          this.EntryTypeChip('账号', 'credential');
-          this.EntryTypeChip('服务器', 'server');
-          this.EntryTypeChip('服务', 'service');
-        }
-      }
-
       TextInput({ placeholder: '名称（必填）', text: $$this.draftLabel })
         .width('100%')
         .height(48)
@@ -1545,129 +1492,6 @@ struct Index {
 
       this.EntryCategorySelect();
       this.EntryTagMultiSelect();
-
-      if (this.editingEntryId.length > 0 && this.draftType === 'credential') {
-        TextInput({ placeholder: '用户名', text: $$this.draftCredentialUsername })
-          .width('100%')
-          .height(48)
-          .backgroundColor(UI_SURFACE_ALT)
-          .fontColor(UI_TEXT)
-          .placeholderColor(UI_MUTED)
-          .caretColor(UI_ACCENT)
-          .border({ width: 1, color: UI_STROKE })
-          .borderRadius(12)
-          .padding({ left: 14, right: 14 });
-        TextInput({ placeholder: '密码', text: $$this.draftCredentialPassword })
-          .type(InputType.Password)
-          .width('100%')
-          .height(48)
-          .backgroundColor(UI_SURFACE_ALT)
-          .fontColor(UI_TEXT)
-          .placeholderColor(UI_MUTED)
-          .caretColor(UI_ACCENT)
-          .border({ width: 1, color: UI_STROKE })
-          .borderRadius(12)
-          .padding({ left: 14, right: 14 });
-        this.AccountsEditor('账号列表');
-      }
-
-      if (this.editingEntryId.length > 0 && this.draftType === 'server') {
-        TextInput({ placeholder: '服务器名称', text: $$this.draftServerName })
-          .width('100%')
-          .height(48)
-          .backgroundColor(UI_SURFACE_ALT)
-          .fontColor(UI_TEXT)
-          .placeholderColor(UI_MUTED)
-          .caretColor(UI_ACCENT)
-          .border({ width: 1, color: UI_STROKE })
-          .borderRadius(12)
-          .padding({ left: 14, right: 14 });
-        TextInput({ placeholder: 'IP地址', text: $$this.draftServerIp })
-          .width('100%')
-          .height(48)
-          .backgroundColor(UI_SURFACE_ALT)
-          .fontColor(UI_TEXT)
-          .placeholderColor(UI_MUTED)
-          .caretColor(UI_ACCENT)
-          .border({ width: 1, color: UI_STROKE })
-          .borderRadius(12)
-          .padding({ left: 14, right: 14 });
-        TextInput({ placeholder: '端口', text: $$this.draftServerPort })
-          .width('100%')
-          .height(48)
-          .backgroundColor(UI_SURFACE_ALT)
-          .fontColor(UI_TEXT)
-          .placeholderColor(UI_MUTED)
-          .caretColor(UI_ACCENT)
-          .border({ width: 1, color: UI_STROKE })
-          .borderRadius(12)
-          .padding({ left: 14, right: 14 });
-        this.AccountsEditor('服务器账号');
-      }
-
-      if (this.editingEntryId.length > 0 && this.draftType === 'service') {
-        TextInput({ placeholder: '服务名称', text: $$this.draftServiceName })
-          .width('100%')
-          .height(48)
-          .backgroundColor(UI_SURFACE_ALT)
-          .fontColor(UI_TEXT)
-          .placeholderColor(UI_MUTED)
-          .caretColor(UI_ACCENT)
-          .border({ width: 1, color: UI_STROKE })
-          .borderRadius(12)
-          .padding({ left: 14, right: 14 });
-        TextInput({ placeholder: '连接地址', text: $$this.draftServiceAddress })
-          .width('100%')
-          .height(48)
-          .backgroundColor(UI_SURFACE_ALT)
-          .fontColor(UI_TEXT)
-          .placeholderColor(UI_MUTED)
-          .caretColor(UI_ACCENT)
-          .border({ width: 1, color: UI_STROKE })
-          .borderRadius(12)
-          .padding({ left: 14, right: 14 });
-        TextInput({ placeholder: '端口', text: $$this.draftServicePort })
-          .width('100%')
-          .height(48)
-          .backgroundColor(UI_SURFACE_ALT)
-          .fontColor(UI_TEXT)
-          .placeholderColor(UI_MUTED)
-          .caretColor(UI_ACCENT)
-          .border({ width: 1, color: UI_STROKE })
-          .borderRadius(12)
-          .padding({ left: 14, right: 14 });
-        TextInput({ placeholder: '账号ID', text: $$this.draftServiceAccountId })
-          .width('100%')
-          .height(48)
-          .backgroundColor(UI_SURFACE_ALT)
-          .fontColor(UI_TEXT)
-          .placeholderColor(UI_MUTED)
-          .caretColor(UI_ACCENT)
-          .border({ width: 1, color: UI_STROKE })
-          .borderRadius(12)
-          .padding({ left: 14, right: 14 });
-        TextInput({ placeholder: '服务器ID，用逗号分隔', text: $$this.draftServiceServerIds })
-          .width('100%')
-          .height(48)
-          .backgroundColor(UI_SURFACE_ALT)
-          .fontColor(UI_TEXT)
-          .placeholderColor(UI_MUTED)
-          .caretColor(UI_ACCENT)
-          .border({ width: 1, color: UI_STROKE })
-          .borderRadius(12)
-          .padding({ left: 14, right: 14 });
-        this.AccountsEditor('服务账号');
-        TextInput({ placeholder: '备注', text: $$this.draftServiceNotes })
-          .width('100%')
-          .height(48)
-          .backgroundColor(UI_SURFACE_ALT)
-          .fontColor(UI_TEXT)
-          .placeholderColor(UI_MUTED)
-          .caretColor(UI_ACCENT)
-          .border({ width: 1, color: UI_STROKE })
-          .borderRadius(12)
-          .padding({ left: 14, right: 14 });
-      }
 
       this.CustomFieldsEditor();
 
@@ -1959,15 +1783,8 @@ struct Index {
                     .fontWeight(FontWeight.Bold)
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    .fontColor(this.entryTitleMatched(entry) ? UI_ACCENT : UI_TEXT);
-                  Blank();
-                  Text(this.typeLabel(entry.type))
-                    .fontSize(11)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor(UI_ACCENT)
-                    .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                    .backgroundColor(UI_SELECTED)
-                    .borderRadius(999);
+                    .fontColor(this.entryTitleMatched(entry) ? UI_ACCENT : UI_TEXT)
+                    .layoutWeight(1);
                 }
 
                 Text(this.entrySummary(entry))
@@ -2053,16 +1870,6 @@ struct Index {
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_TEXT);
-        Blank();
-        if (this.selectedDetailEntry() !== null) {
-          Text(this.typeLabel((this.selectedDetailEntry() as VaultEntry).type))
-            .fontSize(11)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(UI_ACCENT)
-            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .backgroundColor(UI_SELECTED)
-            .borderRadius(999);
-        }
       }
 
       if (this.selectedDetailEntry() === null) {
@@ -2103,7 +1910,6 @@ struct Index {
           .textOverflow({ overflow: TextOverflow.Ellipsis });
         this.DetailValueRow('分类', this.entryCategory(entry) || '未分类');
         this.DetailValueRow('标签', entry.tags.length > 0 ? entry.tags.join(', ') : '-');
-        this.EntryPayloadDetailRows(entry);
         if (entry.customFields.length > 0) {
           Text('自定义字段')
             .fontSize(12)
@@ -2136,49 +1942,6 @@ struct Index {
     }
     .layoutWeight(1)
     .width('100%');
-  }
-
-  @Builder
-  private EntryPayloadDetailRows(entry: VaultEntry) {
-    if (entry.type === VaultEntryType.CREDENTIAL) {
-      this.CredentialPayloadDetailRows(entry.payload as CredentialPayload);
-    } else if (entry.type === VaultEntryType.SERVER) {
-      this.ServerPayloadDetailRows(entry.payload as ServerPayload);
-    } else {
-      this.ServicePayloadDetailRows(entry.payload as ServicePayload);
-    }
-  }
-
-  @Builder
-  private CredentialPayloadDetailRows(payload: CredentialPayload) {
-    this.DetailValueRow('用户名', payload.username ?? '');
-    this.DetailValueRow('账号数量', `${payload.accounts === undefined ? 0 : payload.accounts.length}`);
-    this.DetailValueRow('Token', payload.token ?? '');
-    this.DetailValueRow('App ID', payload.appId ?? '');
-    this.DetailValueRow('Access Key', payload.accessKey ?? '');
-    this.DetailValueRow('备注', payload.notes ?? '');
-  }
-
-  @Builder
-  private ServerPayloadDetailRows(payload: ServerPayload) {
-    this.DetailValueRow('服务器名称', payload.name ?? '');
-    this.DetailValueRow('IP地址', payload.ipAddress ?? '');
-    this.DetailValueRow('端口', payload.port ?? '');
-    this.DetailValueRow('账号数量', `${payload.accounts === undefined ? 0 : payload.accounts.length}`);
-    this.DetailValueRow('操作系统', payload.operatingSystem ?? '');
-    this.DetailValueRow('位置', payload.location ?? '');
-    this.DetailValueRow('备注', payload.notes ?? '');
-  }
-
-  @Builder
-  private ServicePayloadDetailRows(payload: ServicePayload) {
-    this.DetailValueRow('服务名称', payload.name ?? '');
-    this.DetailValueRow('连接地址', payload.connectionAddress ?? '');
-    this.DetailValueRow('端口', payload.connectionPort ?? '');
-    this.DetailValueRow('账号ID', payload.accountId ?? '');
-    this.DetailValueRow('服务器ID', (payload.serverIds ?? []).join(', '));
-    this.DetailValueRow('账号数量', `${payload.accounts === undefined ? 0 : payload.accounts.length}`);
-    this.DetailValueRow('备注', payload.notes ?? '');
   }
 
   @Builder
@@ -2435,14 +2198,13 @@ struct Index {
     const tags = [...this.draftSelectedTags];
     const category = this.draftCategory.trim();
     const customFields = this.normalizedDraftCustomFields();
-    const accounts = this.normalizedDraftAccounts();
 
     if (this.draftType === 'credential') {
       const input: CreateCredentialInput = {
         label: label,
-        username: this.draftCredentialUsername.trim(),
-        password: this.draftCredentialPassword,
-        accounts: accounts,
+        username: '',
+        password: '',
+        accounts: [],
         token: '',
         appId: '',
         accessKey: '',
@@ -2462,12 +2224,12 @@ struct Index {
     if (this.draftType === 'server') {
       const input: CreateServerInput = {
         label: label,
-        name: this.draftServerName.trim(),
-        ipAddress: this.draftServerIp.trim(),
-        port: this.draftServerPort.trim(),
+        name: '',
+        ipAddress: '',
+        port: '',
         username: '',
         password: '',
-        accounts: accounts,
+        accounts: [],
         basicConfig: '',
         operatingSystem: '',
         location: '',
@@ -2486,13 +2248,13 @@ struct Index {
     if (this.draftType === 'service') {
       const input: CreateServiceInput = {
         label: label,
-        name: this.draftServiceName.trim(),
-        connectionAddress: this.draftServiceAddress.trim(),
-        connectionPort: this.draftServicePort.trim(),
-        accountId: this.draftServiceAccountId.trim(),
-        serverIds: this.parseCommaSeparatedValues(this.draftServiceServerIds),
-        accounts: accounts,
-        notes: this.draftServiceNotes,
+        name: '',
+        connectionAddress: '',
+        connectionPort: '',
+        accountId: '',
+        serverIds: [],
+        accounts: [],
+        notes: '',
         tags: tags,
         category: category,
         customFields: customFields,
@@ -3363,98 +3125,6 @@ struct Index {
     .onClick(action);
   }
 
-  @Builder
-  private AccountsEditor(title: string) {
-    Column({ space: 6 }) {
-      Row() {
-        Text(title).fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
-        Blank();
-        Text('+')
-          .width(42)
-          .height(34)
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(UI_ACCENT)
-          .textAlign(TextAlign.Center)
-          .backgroundColor(UI_SURFACE_ALT)
-          .border({ width: 1, color: UI_STROKE })
-          .borderRadius(10)
-          .onClick(() => {
-            this.addDraftAccount();
-          });
-      }
-      if (this.draftAccounts.length === 0) {
-        Text('未添加账号')
-          .fontSize(12)
-          .fontColor(UI_MUTED);
-      }
-      ForEach(this.draftAccounts, (account: DraftAccount) => {
-        Column({ space: 8 }) {
-          TextInput({ placeholder: '账号', text: account.username })
-            .width('100%')
-            .height(48)
-            .backgroundColor(UI_SURFACE_ALT)
-            .fontColor(UI_TEXT)
-            .placeholderColor(UI_MUTED)
-            .caretColor(UI_ACCENT)
-            .border({ width: 1, color: UI_STROKE })
-            .borderRadius(12)
-            .padding({ left: 14, right: 14 })
-            .onChange((value: string) => {
-              this.updateDraftAccountUsername(account.id, value);
-            });
-          TextInput({ placeholder: '密码', text: account.password })
-            .type(InputType.Password)
-            .width('100%')
-            .height(48)
-            .backgroundColor(UI_SURFACE_ALT)
-            .fontColor(UI_TEXT)
-            .placeholderColor(UI_MUTED)
-            .caretColor(UI_ACCENT)
-            .border({ width: 1, color: UI_STROKE })
-            .borderRadius(12)
-            .padding({ left: 14, right: 14 })
-            .onChange((value: string) => {
-              this.updateDraftAccountPassword(account.id, value);
-            });
-          TextInput({ placeholder: '备注', text: account.note })
-            .width('100%')
-            .height(48)
-            .backgroundColor(UI_SURFACE_ALT)
-            .fontColor(UI_TEXT)
-            .placeholderColor(UI_MUTED)
-            .caretColor(UI_ACCENT)
-            .border({ width: 1, color: UI_STROKE })
-            .borderRadius(12)
-            .padding({ left: 14, right: 14 })
-            .onChange((value: string) => {
-              this.updateDraftAccountNote(account.id, value);
-            });
-          Row({ space: 8 }) {
-            Text('删除')
-              .height(36)
-              .padding({ left: 10, right: 10 })
-              .fontSize(13)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(UI_DANGER)
-              .textAlign(TextAlign.Center)
-              .backgroundColor(UI_DANGER_SURFACE)
-              .borderRadius(999)
-              .onClick(() => {
-                this.removeDraftAccount(account.id);
-              });
-          }
-        }
-        .padding(10)
-        .backgroundColor(UI_SURFACE_ALT)
-        .border({ width: 1, color: UI_STROKE })
-        .borderRadius(12)
-        .width('100%');
-      }, (account: DraftAccount) => account.id);
-    }
-    .width('100%');
-  }
-
   private async saveJsonExportFile(prefix: string, name: string, contents: string): Promise<string> {
     if (this.hostContext === null) {
       throw new Error('Host context unavailable');
@@ -4024,14 +3694,13 @@ struct Index {
   }
 
   private applyCategoryTemplateToDraft(category: string): void {
-    if (this.editingEntryId.length > 0) {
-      return;
-    }
     const existingValues = new Map<string, string>();
+    const existingIds = new Map<string, string>();
     this.draftCustomFields.forEach((field: CustomField) => {
       const key = field.name.trim().toLowerCase();
       if (key.length > 0) {
         existingValues.set(key, field.value);
+        existingIds.set(key, field.id);
       }
     });
     const seen = new Set<string>();
@@ -4045,11 +3714,24 @@ struct Index {
       }
       seen.add(key);
       const nextField: CustomField = {
-        id: this.nextUiId(),
+        id: existingIds.get(key) ?? this.nextUiId(),
         name: name,
         value: existingValues.get(key) ?? '',
       };
       nextFields.push(nextField);
+    });
+    this.draftCustomFields.forEach((field: CustomField) => {
+      const name = field.name.trim();
+      const key = name.toLowerCase();
+      if (name.length === 0 || key === '名称' || seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      nextFields.push({
+        id: field.id.length > 0 ? field.id : this.nextUiId(),
+        name: name,
+        value: field.value,
+      });
     });
     this.draftCustomFields = nextFields;
   }
@@ -4061,19 +3743,7 @@ struct Index {
     this.draftTagSearch = '';
     this.draftSelectedTags = [];
     this.draftCustomFields = [];
-    this.draftAccounts = [];
     this.editingEntryId = '';
-    this.draftCredentialUsername = '';
-    this.draftCredentialPassword = '';
-    this.draftServerName = '';
-    this.draftServerIp = '';
-    this.draftServerPort = '';
-    this.draftServiceName = '';
-    this.draftServiceAddress = '';
-    this.draftServicePort = '';
-    this.draftServiceAccountId = '';
-    this.draftServiceServerIds = '';
-    this.draftServiceNotes = '';
   }
 
   private beginCreateEntry(): void {
@@ -4098,33 +3768,18 @@ struct Index {
     this.draftCategory = this.entryCategory(entry);
     this.draftSelectedTags = [...entry.tags];
     this.draftCustomFields = this.copyCustomFields(entry.customFields);
+    this.draftType = this.draftTypeFromEntry(entry);
+    this.applyCategoryTemplateToDraft(this.draftCategory);
+  }
 
-    if (entry.type === VaultEntryType.CREDENTIAL) {
-      const payload = entry.payload as CredentialPayload;
-      this.draftType = 'credential';
-      this.draftCredentialUsername = payload.username ?? '';
-      this.draftCredentialPassword = payload.password ?? '';
-      this.draftAccounts = this.copyAccounts(payload.accounts);
-      return;
-    }
+  private draftTypeFromEntry(entry: VaultEntry): DraftType {
     if (entry.type === VaultEntryType.SERVER) {
-      const payload = entry.payload as ServerPayload;
-      this.draftType = 'server';
-      this.draftServerName = payload.name ?? '';
-      this.draftServerIp = payload.ipAddress ?? '';
-      this.draftServerPort = payload.port ?? '';
-      this.draftAccounts = this.copyAccounts(payload.accounts);
-      return;
+      return 'server';
     }
-    const payload = entry.payload as ServicePayload;
-    this.draftType = 'service';
-    this.draftServiceName = payload.name ?? '';
-    this.draftServiceAddress = payload.connectionAddress ?? '';
-    this.draftServicePort = payload.connectionPort ?? '';
-    this.draftServiceAccountId = payload.accountId ?? '';
-    this.draftServiceServerIds = (payload.serverIds ?? []).join(', ');
-    this.draftServiceNotes = payload.notes ?? '';
-    this.draftAccounts = this.copyAccounts(payload.accounts);
+    if (entry.type === VaultEntryType.SERVICE) {
+      return 'service';
+    }
+    return 'credential';
   }
 
   private addDraftCustomField(): void {
@@ -4233,62 +3888,6 @@ struct Index {
     return names;
   }
 
-  private addDraftAccount(): void {
-    const account: DraftAccount = {
-      id: this.nextUiId(),
-      username: '',
-      password: '',
-      note: '',
-    };
-    this.draftAccounts = [...this.draftAccounts, account];
-  }
-
-  private updateDraftAccountUsername(id: string, value: string): void {
-    this.draftAccounts = this.draftAccounts.map((account: DraftAccount) => {
-      if (account.id !== id) {
-        return account;
-      }
-      return {
-        id: account.id,
-        username: value,
-        password: account.password,
-        note: account.note,
-      };
-    });
-  }
-
-  private updateDraftAccountPassword(id: string, value: string): void {
-    this.draftAccounts = this.draftAccounts.map((account: DraftAccount) => {
-      if (account.id !== id) {
-        return account;
-      }
-      return {
-        id: account.id,
-        username: account.username,
-        password: value,
-        note: account.note,
-      };
-    });
-  }
-
-  private updateDraftAccountNote(id: string, value: string): void {
-    this.draftAccounts = this.draftAccounts.map((account: DraftAccount) => {
-      if (account.id !== id) {
-        return account;
-      }
-      return {
-        id: account.id,
-        username: account.username,
-        password: account.password,
-        note: value,
-      };
-    });
-  }
-
-  private removeDraftAccount(id: string): void {
-    this.draftAccounts = this.draftAccounts.filter((account: DraftAccount) => account.id !== id);
-  }
-
   private normalizedDraftCustomFields(): CustomField[] {
     return this.draftCustomFields
       .map((field: CustomField) => {
@@ -4308,51 +3907,6 @@ struct Index {
         id: field.id.length > 0 ? field.id : this.nextUiId(),
         name: field.name,
         value: field.value,
-      };
-      return copy;
-    });
-  }
-
-  private normalizedDraftAccounts(): ServiceAccount[] {
-    return this.draftAccounts
-      .map((account: DraftAccount) => {
-        const normalized: ServiceAccount = {
-          username: account.username.trim(),
-          password: account.password,
-          note: account.note,
-        };
-        return normalized;
-      })
-      .filter((account: ServiceAccount) =>
-        account.username.length > 0 ||
-        account.password.trim().length > 0 ||
-        account.note.trim().length > 0);
-  }
-
-  private parseCommaSeparatedValues(value: string): string[] {
-    const seen = new Set<string>();
-    const output: string[] = [];
-    value.split(',').forEach((item: string) => {
-      const clean = item.trim();
-      if (clean.length === 0 || seen.has(clean)) {
-        return;
-      }
-      seen.add(clean);
-      output.push(clean);
-    });
-    return output;
-  }
-
-  private copyAccounts(accounts: ServiceAccount[] | undefined): DraftAccount[] {
-    if (accounts === undefined) {
-      return [];
-    }
-    return accounts.map((account: ServiceAccount) => {
-      const copy: DraftAccount = {
-        id: this.nextUiId(),
-        username: account.username ?? '',
-        password: account.password ?? '',
-        note: account.note ?? '',
       };
       return copy;
     });
@@ -4384,7 +3938,6 @@ struct Index {
       { id: 'createdAt', label: '创建时间' },
       { id: 'updatedAt', label: '更新时间' },
     ];
-    this.payloadExportFieldOptions(entry).forEach((option: ExportFieldOption) => options.push(option));
     entry.customFields.forEach((field: CustomField) => {
       options.push({
         id: `custom.${field.id}`,
@@ -4392,44 +3945,6 @@ struct Index {
       });
     });
     return options;
-  }
-
-  private payloadExportFieldOptions(entry: VaultEntry): ExportFieldOption[] {
-    if (entry.type === VaultEntryType.CREDENTIAL) {
-      return [
-        { id: 'payload.username', label: '用户名' },
-        { id: 'payload.password', label: '密码' },
-        { id: 'payload.accounts', label: '账号列表' },
-        { id: 'payload.token', label: 'Token' },
-        { id: 'payload.appId', label: 'App ID' },
-        { id: 'payload.accessKey', label: 'Access Key' },
-        { id: 'payload.secretKey', label: 'Secret Key' },
-        { id: 'payload.notes', label: '备注' },
-      ];
-    }
-    if (entry.type === VaultEntryType.SERVER) {
-      return [
-        { id: 'payload.name', label: '服务器名称' },
-        { id: 'payload.ipAddress', label: 'IP地址' },
-        { id: 'payload.port', label: '端口' },
-        { id: 'payload.username', label: '用户名' },
-        { id: 'payload.password', label: '密码' },
-        { id: 'payload.accounts', label: '账号列表' },
-        { id: 'payload.basicConfig', label: '基础配置' },
-        { id: 'payload.operatingSystem', label: '操作系统' },
-        { id: 'payload.location', label: '位置' },
-        { id: 'payload.notes', label: '备注' },
-      ];
-    }
-    return [
-      { id: 'payload.name', label: '服务名称' },
-      { id: 'payload.connectionAddress', label: '连接地址' },
-      { id: 'payload.connectionPort', label: '端口' },
-      { id: 'payload.accountId', label: '账号ID' },
-      { id: 'payload.serverIds', label: '服务器ID' },
-      { id: 'payload.accounts', label: '账号列表' },
-      { id: 'payload.notes', label: '备注' },
-    ];
   }
 
   private lockVault(): void {
@@ -5007,19 +4522,18 @@ struct Index {
   }
 
   private entrySummary(entry: VaultEntry): string {
-    if (entry.type === VaultEntryType.CREDENTIAL) {
-      const payload = entry.payload as CredentialPayload;
-      const accountCount = payload.accounts === undefined ? 0 : payload.accounts.length;
-      return `用户名: ${payload.username || '-'} 账号: ${accountCount}`;
+    const filledFields = entry.customFields
+      .filter((field: CustomField) => field.value.trim().length > 0)
+      .slice(0, 3)
+      .map((field: CustomField) => `${field.name.trim().length > 0 ? field.name.trim() : '字段'}: ${field.value}`);
+    if (filledFields.length > 0) {
+      return filledFields.join('  ');
     }
-    if (entry.type === VaultEntryType.SERVER) {
-      const payload = entry.payload as ServerPayload;
-      const accountCount = payload.accounts === undefined ? 0 : payload.accounts.length;
-      return `IP: ${payload.ipAddress || '-'} 端口: ${payload.port || '-'} 账号: ${accountCount}`;
-    }
-    const payload = entry.payload as ServicePayload;
-    const accountCount = payload.accounts === undefined ? 0 : payload.accounts.length;
-    return `地址: ${payload.connectionAddress || '-'} 端口: ${payload.connectionPort || '-'} 账号: ${accountCount}`;
+    const templateFields = entry.customFields
+      .filter((field: CustomField) => field.name.trim().length > 0)
+      .slice(0, 3)
+      .map((field: CustomField) => field.name.trim());
+    return templateFields.length > 0 ? `字段: ${templateFields.join('、')}` : '暂无字段数据';
   }
 
   private toast(message: string): void {

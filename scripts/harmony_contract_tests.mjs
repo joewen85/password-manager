@@ -193,26 +193,19 @@ function checkThemedTextInputContract() {
 
 function checkEntryEditorUiContract() {
   const page = read(files.indexPage);
-  assertMatches(
-    page,
-    /if\s*\(\s*this\.editingEntryId\.length\s*>\s*0\s*\)\s*{\s*Text\('条目类型'\)/s,
-    'Harmony new entry hides entry type selector until editing',
+  const editor = page.slice(
+    page.indexOf('private EntryEditorFormContent()'),
+    page.indexOf('private TagSection()'),
   );
-  assertMatches(
-    page,
-    /if\s*\(\s*this\.editingEntryId\.length\s*>\s*0\s*&&\s*this\.draftType\s*===\s*'credential'\s*\)/,
-    'Harmony new credential does not show username, password, or account fields before editing',
-  );
-  assertMatches(
-    page,
-    /if\s*\(\s*this\.editingEntryId\.length\s*>\s*0\s*&&\s*this\.draftType\s*===\s*'server'\s*\)/,
-    'Harmony new server does not show server payload fields before editing',
-  );
-  assertMatches(
-    page,
-    /if\s*\(\s*this\.editingEntryId\.length\s*>\s*0\s*&&\s*this\.draftType\s*===\s*'service'\s*\)/,
-    'Harmony new service does not show service payload fields before editing',
-  );
+  assert(!editor.includes("Text('条目类型'"), 'Harmony entry editor does not show legacy type selector');
+  assert(!editor.includes('this.EntryTypeChip'), 'Harmony entry editor does not show legacy type chips');
+  assert(!editor.includes('this.AccountsEditor'), 'Harmony entry editor does not show legacy account editor');
+  assert(!editor.includes("placeholder: '用户名'"), 'Harmony entry editor does not show legacy username field');
+  assert(!editor.includes("placeholder: '密码'"), 'Harmony entry editor does not show legacy password field');
+  assert(!editor.includes("placeholder: 'Token'"), 'Harmony entry editor does not show legacy token field');
+  assert(!editor.includes("placeholder: 'App ID'"), 'Harmony entry editor does not show legacy app id field');
+  assert(!page.includes('private EntryTypeChip'), 'Harmony page does not define legacy entry type chips');
+  assert(!page.includes('private AccountsEditor'), 'Harmony page does not define legacy account editor');
   assertMatches(
     page,
     /if\s*\(\s*!this\.categoryCreateReturnToEntry\s*\)\s*{\s*Text\('字段快捷键'\)/s,
@@ -240,6 +233,20 @@ function checkEntryEditorUiContract() {
   );
 }
 
+function checkEntryDetailUiContract() {
+  const page = read(files.indexPage);
+  const detail = page.slice(
+    page.indexOf('private EntryDetailContent(entry: VaultEntry)'),
+    page.indexOf('private DetailValueRow'),
+  );
+  assert(!detail.includes('this.EntryPayloadDetailRows'), 'Harmony detail does not render legacy payload rows');
+  assert(!page.includes('private EntryPayloadDetailRows'), 'Harmony page does not define legacy payload detail rows');
+  assert(!page.includes('private payloadExportFieldOptions'), 'Harmony export selector does not define legacy payload field options');
+  assert(!page.includes('payloadExportFieldOptions(entry)'), 'Harmony export selector does not append legacy payload fields');
+  assertIncludes(page, 'const filledFields = entry.customFields', 'Harmony entry summary is based on custom fields');
+  assertIncludes(page, "return templateFields.length > 0 ? `字段: ${templateFields.join('、')}` : '暂无字段数据';", 'Harmony entry summary falls back to category template fields');
+}
+
 function checkCategoryManagementContract() {
   const page = read(files.indexPage);
   const controller = read(files.controller);
@@ -264,6 +271,7 @@ function main() {
   checkThemeResourcesContract();
   checkThemedTextInputContract();
   checkEntryEditorUiContract();
+  checkEntryDetailUiContract();
   checkCategoryManagementContract();
 
   if (failures > 0) {
