@@ -49,6 +49,9 @@ const UI_ACCENT: Resource = $r('app.color.ui_accent');
 const UI_SELECTED: Resource = $r('app.color.ui_selected');
 const UI_DANGER: Resource = $r('app.color.ui_danger');
 const UI_DANGER_SURFACE: Resource = $r('app.color.ui_danger_surface');
+const KEYBOARD_BASELINE_DROP_GUARD: number = 160;
+const VIEWPORT_WIDTH_RESIZE_TOLERANCE: number = 48;
+const KEYBOARD_INSET_TOLERANCE: number = 64;
 
 interface SearchTerm {
   field: string;
@@ -3473,13 +3476,31 @@ struct Index {
   }
 
   private updateViewportSize(area: Area): void {
+    const previousWidth = this.viewportWidth;
     const width = this.lengthToNumber(area.width);
     const height = this.lengthToNumber(area.height);
     this.viewportWidth = width;
     this.viewportHeight = height;
-    if (height > this.keyboardBaselineViewportHeight || this.keyboardHeight <= 0) {
+    if (this.shouldUpdateKeyboardBaselineViewportHeight(width, height, previousWidth)) {
       this.keyboardBaselineViewportHeight = height;
     }
+  }
+
+  private shouldUpdateKeyboardBaselineViewportHeight(width: number, height: number, previousWidth: number): boolean {
+    if (height <= 0) {
+      return false;
+    }
+    if (this.keyboardBaselineViewportHeight <= 0 || height > this.keyboardBaselineViewportHeight) {
+      return true;
+    }
+    if (this.keyboardHeight > 0) {
+      return false;
+    }
+    const widthChanged = previousWidth > 0 && Math.abs(width - previousWidth) > VIEWPORT_WIDTH_RESIZE_TOLERANCE;
+    if (widthChanged) {
+      return true;
+    }
+    return this.keyboardBaselineViewportHeight - height <= KEYBOARD_BASELINE_DROP_GUARD;
   }
 
   private async bindKeyboardAvoidance(context: Context): Promise<void> {
@@ -3608,14 +3629,28 @@ struct Index {
       return 0;
     }
     const height = this.viewportHeight > 0 ? this.viewportHeight : 720;
-    return Math.min(this.keyboardHeight, Math.max(height - 220, 0));
+    return Math.min(this.remainingKeyboardOverlap(), Math.max(height - 220, 0));
   }
 
   private viewportAlreadyAvoidsKeyboard(): boolean {
     if (this.keyboardHeight <= 0 || this.keyboardBaselineViewportHeight <= 0 || this.viewportHeight <= 0) {
       return false;
     }
-    return this.viewportHeight + this.keyboardHeight <= this.keyboardBaselineViewportHeight + 48;
+    return this.remainingKeyboardOverlap() <= KEYBOARD_INSET_TOLERANCE;
+  }
+
+  private remainingKeyboardOverlap(): number {
+    if (this.keyboardHeight <= 0) {
+      return 0;
+    }
+    return Math.max(this.keyboardHeight - this.viewportKeyboardShrink(), 0);
+  }
+
+  private viewportKeyboardShrink(): number {
+    if (this.keyboardBaselineViewportHeight <= 0 || this.viewportHeight <= 0) {
+      return 0;
+    }
+    return Math.max(this.keyboardBaselineViewportHeight - this.viewportHeight, 0);
   }
 
   private floatingPanelMaxHeight(): number {

@@ -276,6 +276,10 @@ function checkKeyboardAvoidanceContract() {
   assertIncludes(page, '.height(this.floatingPanelMaxHeight())', 'Harmony input-heavy floating panels fill available height instead of wrapping content');
   assertIncludes(page, "this.topOverlayPanel === 'entryEditor'", 'Harmony entry editor floating panel uses available height');
   assertIncludes(page, 'height - this.floatingPanelY() - this.floatingPanelBottomGap() - this.effectiveKeyboardInset()', 'Harmony floating panel height avoids keyboard space');
+  assertIncludes(page, 'this.shouldUpdateKeyboardBaselineViewportHeight(width, height, previousWidth)', 'Harmony viewport baseline is guarded against keyboard transition races');
+  assert(!page.includes('height > this.keyboardBaselineViewportHeight || this.keyboardHeight <= 0'), 'Harmony viewport baseline is not overwritten by a shrunken keyboard viewport');
+  assertIncludes(page, 'private remainingKeyboardOverlap(): number', 'Harmony page subtracts only keyboard overlap not already covered by viewport resize');
+  assertIncludes(page, 'return Math.min(this.remainingKeyboardOverlap(), Math.max(height - 220, 0));', 'Harmony floating panel height only subtracts remaining keyboard overlap');
   assertIncludes(page, 'private viewportAlreadyAvoidsKeyboard(): boolean', 'Harmony page detects when viewport already resized for keyboard');
   assertIncludes(page, 'if (this.viewportAlreadyAvoidsKeyboard())', 'Harmony page avoids subtracting keyboard height twice');
   assertIncludes(page, 'return this.keyboardHeight > 0;', 'Harmony page keeps keyboard-visible layout even when inset is already applied');
