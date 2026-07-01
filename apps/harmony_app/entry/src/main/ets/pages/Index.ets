@@ -451,46 +451,50 @@ struct Index {
 
   @Builder
   private HeaderToolbarContent() {
-    Flex({
-      direction: FlexDirection.Row,
-      wrap: FlexWrap.Wrap,
-      alignItems: ItemAlign.Center,
-    }) {
+    Row() {
       Column({ space: 4 }) {
         Text('密码管理器')
-          .fontSize(20)
+          .fontSize(this.headerTitleFontSize())
           .fontWeight(FontWeight.Bold)
-          .fontColor(UI_TEXT);
-        Text('鸿蒙原生密码库')
-          .fontSize(11)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(UI_ACCENT)
-          .padding({ left: 9, right: 9, top: 4, bottom: 4 })
-          .backgroundColor(UI_SURFACE_ALT)
-          .borderRadius(999);
+          .fontColor(UI_TEXT)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis });
+        if (this.showHeaderSubtitle()) {
+          Text('鸿蒙原生密码库')
+            .fontSize(11)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(UI_ACCENT)
+            .padding({ left: 9, right: 9, top: 4, bottom: 4 })
+            .backgroundColor(UI_SURFACE_ALT)
+            .borderRadius(999);
+        }
       }
       .layoutWeight(1)
-      .constraintSize({ minWidth: 168 })
+      .constraintSize({ minWidth: 0 })
       .alignItems(HorizontalAlign.Start);
-      this.ToolbarIconButton('+', '添加', true, () => {
-        this.openTopOverlay('create');
-      });
-      this.ToolbarIconButton(this.syncBusy ? '···' : '↻', '同步', false, () => {
-        if (!this.syncBusy) {
-          this.onSyncNow();
-        }
-      });
-      this.ToolbarIconButton('☁', '备份', this.topOverlayPanel === 'backup', () => {
-        this.openTopOverlay('backup');
-      });
-      this.ToolbarIconButton('⋮', '更多', this.topOverlayPanel === 'more', () => {
-        this.openTopOverlay('more');
-      });
-      this.ToolbarIconButton('▣', '锁定', false, () => {
-        this.lockVault();
-      });
+      Row() {
+        this.ToolbarIconButton('+', '添加', true, () => {
+          this.openTopOverlay('create');
+        });
+        this.ToolbarIconButton(this.syncBusy ? '···' : '↻', '同步', false, () => {
+          if (!this.syncBusy) {
+            this.onSyncNow();
+          }
+        });
+        this.ToolbarIconButton('☁', '备份', this.topOverlayPanel === 'backup', () => {
+          this.openTopOverlay('backup');
+        });
+        this.ToolbarIconButton('⋮', '更多', this.topOverlayPanel === 'more', () => {
+          this.openTopOverlay('more');
+        });
+        this.ToolbarIconButton('▣', '锁定', false, () => {
+          this.lockVault();
+        });
+      }
+      .constraintSize({ minWidth: this.toolbarActionsMinWidth() });
     }
-    .width('100%');
+    .width('100%')
+    .alignItems(VerticalAlign.Center);
   }
 
   @Builder
@@ -3551,10 +3555,33 @@ struct Index {
 
   private toolbarIconSize(): number {
     const width = this.viewportWidth;
+    if (this.headerToolbarCompact()) {
+      return 36;
+    }
     if (width > 0 && width < 420) {
       return 38;
     }
     return 44;
+  }
+
+  private toolbarActionsMinWidth(): number {
+    return (this.toolbarIconSize() + 2) * 5;
+  }
+
+  private headerToolbarCompact(): boolean {
+    const width = this.viewportWidth;
+    return width > 0 && width < 820;
+  }
+
+  private headerTitleFontSize(): number {
+    return this.headerToolbarCompact() ? 17 : 20;
+  }
+
+  private showHeaderSubtitle(): boolean {
+    if (this.useWideLayout() && this.activePanel === 'home' && !this.entryEditorVisible) {
+      return !this.headerToolbarCompact();
+    }
+    return this.viewportWidth <= 0 || this.viewportWidth >= 420;
   }
 
   private primaryPaneMinWidth(): number {
