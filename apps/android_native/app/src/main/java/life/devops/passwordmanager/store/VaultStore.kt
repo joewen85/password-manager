@@ -43,6 +43,7 @@ private data class SyncLoopInput(
     val settings: SyncSettings,
     val vaultKey: ByteArray,
     val masterKeyRecord: MasterKeyRecord?,
+    val masterPassword: String,
 )
 
 class VaultStore(
@@ -493,6 +494,7 @@ class VaultStore(
                             settings = syncSettings,
                             vaultKey = key,
                             masterKeyRecord = masterKeyRecord,
+                            masterPassword = this@VaultStore.masterPassword,
                         )
                     }
                     val encryptedClient = EncryptedRemoteSyncClient(
@@ -500,6 +502,7 @@ class VaultStore(
                         crypto = crypto,
                         vaultKey = syncInput.vaultKey,
                         masterKeyRecord = syncInput.masterKeyRecord,
+                        masterPassword = syncInput.masterPassword,
                         includeMasterKeyRecord = syncInput.settings.syncMasterKey,
                     )
                     val result = syncEngine.synchronize(
@@ -530,6 +533,12 @@ class VaultStore(
                         if (localChangeRevision != revisionAtStart) {
                             syncRequestedAgain = true
                         } else {
+                            encryptedClient.remoteMasterKeyRecord?.let { remoteRecord ->
+                                val remoteKey = checkNotNull(encryptedClient.resolvedRemoteVaultKey())
+                                masterKeyRecord = remoteRecord
+                                activeVaultKey = remoteKey
+                                hasMasterKey = true
+                            }
                             applySyncResult(result)
                         }
                     }

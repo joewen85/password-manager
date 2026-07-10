@@ -12,12 +12,21 @@ import java.time.Instant
 class EncryptedRemoteSyncClient(
     private val delegate: RemoteSyncClient,
     private val crypto: AndroidVaultCrypto,
-    private val vaultKey: ByteArray,
-    private val masterKeyRecord: MasterKeyRecord?,
+    vaultKey: ByteArray,
+    masterKeyRecord: MasterKeyRecord?,
+    private val masterPassword: String,
     private val includeMasterKeyRecord: Boolean,
 ) : RemoteSyncClient {
+    private var effectiveVaultKey: ByteArray = vaultKey.copyOf()
+    private var effectiveMasterKeyRecord: MasterKeyRecord? = masterKeyRecord
+    private var remoteVaultKey: ByteArray? = null
+
     var downloadedPlaintextRemote: Boolean = false
         private set
+    var remoteMasterKeyRecord: MasterKeyRecord? = null
+        private set
+
+    fun resolvedRemoteVaultKey(): ByteArray? = remoteVaultKey?.copyOf()
 
     override fun metadata(): RemoteSyncMetadata =
         delegate.metadata().let { metadata ->
@@ -42,7 +51,7 @@ class EncryptedRemoteSyncClient(
         val syncPayload = VaultSyncPayload.fromJson(payload)
         val encryptedVault = crypto.encrypt(
             VaultJson.encodeSnapshot(syncPayload.snapshot).toByteArray(StandardCharsets.UTF_8),
-            vaultKey,
+            effectiveVaultKey,
         )
         val envelope = JSONObject()
             .put("version", syncPayload.version)
@@ -51,7 +60,7 @@ class EncryptedRemoteSyncClient(
             .put("revision", syncPayload.revision)
             .put(
                 "masterKeyRecord",
-                if (includeMasterKeyRecord) masterKeyRecord?.toJson() ?: NULL else NULL,
+                if (includeMasterKeyRecord) effectiveMasterKeyRecord?.toJson() ?: NULL else NULL,
             )
             .put("encryptedVault", encryptedVault.toJson())
         return delegate.upload(envelope.toString())
@@ -61,8 +70,9 @@ class EncryptedRemoteSyncClient(
         val json = JSONObject(rawPayload)
         val encryptedVault = json.optJSONObject("encryptedVault")?.toEncryptedPayloadRecord()
             ?: return null
+        val decryptedVault = decryptWithAvailableKey(json, encryptedVault)
         val decryptedSnapshot = VaultJson.decodeSnapshot(
-            String(crypto.decrypt(encryptedVault, vaultKey), StandardCharsets.UTF_8)
+            String(decryptedVault, StandardCharsets.UTF_8)
         )
         return VaultSyncPayload(
             version = json.optInt("version", 1),
@@ -71,6 +81,23 @@ class EncryptedRemoteSyncClient(
             revision = json.optInt("revision", 0),
             snapshot = decryptedSnapshot,
         )
+    }
+
+    private fun decryptWithAvailableKey(
+        envelope: JSONObject,
+        encryptedVault: EncryptedPayloadRecord,
+    ): ByteArray = try {
+        crypto.decrypt(encryptedVault, effectiveVaultKey)
+    } catch (localKeyError: Exception) {
+        val remoteRecord = envelope.optJSONObject("masterKeyRecord")?.toMasterKeyRecord()
+            ?: throw localKeyError
+        val resolvedKey = crypto.verify(masterPassword, remoteRecord)
+        val decrypted = crypto.decrypt(encryptedVault, resolvedKey)
+        effectiveVaultKey = resolvedKey.copyOf()
+        effectiveMasterKeyRecord = remoteRecord
+        remoteVaultKey = resolvedKey.copyOf()
+        remoteMasterKeyRecord = remoteRecord
+        decrypted
     }
 
     private fun markPlaintextRemoteIfNeeded(rawPayload: String) {
@@ -93,6 +120,15 @@ class EncryptedRemoteSyncClient(
             .put("mac", mac)
             .put("version", version)
 
+    private fun JSONObject.toMasterKeyRecord(): MasterKeyRecord =
+        MasterKeyRecord(
+            saltBase64 = getString("saltBase64"),
+            iterations = getInt("iterations"),
+            verifierBase64 = getString("verifierBase64"),
+            metadataSaltBase64 = optionalString("metadataSaltBase64"),
+            metadataIterations = optionalInt("metadataIterations"),
+        )
+
     private fun JSONObject.toEncryptedPayloadRecord(): EncryptedPayloadRecord =
         EncryptedPayloadRecord(
             ciphertext = optString("ciphertext"),
@@ -104,6 +140,16 @@ class EncryptedRemoteSyncClient(
     private fun JSONObject.optInstant(name: String): Instant? {
         if (!has(name) || isNull(name)) return null
         return runCatching { Instant.parse(optString(name)) }.getOrNull()
+    }
+
+    private fun JSONObject.optionalString(name: String): String? {
+        if (!has(name) || isNull(name)) return null
+        return optString(name).takeIf { it.isNotEmpty() }
+    }
+
+    private fun JSONObject.optionalInt(name: String): Int? {
+        if (!has(name) || isNull(name)) return null
+        return optInt(name)
     }
 
     private fun isSuccessfulDownload(statusCode: Int): Boolean =

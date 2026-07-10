@@ -4,6 +4,7 @@ import life.devops.passwordmanager.model.CategoryTemplate
 import life.devops.passwordmanager.model.CredentialPayload
 import life.devops.passwordmanager.model.EncryptedPayloadRecord
 import life.devops.passwordmanager.model.EntryDraft
+import life.devops.passwordmanager.model.MasterKeyRecord
 import life.devops.passwordmanager.model.ServiceAccount
 import life.devops.passwordmanager.model.VaultEntry
 import life.devops.passwordmanager.model.VaultEntryType
@@ -205,6 +206,81 @@ class VaultStoreSyncTest {
             assertTrue(store.listEntries().any { it.label == "Remote Login" })
             assertFalse(remotePayload.contains("remote-secret"))
             assertTrue(remotePayload.contains("encryptedVault"))
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun syncNowOnFreshInstallUsesRemoteMasterKeyRecord() {
+        val directory = createTempDirectory("PasswordManagerAndroidFreshInstallSyncTests").toFile()
+        try {
+            val now = Instant.parse("2027-01-15T08:00:00Z")
+            val engine = VaultSyncEngine(clock = { now })
+            val remote = createRemoteSyncFixture(File(directory, "remote"), engine)
+            val fresh = createConfiguredSyncStore(
+                directory = File(directory, "fresh"),
+                engine = engine,
+                password = "test-password",
+                deviceId = "fresh-device",
+            )
+            val freshClient = VaultStoreSyncFakeClient(
+                downloads = ArrayDeque(listOf(RemoteSyncResult(payload = remote.payload, statusCode = 200))),
+                uploadStatusCodes = ArrayDeque(listOf(200)),
+            )
+
+            fresh.store.syncNow(freshClient)
+
+            assertEquals("success", fresh.store.syncSettings.lastSyncStatus, fresh.store.syncSettings.lastSyncMessage)
+            val expectedLabels = setOf("Remote Login", "Remote Server")
+            assertEquals(expectedLabels, fresh.store.listEntries().map { it.label }.toSet())
+            assertEquals(remote.masterKeyRecord, fresh.repository.loadEnvelope()?.masterKeyRecord)
+            val mergedRemotePayload = freshClient.uploadedPayloads.single()
+            assertEquals(
+                remote.masterKeyRecord.saltBase64,
+                JSONObject(mergedRemotePayload).getJSONObject("masterKeyRecord").getString("saltBase64"),
+            )
+            val mergedRemoteLabels = decodeEncryptedSyncPayload(mergedRemotePayload, remote.repository)
+                .snapshot.entries.map { it.label }.toSet()
+            assertEquals(expectedLabels, mergedRemoteLabels)
+
+            val reloadedStore = VaultStore(
+                repository = fresh.repository,
+                syncSettingsRepository = fresh.syncSettingsRepository,
+                syncEngine = engine,
+            )
+            assertTrue(reloadedStore.unlock("test-password"))
+            assertEquals(expectedLabels, reloadedStore.listEntries().map { it.label }.toSet())
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun syncNowOnFreshInstallRejectsRemoteMasterKeyRecordForWrongPassword() {
+        val directory = createTempDirectory("PasswordManagerAndroidFreshInstallWrongPasswordSyncTests").toFile()
+        try {
+            val engine = VaultSyncEngine(clock = { Instant.parse("2027-01-15T08:00:00Z") })
+            val remote = createRemoteSyncFixture(File(directory, "remote"), engine)
+            val fresh = createConfiguredSyncStore(
+                directory = File(directory, "fresh"),
+                engine = engine,
+                password = "wrong-password",
+                deviceId = "wrong-password-device",
+            )
+            val localMasterKeyRecord = fresh.repository.loadEnvelope()?.masterKeyRecord
+
+            fresh.store.syncNow(
+                VaultStoreSyncFakeClient(
+                    downloads = ArrayDeque(listOf(RemoteSyncResult(payload = remote.payload, statusCode = 200))),
+                    uploadStatusCodes = ArrayDeque(listOf(200)),
+                )
+            )
+
+            assertEquals("error", fresh.store.syncSettings.lastSyncStatus)
+            assertEquals("Vault authentication failed.", fresh.store.syncSettings.lastSyncMessage)
+            assertEquals(emptyList(), fresh.store.listEntries())
+            assertEquals(localMasterKeyRecord, fresh.repository.loadEnvelope()?.masterKeyRecord)
         } finally {
             directory.deleteRecursively()
         }
@@ -520,6 +596,97 @@ class VaultStoreSyncTest {
             directory.deleteRecursively()
         }
     }
+}
+
+private data class ConfiguredSyncStore(
+    val store: VaultStore,
+    val repository: FileVaultRepository,
+    val syncSettingsRepository: SyncSettingsRepository,
+)
+
+private data class RemoteSyncFixture(
+    val payload: String,
+    val masterKeyRecord: MasterKeyRecord,
+    val repository: FileVaultRepository,
+)
+
+private fun createConfiguredSyncStore(
+    directory: File,
+    engine: VaultSyncEngine,
+    password: String,
+    deviceId: String,
+): ConfiguredSyncStore {
+    val repository = FileVaultRepository(directory)
+    val syncSettingsRepository = SyncSettingsRepository(
+        settingsFile = File(directory, "sync_settings.json"),
+        secretStore = InMemorySyncSecretStore(),
+    )
+    val store = VaultStore(
+        repository = repository,
+        syncSettingsRepository = syncSettingsRepository,
+        syncEngine = engine,
+    )
+    check(store.setupMasterPassword(password, password))
+    store.updateSyncSettings(
+        SyncSettings.defaults(deviceId = deviceId).copy(
+            providerType = SyncProviderType.WEBDAV,
+            webdavUrl = "https://dav.example.com/root",
+            webdavPath = "/vault.json",
+        )
+    )
+    return ConfiguredSyncStore(store, repository, syncSettingsRepository)
+}
+
+private fun createRemoteSyncFixture(
+    directory: File,
+    engine: VaultSyncEngine,
+): RemoteSyncFixture {
+    val remote = createConfiguredSyncStore(
+        directory = directory,
+        engine = engine,
+        password = "test-password",
+        deviceId = "remote-device",
+    )
+    remote.store.upsert(
+        EntryDraft(
+            label = "Remote Login",
+            type = VaultEntryType.CREDENTIAL,
+            category = "",
+            tags = emptyList(),
+            credential = CredentialPayload(
+                username = "remote@example.com",
+                password = "remote-secret",
+            ),
+        )
+    )
+    val initialUpload = VaultStoreSyncFakeClient(
+        downloads = ArrayDeque(listOf(RemoteSyncResult(payload = null, statusCode = 404))),
+        uploadStatusCodes = ArrayDeque(listOf(201)),
+    )
+    remote.store.syncNow(initialUpload)
+    remote.store.upsert(
+        EntryDraft(
+            label = "Remote Server",
+            type = VaultEntryType.SERVER,
+            category = "",
+            tags = emptyList(),
+        )
+    )
+    val updatedUpload = VaultStoreSyncFakeClient(
+        downloads = ArrayDeque(
+            listOf(RemoteSyncResult(payload = initialUpload.uploadedPayloads.single(), statusCode = 200))
+        ),
+        uploadStatusCodes = ArrayDeque(listOf(200)),
+    )
+    remote.store.syncNow(updatedUpload)
+    val payload = updatedUpload.uploadedPayloads.single()
+    check(JSONObject(payload).getInt("revision") == 1)
+    check(JSONObject(payload).optJSONObject("masterKeyRecord") != null)
+    return RemoteSyncFixture(
+        payload = payload,
+        masterKeyRecord = checkNotNull(remote.repository.loadEnvelope()?.masterKeyRecord),
+        repository = remote.repository,
+    )
 }
 
 private fun decodeEncryptedSyncPayload(
