@@ -339,6 +339,104 @@ int main() {
     assert(unrestrictedReference.has_value());
     assert(unrestrictedReference->status == pm::EntryReferenceStatus::Resolved);
 
+    pm::VaultEntry displayTarget = pm::makeEntry("Resolved Account", "credential", "target-user", "target-secret");
+    displayTarget.id = "raw-resolved-target-id";
+    displayTarget.category = "Accounts";
+    pm::VaultEntry deletedDisplayTarget = pm::makeEntry("Deleted Account", "credential", "deleted-user", "deleted-secret");
+    deletedDisplayTarget.id = "raw-deleted-target-id";
+    deletedDisplayTarget.category = "Accounts";
+    deletedDisplayTarget.isDeleted = true;
+    pm::VaultEntry mismatchedDisplayTarget = pm::makeEntry("Archived Account", "credential", "archive-user", "archive-secret");
+    mismatchedDisplayTarget.id = "raw-mismatched-target-id";
+    mismatchedDisplayTarget.category = "Archive";
+    pm::VaultEntry displaySource = pm::makeEntry("Display Source", "service", "source-user", "source-secret");
+    displaySource.id = "display-source-id";
+    displaySource.category = "Servers";
+    const std::vector<pm::FieldTemplate> displayTemplates = {
+        {"template_text", "Notes", "text", ""},
+        {"template_resolved", "Resolved Owner", "entryReference", "Accounts"},
+        {"template_empty", "Empty Owner", "entryReference", "Accounts"},
+        {"template_missing", "Missing Owner", "entryReference", "Accounts"},
+        {"template_deleted", "Deleted Owner", "entryReference", "Accounts"},
+        {"template_mismatch", "Mismatched Owner", "entryReference", "Accounts"},
+        {"template_future", "Future Owner", "futureLink", "Accounts"},
+    };
+    displaySource.customFields = {
+        {"field_text", "Notes", "visible-text", "template_text"},
+        {"field_resolved", "Resolved Owner", displayTarget.id, "template_resolved"},
+        {"field_empty", "Empty Owner", "", "template_empty"},
+        {"field_missing", "Missing Owner", "raw-missing-target-id", "template_missing"},
+        {"field_deleted", "Deleted Owner", deletedDisplayTarget.id, "template_deleted"},
+        {"field_mismatch", "Mismatched Owner", mismatchedDisplayTarget.id, "template_mismatch"},
+        {"field_future", "Future Owner", "raw-unknown-value", "template_future"},
+        {"field_orphan", "Orphan Owner", "raw-orphan-value", "missing-template"},
+        {"field_ad_hoc", "Region", "visible-ad-hoc", ""},
+    };
+    const std::vector<pm::VaultEntry> displayEntries = {
+        displaySource,
+        displayTarget,
+        deletedDisplayTarget,
+        mismatchedDisplayTarget,
+    };
+    const auto displayFields = pm::projectCustomFieldsForDisplay(
+        displaySource.customFields,
+        displayTemplates,
+        displayEntries
+    );
+    assert(displayFields[0].value == "visible-text");
+    assert(displayFields[1].value == "resolved: Resolved Account - Accounts");
+    assert(displayFields[2].value == "empty");
+    assert(displayFields[3].value == "missing");
+    assert(displayFields[4].value == "deleted");
+    assert(displayFields[5].value == "categoryMismatch");
+    assert(displayFields[6].value.empty());
+    assert(displayFields[7].value.empty());
+    assert(displayFields[8].value == "visible-ad-hoc");
+
+    const auto searchFields = pm::projectCustomFieldsForSearch(
+        displaySource.customFields,
+        displayTemplates,
+        displayEntries
+    );
+    assert(searchFields[1].value == "Resolved Account Accounts");
+    for (std::size_t index = 2; index <= 7; ++index) assert(searchFields[index].value.empty());
+    assert(searchFields[8].value == "visible-ad-hoc");
+
+    pm::VaultSnapshot displaySnapshot;
+    displaySnapshot.entries = displayEntries;
+    displaySnapshot.categories = {"Accounts", "Archive", "Servers"};
+    displaySnapshot.categoryTemplates = {pm::CategoryTemplate{"Servers", displayTemplates}};
+    const auto displayRoundTrip = pm::parseSnapshotJson(pm::serializeSnapshotJson(displaySnapshot));
+    assert(displayRoundTrip.entries[0].customFields[1].value == displayTarget.id);
+    assert(displayRoundTrip.entries[0].customFields[3].value == "raw-missing-target-id");
+    assert(displayRoundTrip.entries[0].customFields[6].value == "raw-unknown-value");
+    assert(displayRoundTrip.entries[0].customFields[7].value == "raw-orphan-value");
+    for (const auto& forbidden : {
+        displayTarget.id,
+        std::string("raw-missing-target-id"),
+        std::string("raw-unknown-value"),
+        std::string("raw-orphan-value"),
+    }) {
+        const auto matches = pm::filterEntries(
+            displaySnapshot.entries,
+            displaySnapshot.categoryTemplates,
+            forbidden,
+            "all"
+        );
+        assert(std::none_of(matches.begin(), matches.end(), [&](const pm::VaultEntry& candidate) {
+            return candidate.id == displaySource.id;
+        }));
+    }
+    const auto resolvedLabelMatches = pm::filterEntries(
+        displaySnapshot.entries,
+        displaySnapshot.categoryTemplates,
+        "Resolved Account",
+        "all"
+    );
+    assert(std::any_of(resolvedLabelMatches.begin(), resolvedLabelMatches.end(), [&](const pm::VaultEntry& candidate) {
+        return candidate.id == displaySource.id;
+    }));
+
     auto lifecycleTemplates = referenceFixture.categoryTemplates;
     lifecycleTemplates[1].fields[0].targetCategory = " accounts ";
     lifecycleTemplates[1].fields.push_back(pm::FieldTemplate{

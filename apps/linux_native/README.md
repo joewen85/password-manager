@@ -9,7 +9,7 @@
 - 当前切片是 C++17 + OpenSSL 的 Linux terminal-native 起点，核心逻辑来自 `apps/native_core`。
 - 已实现可测试核心：PBKDF2-SHA256、AES-256-GCM encrypted vault envelope、TOTP、entry model、搜索/过滤、分类/标签集合、JSON snapshot 序列化/反序列化、encrypted vault 文件读写、version-vector merge。
 - CLI 入口支持初始化、`--password-stdin` 主密码输入、TOTP vault 解锁强制校验、解锁状态检查、分类模板持久化、credential/server/service 条目新增、搜索列表、单条查看、软删除、本地 encrypted envelope 备份/恢复、明文 snapshot 导出/导入、TOTP 生成、WebDAV / S3 presigned URL / 腾讯云 COS / 阿里云 OSS 远端对象同步和 `self-test`，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
-- 共享 C++ core 已无损保留字段关联契约，并提供五态解析、生命周期传播、安全搜索投影、纯 copy-import ID 重映射 helper 和同步冲突保真测试；CLI 搜索只使用成功解析目标的名称/分类，不索引原始 ID 或目标秘密。标签职责不变，CLI 暂不提供关联编辑/详情或 scoped-copy 导入流程，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
+- 共享 C++ core 已无损保留字段关联契约，并提供五态解析、生命周期传播、安全搜索投影、纯 copy-import ID 重映射 helper 和同步冲突保真测试。CLI 搜索只使用成功解析目标的名称/分类，不索引原始引用 ID、目标秘密、未知字段值或孤儿绑定值；`show-entry` 将引用安全展示为 `empty`、`resolved: <名称> - <分类>`、`missing`、`deleted` 或 `categoryMismatch`，即使传入 `--show-secret` 也不会泄露上述原值或目标秘密。`export-snapshot` 是用于无损往返的敏感明文数据边界，会保留原始引用 ID 和未知/孤儿值。标签职责不变，CLI 暂不提供关联编辑或 scoped-copy 导入流程，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
 - 当前尚未实现 GTK/Qt/libadwaita 图形界面、GUI CRUD 和 GUI 同步入口。
 - 当前在 macOS 上用 clang + Homebrew OpenSSL 验证核心逻辑；同时提供 Docker 化 Ubuntu release gate，可在真实 Linux userspace 中使用系统 OpenSSL/libcurl 重新构建、跑完整 core/CLI smoke，并构建/安装/卸载 CLI `.deb` 包。
 
@@ -24,11 +24,13 @@
 - `../native_core/src/vault_core.cpp`: 共享 crypto、TOTP、entry、merge、分类模板和对象存储签名实现。
 - `../native_core/src/vault_cli.cpp`: Windows/Linux 共享 terminal-native CLI。
 - `../native_core/tests/vault_core_tests.cpp`: Windows/Linux 共用 C++ 核心测试。
+- `../native_core/tests/vault_cli_smoke.sh`: 使用当前平台 CLI 产物验证字段关联五态安全展示、搜索抑制和 `export-snapshot` 无损保真。
 
 ### 环境要求
 
 - Linux 发布构建：GCC 或 Clang、GNU Make、OpenSSL 3 development headers、libcurl development headers/library。
 - 本机验证环境：macOS clang + `/opt/homebrew/opt/openssl@3`。
+- Python 3，用于共享 CLI smoke 中的字段关联 JSON 展示与无损导出断言。
 
 Linux 安装依赖示例：
 
@@ -76,7 +78,7 @@ make OPENSSL_PREFIX=/usr
 ./scripts/verify_release_docker.sh
 ```
 
-该脚本会把 `apps/linux_native` 与 `apps/native_core` 只读挂载进容器，复制到容器内临时工作区，然后安装发行版 OpenSSL/libcurl 开发包，执行 release binary 构建、ELF/动态库检查、CLI `self-test` 和启用 `assert` 的 `make test`。可通过 `LINUX_RELEASE_DOCKER_IMAGE` 覆盖发行版镜像。
+该脚本会把 `apps/linux_native`、`apps/native_core` 与共享 `fixtures` 只读挂载进容器，将源码复制到容器内临时工作区，然后安装发行版 OpenSSL/libcurl 开发包，执行 release binary 构建、ELF/动态库检查、CLI `self-test` 和启用 `assert` 的 `make test`。`make test` 会用 Linux CLI 产物验证字段关联五态安全展示、默认及 `--show-secret` 均不泄露原始关联值，并确认 `export-snapshot` 仍无损保留。可通过 `LINUX_RELEASE_DOCKER_IMAGE` 覆盖发行版镜像。
 在 apt-based 镜像中，它还会执行 `make package-deb`，安装生成的 `.deb`，从 `/usr/bin/password-manager-linux` 运行 `self-test`，再卸载包确认命令被移除。
 
 运行当前机器可验证的 Linux native release gate：
@@ -85,7 +87,7 @@ make OPENSSL_PREFIX=/usr
 ./scripts/verify_release.sh
 ```
 
-该脚本会先构建 release binary 并执行 CLI `self-test`，再执行启用 `assert` 的 C++ core tests 和共享 CLI smoke，并检查当前宿主机 binary 与 OpenSSL/libcurl 的链接。若需要同时执行真实 Linux userspace 和 `.deb` 安装/卸载验证：
+该脚本会先构建 release binary 并执行 CLI `self-test`，再执行启用 `assert` 的 C++ core tests 和共享 CLI smoke，包括字段关联安全展示/搜索与无损导出合同，并检查当前宿主机 binary 与 OpenSSL/libcurl 的链接。若需要同时执行真实 Linux userspace 和 `.deb` 安装/卸载验证：
 
 ```bash
 ./scripts/verify_release.sh --docker
@@ -273,6 +275,7 @@ Release notes 只能描述已经验证的能力；当前不能把 GUI、GUI 同�
 - [x] C++ 测试覆盖加密 envelope、错误密码拒绝、snapshot 反序列化、encrypted vault 文件读回、TOTP、entry 过滤、集合重建和 version-vector merge。
 - [x] terminal-native smoke-test CLI 可构建。
 - [x] Windows/Linux 共用 terminal-native CLI，支持加密 vault 初始化、stdin 主密码输入、TOTP vault 解锁强制校验、状态读取、分类模板持久化、条目新增/搜索/查看/软删除。
+- [x] Linux CLI release gate 验证字段关联五态安全展示、默认及 `--show-secret` 不泄露原始关联/未知/孤儿值或目标秘密、安全搜索投影，以及 `export-snapshot` 无损保真。
 - [x] Windows/Linux 共用 terminal-native CLI 支持 WebDAV、S3 presigned URL、腾讯云 COS、阿里云 OSS 远端对象同步。
 - [x] `scripts/verify_release.sh` 串联 release binary 构建、CLI `self-test`、启用 `assert` 的 C++/CLI smoke 和宿主机 binary 依赖检查。
 - [x] Ubuntu Docker release gate 可在真实 Linux userspace 中构建、测试并校验 ELF/动态库。
@@ -295,7 +298,7 @@ This directory contains the native Linux application target, used to build Linux
 - The current slice is a C++17 + OpenSSL Linux terminal-native starting point.
 - Testable core is implemented in shared `apps/native_core`: PBKDF2-SHA256, AES-256-GCM encrypted vault envelope, TOTP, entry model, search/filtering, category/tag collection rebuilding, JSON snapshot serialization/deserialization, encrypted vault file read/write, and version-vector merge.
 - The CLI entry point supports encrypted vault initialization, `--password-stdin` master password input, TOTP-protected vault enforcement, unlock status checks, persisted category templates, credential/server/service entry add, search/list, single-entry view, soft delete, local encrypted envelope backup/restore, plaintext snapshot export/import, TOTP generation, WebDAV / S3 presigned URL / Tencent COS / Aliyun OSS remote object sync, and `self-test`.
-- The shared C++ core losslessly preserves entry references and provides five-state resolution, lifecycle propagation, safe search projection, a pure copy-import ID remapping helper, and sync conflict-preservation coverage. CLI search uses only successfully resolved target labels/categories and never raw IDs or target secrets. Tags remain unchanged; reference editing/detail and a scoped-copy CLI flow are still outside this slice. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
+- The shared C++ core losslessly preserves entry references and provides five-state resolution, lifecycle propagation, safe search projection, a pure copy-import ID remapping helper, and sync conflict-preservation coverage. CLI search uses only successfully resolved target labels/categories and suppresses raw reference IDs, target secrets, unknown field values, and orphaned binding values. `show-entry` provides five-state safe reference display as `empty`, `resolved: <label> - <category>`, `missing`, `deleted`, or `categoryMismatch`; this remains safe with `--show-secret`, which only controls the selected entry's own secret. `export-snapshot` is the lossless plaintext boundary and intentionally retains raw reference IDs and unknown/orphan values, so its output is sensitive vault data. Tags remain unchanged; reference editing and a scoped-copy CLI flow are still outside this slice. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
 - GTK/Qt/libadwaita GUI, GUI CRUD, and GUI sync entry points are not implemented yet.
 - The current verification runs on macOS with clang + Homebrew OpenSSL. A Dockerized Ubuntu release gate is also available to rebuild with distribution OpenSSL/libcurl, run the full core/CLI smoke coverage, and build/install/uninstall the CLI `.deb` package in a real Linux userspace.
 
@@ -310,11 +313,13 @@ This directory contains the native Linux application target, used to build Linux
 - `../native_core/src/vault_core.cpp`: shared crypto, TOTP, entry, merge, category template, and object storage signing implementation.
 - `../native_core/src/vault_cli.cpp`: shared Windows/Linux terminal-native CLI.
 - `../native_core/tests/vault_core_tests.cpp`: shared Windows/Linux C++ core tests.
+- `../native_core/tests/vault_cli_smoke.sh`: runs the current platform CLI artifact through five-state reference display, search suppression, and lossless `export-snapshot` checks.
 
 ### Requirements
 
 - Linux release build: GCC or Clang, GNU Make, OpenSSL 3 development headers, libcurl development headers/library.
 - Local verification here: macOS clang + `/opt/homebrew/opt/openssl@3`.
+- Python 3 for the shared CLI smoke's field-reference JSON display and lossless export assertions.
 
 Linux dependency examples:
 
@@ -362,7 +367,7 @@ Run the Linux release gate inside an Ubuntu container:
 ./scripts/verify_release_docker.sh
 ```
 
-The script read-only mounts `apps/linux_native` and `apps/native_core`, copies them into a temporary container workspace, installs distribution OpenSSL/libcurl development packages, runs a release binary build, ELF/dependency checks, the CLI `self-test`, and assertion-enabled `make test`. On apt-based images, it also runs `make package-deb`, installs the generated `.deb`, runs `self-test` from `/usr/bin/password-manager-linux`, and uninstalls the package. Override the distro image with `LINUX_RELEASE_DOCKER_IMAGE` when needed.
+The script read-only mounts `apps/linux_native`, `apps/native_core`, and the shared `fixtures`, copies the source trees into a temporary container workspace, installs distribution OpenSSL/libcurl development packages, runs a release binary build, ELF/dependency checks, the CLI `self-test`, and assertion-enabled `make test`. The test gate runs the Linux CLI artifact through five-state safe reference display, default and `--show-secret` non-disclosure, and lossless `export-snapshot` checks. On apt-based images, it also runs `make package-deb`, installs the generated `.deb`, runs `self-test` from `/usr/bin/password-manager-linux`, and uninstalls the package. Override the distro image with `LINUX_RELEASE_DOCKER_IMAGE` when needed.
 
 Run the Linux native release gate that is available on the current host:
 
@@ -370,7 +375,7 @@ Run the Linux native release gate that is available on the current host:
 ./scripts/verify_release.sh
 ```
 
-The script builds the release binary and runs CLI `self-test`, then runs assertion-enabled C++ core tests and shared CLI smoke, and checks the current host binary links OpenSSL/libcurl. To also run real Linux userspace and `.deb` install/uninstall validation:
+The script builds the release binary and runs CLI `self-test`, then runs assertion-enabled C++ core tests and shared CLI smoke, including the safe reference display/search and lossless export contract, and checks the current host binary links OpenSSL/libcurl. To also run real Linux userspace and `.deb` install/uninstall validation:
 
 ```bash
 ./scripts/verify_release.sh --docker
@@ -532,6 +537,7 @@ Release notes must only describe verified capabilities. Do not list GUI, GUI syn
 - [x] C++ tests cover encrypted envelope, wrong-password rejection, TOTP, entry filtering, collection rebuilding, and version-vector merge.
 - [x] Terminal-native smoke-test CLI builds.
 - [x] Shared Windows/Linux terminal-native CLI supports encrypted vault initialization, stdin master password input, TOTP-protected vault enforcement, status reads, category template persistence, and entry add/search/view/soft-delete.
+- [x] The Linux CLI release gate verifies five-state safe reference display, no raw reference/unknown/orphan values or target secrets in default and `--show-secret` output, safe search projection, and lossless `export-snapshot` persistence.
 - [x] Shared Windows/Linux terminal-native CLI supports WebDAV, S3 presigned URL, Tencent COS, and Aliyun OSS remote object sync.
 - [x] `scripts/verify_release.sh` chains the release binary build, CLI `self-test`, assertion-enabled C++/CLI smoke coverage, and host binary dependency inspection.
 - [x] Ubuntu Docker release gate builds, tests, and verifies ELF/dependencies in a real Linux userspace.

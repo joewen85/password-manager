@@ -40,8 +40,20 @@ docker run --rm \
   -e CONTAINER_CXX="$CONTAINER_CXX" \
   -v "$REPO_ROOT/apps/linux_native:/src/linux_native:ro" \
   -v "$REPO_ROOT/apps/native_core:/src/native_core:ro" \
+  -v "$REPO_ROOT/fixtures:/work/fixtures:ro" \
   "$IMAGE" \
-  bash -lc '
+  sh -c '
+    set -eu
+    if ! command -v bash >/dev/null 2>&1; then
+      if command -v apk >/dev/null 2>&1; then
+        apk add --no-cache bash
+      else
+        echo "The Linux release image must provide bash." >&2
+        exit 1
+      fi
+    fi
+    exec bash -lc "$1"
+  ' sh '
     set -euo pipefail
     export DEBIAN_FRONTEND=noninteractive
 
@@ -66,6 +78,7 @@ docker run --rm \
         python3
     elif command -v apk >/dev/null 2>&1; then
       apk add --no-cache \
+        bash \
         build-base \
         curl-dev \
         file \

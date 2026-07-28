@@ -1,4 +1,4 @@
-import 'sync_interfaces.dart';
+import 'package:password_manager_sync/src/sync_interfaces.dart';
 
 class NoopSyncProvider implements SyncProvider {
   DateTime? _lastSyncedAt;

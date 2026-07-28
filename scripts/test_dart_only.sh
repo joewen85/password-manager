@@ -24,4 +24,14 @@ echo "==> Running package tests (Dart only)"
   dart test
 )
 
-echo "All Dart package tests passed."
+echo "==> Running static analysis for interface-only packages"
+(
+  cd packages/sync
+  dart analyze --fatal-infos
+)
+(
+  cd packages/backup
+  dart analyze --fatal-infos
+)
+
+echo "All shared Dart package checks passed."

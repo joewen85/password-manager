@@ -26,4 +26,13 @@ Push-Location packages/storage
   dart test
 Pop-Location
 
-Write-Host "All tests passed."
+Write-Host "==> Running static analysis for interface-only packages"
+Push-Location packages/sync
+  dart analyze --fatal-infos
+Pop-Location
+
+Push-Location packages/backup
+  dart analyze --fatal-infos
+Pop-Location
+
+Write-Host "All shared Dart package checks passed."

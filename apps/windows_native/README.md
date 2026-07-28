@@ -12,7 +12,7 @@
 - 可移植 core 复用 `apps/native_core` 的 C++17 + OpenSSL 路径，当前可在本机用 clang 构建和测试。
 - 已实现可测试核心：PBKDF2-SHA256、AES-256-GCM encrypted vault envelope、TOTP、entry model、搜索/过滤、分类/标签集合、JSON snapshot 序列化/反序列化、encrypted vault 文件读写、version-vector merge。
 - CLI 入口支持初始化、`--password-stdin` 主密码输入、TOTP vault 解锁强制校验、解锁状态检查、分类模板持久化、credential/server/service 条目新增、搜索列表、单条查看、软删除、本地 encrypted envelope 备份/恢复、明文 snapshot 导出/导入、TOTP、WebDAV / S3 presigned URL / 腾讯云 COS / 阿里云 OSS 远端对象同步和 self-test，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
-- 共享 C++ core 已无损保留字段关联契约，并提供五态解析、生命周期传播、安全搜索投影、纯 copy-import ID 重映射 helper 和同步冲突保真测试；CLI 搜索只使用成功解析目标的名称/分类，不索引原始 ID 或目标秘密。标签职责不变，CLI 暂不提供关联编辑/详情或 scoped-copy 导入流程，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
+- 共享 C++ core 已无损保留字段关联契约，并提供五态解析、生命周期传播、安全搜索投影、纯 copy-import ID 重映射 helper 和同步冲突保真测试。CLI 搜索只使用成功解析目标的名称/分类，不索引原始引用 ID、目标秘密、未知字段值或孤儿绑定值；`show-entry` 将引用安全展示为 `empty`、`resolved: <名称> - <分类>`、`missing`、`deleted` 或 `categoryMismatch`，即使传入 `--show-secret` 也不会泄露上述原值或目标秘密。`export-snapshot` 是用于无损往返的敏感明文数据边界，会保留原始引用 ID 和未知/孤儿值。标签职责不变，CLI 暂不提供关联编辑或 scoped-copy 导入流程，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
 - 当前尚未实现完整 Win32/WinUI 3/WPF 图形界面，也尚未实现 Windows Credential Manager / DPAPI 集成、GUI 同步入口、Windows 实机 MSBuild 构建验证和干净 Windows VM 运行时依赖验证。
 
 ### 目录说明
@@ -27,6 +27,7 @@
 - `../native_core/src/vault_core.cpp`: 共享 crypto、TOTP、entry、merge、分类模板和对象存储签名实现。
 - `../native_core/src/vault_cli.cpp`: Windows/Linux 共享 terminal-native CLI。
 - `../native_core/tests/vault_core_tests.cpp`: Windows/Linux 共用 C++ core tests。
+- `../native_core/tests/vault_cli_smoke.sh`: 使用当前平台 CLI 产物验证字段关联五态安全展示、搜索抑制和 `export-snapshot` 无损保真。
 
 ### 环境要求
 
@@ -81,7 +82,7 @@ python3 scripts/verify_release_contract.py
 ./scripts/verify_release.sh
 ```
 
-该脚本会先构建 portable shared core release binary 并执行 CLI `self-test`，再执行启用 `assert` 的 C++ core tests、共享 CLI smoke 和 Visual Studio / MSBuild release contract verifier；它不替代 Windows 实机 MSBuild、签名或干净 VM 安装验证。
+该脚本会先构建 portable shared core release binary 并执行 CLI `self-test`，再执行启用 `assert` 的 C++ core tests、共享 CLI smoke（包括字段关联五态安全展示/搜索与无损导出合同）和 Visual Studio / MSBuild release contract verifier；它不替代 Windows 实机 MSBuild、签名或干净 VM 安装验证。
 
 ### 本地功能验证
 
@@ -275,6 +276,7 @@ Release notes 只能描述已经验证的能力；当前不能把完整 GUI、GU
 - [x] C++ 测试覆盖加密 envelope、错误密码拒绝、snapshot 反序列化、encrypted vault 文件读回、TOTP、entry 过滤、集合重建和 version-vector merge。
 - [x] portable smoke-test CLI 可在当前机器构建。
 - [x] Windows/Linux 共用 terminal-native CLI，支持加密 vault 初始化、stdin 主密码输入、TOTP vault 解锁强制校验、状态读取、分类模板持久化、条目新增/搜索/查看/软删除。
+- [x] Windows portable CLI release gate 验证字段关联五态安全展示、默认及 `--show-secret` 不泄露原始关联/未知/孤儿值或目标秘密、安全搜索投影，以及 `export-snapshot` 无损保真。
 - [x] Windows/Linux 共用 terminal-native CLI 支持 WebDAV、S3 presigned URL、腾讯云 COS、阿里云 OSS 远端对象同步。
 - [ ] 在 Windows 10/11 上用 Visual Studio/MSBuild 构建 `.exe`。
 - [ ] 完整 Win32/WinUI 3/WPF UI 完成。
@@ -300,7 +302,7 @@ This directory contains the native Windows application target, used to build Win
 - The portable core uses the shared `apps/native_core` C++17 + OpenSSL path and can currently be built and tested locally with clang.
 - Testable core is implemented: PBKDF2-SHA256, AES-256-GCM encrypted vault envelope, TOTP, entry model, search/filtering, category/tag collection rebuilding, JSON snapshot serialization/deserialization, encrypted vault file read/write, and version-vector merge.
 - The CLI supports initialization, `--password-stdin` master password input, TOTP-protected vault enforcement, unlock status checks, persisted category templates, credential/server/service entry add, search/list, single-entry view, soft delete, local encrypted envelope backup/restore, plaintext snapshot export/import, TOTP, WebDAV / S3 presigned URL / Tencent COS / Aliyun OSS remote object sync, and self-test through shared `apps/native_core/src/vault_cli.cpp`.
-- The shared C++ core losslessly preserves entry references and provides five-state resolution, lifecycle propagation, safe search projection, a pure copy-import ID remapping helper, and sync conflict-preservation coverage. CLI search uses only successfully resolved target labels/categories and never raw IDs or target secrets. Tags remain unchanged; reference editing/detail and a scoped-copy CLI flow are still outside this slice. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
+- The shared C++ core losslessly preserves entry references and provides five-state resolution, lifecycle propagation, safe search projection, a pure copy-import ID remapping helper, and sync conflict-preservation coverage. CLI search uses only successfully resolved target labels/categories and suppresses raw reference IDs, target secrets, unknown field values, and orphaned binding values. `show-entry` provides five-state safe reference display as `empty`, `resolved: <label> - <category>`, `missing`, `deleted`, or `categoryMismatch`; this remains safe with `--show-secret`, which only controls the selected entry's own secret. `export-snapshot` is the lossless plaintext boundary and intentionally retains raw reference IDs and unknown/orphan values, so its output is sensitive vault data. Tags remain unchanged; reference editing and a scoped-copy CLI flow are still outside this slice. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
 - Full Win32/WinUI 3/WPF GUI, Windows Credential Manager / DPAPI integration, GUI sync entry points, Windows-host MSBuild validation, and clean Windows VM runtime dependency validation are not implemented yet.
 
 ### Directory Layout
@@ -315,6 +317,7 @@ This directory contains the native Windows application target, used to build Win
 - `../native_core/src/vault_core.cpp`: shared crypto, TOTP, entry, merge, category template, and object storage signing implementation.
 - `../native_core/src/vault_cli.cpp`: shared Windows/Linux terminal-native CLI.
 - `../native_core/tests/vault_core_tests.cpp`: shared Windows/Linux C++ core tests.
+- `../native_core/tests/vault_cli_smoke.sh`: runs the current platform CLI artifact through five-state reference display, search suppression, and lossless `export-snapshot` checks.
 
 ### Requirements
 
@@ -369,7 +372,7 @@ Run the locally verifiable Windows native release gate:
 ./scripts/verify_release.sh
 ```
 
-The script builds the portable shared core release binary and runs CLI `self-test`, then runs assertion-enabled C++ core tests, shared CLI smoke, and the Visual Studio / MSBuild release contract verifier. It does not replace Windows-host MSBuild, signing, or clean-VM installation validation.
+The script builds the portable shared core release binary and runs CLI `self-test`, then runs assertion-enabled C++ core tests, shared CLI smoke including the safe reference display/search and lossless export contract, and the Visual Studio / MSBuild release contract verifier. It does not replace Windows-host MSBuild, signing, or clean-VM installation validation.
 
 ### Local Feature Verification
 
@@ -537,6 +540,7 @@ Release notes must only describe verified capabilities. Do not list full GUI, GU
 - [x] C++ tests cover encrypted envelope, wrong-password rejection, TOTP, entry filtering, collection rebuilding, and version-vector merge.
 - [x] Portable smoke-test CLI builds on the current machine.
 - [x] Shared Windows/Linux terminal-native CLI supports encrypted vault initialization, stdin master password input, TOTP-protected vault enforcement, status reads, category template persistence, and entry add/search/view/soft-delete.
+- [x] The Windows portable CLI release gate verifies five-state safe reference display, no raw reference/unknown/orphan values or target secrets in default and `--show-secret` output, safe search projection, and lossless `export-snapshot` persistence.
 - [x] Shared Windows/Linux terminal-native CLI supports WebDAV, S3 presigned URL, Tencent COS, and Aliyun OSS remote object sync.
 - [ ] Build `.exe` on Windows 10/11 with Visual Studio/MSBuild.
 - [ ] Full Win32/WinUI 3/WPF UI is complete.

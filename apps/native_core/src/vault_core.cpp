@@ -392,6 +392,24 @@ std::string trimCopy(const std::string& value) {
     return value.substr(first, last - first + 1);
 }
 
+const FieldTemplate* matchingFieldTemplate(
+    const CustomField& field,
+    const std::vector<FieldTemplate>& templateFields
+) {
+    if (!field.templateFieldId.empty()) {
+        const auto match = std::find_if(templateFields.begin(), templateFields.end(), [&](const FieldTemplate& candidate) {
+            return candidate.id == field.templateFieldId;
+        });
+        return match == templateFields.end() ? nullptr : &*match;
+    }
+    const auto fieldName = lowerCopy(trimCopy(field.name));
+    if (fieldName.empty()) return nullptr;
+    const auto match = std::find_if(templateFields.begin(), templateFields.end(), [&](const FieldTemplate& candidate) {
+        return lowerCopy(trimCopy(candidate.name)) == fieldName;
+    });
+    return match == templateFields.end() ? nullptr : &*match;
+}
+
 std::string canonicalIdString(const std::string& value) {
     std::string normalized = trimCopy(value);
     bool isUuid = normalized.size() == 36;
@@ -1719,6 +1737,79 @@ std::optional<EntryReferenceResolution> resolveEntryReference(
     return EntryReferenceResolution{EntryReferenceStatus::Resolved, projection};
 }
 
+std::vector<CustomField> projectCustomFieldsForSearch(
+    const std::vector<CustomField>& fields,
+    const std::vector<FieldTemplate>& templateFields,
+    const std::vector<VaultEntry>& entries
+) {
+    auto projected = fields;
+    for (auto& field : projected) {
+        const auto* templateField = matchingFieldTemplate(field, templateFields);
+        if (templateField == nullptr) {
+            if (!field.templateFieldId.empty()) field.value.clear();
+            continue;
+        }
+        if (templateField->valueType == "text") continue;
+        if (templateField->valueType != "entryReference") {
+            field.value.clear();
+            continue;
+        }
+        const auto resolution = resolveEntryReference(field, templateFields, entries);
+        field.value = resolution.has_value()
+                && resolution->status == EntryReferenceStatus::Resolved
+                && resolution->target.has_value()
+            ? resolution->target->label + " " + resolution->target->category
+            : "";
+    }
+    return projected;
+}
+
+std::vector<CustomField> projectCustomFieldsForDisplay(
+    const std::vector<CustomField>& fields,
+    const std::vector<FieldTemplate>& templateFields,
+    const std::vector<VaultEntry>& entries
+) {
+    auto projected = fields;
+    for (auto& field : projected) {
+        const auto* templateField = matchingFieldTemplate(field, templateFields);
+        if (templateField == nullptr) {
+            if (!field.templateFieldId.empty()) field.value.clear();
+            continue;
+        }
+        if (templateField->valueType == "text") continue;
+        if (templateField->valueType != "entryReference") {
+            field.value.clear();
+            continue;
+        }
+        const auto resolution = resolveEntryReference(field, templateFields, entries);
+        if (!resolution.has_value()) {
+            field.value.clear();
+            continue;
+        }
+        switch (resolution->status) {
+            case EntryReferenceStatus::Empty:
+                field.value = "empty";
+                break;
+            case EntryReferenceStatus::Resolved:
+                field.value = resolution->target.has_value()
+                    ? "resolved: " + resolution->target->label
+                        + (resolution->target->category.empty() ? "" : " - " + resolution->target->category)
+                    : "resolved";
+                break;
+            case EntryReferenceStatus::Missing:
+                field.value = "missing";
+                break;
+            case EntryReferenceStatus::Deleted:
+                field.value = "deleted";
+                break;
+            case EntryReferenceStatus::CategoryMismatch:
+                field.value = "categoryMismatch";
+                break;
+        }
+    }
+    return projected;
+}
+
 std::vector<CategoryTemplate> propagateEntryReferenceCategoryRename(
     const std::vector<CategoryTemplate>& templates,
     const std::string& oldCategory,
@@ -1828,13 +1919,17 @@ std::vector<VaultEntry> filterEntries(
             }
         );
         if (templateEntry != categoryTemplates.end()) {
-            for (auto& field : searchProjection.customFields) {
-                const auto resolution = resolveEntryReference(field, templateEntry->fields, entries);
-                if (!resolution.has_value()) continue;
-                field.value = resolution->status == EntryReferenceStatus::Resolved && resolution->target.has_value()
-                    ? resolution->target->label + " " + resolution->target->category
-                    : "";
-            }
+            searchProjection.customFields = projectCustomFieldsForSearch(
+                searchProjection.customFields,
+                templateEntry->fields,
+                entries
+            );
+        } else {
+            searchProjection.customFields = projectCustomFieldsForSearch(
+                searchProjection.customFields,
+                {},
+                entries
+            );
         }
         bool matches = true;
         for (const auto& term : terms) {

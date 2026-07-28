@@ -19,14 +19,23 @@ link these sources instead of copying them into each app directory.
 - The entry-reference data contract is preserved in shared snapshot and sync
   serialization. The shared core also resolves opaque target IDs into
   `empty`, `resolved`, `missing`, `deleted`, or category-mismatch states while
-  exposing only the target ID, label, and category. Its domain helper propagates
+  exposing only the target ID, label, and category to trusted domain callers. Its domain helper propagates
   matching category-renamed target configuration, while category deletion and
   target delete/restore/move scenarios retain stored reference values. Search
-  projects only resolved target labels/categories and suppresses stored IDs and
-  target secrets. A pure import helper remaps references through a complete copy
-  ID map, and conflict-copy tests verify reference values plus template field IDs.
-  Reference editing/display and a scoped-copy CLI flow remain outside this slice; see
-  `../../docs/FIELD_REFERENCE_CONTRACT.md`.
+  projects only resolved target labels/categories and suppresses stored IDs,
+  target secrets, unknown field values, and orphaned binding values. `show-entry`
+  keeps known text and ad-hoc text values, renders reference values as `empty`,
+  `resolved: <label> - <category>`, `missing`, `deleted`, or `categoryMismatch`,
+  and blanks unknown/orphan values. This remains true with `--show-secret`, which
+  only controls the selected entry's own secret. A pure import helper remaps
+  references through a complete copy ID map, and conflict-copy tests verify
+  reference values plus template field IDs. Reference editing and a scoped-copy
+  CLI flow remain outside this slice; see `../../docs/FIELD_REFERENCE_CONTRACT.md`.
+
+`export-snapshot` is a lossless plaintext data export, not a display projection.
+It intentionally retains stored reference IDs and unknown/orphan values so a
+later import can restore them. Treat the export as sensitive vault data and do
+not print or log it.
 
 ## Verify
 

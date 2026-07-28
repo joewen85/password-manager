@@ -224,6 +224,10 @@ def check_version_resource() -> None:
 
 def check_readme() -> None:
     require(README.exists(), "README exists")
+    require(
+        (APP_ROOT.parent / "native_core" / "tests" / "vault_cli_smoke.sh").exists(),
+        "shared CLI field-reference smoke exists",
+    )
     text = README.read_text(encoding="utf-8")
     for needle in [
         "scripts/verify_release_contract.py",
@@ -234,6 +238,8 @@ def check_readme() -> None:
         "x64-windows",
         "Visual Studio / MSBuild release contract",
         "Windows 实机 MSBuild",
+        "five-state safe reference display",
+        "lossless plaintext boundary",
     ]:
         require(needle in text, f"README documents {needle}")
 

@@ -43,6 +43,10 @@ command -v make >/dev/null 2>&1 || {
   echo "make is required to run the Linux native release gate." >&2
   exit 127
 }
+command -v python3 >/dev/null 2>&1 || {
+  echo "python3 is required to run the CLI field-reference contract checks." >&2
+  exit 127
+}
 
 cd "$APP_ROOT"
 

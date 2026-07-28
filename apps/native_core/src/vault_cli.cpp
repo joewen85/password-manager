@@ -1091,12 +1091,27 @@ void printEntryLine(const VaultEntry& entry, bool showSecret) {
     std::cout << "\n";
 }
 
-std::string entryJsonForDisplay(const VaultEntry& entry, bool showSecret) {
+std::string entryJsonForDisplay(const VaultEntry& entry, const VaultSnapshot& source, bool showSecret) {
     VaultEntry copy = entry;
     if (!showSecret) {
         copy.secret = maskedSecret(copy.secret, false);
         copy.payloadJson.clear();
     }
+    const auto categoryKey = lowerAscii(trimAscii(entry.category));
+    const auto templateEntry = std::find_if(
+        source.categoryTemplates.begin(),
+        source.categoryTemplates.end(),
+        [&](const CategoryTemplate& candidate) {
+            return lowerAscii(trimAscii(candidate.category)) == categoryKey;
+        }
+    );
+    copy.customFields = projectCustomFieldsForDisplay(
+        copy.customFields,
+        templateEntry == source.categoryTemplates.end()
+            ? std::vector<FieldTemplate>{}
+            : templateEntry->fields,
+        source.entries
+    );
     VaultSnapshot snapshot;
     snapshot.entries.push_back(copy);
     rebuildTaxonomy(snapshot);
@@ -1169,7 +1184,7 @@ void showEntry(const CommandAuth& auth, int argc, char** argv, const char* defau
     const auto snapshot = loadUnlockedSnapshot(auth, args.vaultPath);
     for (const auto& entry : snapshot.entries) {
         if (entry.id == id) {
-            std::cout << entryJsonForDisplay(entry, args.showSecret) << "\n";
+            std::cout << entryJsonForDisplay(entry, snapshot, args.showSecret) << "\n";
             return;
         }
     }

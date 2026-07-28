@@ -23,7 +23,7 @@ Password Manager 是一款本地加密优先的跨平台密码保险库，用来
 - **可控同步**：围绕 WebDAV、NAS WebDAV、S3 Presigned URL 和对象存储设计同步接口、revision、冲突策略和同步日志。
 - **备份与迁移**：支持本地加密备份、快照 JSON 导入导出、单条或分类导入导出，以及冲突处理策略。
 - **跨端一致契约**：共享 Dart 包、Swift/Kotlin 原生实现和 C++ portable core 围绕同一数据模型、加密格式和同步语义演进。
-- **字段关联契约**：分类模板字段可声明可选的单条记录引用，引用值使用稳定条目 ID；标签继续用于宽松分组、搜索和筛选。当前已完成全端无损读写、五态解析、生命周期传播、安全搜索、同批复制导入 ID 重映射和同步冲突保真；HarmonyOS 已开放首个完整的分类配置、条目选择和五态详情 UI 垂直切片，并对已用字段改型/删除、未知类型和孤儿绑定执行安全保护，其他平台 UI 仍分阶段开放。完整格式与上线约束见 `docs/FIELD_REFERENCE_CONTRACT.md`。
+- **字段关联契约**：分类模板字段可声明可选的单条记录引用，引用值使用稳定条目 ID；标签继续用于宽松分组、搜索和筛选。当前已完成全端无损读写、五态解析、生命周期传播、安全搜索、同批复制导入 ID 重映射和同步冲突保真；HarmonyOS、Android、iOS 与 macOS 已完成分类配置、条目选择和五态详情 UI，Windows/Linux 共用 CLI 已提供安全搜索与五态详情投影。所有展示路径均隐藏原始引用 ID、目标秘密以及未知类型或孤儿绑定的存储值，完整格式与上线约束见 `docs/FIELD_REFERENCE_CONTRACT.md`。
 
 ## 当前状态
 
@@ -31,11 +31,11 @@ Password Manager 是一款本地加密优先的跨平台密码保险库，用来
 
 | 平台 | 当前进度 |
 | --- | --- |
-| Android 原生 | 已覆盖初始化/解锁、条目管理、TOTP、同步设置、导入导出、备份、折叠屏/大屏适配和 release gate。 |
+| Android 原生 | 已覆盖初始化/解锁、条目管理、TOTP、同步设置、导入导出、备份、字段关联完整 UI、折叠屏/大屏适配和 release gate。 |
 | HarmonyOS 6 原生 | 已完成 Stage 工程、离线 MVP、CryptoArchitectureKit 加密、TOTP、生物识别、同步状态机、导入导出、字段关联完整 UI 垂直切片和 HAP 校验链路。 |
-| macOS 原生 | 已有 SwiftUI app、Keychain/Touch ID 解锁、同步中心、备份中心、导入导出中心和本地打包验证。 |
-| iOS 原生 | 已建立 SwiftPM core 与 Xcode app target，复用已验证的 Swift 核心能力，并通过 simulator smoke 验证首屏。 |
-| Windows / Linux | 已有共享 C++17 core 和 terminal-native CLI，覆盖加密 vault、TOTP、CRUD、备份、导入导出和远端对象同步；图形界面仍在补齐。 |
+| macOS 原生 | 已有 SwiftUI app、Keychain/Touch ID 解锁、同步中心、备份中心、导入导出中心、字段关联完整 UI 和本地打包验证。 |
+| iOS 原生 | 已建立 SwiftPM core 与 Xcode app target，完成字段关联 SwiftUI 垂直切片，并通过单测、Release UI smoke、模拟器构建与 unsigned archive 门禁。 |
+| Windows / Linux | 已有共享 C++17 core 和 terminal-native CLI，覆盖加密 vault、TOTP、CRUD、备份、导入导出、远端对象同步以及字段关联安全搜索/五态详情；图形界面仍在补齐。 |
 | 共享 packages | Dart `crypto`、`storage`、`sync`、`auth`、`backup`、`core` 包提供跨端契约和测试基线。 |
 
 ## 项目结构
@@ -88,14 +88,14 @@ Password Manager 是一款本地加密优先的跨平台密码保险库，用来
 ```
 
 ### 4. 测试
-- macOS/Linux：`./scripts/test_all.sh`
-- Windows：`powershell -ExecutionPolicy Bypass -File .\\scripts\\test_all.ps1`
+- 共享 Dart 包（macOS/Linux）：`./scripts/test_all.sh`
+- 共享 Dart 包（Windows）：`powershell -ExecutionPolicy Bypass -File .\\scripts\\test_all.ps1`
 - Windows/Linux 原生端：`./scripts/verify_desktop_native.sh`
 - 字段关联共享 fixture：`node scripts/verify_vault_contract_fixtures.mjs --check`
 - HarmonyOS 字段关联 UI：`node scripts/harmony_field_reference_ui_tests.mjs`
 
 ### 4.1 测试可行性说明（macOS）
-- **全量共享包测试** 需要 `dart` 命令。
+- **共享 Dart 包测试** 需要 `dart` 命令；原生端仍需分别执行对应平台门禁，不能用该脚本代替全仓验证。
 - 如果提示 `dart: command not found`，说明尚未安装 Dart SDK 或未正确配置 PATH。
 - 原生端构建、设备冒烟和发布验证请按对应 app 目录 README 执行。
 - Windows/Linux 原生端本机 release gate 会构建共享 C++ release binary、运行 CLI `self-test` 和启用 `assert` 的 core/CLI smoke，并校验 Windows release contract 与 Linux host binary 依赖；Linux 真实 userspace 和 `.deb` 安装验证可通过 `./scripts/verify_desktop_native.sh --linux-docker` 追加执行。
