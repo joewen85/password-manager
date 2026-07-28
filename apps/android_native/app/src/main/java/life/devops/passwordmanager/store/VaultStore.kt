@@ -5,6 +5,8 @@ import life.devops.passwordmanager.model.CategoryTemplate
 import life.devops.passwordmanager.model.CategoryTypePreset
 import life.devops.passwordmanager.model.CustomField
 import life.devops.passwordmanager.model.EntryDraft
+import life.devops.passwordmanager.model.EntryReferenceCandidate
+import life.devops.passwordmanager.model.EntryReferenceResolution
 import life.devops.passwordmanager.model.FieldTemplate
 import life.devops.passwordmanager.model.ImportConflictStrategy
 import life.devops.passwordmanager.model.MasterKeyRecord
@@ -16,10 +18,15 @@ import life.devops.passwordmanager.model.VaultEntryType
 import life.devops.passwordmanager.model.VaultPayload
 import life.devops.passwordmanager.model.VaultPersistenceEnvelope
 import life.devops.passwordmanager.model.VaultSnapshot
+import life.devops.passwordmanager.model.canExposeRawCustomFieldValue
+import life.devops.passwordmanager.model.categoryTemplateFieldsForUserSave
 import life.devops.passwordmanager.model.copyForImport
+import life.devops.passwordmanager.model.entryReferenceCandidates as safeEntryReferenceCandidates
 import life.devops.passwordmanager.model.importMatchKey
-import life.devops.passwordmanager.model.mergeCustomFieldsForLegacyEditorSave
+import life.devops.passwordmanager.model.mergeCustomFieldsForEditorSave
+import life.devops.passwordmanager.model.newCategoryTemplateField
 import life.devops.passwordmanager.model.remapEntryReferenceIds
+import life.devops.passwordmanager.model.resolveEntryReference as resolveModelEntryReference
 import life.devops.passwordmanager.model.withEntryReferenceSearchProjection
 import life.devops.passwordmanager.sync.EncryptedRemoteSyncClient
 import life.devops.passwordmanager.sync.RemoteSyncClient
@@ -217,24 +224,45 @@ class VaultStore(
     }
 
     @Synchronized
-    fun upsert(draft: EntryDraft, editingId: String? = null): VaultEntry {
+    fun upsert(
+        draft: EntryDraft,
+        editingId: String? = null,
+        protectedFieldIds: Set<String> = emptySet(),
+    ): VaultEntry {
         val now = Instant.now()
         val existingIndex = editingId?.let { id -> entries.indexOfFirst { it.id == id } } ?: -1
         val existingEntry = entries.getOrNull(existingIndex)
         val normalizedTags = draft.tags.map { it.trim() }.filter { it.isNotEmpty() }
+        val normalizedCategory = draft.category.trim()
+        val destinationTemplate = editorCategoryTemplate(normalizedCategory)
         val normalizedCustomFields = draft.customFields
-            .map { it.copy(name = it.name.trim(), value = it.value.trim()) }
-            .filter { it.name.isNotBlank() || it.value.isNotBlank() }
-        val normalizedDraft = draft.copy(
-            category = draft.category.trim(),
-            tags = normalizedTags,
-            customFields = existingEntry?.let { current ->
-                mergeCustomFieldsForLegacyEditorSave(
-                    originalFields = current.customFields,
-                    editedFields = normalizedCustomFields,
-                    template = categoryTemplate(current.payload.category),
+            .map { field ->
+                field.copy(
+                    name = field.name.trim(),
+                    value = if (canExposeRawCustomFieldValue(field, destinationTemplate)) {
+                        field.value.trim()
+                    } else {
+                        field.value
+                    },
                 )
-            } ?: normalizedCustomFields,
+            }
+            .filter { field ->
+                field.name.isNotEmpty() ||
+                    field.value.isNotEmpty() ||
+                    field.templateFieldId.isNotEmpty()
+            }
+        val normalizedDraft = draft.copy(
+            category = normalizedCategory,
+            tags = normalizedTags,
+            customFields = mergeCustomFieldsForEditorSave(
+                originalFields = existingEntry?.customFields.orEmpty(),
+                editedFields = normalizedCustomFields,
+                sourceTemplate = existingEntry?.let { current ->
+                    editorCategoryTemplate(current.payload.category)
+                } ?: destinationTemplate,
+                destinationTemplate = destinationTemplate,
+                protectedFieldIds = protectedFieldIds,
+            ),
         )
         val entry = if (existingIndex >= 0) {
             entries[existingIndex].copy(
@@ -263,6 +291,61 @@ class VaultStore(
         }
         persistUnlockedSnapshot()
         return entry
+    }
+
+    internal fun entryReferenceCandidates(
+        targetCategory: String,
+        query: String,
+    ): List<EntryReferenceCandidate> =
+        safeEntryReferenceCandidates(
+            entries = entries,
+            targetCategory = targetCategory,
+            query = query,
+        )
+
+    internal fun resolveEntryReference(
+        field: CustomField,
+        sourceCategory: String,
+    ): EntryReferenceResolution? =
+        resolveModelEntryReference(
+            field = field,
+            template = categoryTemplate(sourceCategory),
+            entries = entries,
+        )
+
+    fun liveEntry(id: String): VaultEntry? =
+        entries.firstOrNull { entry -> entry.id == id && !entry.isDeleted }
+
+    @Synchronized
+    fun clearEntryReference(entryId: String, fieldId: String): Boolean {
+        val entryIndex = entries.indexOfFirst { entry -> entry.id == entryId && !entry.isDeleted }
+        if (entryIndex < 0) return false
+        val entry = entries[entryIndex]
+        val fieldIndex = entry.customFields.indexOfFirst { field -> field.id == fieldId }
+        if (fieldIndex < 0) return false
+        val field = entry.customFields[fieldIndex]
+        if (
+            resolveModelEntryReference(
+                field = field,
+                template = categoryTemplate(entry.payload.category),
+                entries = entries,
+            ) == null
+        ) {
+            return false
+        }
+        if (field.value.isEmpty()) return true
+
+        val updatedFields = entry.customFields.toMutableList().apply {
+            this[fieldIndex] = field.copy(value = "")
+        }
+        val now = Instant.now()
+        entries[entryIndex] = entry.copy(
+            customFields = updatedFields,
+            updatedAt = now,
+        ).markLocalEntryChange(syncSettings.deviceId, now)
+        persistUnlockedSnapshot()
+        statusMessage = "Reference cleared."
+        return true
     }
 
     @Synchronized
@@ -295,6 +378,12 @@ class VaultStore(
             ?.value
     }
 
+    private fun editorCategoryTemplate(category: String): CategoryTemplate =
+        categoryTemplate(category) ?: CategoryTemplate(
+            category = category.trim(),
+            fields = CategoryTemplate.defaultCategoryFields(),
+        )
+
     fun tags(): List<String> =
         buildSet {
             addAll(manualTags)
@@ -307,7 +396,20 @@ class VaultStore(
         addCategory(category, CategoryTemplate.defaultCategoryFields())
 
     fun addCategory(category: String, preset: CategoryTypePreset?, customFieldNames: List<String>): Boolean =
-        addCategory(category, CategoryTemplate.fieldsForPreset(preset, customFieldNames))
+        addCategory(
+            category,
+            CategoryTemplate.defaultCategoryFields() +
+                (preset?.fields.orEmpty() + customFieldNames)
+                    .map { name -> name.trim() }
+                    .filter { name -> name.isNotEmpty() }
+                    .distinctBy { name -> name.lowercase() }
+                    .filterNot { name ->
+                        CategoryTemplate.defaultCategoryFields().any { base ->
+                            base.name.trim().equals(name, ignoreCase = true)
+                        }
+                    }
+                    .map { name -> newCategoryTemplateField(name = name) },
+        )
 
     @Synchronized
     fun addCategory(category: String, fields: List<FieldTemplate>): Boolean {
@@ -347,6 +449,62 @@ class VaultStore(
         persistUnlockedSnapshot()
         statusMessage = "Category template updated."
         return true
+    }
+
+    @Synchronized
+    fun updateCategoryTemplate(category: String, requestedCustomFields: List<FieldTemplate>): Boolean {
+        val normalized = category.trim()
+        if (normalized.isBlank()) {
+            statusMessage = "Value is required."
+            return false
+        }
+        val existingEntry = categoryTemplates.entries.firstOrNull { entry ->
+            entry.key.equals(normalized, ignoreCase = true)
+        }
+        val existing = existingEntry?.value ?: CategoryTemplate(
+            category = normalized,
+            fields = CategoryTemplate.defaultCategoryFields(),
+        )
+        val storedValueFieldIds = categoryTemplateStoredValueFieldIds(normalized)
+        val updated = existing.copy(
+            category = normalized,
+            fields = categoryTemplateFieldsForUserSave(
+                existing = existing.fields,
+                requestedCustomFields = requestedCustomFields,
+                storedValueFieldIds = storedValueFieldIds,
+            ),
+        )
+        existingEntry?.let { entry ->
+            if (entry.key != normalized) {
+                categoryTemplates.remove(entry.key)
+            }
+        }
+        manualCategories += normalized
+        categoryTemplates[normalized] = updated
+        persistUnlockedSnapshot()
+        statusMessage = "Category template updated."
+        return true
+    }
+
+    fun categoryTemplateStoredValueFieldIds(category: String): Set<String> {
+        val templateFieldIds = categoryTemplate(category)
+            ?.fields
+            ?.mapTo(mutableSetOf()) { field -> field.id }
+            .orEmpty()
+        if (templateFieldIds.isEmpty()) return emptySet()
+        return buildSet {
+            entries.forEach { entry ->
+                entry.customFields.forEach { field ->
+                    if (
+                        field.templateFieldId.isNotEmpty() &&
+                        field.templateFieldId in templateFieldIds &&
+                        field.value.isNotEmpty()
+                    ) {
+                        add(field.templateFieldId)
+                    }
+                }
+            }
+        }
     }
 
     @Synchronized

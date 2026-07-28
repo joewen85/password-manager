@@ -19,6 +19,12 @@ internal data class EntryReferenceResolution(
     val target: EntryReferenceTarget? = null,
 )
 
+internal data class EntryReferenceCandidate(
+    val id: String,
+    val label: String,
+    val category: String,
+)
+
 internal fun resolveEntryReference(
     field: CustomField,
     template: CategoryTemplate?,
@@ -33,8 +39,9 @@ private inline fun resolveEntryReference(
     template: CategoryTemplate?,
     findTargetById: (String) -> VaultEntry?,
 ): EntryReferenceResolution? {
-    val templateField = template.matchingReferenceTemplateField(field) ?: return null
-    if (templateField.valueType != ENTRY_REFERENCE_VALUE_TYPE) return null
+    val semantics = customFieldSemantics(field, template)
+    if (semantics.semantic != CustomFieldSemantic.ENTRY_REFERENCE) return null
+    val templateField = semantics.templateField ?: return null
     if (field.value.isBlank()) {
         return EntryReferenceResolution(status = EntryReferenceStatus.EMPTY)
     }
@@ -74,20 +81,59 @@ internal fun VaultEntry.withEntryReferenceSearchProjection(
     entriesById: Map<String, VaultEntry>,
 ): VaultEntry {
     val projectedFields = customFields.map { field ->
-        val resolution = resolveEntryReference(field, template) { targetId ->
-            entriesById[targetId]
-        } ?: return@map field
-        val searchableValue = if (resolution.status == EntryReferenceStatus.RESOLVED) {
-            listOfNotNull(
-                resolution.target?.label,
-                resolution.target?.category?.takeIf { it.isNotEmpty() },
-            ).joinToString(" ")
-        } else {
-            ""
+        when (customFieldSemantics(field, template).semantic) {
+            CustomFieldSemantic.TEXT -> field
+            CustomFieldSemantic.UNSUPPORTED -> field.copy(value = "")
+            CustomFieldSemantic.ENTRY_REFERENCE -> {
+                val resolution = resolveEntryReference(field, template) { targetId ->
+                    entriesById[targetId]
+                }
+                val searchableValue = if (resolution?.status == EntryReferenceStatus.RESOLVED) {
+                    listOfNotNull(
+                        resolution.target?.label,
+                        resolution.target?.category?.takeIf { it.isNotEmpty() },
+                    ).joinToString(" ")
+                } else {
+                    ""
+                }
+                field.copy(value = searchableValue)
+            }
         }
-        field.copy(value = searchableValue)
     }
     return if (projectedFields == customFields) this else copy(customFields = projectedFields)
+}
+
+internal fun entryReferenceCandidates(
+    entries: List<VaultEntry>,
+    targetCategory: String,
+    query: String,
+): List<EntryReferenceCandidate> {
+    val category = targetCategory.trim()
+    val searchQuery = query.trim()
+    return entries
+        .asSequence()
+        .filterNot { entry -> entry.isDeleted }
+        .map { entry ->
+            EntryReferenceCandidate(
+                id = entry.id,
+                label = entry.label,
+                category = entry.payload.category.trim(),
+            )
+        }
+        .filter { candidate ->
+            category.isEmpty() || candidate.category.equals(category, ignoreCase = true)
+        }
+        .filter { candidate ->
+            searchQuery.isEmpty() ||
+                candidate.label.contains(searchQuery, ignoreCase = true) ||
+                candidate.category.contains(searchQuery, ignoreCase = true)
+        }
+        .sortedWith(
+            compareBy<EntryReferenceCandidate> { candidate -> candidate.label.lowercase() }
+                .thenBy { candidate -> candidate.label }
+                .thenBy { candidate -> candidate.id }
+        )
+        .toList()
 }
 
 internal fun VaultEntry.remapEntryReferenceIds(
@@ -101,20 +147,3 @@ internal fun VaultEntry.remapEntryReferenceIds(
     }
     return if (remappedFields == customFields) this else copy(customFields = remappedFields)
 }
-
-private fun CategoryTemplate?.matchingReferenceTemplateField(field: CustomField): FieldTemplate? {
-    val templateFields = this?.fields ?: return null
-    if (field.templateFieldId.isNotEmpty()) {
-        return templateFields.firstOrNull { templateField ->
-            templateField.id == field.templateFieldId
-        }
-    }
-
-    val fieldName = field.name.trim()
-    if (fieldName.isEmpty()) return null
-    return templateFields.firstOrNull { templateField ->
-        templateField.name.trim().equals(fieldName, ignoreCase = true)
-    }
-}
-
-private const val ENTRY_REFERENCE_VALUE_TYPE = "entryReference"

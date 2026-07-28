@@ -49,8 +49,16 @@ import androidx.window.layout.WindowInfoTracker
 import life.devops.passwordmanager.model.CredentialPayload
 import life.devops.passwordmanager.model.CategoryTemplate
 import life.devops.passwordmanager.model.CategoryTypePreset
+import life.devops.passwordmanager.model.CUSTOM_FIELD_ENTRY_REFERENCE_VALUE_TYPE
+import life.devops.passwordmanager.model.CUSTOM_FIELD_TEXT_VALUE_TYPE
 import life.devops.passwordmanager.model.CustomField
+import life.devops.passwordmanager.model.CustomFieldSemantic
+import life.devops.passwordmanager.model.DraftCustomFieldState
 import life.devops.passwordmanager.model.EntryDraft
+import life.devops.passwordmanager.model.EntryReferenceCandidate
+import life.devops.passwordmanager.model.EntryReferenceResolution
+import life.devops.passwordmanager.model.EntryReferenceStatus
+import life.devops.passwordmanager.model.FieldTemplate
 import life.devops.passwordmanager.model.ImportConflictStrategy
 import life.devops.passwordmanager.model.ServerPayload
 import life.devops.passwordmanager.model.ServiceAccount
@@ -58,9 +66,12 @@ import life.devops.passwordmanager.model.ServicePayload
 import life.devops.passwordmanager.model.VaultEntry
 import life.devops.passwordmanager.model.VaultEntryType
 import life.devops.passwordmanager.model.VaultPayload
-import life.devops.passwordmanager.model.editableCustomFieldsForLegacyEditor
-import life.devops.passwordmanager.model.replaceWithTemplate
-import life.devops.passwordmanager.model.templateCustomFields
+import life.devops.passwordmanager.model.applyCategoryTemplateToDraft
+import life.devops.passwordmanager.model.customFieldSemantics
+import life.devops.passwordmanager.model.draftCustomFieldStates
+import life.devops.passwordmanager.model.isEditableCategoryFieldType
+import life.devops.passwordmanager.model.newCategoryTemplateField
+import life.devops.passwordmanager.model.normalizedValueType
 import life.devops.passwordmanager.store.BiometricCredentialStore
 import life.devops.passwordmanager.store.BackupInfo
 import life.devops.passwordmanager.store.VaultStore
@@ -734,7 +745,24 @@ class MainActivity : FragmentActivity() {
                 gravity = Gravity.END
                 addView(compactTextButton(text(R.string.close)) { dialog.dismiss() }, wrapWrap())
             }, matchWrap(bottom = compactGap()))
-            addView(detailContent(entry))
+            addView(detailContent(
+                entry = entry,
+                onEntryChanged = {
+                    dialog.dismiss()
+                    val updated = store.liveEntry(entry.id)
+                    selectedEntry = updated
+                    showHome()
+                    updated?.let(::showDetail)
+                },
+                onReferenceEdit = { fieldId ->
+                    dialog.dismiss()
+                    showEditor(entry, focusReferenceFieldId = fieldId)
+                },
+                onOpenTarget = { target ->
+                    dialog.dismiss()
+                    openEntryReferenceTarget(target)
+                },
+            ))
         }
         dialog = AlertDialog.Builder(this)
             .setView(ScrollView(this).apply { addView(content) })
@@ -893,6 +921,11 @@ class MainActivity : FragmentActivity() {
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.END
+                if (kind == TaxonomyKind.CATEGORY) {
+                    addView(actionButton(text(R.string.edit_fields), primary = false, compact = true) {
+                        showCategoryTemplateEditor(value)
+                    }, wrapWrap(right = dp(8)))
+                }
                 addView(actionButton(text(R.string.rename), primary = false, compact = true) {
                     showRenameTaxonomyDialog(kind, value)
                 }, wrapWrap(right = dp(8)))
@@ -901,6 +934,169 @@ class MainActivity : FragmentActivity() {
                 }, wrapWrap())
             }, matchWrap(top = dp(10)))
         }
+
+    private fun showCategoryTemplateEditor(category: String) {
+        val template = store.categoryTemplate(category) ?: CategoryTemplate(category = category)
+        val baseFieldNames = CategoryTemplate.defaultCategoryFields()
+            .mapTo(mutableSetOf()) { field -> field.name.trim().lowercase() }
+        val customFields = template.fields
+            .filterNot { field -> field.name.trim().lowercase() in baseFieldNames }
+            .toMutableList()
+        val storedValueFieldIds = store.categoryTemplateStoredValueFieldIds(category)
+        val fieldsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        lateinit var renderFields: () -> Unit
+
+        fun updateField(index: Int, update: (FieldTemplate) -> FieldTemplate) {
+            val current = customFields.getOrNull(index) ?: return
+            customFields[index] = update(current)
+        }
+
+        renderFields = {
+            fieldsContainer.removeAllViews()
+            if (customFields.isEmpty()) {
+                fieldsContainer.addView(
+                    label(text(R.string.no_custom_fields), 13f, uiColor(R.color.ui_muted)),
+                    matchWrap(top = dp(8)),
+                )
+            }
+            customFields.forEachIndexed { index, field ->
+                val valueType = field.normalizedValueType()
+                val editableType = isEditableCategoryFieldType(field.valueType)
+                val typeLocked = field.id in storedValueFieldIds
+                fieldsContainer.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    background = rounded(uiColor(R.color.ui_surface_alt), dp(12), uiColor(R.color.ui_stroke))
+                    setPadding(dp(12), dp(12), dp(12), dp(12))
+                    if (!editableType) {
+                        addView(label(
+                            field.name.ifBlank { text(R.string.unsupported_field) },
+                            14f,
+                            uiColor(R.color.ui_text),
+                            Typeface.BOLD,
+                        ))
+                        addView(label(
+                            "${text(R.string.field_type)}: ${field.valueType}",
+                            12f,
+                            uiColor(R.color.ui_muted),
+                        ), matchWrap(top = dp(6)))
+                        addView(label(
+                            text(R.string.unsupported_field_value_preserved),
+                            12f,
+                            uiColor(R.color.ui_error),
+                        ), matchWrap(top = dp(6)))
+                    } else {
+                        val nameInput = input(text(R.string.custom_field_name)).apply {
+                        setText(field.name)
+                        addTextChangedListener(SimpleTextWatcher { value ->
+                            updateField(index) { current -> current.copy(name = value) }
+                        })
+                        }
+                        addView(nameInput, matchWrap())
+                        addView(label(text(R.string.field_type), 12f, uiColor(R.color.ui_muted), Typeface.BOLD), matchWrap(top = dp(10)))
+                        if (typeLocked) {
+                        addView(label(
+                            if (valueType == CUSTOM_FIELD_ENTRY_REFERENCE_VALUE_TYPE) {
+                                text(R.string.field_type_entry_reference)
+                            } else {
+                                text(R.string.field_type_text)
+                            },
+                            13f,
+                            uiColor(R.color.ui_text),
+                            Typeface.BOLD,
+                        ), matchWrap(top = dp(6)))
+                        addView(label(
+                            "${text(R.string.field_in_use_cannot_change_type)} ${text(R.string.field_in_use_cannot_delete)}",
+                            12f,
+                            uiColor(R.color.ui_muted),
+                        ), matchWrap(top = dp(6)))
+                        } else {
+                        addView(HorizontalScrollView(this@MainActivity).apply {
+                            isHorizontalScrollBarEnabled = false
+                            addView(LinearLayout(this@MainActivity).apply {
+                                orientation = LinearLayout.HORIZONTAL
+                                addView(filterChip(
+                                    text(R.string.field_type_text),
+                                    valueType == CUSTOM_FIELD_TEXT_VALUE_TYPE,
+                                ) {
+                                    updateField(index) { current ->
+                                        current.copy(valueType = CUSTOM_FIELD_TEXT_VALUE_TYPE, targetCategory = "")
+                                    }
+                                    renderFields()
+                                }, wrapWrap(right = dp(8)))
+                                addView(filterChip(
+                                    text(R.string.field_type_entry_reference),
+                                    valueType == CUSTOM_FIELD_ENTRY_REFERENCE_VALUE_TYPE,
+                                ) {
+                                    updateField(index) { current ->
+                                        current.copy(valueType = CUSTOM_FIELD_ENTRY_REFERENCE_VALUE_TYPE)
+                                    }
+                                    renderFields()
+                                }, wrapWrap())
+                            })
+                        }, matchWrap(top = dp(6)))
+                        }
+
+                        if (valueType == CUSTOM_FIELD_ENTRY_REFERENCE_VALUE_TYPE) {
+                            val targetCategory = field.targetCategory.trim()
+                            addView(label(text(R.string.target_category), 12f, uiColor(R.color.ui_muted), Typeface.BOLD), matchWrap(top = dp(10)))
+                            addView(selectBoxText(
+                                targetCategory.ifBlank { text(R.string.any_category) },
+                            ) {
+                                showCategorySelectionDialog(targetCategory) { selected ->
+                                    updateField(index) { current -> current.copy(targetCategory = selected) }
+                                    renderFields()
+                                }
+                            }, matchWrap(top = dp(4)))
+                        }
+
+                        if (!typeLocked) {
+                            addView(actionButton(text(R.string.delete), primary = false, compact = true) {
+                                if (index in customFields.indices) {
+                                    customFields.removeAt(index)
+                                    renderFields()
+                                }
+                            }, wrapWrap(top = dp(10)))
+                        }
+                    }
+                }, matchWrap(top = dp(8)))
+            }
+            fieldsContainer.addView(actionButton(text(R.string.add_custom_field), primary = false) {
+                customFields += newCategoryTemplateField()
+                renderFields()
+            }, matchWrap(top = dp(10)))
+        }
+
+        val form = formRoot().apply {
+            addView(formTitle(text(R.string.edit_category_fields)))
+            addView(label(category, 14f, uiColor(R.color.ui_text), Typeface.BOLD), matchWrap(top = dp(8)))
+            addView(label(text(R.string.category_fields_hint), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(6)))
+            addView(fieldsContainer, matchWrap(top = dp(8)))
+        }
+        renderFields()
+        val dialog = AlertDialog.Builder(this)
+            .setView(ScrollView(this).apply { addView(form) })
+            .setPositiveButton(text(R.string.save), null)
+            .setNegativeButton(text(R.string.cancel), null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                if (customFields.any { field ->
+                        isEditableCategoryFieldType(field.valueType) && field.name.trim().isEmpty()
+                    }) {
+                    toast(text(R.string.value_required))
+                    return@setOnClickListener
+                }
+                if (!store.updateCategoryTemplate(category, customFields)) {
+                    toast(store.statusMessage ?: text(R.string.operation_failed))
+                    return@setOnClickListener
+                }
+                dialog.dismiss()
+                showTaxonomyListEditor(TaxonomyKind.CATEGORY)
+                toast(store.statusMessage ?: text(R.string.saved))
+            }
+        }
+        dialog.show()
+    }
 
     private fun showRenameTaxonomyDialog(kind: TaxonomyKind, oldValue: String) {
         val form = formRoot()
@@ -984,7 +1180,15 @@ class MainActivity : FragmentActivity() {
             ))
             return
         }
-        detailCard.addView(detailContent(entry), LinearLayout.LayoutParams(
+        detailCard.addView(detailContent(
+            entry = entry,
+            onEntryChanged = {
+                selectedEntry = store.liveEntry(entry.id)
+                refreshEntries()
+            },
+            onReferenceEdit = { fieldId -> showEditor(entry, focusReferenceFieldId = fieldId) },
+            onOpenTarget = ::openEntryReferenceTarget,
+        ), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             0,
             1f
@@ -1008,7 +1212,12 @@ class MainActivity : FragmentActivity() {
         ))
     }
 
-    private fun detailContent(entry: VaultEntry): ScrollView =
+    private fun detailContent(
+        entry: VaultEntry,
+        onEntryChanged: () -> Unit,
+        onReferenceEdit: (String) -> Unit,
+        onOpenTarget: (VaultEntry) -> Unit,
+    ): ScrollView =
         ScrollView(this).apply {
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
@@ -1031,8 +1240,151 @@ class MainActivity : FragmentActivity() {
                     text(R.string.updated) to entry.updatedAt.toString(),
                 )))
                 addView(detailSection(text(R.string.fields), entry.detailPairs(this@MainActivity)), matchWrap(top = dp(12)))
+                if (entry.customFields.isNotEmpty()) {
+                    addView(customFieldsDetailSection(
+                        entry = entry,
+                        onEntryChanged = onEntryChanged,
+                        onReferenceEdit = onReferenceEdit,
+                        onOpenTarget = onOpenTarget,
+                    ), matchWrap(top = dp(12)))
+                }
             })
         }
+
+    private fun customFieldsDetailSection(
+        entry: VaultEntry,
+        onEntryChanged: () -> Unit,
+        onReferenceEdit: (String) -> Unit,
+        onOpenTarget: (VaultEntry) -> Unit,
+    ): LinearLayout {
+        val template = editorCategoryTemplate(entry.payload.category)
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(uiColor(R.color.ui_surface_alt), dp(12), uiColor(R.color.ui_stroke))
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            addView(label(text(R.string.custom_fields), 13f, uiColor(R.color.ui_muted), Typeface.BOLD))
+            entry.customFields.forEach { field ->
+                val semantics = customFieldSemantics(field, template)
+                addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(0, dp(10), 0, 0)
+                    addView(label(
+                        field.name.ifBlank { text(R.string.custom_field) },
+                        11f,
+                        uiColor(R.color.ui_muted),
+                        Typeface.BOLD,
+                    ))
+                    when (semantics.semantic) {
+                        CustomFieldSemantic.TEXT -> {
+                            addView(label(field.value.ifBlank { "-" }, 15f, uiColor(R.color.ui_text)).apply {
+                                setTextIsSelectable(true)
+                            })
+                        }
+                        CustomFieldSemantic.UNSUPPORTED -> {
+                            addView(label(
+                                text(R.string.unsupported_field_value_preserved),
+                                13f,
+                                uiColor(R.color.ui_muted),
+                            ))
+                        }
+                        CustomFieldSemantic.ENTRY_REFERENCE -> {
+                            val resolution = store.resolveEntryReference(field, entry.payload.category)
+                            addView(label(
+                                entryReferenceStatusText(resolution),
+                                14f,
+                                entryReferenceStatusColor(resolution),
+                            ))
+                            addView(HorizontalScrollView(this@MainActivity).apply {
+                                isHorizontalScrollBarEnabled = false
+                                addView(LinearLayout(this@MainActivity).apply {
+                                    orientation = LinearLayout.HORIZONTAL
+                                    val target = resolution
+                                        ?.takeIf { it.status == EntryReferenceStatus.RESOLVED }
+                                        ?.target
+                                        ?.let { projected -> store.liveEntry(projected.id) }
+                                    if (target != null) {
+                                        addView(actionButton(text(R.string.view_reference), primary = false, compact = true) {
+                                            onOpenTarget(target)
+                                        }, wrapWrap(right = dp(8)))
+                                    }
+                                    addView(actionButton(
+                                        entryReferenceActionText(resolution),
+                                        primary = true,
+                                        compact = true,
+                                    ) {
+                                        onReferenceEdit(field.id)
+                                    }, wrapWrap(right = if (field.value.isNotEmpty()) dp(8) else 0))
+                                    if (field.value.isNotEmpty()) {
+                                        addView(actionButton(text(R.string.clear_reference), primary = false, compact = true) {
+                                            if (store.clearEntryReference(entry.id, field.id)) {
+                                                toast(store.statusMessage ?: text(R.string.saved))
+                                                onEntryChanged()
+                                            } else {
+                                                toast(store.statusMessage ?: text(R.string.operation_failed))
+                                            }
+                                        }, wrapWrap())
+                                    }
+                                })
+                            }, matchWrap(top = dp(8)))
+                        }
+                    }
+                })
+            }
+        }
+    }
+
+    private fun entryReferenceStatusText(resolution: EntryReferenceResolution?): String =
+        when (resolution?.status) {
+            EntryReferenceStatus.EMPTY, null -> text(R.string.reference_not_selected)
+            EntryReferenceStatus.RESOLVED -> {
+                val target = resolution.target
+                if (target == null) {
+                    text(R.string.reference_missing)
+                } else {
+                    text(
+                        R.string.reference_resolved,
+                        target.label.ifBlank { text(R.string.untitled) },
+                        categoryDisplayName(target.category),
+                    )
+                }
+            }
+            EntryReferenceStatus.MISSING -> text(R.string.reference_missing)
+            EntryReferenceStatus.DELETED -> text(R.string.reference_deleted)
+            EntryReferenceStatus.CATEGORY_MISMATCH -> text(R.string.reference_category_mismatch)
+        }
+
+    private fun entryReferenceStatusColor(resolution: EntryReferenceResolution?): Int =
+        when (resolution?.status) {
+            EntryReferenceStatus.RESOLVED -> uiColor(R.color.ui_text)
+            EntryReferenceStatus.EMPTY, null -> uiColor(R.color.ui_muted)
+            EntryReferenceStatus.MISSING,
+            EntryReferenceStatus.DELETED,
+            EntryReferenceStatus.CATEGORY_MISMATCH -> uiColor(R.color.ui_error)
+        }
+
+    private fun entryReferenceActionText(resolution: EntryReferenceResolution?): String =
+        when (resolution?.status) {
+            EntryReferenceStatus.EMPTY, null -> text(R.string.select_reference)
+            EntryReferenceStatus.RESOLVED -> text(R.string.replace_reference)
+            EntryReferenceStatus.MISSING,
+            EntryReferenceStatus.DELETED,
+            EntryReferenceStatus.CATEGORY_MISMATCH -> text(R.string.repair_reference)
+        }
+
+    private fun openEntryReferenceTarget(target: VaultEntry) {
+        searchQuery = ""
+        selectedType = null
+        selectedTag = null
+        selectedCategory = target.payload.category.takeIf { it.isNotBlank() }
+        selectedEntry = target
+        showHome()
+        if (detailPane == null) {
+            showDetail(target)
+        }
+    }
+
+    private fun editorCategoryTemplate(category: String): CategoryTemplate =
+        store.categoryTemplate(category) ?: CategoryTemplate(category = category.trim())
 
     private fun detailSection(title: String, rows: List<Pair<String, String>>): LinearLayout =
         LinearLayout(this).apply {
@@ -1056,15 +1408,17 @@ class MainActivity : FragmentActivity() {
         entry: VaultEntry?,
         presetCategory: String = "",
         presetTag: String = "",
+        focusReferenceFieldId: String? = null,
     ) {
         val isCreating = entry == null
-        val currentTemplate = entry?.let { current -> store.categoryTemplate(current.payload.category) }
+        val sourceCategory = entry?.payload?.category ?: presetCategory
+        val sourceTemplate = editorCategoryTemplate(sourceCategory)
         val draft = entry?.toDraft() ?: EntryDraft(
             label = "",
             type = VaultEntryType.CREDENTIAL,
             category = presetCategory,
             tags = listOf(presetTag).filter { it.isNotBlank() },
-            customFields = templateCustomFields(store.categoryTemplate(presetCategory)),
+            customFields = emptyList(),
         )
         val form = formRoot()
         val payloadFields = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -1073,35 +1427,64 @@ class MainActivity : FragmentActivity() {
         var selectedEntryType = draft.type
         var selectedCategory = draft.category
         val selectedTags = draft.tags.toMutableSet()
-        val customFields = editableCustomFieldsForLegacyEditor(draft.customFields, currentTemplate)
+        var customFieldStates = if (entry == null) {
+            applyCategoryTemplateToDraft(
+                states = emptyList(),
+                targetCategory = selectedCategory,
+                template = editorCategoryTemplate(selectedCategory),
+            )
+        } else {
+            applyCategoryTemplateToDraft(
+                states = draftCustomFieldStates(
+                    fields = draft.customFields,
+                    sourceCategory = sourceCategory,
+                    template = sourceTemplate,
+                ),
+                targetCategory = selectedCategory,
+                template = sourceTemplate,
+            )
+        }.toMutableList()
+
+        fun sameDraftCategory(left: String, right: String): Boolean =
+            left.trim().equals(right.trim(), ignoreCase = true)
+
         fun removeDraftCustomField(fieldId: String) {
-            customFields.removeAll { it.id == fieldId }
+            customFieldStates.removeAll { state -> state.field.id == fieldId }
         }
         fun updateDraftCustomFieldName(fieldId: String, name: String) {
-            val index = customFields.indexOfFirst { it.id == fieldId }
+            val index = customFieldStates.indexOfFirst { state -> state.field.id == fieldId }
             if (index >= 0) {
-                customFields[index] = customFields[index].copy(name = name)
+                val state = customFieldStates[index]
+                customFieldStates[index] = state.copy(field = state.field.copy(name = name))
             }
         }
         fun updateDraftCustomFieldValue(fieldId: String, value: String) {
-            val index = customFields.indexOfFirst { it.id == fieldId }
+            val index = customFieldStates.indexOfFirst { state -> state.field.id == fieldId }
             if (index >= 0) {
-                customFields[index] = customFields[index].copy(value = value)
+                val state = customFieldStates[index]
+                customFieldStates[index] = state.copy(field = state.field.copy(value = value))
             }
         }
         fun addDraftCustomField() {
-            customFields += CustomField()
+            customFieldStates += DraftCustomFieldState(
+                field = CustomField(),
+                sourceCategory = selectedCategory.trim(),
+                isProtected = false,
+            )
         }
         lateinit var renderFields: () -> Unit
+        lateinit var openReferencePicker: (String) -> Unit
         lateinit var categoryPicker: TextView
         categoryPicker = selectBoxText(categoryDisplayName(selectedCategory)) {
             showCategorySelectionDialog(selectedCategory) { selected ->
                 selectedCategory = selected
                 categoryPicker.text = categoryDisplayName(selectedCategory)
-                if (isCreating) {
-                    customFields.replaceWithTemplate(store.categoryTemplate(selectedCategory))
-                    renderFields()
-                }
+                customFieldStates = applyCategoryTemplateToDraft(
+                    states = customFieldStates,
+                    targetCategory = selectedCategory,
+                    template = editorCategoryTemplate(selectedCategory),
+                ).toMutableList()
+                renderFields()
             }
         }
         val tagsSummary = TextView(this).apply {
@@ -1190,13 +1573,54 @@ class MainActivity : FragmentActivity() {
                 }.also { payloadFields.addView(it, matchWrap(top = dp(10))) }
             }
         }
+        openReferencePicker = referencePicker@{ fieldId ->
+            val state = customFieldStates.firstOrNull { candidate -> candidate.field.id == fieldId }
+                ?: return@referencePicker
+            if (state.isProtected || !sameDraftCategory(state.sourceCategory, selectedCategory)) {
+                return@referencePicker
+            }
+            val semantics = customFieldSemantics(
+                state.field,
+                editorCategoryTemplate(selectedCategory),
+            )
+            if (semantics.semantic != CustomFieldSemantic.ENTRY_REFERENCE) {
+                return@referencePicker
+            }
+            showEntryReferenceSelectionDialog(
+                fieldName = state.field.name,
+                currentValue = state.field.value,
+                targetCategory = semantics.templateField?.targetCategory.orEmpty(),
+            ) { selectedId ->
+                updateDraftCustomFieldValue(fieldId, selectedId)
+                renderFields()
+            }
+        }
         renderFields = {
             fieldsContainer.removeAllViews()
             fieldsContainer.addView(sectionTitle(text(R.string.fields)), matchWrap(top = dp(14)))
-            if (customFields.isEmpty()) {
+            val activeStates = customFieldStates.filter { state ->
+                !state.isProtected && sameDraftCategory(state.sourceCategory, selectedCategory)
+            }
+            val textStates = activeStates.filter { state ->
+                customFieldSemantics(
+                    state.field,
+                    editorCategoryTemplate(selectedCategory),
+                ).semantic == CustomFieldSemantic.TEXT
+            }
+            val referenceStates = activeStates.filter { state ->
+                customFieldSemantics(
+                    state.field,
+                    editorCategoryTemplate(selectedCategory),
+                ).semantic == CustomFieldSemantic.ENTRY_REFERENCE
+            }
+            val protectedCurrentStates = customFieldStates.filter { state ->
+                state.isProtected && sameDraftCategory(state.sourceCategory, selectedCategory)
+            }
+            if (textStates.isEmpty() && referenceStates.isEmpty()) {
                 fieldsContainer.addView(label(text(R.string.no_custom_fields), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(8)))
             }
-            customFields.forEach { field ->
+            textStates.forEach { state ->
+                val field = state.field
                 fieldsContainer.addView(LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     background = rounded(uiColor(R.color.ui_surface_alt), dp(12), uiColor(R.color.ui_stroke))
@@ -1215,6 +1639,74 @@ class MainActivity : FragmentActivity() {
                     valueInput.addTextChangedListener(SimpleTextWatcher { value ->
                         updateDraftCustomFieldValue(field.id, value)
                     })
+                }, matchWrap(top = dp(8)))
+            }
+            referenceStates.forEach { state ->
+                val field = state.field
+                val semantics = customFieldSemantics(
+                    field,
+                    editorCategoryTemplate(selectedCategory),
+                )
+                val resolution = store.resolveEntryReference(field, selectedCategory)
+                fieldsContainer.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    background = rounded(uiColor(R.color.ui_surface_alt), dp(12), uiColor(R.color.ui_stroke))
+                    setPadding(dp(12), dp(12), dp(12), dp(12))
+                    addView(label(
+                        field.name.ifBlank { text(R.string.custom_field) },
+                        14f,
+                        uiColor(R.color.ui_text),
+                        Typeface.BOLD,
+                    ))
+                    addView(label(
+                        entryReferenceStatusText(resolution),
+                        13f,
+                        entryReferenceStatusColor(resolution),
+                    ), matchWrap(top = dp(6)))
+                    val targetCategory = semantics.templateField?.targetCategory.orEmpty().trim()
+                    addView(label(
+                        "${text(R.string.target_category)}: ${targetCategory.ifBlank { text(R.string.any_category) }}",
+                        12f,
+                        uiColor(R.color.ui_muted),
+                    ), matchWrap(top = dp(6)))
+                    addView(LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        addView(actionButton(
+                            entryReferenceActionText(resolution),
+                            primary = true,
+                            compact = true,
+                        ) {
+                            openReferencePicker(field.id)
+                        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                            rightMargin = if (field.value.isNotEmpty()) dp(8) else 0
+                        })
+                        if (field.value.isNotEmpty()) {
+                            addView(actionButton(text(R.string.clear_reference), primary = false, compact = true) {
+                                updateDraftCustomFieldValue(field.id, "")
+                                renderFields()
+                            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                        }
+                    }, matchWrap(top = dp(8)))
+                }, matchWrap(top = dp(8)))
+            }
+            if (protectedCurrentStates.isNotEmpty()) {
+                fieldsContainer.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    background = rounded(uiColor(R.color.ui_error_surface), dp(12), uiColor(R.color.ui_error_stroke))
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    protectedCurrentStates.forEach { state ->
+                        addView(label(
+                            state.field.name.ifBlank { text(R.string.unsupported_field) },
+                            12f,
+                            uiColor(R.color.ui_error),
+                            Typeface.BOLD,
+                        ), matchWrap(top = dp(4)))
+                    }
+                    addView(label(
+                        text(R.string.unsupported_field_value_preserved),
+                        12f,
+                        uiColor(R.color.ui_muted),
+                    ), matchWrap(top = dp(6)))
                 }, matchWrap(top = dp(8)))
             }
             fieldsContainer.addView(actionButton(text(R.string.add_custom_field), primary = false) {
@@ -1254,19 +1746,119 @@ class MainActivity : FragmentActivity() {
                     type = selectedEntryType,
                     category = selectedCategory,
                     tags = selectedTags.sorted(),
-                    customFields = customFields,
+                    customFields = customFieldStates.map { state -> state.field },
                     credential = credentialPayload(payloadInputs),
                     server = serverPayload(payloadInputs),
                     service = servicePayload(payloadInputs),
                 )
-                val savedEntry = store.upsert(savedDraft, editingId = entry?.id)
+                val savedEntry = store.upsert(
+                    draft = savedDraft,
+                    editingId = entry?.id,
+                    protectedFieldIds = customFieldStates
+                        .filter { state -> state.isProtected }
+                        .mapTo(mutableSetOf()) { state -> state.field.id },
+                )
                 selectedEntry = savedEntry
                 dialog.dismiss()
                 showHome()
             }
         }
         dialog.show()
+        focusReferenceFieldId?.let(openReferencePicker)
     }
+
+    private fun showEntryReferenceSelectionDialog(
+        fieldName: String,
+        currentValue: String,
+        targetCategory: String,
+        onSelected: (String) -> Unit,
+    ) {
+        val form = formRoot()
+        val search = searchInput(text(R.string.search_entries))
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        var dialog: AlertDialog? = null
+
+        fun render(query: String = "") {
+            list.removeAllViews()
+            val candidates = store.entryReferenceCandidates(targetCategory, query)
+            if (candidates.isEmpty()) {
+                list.addView(label(
+                    text(R.string.no_matching_entries),
+                    13f,
+                    uiColor(R.color.ui_muted),
+                ), matchWrap(top = dp(12)))
+            } else {
+                candidates.forEach { candidate ->
+                    list.addView(referenceCandidateRow(
+                        candidate = candidate,
+                        selected = candidate.id == currentValue,
+                    ) {
+                        onSelected(candidate.id)
+                        dialog?.dismiss()
+                    }, matchWrap(top = dp(8)))
+                }
+            }
+        }
+
+        search.addTextChangedListener(SimpleTextWatcher(::render))
+        form.addView(formTitle(
+            fieldName.trim().takeIf { it.isNotEmpty() }
+                ?.let { name -> "${text(R.string.choose_entry)} · $name" }
+                ?: text(R.string.choose_entry),
+        ))
+        form.addView(label(
+            "${text(R.string.target_category)}: ${targetCategory.trim().ifBlank { text(R.string.any_category) }}",
+            12f,
+            uiColor(R.color.ui_muted),
+        ), matchWrap(top = dp(8)))
+        form.addView(search, matchWrap(top = dp(12)))
+        if (currentValue.isNotEmpty()) {
+            form.addView(actionButton(text(R.string.clear_reference), primary = false, compact = true) {
+                onSelected("")
+                dialog?.dismiss()
+            }, wrapWrap(top = dp(10)))
+        }
+        form.addView(ScrollView(this).apply { addView(list) }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            dp(if (isCompactWidth()) 320 else 420),
+        ).apply {
+            topMargin = dp(6)
+        })
+        render()
+        dialog = AlertDialog.Builder(this)
+            .setView(form)
+            .setNegativeButton(text(R.string.cancel), null)
+            .show()
+    }
+
+    private fun referenceCandidateRow(
+        candidate: EntryReferenceCandidate,
+        selected: Boolean,
+        onClick: () -> Unit,
+    ): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            isClickable = true
+            isFocusable = true
+            background = rounded(
+                if (selected) uiColor(R.color.ui_accent) else uiColor(R.color.ui_surface_alt),
+                dp(12),
+                if (selected) uiColor(R.color.ui_accent) else uiColor(R.color.ui_stroke),
+            )
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            addView(label(
+                candidate.label.ifBlank { text(R.string.untitled) },
+                14f,
+                if (selected) Color.WHITE else uiColor(R.color.ui_text),
+                Typeface.BOLD,
+            ))
+            addView(label(
+                categoryDisplayName(candidate.category),
+                12f,
+                if (selected) Color.WHITE else uiColor(R.color.ui_muted),
+            ), matchWrap(top = dp(4)))
+            setOnClickListener { onClick() }
+        }
 
     private fun showExportDialog() {
         val form = formRoot()
@@ -3000,9 +3592,7 @@ private fun VaultEntry.detailPairs(activity: MainActivity): List<Pair<String, St
             activity.getString(R.string.service_accounts) to formatServiceAccountsForDisplay(currentPayload.value.accounts),
             activity.getString(R.string.notes) to currentPayload.value.notes,
         )
-    }).filter { (_, value) -> value.isNotBlank() } + customFields.map { field ->
-        field.name.ifBlank { activity.getString(R.string.custom_field) } to field.value
-    }
+    }).filter { (_, value) -> value.isNotBlank() }
 
 private class SimpleTextWatcher(
     private val onChanged: (String) -> Unit,

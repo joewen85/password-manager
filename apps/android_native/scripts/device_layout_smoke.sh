@@ -216,7 +216,7 @@ packages = {node.attrib.get("package", "") for node in root.iter("node")}
 if target_package not in packages:
     raise SystemExit(f"{profile}: UI tree does not contain package {target_package}; packages={sorted(packages)}")
 
-required_texts = {"Search vault"}
+required_texts = {"Search, e.g. ip:1.2.3.4 name:xxx..."}
 required_descs = {"Create", "Sync", "Backups", "More actions", "Lock"}
 missing_texts = sorted(required_texts - texts)
 missing_descs = sorted(required_descs - descs)
@@ -268,7 +268,7 @@ run_profile() {
   dump_ui "$init_ui"
   tap_text "Create Vault" "$init_ui"
 
-  wait_for_text "Search vault" "$home_ui"
+  wait_for_text "Search, e.g. ip:1.2.3.4 name:xxx..." "$home_ui"
   "$ADB" -s "$SERIAL" exec-out screencap -p > "$screenshot"
   "$ADB" -s "$SERIAL" logcat -d -b crash > "$crash_log"
   grep -F "$PACKAGE_NAME" "$crash_log" > "$app_crash_log" || true

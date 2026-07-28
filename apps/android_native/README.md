@@ -18,7 +18,8 @@
 - 折叠/紧凑态操作区已提供分类和标签入口：分类/标签仍来自条目字段，入口会预填新建条目的 category 或 tags，不引入新的数据模型。
 - UI 文案已拆分为英文默认资源和中文 `values-zh` 资源，条目类型、同步 provider、冲突策略等用户可见枚举也走资源化文本；系统语言为中文时显示中文。颜色已拆分为 light/night 资源，默认跟随系统深色/浅色模式。
 - 条目/分类级 JSON 导入导出已实现，导入时支持 Keep Copy、Overwrite、Skip 冲突策略。
-- 字段关联已支持无损数据契约、五态解析和生命周期传播；搜索仅加入成功解析目标的名称与分类，不索引原始引用 ID 或目标秘密。同批复制导入会先分配目标 ID 再重写内部引用，未包含目标时保留原 ID；同步内容比较与冲突副本保留引用字段及 `templateFieldId`。标签职责不变，当前仍不提供关联编辑或详情 UI，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
+- 字段关联已完成 Android UI 垂直切片：分类模板字段可选择 `text` 或 `entryReference`，关联字段可限制目标分类；条目编辑支持选择、更换和清空一条匹配记录；详情展示 `empty`、`resolved`、`missing`、`deleted`、`categoryMismatch` 五态，并为有效目标提供查看入口、为失效目标提供修复或清空入口。搜索只加入成功解析目标的名称与分类，不索引原始引用 ID 或目标秘密；详情、复制和搜索也不会暴露原始 ID、未知字段类型或孤儿绑定的存储值。同批复制导入会先分配目标 ID 再重写内部引用，未包含目标时保留原 ID；同步内容比较与冲突副本保留引用字段及 `templateFieldId`。标签职责不变，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
+- 字段关联仍存储在现有加密 vault JSON 的 `categoryTemplates` 与 `customFields` 中，不新增数据库或数据库字段，因此不需要数据库迁移文件；旧快照通过加法式 JSON 默认值继续读取。
 - 本地备份支持恢复最新加密备份，并自动保留最近 5 个备份文件。
 - 同步合并数据层已对齐 Flutter 的 version-vector 规则：本地/远端支配、并发冲突、delete-vs-update tombstone、keep-both conflict copy 均有 JVM 测试覆盖。
 - 远端同步 transport 层已对齐 Flutter 的 WebDAV 和 S3 presigned URL 行为：路径归一化、Basic Auth、JSON PUT、404/204 空远端、timeout/error 状态映射均有 JVM 测试覆盖。
@@ -31,6 +32,7 @@
 - Adaptive launcher icon 已包含 foreground、background、round icon 和 Android 13+ themed icon 所需的 monochrome layer。
 - Debug APK 已在 `Medium_Phone_API_36.1` AVD（Android 16 / API 36）上完成安装和启动冒烟验证；launcher activity 解析为 `.MainActivity`，首屏 UI tree 显示 `Initialize Vault`、主密码/确认密码输入框和 `Create Vault`。
 - Debug APK、未签名 release AAB、androidTest APK 构建、release manifest 处理、release verification 脚本、JVM 测试和 Keystore-backed key wrapping instrumentation test 已通过。本次设备级验证使用 `Medium_Phone_API_36.1` AVD（Android 16 / API 36）。生产发布前仍需完成 upload key 签名校验、真实 WebDAV/S3 端到端服务验证和生产 UI polish。
+- 字段关联 UI 已在 `Medium_Phone_API_36.1` AVD 的新会话中完成设备复验：compact 布局覆盖模板配置与已存值门禁、选择/更换/清空、目标名称搜索、`resolved`/`empty`/`deleted`/`categoryMismatch` 详情、查看目标和修复入口；expanded 布局覆盖真实 `resolved` 与 `categoryMismatch` 双栏详情，按钮、文字和弹层无重叠。compact/expanded 基础布局脚本均通过，目标 app crash buffer 为空。`missing` 状态由 JVM 回归测试覆盖；完整平板/折叠屏姿态与发布设备矩阵仍需按下方清单执行。
 
 ### 环境要求
 
@@ -103,6 +105,18 @@ chmod +x ./gradlew
 
 该脚本要求已连接一个 adb device/emulator，或通过 `ANDROID_SERIAL=<serial>` 指定目标设备。它会安装 Debug APK，临时切换 `wm size`/`wm density` 到 compact phone 和 expanded tablet 两组窗口，清空 app 数据并创建临时 vault，然后用 UI tree 校验 compact 模式下 `New`、`Category`、`Tag`、`Sync`、`Backups`、`Search vault` 入口可见且不渲染详情栏，expanded 模式渲染 `Select an entry` 详情占位，保存 `build/device-layout-smoke/` 下的 UI tree、截图和 crash buffer，并确认目标 app 没有写入 crash buffer；脚本退出时会恢复显示设置。
 
+字段关联 UI 需要在 compact 和 expanded 两种布局中分别完成以下设备验证；基础布局脚本不能替代这些功能步骤：
+
+1. 创建目标分类和来源分类，在来源分类模板中分别新增文本字段和关联字段，为关联字段选择目标分类。
+2. 新建目标条目和来源条目，在来源条目中选择目标记录，再依次验证更换与清空引用。
+3. 在详情中验证已解析引用只显示目标名称和分类，点击“查看”可打开目标条目，且界面和复制内容均不出现原始引用 ID。
+4. 通过删除、移动或移除目标记录构造 `missing`、`deleted`、`categoryMismatch`，验证失效提示、修复和清空入口；空引用显示 `empty`。
+5. 导入包含未知 `valueType` 或孤儿 `templateFieldId` 的兼容数据，确认其原始存储值不会显示、复制或进入搜索结果。
+6. 在 compact 模式确认编辑器和详情 dialog 可滚动、按钮可点击、文字不被裁切；在 expanded 模式确认列表/详情双栏和弹层不会越过窗口或折痕边界。
+7. 保存每种布局的截图、UI tree 和目标 app crash buffer，并在设备型号、API 版本和 posture 记录齐全后再勾选发布检查项。
+
+当前没有连接的 Android device/emulator，因此本轮文档更新不宣称上述 P4 设备验证已经通过。
+
 ### 本地加密校验
 
 修改持久化或加密代码后，使用以下流程校验：
@@ -142,8 +156,9 @@ chmod +x ./gradlew
 7. 校验水平 separating fold/tabletop posture：应用使用上下分区，列表和详情不会跨越折叠区域。
 8. 旋转设备并重复新增/编辑/删除/搜索流程，确认搜索关键字和选中详情在折叠/展开重建后仍保留。
 9. 验证紧凑/折叠态下分类和标签入口可见，且新建条目会预填对应 category 或 tag。
-10. 验证文字可读、详情操作可见，并且 hinge 或窗口边界附近没有控件被裁切。
-11. 在 Android multi-window 模式下运行应用，并跨 compact/expanded 阈值调整窗口大小。
+10. 在 compact 和 expanded posture 中重复字段关联的模板配置、选择、更换、清空、五态详情、查看和修复流程，确认原始 ID、未知类型值和孤儿绑定值不会显示、复制或被搜索命中。
+11. 验证文字可读、详情操作可见，并且 hinge 或窗口边界附近没有控件被裁切。
+12. 在 Android multi-window 模式下运行应用，并跨 compact/expanded 阈值调整窗口大小。
 
 ### 权限、备份和隐私披露
 
@@ -281,6 +296,9 @@ docs/PERMISSIONS_AND_PRIVACY.md
 - [x] 本地备份支持恢复最新加密备份，并保留最近 5 个备份。
 - [x] 完整快照 JSON 导入/导出可通过 app-private `exports/` 和 `imports/` 目录使用。
 - [x] 条目/分类 JSON 导入导出支持 Keep Copy、Overwrite、Skip 冲突策略。
+- [x] Android 分类模板支持文本/关联条目类型和目标分类，条目编辑支持选择、更换与清空引用，详情支持五态、查看、修复和清空。
+- [x] Android 详情、复制和搜索不暴露原始引用 ID、未知类型值或孤儿绑定值；搜索只投影成功解析目标的名称和分类。
+- [x] P4 字段关联已在新的 compact/expanded AVD 会话中验证并保留截图、UI tree 与 crash buffer；compact 覆盖主要编辑和四种可直接构造的详情状态，expanded 覆盖真实 resolved/categoryMismatch 双栏详情，missing 由 JVM 回归测试覆盖。
 - [x] 同步合并数据层覆盖 version-vector 支配、并发冲突、delete-vs-update tombstone 和 keep-both conflict copy。
 - [x] WebDAV 和 S3 presigned URL 同步 transport 层覆盖路径归一化、Basic Auth、JSON PUT 和网络错误映射。
 - [x] 同步设置模型和 provider client factory 覆盖 Flutter 字段契约、默认值和未知值兼容。
@@ -312,7 +330,8 @@ This directory contains the native Android application target, used to build And
 - JVM unit tests cover PBKDF2 verifier behavior, AES-GCM round trip, TOTP generation/verification, JSON snapshot round trip for credential/server/service/tombstone payloads, PBKDF2/AES-GCM Dart fixture compatibility, and the compact/expanded/fold-separating layout policy.
 - Service accounts on service entries are edited in the Android native form with the compact `username:password:note; ...` format and shown in details with passwords masked.
 - Item/category scoped JSON import/export is implemented with Keep Copy, Overwrite, and Skip conflict strategies.
-- Entry references now cover lossless persistence, five-state resolution, and lifecycle propagation. Search adds only a successfully resolved target label and category, never the raw reference ID or target secrets. Batch copy import assigns destination IDs before rewriting internal references, keeps IDs for targets not included, and sync comparison/conflict copies retain reference fields and `templateFieldId`. Tags remain unchanged; reference editing and detail UI are still not exposed. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
+- Entry references now provide a complete Android UI slice. Category-template fields can select `text` or `entryReference`, and reference fields can constrain a target category. Entry editing can select, replace, or clear one matching entry. Details render the `empty`, `resolved`, `missing`, `deleted`, and `categoryMismatch` states, with a view action for a valid target and repair or clear actions for unavailable targets. Search adds only a successfully resolved target label and category, never the raw reference ID or target secrets; details, copy actions, and search also suppress raw IDs and stored values belonging to unknown field types or orphaned bindings. Batch copy import assigns destination IDs before rewriting internal references, keeps IDs for targets not included, and sync comparison/conflict copies retain reference fields and `templateFieldId`. Tags remain unchanged. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
+- Entry references remain inside the existing encrypted vault JSON under `categoryTemplates` and `customFields`. P4 adds no database or database column, so no database migration file is required; additive JSON defaults remain the migration path for older snapshots.
 - Local backup supports restoring the latest encrypted backup and automatically keeps the latest 5 backup files.
 - Sync merge data layer matches the Flutter version-vector rules: local/remote dominance, concurrent conflicts, delete-vs-update tombstones, and keep-both conflict copies are covered by JVM tests.
 - Remote sync transport now matches the Flutter WebDAV and S3 presigned URL clients: path normalization, Basic Auth, JSON PUT, 404/204 empty remote handling, and timeout/error status mapping are covered by JVM tests.
@@ -325,6 +344,7 @@ This directory contains the native Android application target, used to build And
 - The adaptive launcher icon includes foreground, background, round icon, and the monochrome layer required for Android 13+ themed icons.
 - Debug APK install and launch smoke validation passed on the `Medium_Phone_API_36.1` AVD (Android 16 / API 36). The launcher activity resolves to `.MainActivity`, and the first-screen UI tree shows `Initialize Vault`, master password / confirmation fields, and `Create Vault`.
 - Debug APK, unsigned release AAB, androidTest APK build, release manifest processing, the release verification script, JVM tests, and the Keystore-backed key wrapping instrumentation test pass. The device-level validation used the `Medium_Phone_API_36.1` AVD (Android 16 / API 36). Before production release, upload-key signing verification, real WebDAV/S3 end-to-end service validation, and production UI polish must still be completed.
+- The P4 entry-reference UI has now been revalidated in a fresh `Medium_Phone_API_36.1` AVD session. Compact validation covered template configuration and stored-value guards, select/replace/clear, target-label search, `resolved`/`empty`/`deleted`/`categoryMismatch` details, view-target, and repair entry points. Expanded validation covered real `resolved` and `categoryMismatch` two-pane details without clipped or overlapping text, buttons, or dialogs. Both compact/expanded baseline layout runs passed and the target app crash buffer was empty. The `missing` state is covered by JVM regression tests; the full tablet/foldable posture and release-device matrix still remains below.
 
 ### Requirements
 
@@ -397,6 +417,18 @@ Run the device layout smoke check:
 
 The script expects one connected adb device/emulator, or a target selected with `ANDROID_SERIAL=<serial>`. It installs the Debug APK, temporarily changes `wm size` / `wm density` to compact phone and expanded tablet windows, clears app data, creates a temporary vault, and verifies from the UI tree that compact mode exposes `New`, `Category`, `Tag`, `Sync`, `Backups`, and `Search vault` without rendering the detail pane, while expanded mode renders the `Select an entry` detail placeholder. It saves UI trees, screenshots, and crash-buffer logs under `build/device-layout-smoke/`, verifies the target app did not write to the crash buffer, then restores display settings on exit.
 
+Validate the entry-reference UI separately in both compact and expanded layouts; the baseline layout script does not replace these functional steps:
+
+1. Create a target category and a source category. Add both a text field and an entry-reference field to the source template, and select the reference target category.
+2. Create target and source entries. Select a target from the source entry, then verify replacing and clearing the reference.
+3. In details, confirm a resolved reference shows only the target label and category, the View action opens the target, and neither UI nor copied content exposes the raw reference ID.
+4. Create `missing`, `deleted`, and `categoryMismatch` states by removing, deleting, or moving the target; verify unavailable-state text plus repair and clear actions. Verify an unset value renders as `empty`.
+5. Import compatibility data containing an unknown `valueType` or orphaned `templateFieldId`; confirm its stored value is not displayed, copied, or returned by search.
+6. In compact mode, confirm editors and detail dialogs scroll and remain actionable without clipping. In expanded mode, confirm list/detail panes and dialogs stay inside the window and fold boundaries.
+7. Save screenshots, UI trees, and the target-app crash buffer for each layout, and record the device model, API level, and posture before marking the release check complete.
+
+No Android device/emulator is currently connected, so this documentation update does not claim that the P4 device checks above have passed.
+
 ### Local Encryption Verification
 
 Use this flow after changing persistence or crypto code:
@@ -436,8 +468,9 @@ Use at least one foldable emulator profile and one tablet profile before every A
 7. Validate a horizontal separating fold/tabletop posture: the app uses top/bottom regions so list/detail content does not cross the fold.
 8. Rotate the device and repeat add/edit/delete/search flows; confirm search text and selected details survive fold/unfold rebuilds.
 9. Verify category and tag entry points remain visible in compact/folded layouts and prefill the new-entry form.
-10. Verify text remains readable, detail actions remain visible, and no controls are clipped near hinge or window boundaries.
-11. Run the app in Android multi-window mode and resize across the compact/expanded threshold.
+10. Repeat entry-reference template configuration, select/replace/clear, five-state details, view, and repair flows in compact and expanded postures; confirm raw IDs, unknown-type values, and orphaned-binding values are never displayed, copied, or returned by search.
+11. Verify text remains readable, detail actions remain visible, and no controls are clipped near hinge or window boundaries.
+12. Run the app in Android multi-window mode and resize across the compact/expanded threshold.
 
 ### Permissions, Backup, and Privacy Disclosure
 
@@ -575,6 +608,9 @@ docs/PERMISSIONS_AND_PRIVACY.md
 - [x] Local backup restores the latest encrypted backup and keeps the latest 5 backups.
 - [x] Full snapshot JSON export/import is available through app-private `exports/` and `imports/` directories.
 - [x] Item/category JSON import/export supports Keep Copy, Overwrite, and Skip conflict strategies.
+- [x] Android category templates support text/entry-reference types and target categories; entry editing supports select, replace, and clear; details support all five states plus view, repair, and clear actions.
+- [x] Android details, copy actions, and search suppress raw reference IDs, unknown-type values, and orphaned-binding values; search projects only a resolved target label and category.
+- [x] P4 entry-reference behavior has been validated in a fresh compact/expanded AVD session with screenshots, UI trees, and crash-buffer evidence; compact covers the main editing flow and four directly constructible detail states, expanded covers real resolved/category-mismatch two-pane details, and missing is covered by JVM regression tests.
 - [x] Sync merge data layer covers version-vector dominance, concurrent conflicts, delete-vs-update tombstones, and keep-both conflict copies.
 - [x] WebDAV and S3 presigned URL sync transport covers path normalization, Basic Auth, JSON PUT, and network error mapping.
 - [x] Sync settings model and provider client factory cover the Flutter field contract, defaults, and unknown-value tolerance.

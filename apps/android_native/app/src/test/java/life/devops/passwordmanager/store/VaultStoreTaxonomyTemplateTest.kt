@@ -74,7 +74,8 @@ class VaultStoreTaxonomyTemplateTest {
 
             val template = assertNotNull(store.categoryTemplate("Infra"))
             assertEquals(listOf("名称", "备注", "IP地址", "端口", "关联账号", "Owner"), template.fields.map { it.name })
-            assertTrue(template.fields.none { it.id.contains('-') })
+            assertTrue(template.fields.take(2).none { it.id.contains('-') })
+            assertTrue(template.fields.drop(2).all { UUID_PATTERN.matches(it.id) })
         } finally {
             directory.deleteRecursively()
         }
@@ -91,7 +92,8 @@ class VaultStoreTaxonomyTemplateTest {
 
             val template = assertNotNull(store.categoryTemplate("Ops"))
             assertEquals(listOf("名称", "备注", "IP地址", "端口", "Owner"), template.fields.map { it.name })
-            assertTrue(template.fields.none { it.id.contains('-') })
+            assertTrue(template.fields.take(2).none { it.id.contains('-') })
+            assertTrue(template.fields.drop(2).all { UUID_PATTERN.matches(it.id) })
         } finally {
             directory.deleteRecursively()
         }
@@ -330,11 +332,6 @@ class VaultStoreTaxonomyTemplateTest {
                             value = "account-id",
                         ),
                         CustomField(
-                            id = "future-instance",
-                            name = "Future",
-                            value = "future-value",
-                        ),
-                        CustomField(
                             id = "notes-instance",
                             templateFieldId = "template-notes",
                             name = "Notes",
@@ -345,7 +342,6 @@ class VaultStoreTaxonomyTemplateTest {
                 )
             )
             val originalOwner = original.customFields.single { it.id == "owner-instance" }
-            val originalFuture = original.customFields.single { it.id == "future-instance" }
 
             val saved = store.upsert(
                 EntryDraft(
@@ -354,6 +350,7 @@ class VaultStoreTaxonomyTemplateTest {
                     category = original.payload.category,
                     tags = original.payload.tags,
                     customFields = listOf(
+                        originalOwner,
                         CustomField(
                             id = "notes-instance",
                             templateFieldId = "template-notes",
@@ -367,11 +364,16 @@ class VaultStoreTaxonomyTemplateTest {
             )
 
             assertEquals(originalOwner, saved.customFields.single { it.id == "owner-instance" })
-            assertEquals(originalFuture, saved.customFields.single { it.id == "future-instance" })
             assertEquals("new text", saved.customFields.single { it.id == "notes-instance" }.value)
             assertEquals("new custom", saved.customFields.single { it.id == "ordinary-instance" }.value)
         } finally {
             directory.deleteRecursively()
         }
+    }
+
+    private companion object {
+        val UUID_PATTERN = Regex(
+            "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        )
     }
 }

@@ -40,7 +40,8 @@ echo "Running Android device launch smoke on $SERIAL..."
 ./gradlew :app:installDebug
 
 ACTIVITY="$("$ADB" -s "$SERIAL" shell cmd package resolve-activity --brief "$PACKAGE_NAME" | tail -n 1 | tr -d '\r')"
-if [[ "$ACTIVITY" != "$PACKAGE_NAME/$ACTIVITY_NAME" ]]; then
+SHORT_ACTIVITY_NAME=".${ACTIVITY_NAME##*.}"
+if [[ "$ACTIVITY" != "$PACKAGE_NAME/$ACTIVITY_NAME" && "$ACTIVITY" != "$PACKAGE_NAME/$SHORT_ACTIVITY_NAME" ]]; then
   echo "Unexpected launcher activity: $ACTIVITY" >&2
   exit 1
 fi
