@@ -484,8 +484,10 @@ function checkFieldReferenceEditorProtection() {
     'Harmony entry template application matches stable template field IDs first',
   );
   assert(
-    applyTemplate.match(/!this\.draftProtectedCustomFieldIds\.includes\(field\.id\)/g)?.length === 2,
-    'Harmony category switches cannot consume protected fields through ID or name fallback',
+    applyTemplate.includes('this.draftFieldBelongsToCategory(field.id, category)') &&
+      applyTemplate.match(/!this\.draftProtectedCustomFieldIds\.includes\(field\.id\)/g)?.length === 2 &&
+      applyTemplate.includes('this.draftProtectedCustomFieldIds = this.draftProtectedCustomFieldIds.filter('),
+    'Harmony category switches reuse protected bindings only within their source category and keep name fallback isolated',
   );
   assertIncludes(
     applyTemplate,
@@ -528,8 +530,8 @@ function checkFieldReferenceEditorProtection() {
   );
   assertIncludes(
     normalizeFields,
-    'return definition === undefined || this.isTextTemplateField(definition);',
-    'Harmony hides known non-text fields and conservatively edits fields with missing definitions',
+    'return canExposeRawCustomFieldValue(',
+    'Harmony only edits fields whose raw values are safe to expose',
   );
   assertIncludes(
     normalizeFields,
@@ -599,7 +601,7 @@ function checkCategoryManagementContract() {
   assertIncludes(page, 'private CategoryListRow(category: string)', 'Harmony category management uses row list items');
   assertIncludes(page, 'this.beginEditCategory(category);', 'Harmony category rows expose edit action');
   assertIncludes(page, 'this.categoryDraftCustomFields = this.categoryTemplateDraftFields(clean);', 'Harmony category edit loads existing template fields');
-  assertIncludes(page, 'await this.controller().saveCategoryTemplate(target, this.categoryDraftCustomFieldNames());', 'Harmony category save persists edited fields');
+  assertIncludes(page, 'await this.controller().saveCategoryTemplateFields(', 'Harmony category save persists complete field definitions');
   assertIncludes(controller, 'async saveCategoryTemplate(category: string, customFieldNames: string[] = []): Promise<void>', 'Harmony controller can save an existing category template');
 }
 

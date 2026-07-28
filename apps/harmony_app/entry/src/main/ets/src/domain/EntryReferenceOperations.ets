@@ -1,6 +1,7 @@
 import {
   CategoryTemplate,
   CustomField,
+  FieldTemplate,
   VaultEntry,
 } from '../model/VaultTypes';
 import {
@@ -8,6 +9,15 @@ import {
   matchingEntryReferenceTemplate,
   resolveEntryReference,
 } from './FieldReferenceResolver';
+
+export interface EntryReferenceCandidate {
+  id: string;
+  label: string;
+  category: string;
+}
+
+const CUSTOM_FIELD_TEXT_VALUE_TYPE: string = 'text';
+const CUSTOM_FIELD_ENTRY_REFERENCE_VALUE_TYPE: string = 'entryReference';
 
 export function resolvedEntryReferenceSearchValues(
   entry: VaultEntry,
@@ -56,6 +66,123 @@ export function remapEntryReferenceCustomFields(
   });
 }
 
+export function entryReferenceCandidates(
+  entries: VaultEntry[],
+  targetCategory: string,
+  query: string,
+): EntryReferenceCandidate[] {
+  const categoryKey = targetCategory.trim().toLowerCase();
+  const queryKey = query.trim().toLowerCase();
+  return entries
+    .filter((entry: VaultEntry) => !entry.isDeleted)
+    .filter((entry: VaultEntry) =>
+      categoryKey.length === 0 || entry.payload.category.trim().toLowerCase() === categoryKey
+    )
+    .filter((entry: VaultEntry) => {
+      if (queryKey.length === 0) {
+        return true;
+      }
+      return entry.label.toLowerCase().includes(queryKey) ||
+        entry.payload.category.trim().toLowerCase().includes(queryKey);
+    })
+    .sort((left: VaultEntry, right: VaultEntry) => {
+      const labelOrder = left.label.localeCompare(right.label);
+      return labelOrder !== 0 ? labelOrder : left.id.localeCompare(right.id);
+    })
+    .map((entry: VaultEntry) => {
+      const candidate: EntryReferenceCandidate = {
+        id: entry.id,
+        label: entry.label,
+        category: entry.payload.category.trim(),
+      };
+      return candidate;
+    });
+}
+
+export function safeCustomFieldSearchValues(
+  field: CustomField,
+  template: CategoryTemplate | null,
+  entries: VaultEntry[],
+): string[] {
+  const fieldTemplate = matchingCustomFieldTemplate(field, template);
+  if (fieldTemplate === null) {
+    return hasBoundTemplateFieldId(field)
+      ? compactSearchValues([field.name])
+      : compactSearchValues([field.name, field.value]);
+  }
+  const valueType = normalizedTemplateValueType(fieldTemplate.valueType);
+  if (valueType === CUSTOM_FIELD_TEXT_VALUE_TYPE) {
+    return compactSearchValues([field.name, field.value]);
+  }
+  if (valueType !== CUSTOM_FIELD_ENTRY_REFERENCE_VALUE_TYPE) {
+    return compactSearchValues([field.name]);
+  }
+  const resolution = resolveEntryReference(field, template, entries);
+  if (
+    resolution === null ||
+    resolution.status !== EntryReferenceStatus.RESOLVED ||
+    resolution.target === undefined
+  ) {
+    return [field.name];
+  }
+  return compactSearchValues([
+    field.name,
+    resolution.target.label,
+    resolution.target.category,
+  ]);
+}
+
+export function canExposeRawCustomFieldValue(
+  field: CustomField,
+  template: CategoryTemplate | null,
+): boolean {
+  const fieldTemplate = matchingCustomFieldTemplate(field, template);
+  if (fieldTemplate === null) {
+    return !hasBoundTemplateFieldId(field);
+  }
+  return normalizedTemplateValueType(fieldTemplate.valueType) === CUSTOM_FIELD_TEXT_VALUE_TYPE;
+}
+
+export function entryReferenceTemplateForField(
+  field: CustomField,
+  template: CategoryTemplate | null,
+): FieldTemplate | null {
+  return matchingEntryReferenceTemplate(field, template);
+}
+
+function matchingCustomFieldTemplate(
+  field: CustomField,
+  template: CategoryTemplate | null,
+): FieldTemplate | null {
+  const fields = template?.fields;
+  if (fields === undefined) {
+    return null;
+  }
+  if (hasBoundTemplateFieldId(field)) {
+    return fields.find(
+      (candidate: FieldTemplate) => candidate.id === field.templateFieldId,
+    ) ?? null;
+  }
+  const name = field.name.trim().toLowerCase();
+  if (name.length === 0) {
+    return null;
+  }
+  return fields.find(
+    (candidate: FieldTemplate) => candidate.name.trim().toLowerCase() === name,
+  ) ?? null;
+}
+
+function hasBoundTemplateFieldId(field: CustomField): boolean {
+  return typeof field.templateFieldId === 'string' && field.templateFieldId.length > 0;
+}
+
+function normalizedTemplateValueType(valueType: string | undefined): string {
+  if (typeof valueType !== 'string' || valueType.trim().length === 0) {
+    return CUSTOM_FIELD_TEXT_VALUE_TYPE;
+  }
+  return valueType;
+}
+
 function categoryTemplateFor(
   templates: CategoryTemplate[],
   category: string,
@@ -76,4 +203,11 @@ function appendSearchValue(values: string[], seen: Set<string>, value: string): 
   }
   seen.add(normalized);
   values.push(normalized);
+}
+
+function compactSearchValues(source: string[]): string[] {
+  const values: string[] = [];
+  const seen = new Set<string>();
+  source.forEach((value: string) => appendSearchValue(values, seen, value));
+  return values;
 }

@@ -37,6 +37,7 @@ echo "[INFO] Running Harmony contract tests..."
 node "$ROOT_DIR/scripts/harmony_contract_tests.mjs"
 node "$ROOT_DIR/scripts/harmony_reference_resolver_tests.mjs"
 node "$ROOT_DIR/scripts/harmony_reference_operations_tests.mjs"
+node "$ROOT_DIR/scripts/harmony_field_reference_ui_tests.mjs"
 
 cd "$APP_DIR"
 

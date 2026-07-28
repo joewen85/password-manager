@@ -1,4 +1,5 @@
 import { Context } from '@kit.AbilityKit';
+import { util } from '@kit.ArkTS';
 import { window } from '@kit.ArkUI';
 import display from '@ohos.display';
 import picker from '@ohos.file.picker';
@@ -33,10 +34,21 @@ import {
   SyncProviderType,
   SyncSettings,
 } from '../src/sync/SyncTypes';
+import { isEditableCategoryFieldType } from '../src/domain/CategoryTemplateEditing';
+import {
+  EntryReferenceResolution,
+  EntryReferenceStatus,
+} from '../src/domain/FieldReferenceResolver';
+import {
+  canExposeRawCustomFieldValue,
+  EntryReferenceCandidate,
+  entryReferenceCandidates,
+  safeCustomFieldSearchValues as referenceSafeCustomFieldSearchValues,
+} from '../src/domain/EntryReferenceOperations';
 
 type DraftType = 'credential' | 'server' | 'service';
 type ActivePanel = 'home' | 'category' | 'tag';
-type TopOverlayPanel = 'none' | 'create' | 'settings' | 'more' | 'backup' | 'clearData' | 'categorySelect' | 'categoryCreate' | 'tagCreate' | 'entryEditor';
+type TopOverlayPanel = 'none' | 'create' | 'settings' | 'more' | 'backup' | 'clearData' | 'categorySelect' | 'categoryCreate' | 'tagCreate' | 'entryEditor' | 'entryReferenceSelect' | 'entryDetail';
 const MAX_UNLOCK_ATTEMPTS: number = 5;
 const WIDE_LAYOUT_MIN_WIDTH: number = 720;
 const EXPANDED_LAYOUT_MIN_WIDTH: number = 960;
@@ -93,6 +105,18 @@ interface EntryCategoryCarrier {
 interface ExportFieldOption {
   id: string;
   label: string;
+}
+
+interface CategoryFieldTypeState {
+  fieldId: string;
+  valueType: string;
+  readOnly: boolean;
+  typeLocked: boolean;
+}
+
+interface DraftCustomFieldCategoryState {
+  fieldId: string;
+  category: string;
 }
 
 @Entry
@@ -187,6 +211,7 @@ struct Index {
   @State private categorySelectReturnToEntry: boolean = false;
   @State private categoryRenameSource: string = '';
   @State private categoryDraftCustomFields: CustomField[] = [];
+  @State private categoryDraftFieldTypes: CategoryFieldTypeState[] = [];
   @State private clearDataPassword: string = '';
   @State private backups: BackupInfo[] = [];
   @State private backupBusy: boolean = false;
@@ -199,6 +224,9 @@ struct Index {
   @State private draftSelectedTags: string[] = [];
   @State private draftCustomFields: CustomField[] = [];
   @State private draftProtectedCustomFieldIds: string[] = [];
+  @State private draftCustomFieldCategories: DraftCustomFieldCategoryState[] = [];
+  @State private draftReferenceFieldId: string = '';
+  @State private draftReferenceSearch: string = '';
   @State private editingEntryId: string = '';
   @State private exportEntryId: string = '';
   @State private exportSelectedFieldIds: string[] = [];
@@ -589,6 +617,10 @@ struct Index {
       this.CategoryCreateOverlayPanel();
     } else if (this.topOverlayPanel === 'tagCreate') {
       this.TagCreateOverlayPanel();
+    } else if (this.topOverlayPanel === 'entryReferenceSelect') {
+      this.EntryReferenceSelectOverlayPanel();
+    } else if (this.topOverlayPanel === 'entryDetail') {
+      this.EntryDetailOverlayPanel();
     } else if (this.topOverlayPanel === 'entryEditor') {
       this.EntryEditorOverlayPanel();
     }
@@ -847,6 +879,94 @@ struct Index {
     .onClick(() => {
       this.selectDraftCategory(category);
       this.closeTopOverlay();
+    });
+  }
+
+  @Builder
+  private EntryReferenceSelectOverlayPanel() {
+    Column({ space: 10 }) {
+      this.FloatingPanelHeader(this.entryReferenceSelectorTitle());
+      Text(this.entryReferenceSelectorHint())
+        .fontSize(12)
+        .fontColor(UI_MUTED)
+        .width('100%');
+      TextInput({ placeholder: '搜索条目名称或分类', text: $$this.draftReferenceSearch })
+        .width('100%')
+        .height(48)
+        .backgroundColor(UI_SURFACE_ALT)
+        .fontColor(UI_TEXT)
+        .placeholderColor(UI_MUTED)
+        .caretColor(UI_ACCENT)
+        .onFocus(() => {
+          this.scheduleKeyboardAvoidAreaSync();
+        })
+        .border({ width: 1, color: UI_STROKE })
+        .borderRadius(12)
+        .padding({ left: 14, right: 14 });
+      if (this.activeDraftReferenceValue().length > 0) {
+        this.SecondaryTextButton('清除关联', () => {
+          this.clearActiveDraftReference();
+        });
+      }
+      Scroll() {
+        Column({ space: 8 }) {
+          if (this.filteredEntryReferenceCandidates().length === 0) {
+            Text(this.entryReferenceSelectorEmptyText())
+              .fontSize(13)
+              .fontColor(UI_MUTED)
+              .width('100%')
+              .textAlign(TextAlign.Center)
+              .padding({ top: 28, bottom: 28 });
+          } else {
+            ForEach(this.filteredEntryReferenceCandidates(), (entry: EntryReferenceCandidate) => {
+              this.EntryReferenceSelectRow(
+                entry,
+                this.activeDraftReferenceValue() === entry.id,
+              );
+            }, (entry: EntryReferenceCandidate) => entry.id);
+          }
+        }
+        .width('100%');
+      }
+      .width('100%')
+      .height(this.entryReferenceSelectListHeight());
+    }
+    .width('100%');
+  }
+
+  @Builder
+  private EntryReferenceSelectRow(entry: EntryReferenceCandidate, selected: boolean) {
+    Row({ space: 8 }) {
+      Column({ space: 3 }) {
+        Text(entry.label)
+          .fontSize(14)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(selected ? '#FFFFFF' : UI_TEXT)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%');
+        Text(entry.category.length > 0 ? entry.category : '未分类')
+          .fontSize(12)
+          .fontColor(selected ? '#FFFFFF' : UI_MUTED)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%');
+      }
+      .layoutWeight(1);
+      if (selected) {
+        Text('✓')
+          .fontSize(14)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#FFFFFF');
+      }
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(selected ? UI_ACCENT : UI_SURFACE_ALT)
+    .border({ width: 1, color: selected ? UI_ACCENT : UI_STROKE })
+    .borderRadius(12)
+    .onClick(() => {
+      this.selectActiveDraftReference(entry.id);
     });
   }
 
@@ -1587,6 +1707,24 @@ struct Index {
   }
 
   @Builder
+  private EntryDetailOverlayPanel() {
+    Column({ space: 10 }) {
+      this.FloatingPanelHeader('条目详情');
+      if (this.selectedDetailEntry() === null) {
+        Text('条目不存在或已删除')
+          .fontSize(13)
+          .fontColor(UI_MUTED)
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .padding({ top: 32, bottom: 32 });
+      } else {
+        this.EntryDetailContent(this.selectedDetailEntry() as VaultEntry);
+      }
+    }
+    .width('100%');
+  }
+
+  @Builder
   private EntryEditorFormContent() {
     Column({ space: 10 }) {
       TextInput({ placeholder: '名称（必填）', text: $$this.draftLabel })
@@ -1606,7 +1744,9 @@ struct Index {
       this.EntryCategorySelect();
       this.EntryTagMultiSelect();
 
+      this.EntryReferenceFieldsEditor();
       this.CustomFieldsEditor();
+      this.UnsupportedDraftFieldsNotice();
 
       this.PrimaryTextButton(this.editingEntryId.length > 0 ? '保存修改' : '保存条目', () => {
         this.onSaveEntry();
@@ -1933,6 +2073,16 @@ struct Index {
                     .fontSize(11)
                     .fontColor(UI_MUTED);
                   Blank();
+                  if (!this.useWideLayout()) {
+                    Text('查看')
+                      .fontSize(12)
+                      .fontWeight(FontWeight.Bold)
+                      .fontColor(UI_ACCENT)
+                      .margin({ right: 14 })
+                      .onClick(() => {
+                        this.openEntryDetailOverlay(entry);
+                      });
+                  }
                   Text('导出')
                     .fontSize(12)
                     .fontWeight(FontWeight.Bold)
@@ -2043,7 +2193,13 @@ struct Index {
             .fontColor(UI_MUTED)
             .margin({ top: 4 });
           ForEach(entry.customFields, (field: CustomField) => {
-            this.DetailValueRow(field.name.length > 0 ? field.name : '字段', field.value);
+            if (this.isEntryReferenceCustomField(entry, field)) {
+              this.EntryReferenceDetailRow(entry, field);
+            } else if (this.isUnsupportedCustomField(entry, field)) {
+              this.UnsupportedDetailFieldRow(field);
+            } else {
+              this.DetailValueRow(field.name.length > 0 ? field.name : '字段', field.value);
+            }
           }, (field: CustomField) => field.id);
         }
         Row({ space: 8 }) {
@@ -2068,6 +2224,73 @@ struct Index {
     }
     .layoutWeight(1)
     .width('100%');
+  }
+
+  @Builder
+  private EntryReferenceDetailRow(entry: VaultEntry, field: CustomField) {
+    Column({ space: 6 }) {
+      Text(field.name.length > 0 ? field.name : '关联字段')
+        .fontSize(11)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_MUTED)
+        .width('100%');
+      Text(this.entryReferenceDetailText(entry, field))
+        .fontSize(14)
+        .fontColor(this.entryReferenceDetailColor(entry, field))
+        .width('100%')
+        .maxLines(3)
+        .textOverflow({ overflow: TextOverflow.Ellipsis });
+      Row({ space: 8 }) {
+        if (this.entryReferenceTargetCanOpen(entry, field)) {
+          Column() {
+            this.SecondaryTextButton('查看目标', () => {
+              this.openEntryReferenceTarget(entry, field);
+            });
+          }
+          .layoutWeight(1);
+        }
+        Column() {
+          this.PrimaryTextButton(this.entryReferenceRepairLabel(entry, field), () => {
+            this.repairEntryReference(entry, field);
+          });
+        }
+        .layoutWeight(1);
+        if (field.value.length > 0) {
+          Column() {
+            this.SecondaryTextButton('清除关联', () => {
+              this.prepareClearEntryReference(entry, field);
+            });
+          }
+          .layoutWeight(1);
+        }
+      }
+      .width('100%');
+    }
+    .width('100%')
+    .padding(10)
+    .backgroundColor(UI_SURFACE_ALT)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(12);
+  }
+
+  @Builder
+  private UnsupportedDetailFieldRow(field: CustomField) {
+    Column({ space: 4 }) {
+      Text(field.name.length > 0 ? field.name : '未知字段')
+        .fontSize(11)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_MUTED)
+        .width('100%');
+      Text('当前版本不支持此字段类型，原值已保留。')
+        .fontSize(13)
+        .fontColor(UI_DANGER)
+        .width('100%');
+    }
+    .width('100%')
+    .padding(10)
+    .backgroundColor(UI_DANGER_SURFACE)
+    .border({ width: 1, color: UI_DANGER })
+    .borderRadius(12);
   }
 
   @Builder
@@ -2524,10 +2747,13 @@ struct Index {
       this.toast('分类已存在');
       return;
     }
-    const customFieldNames = this.categoryDraftCustomFieldNames();
-    await this.controller().addCategory(category, customFieldNames);
+    await this.controller().addCategoryWithTemplateFields(
+      category,
+      this.categoryDraftTemplateFieldDefinitions(),
+    );
     this.categoryDraft = '';
     this.categoryDraftCustomFields = [];
+    this.categoryDraftFieldTypes = [];
     this.categoryRenameSource = '';
     this.refreshData();
     this.toast('分类已保存');
@@ -2575,7 +2801,10 @@ struct Index {
     if (source !== target) {
       await this.controller().renameCategory(source, target);
     }
-    await this.controller().saveCategoryTemplate(target, this.categoryDraftCustomFieldNames());
+    await this.controller().saveCategoryTemplateFields(
+      target,
+      this.categoryDraftTemplateFieldDefinitions(),
+    );
     if (this.sameCategoryName(this.selectedCategory, source)) {
       this.selectedCategory = target;
     }
@@ -2735,6 +2964,10 @@ struct Index {
     return this.templateFieldValueType(field) === 'text';
   }
 
+  private isEntryReferenceTemplateField(field: FieldTemplate): boolean {
+    return this.templateFieldValueType(field) === 'entryReference';
+  }
+
   private categoryTemplate(category: string): CategoryTemplate | null {
     const clean = category.trim().toLowerCase();
     if (clean.length === 0) {
@@ -2754,34 +2987,75 @@ struct Index {
     this.categoryRenameSource = clean;
     this.categoryDraft = clean;
     this.categoryDraftCustomFields = this.categoryTemplateDraftFields(clean);
+    this.categoryDraftFieldTypes = this.categoryTemplateDraftFieldTypes(
+      clean,
+      this.categoryDraftCustomFields,
+    );
   }
 
   private cancelCategoryEdit(): void {
     this.categoryRenameSource = '';
     this.categoryDraft = '';
     this.categoryDraftCustomFields = [];
+    this.categoryDraftFieldTypes = [];
   }
 
   private categoryTemplateDraftFields(category: string): CustomField[] {
     const fields: CustomField[] = [];
     const seen = new Set<string>();
     this.templateFieldsForCategory(category).forEach((templateField: FieldTemplate) => {
-      if (!this.isTextTemplateField(templateField)) {
-        return;
-      }
       const name = templateField.name.trim();
       const key = name.toLowerCase();
       if (name.length === 0 || this.isBaseCategoryField(name) || seen.has(key)) {
         return;
       }
+      let value = '';
+      if (!this.isTextTemplateField(templateField)) {
+        value = typeof templateField.targetCategory === 'string'
+          ? templateField.targetCategory
+          : '';
+      }
       seen.add(key);
       fields.push({
         id: this.nextUiId(),
+        templateFieldId: templateField.id,
         name: name,
-        value: '',
+        value,
       });
     });
     return fields;
+  }
+
+  private categoryTemplateDraftFieldTypes(
+    category: string,
+    fields: CustomField[],
+  ): CategoryFieldTypeState[] {
+    const templateFields = this.templateFieldsForCategory(category);
+    return fields.map((field: CustomField) => {
+      const template = templateFields.find(
+        (candidate: FieldTemplate) => candidate.id === field.templateFieldId,
+      );
+      const valueType = template === undefined
+        ? 'text'
+        : this.templateFieldValueType(template);
+      const state: CategoryFieldTypeState = {
+        fieldId: field.id,
+        valueType,
+        readOnly: !isEditableCategoryFieldType(valueType),
+        typeLocked: this.categoryTemplateFieldHasStoredValue(category, field.templateFieldId),
+      };
+      return state;
+    });
+  }
+
+  private categoryTemplateFieldHasStoredValue(
+    category: string,
+    templateFieldId: string | undefined,
+  ): boolean {
+    if (typeof templateFieldId !== 'string' || templateFieldId.length === 0) {
+      return false;
+    }
+    return this.controller().categoryTemplateFieldHasStoredValue(category, templateFieldId);
   }
 
   private isBaseCategoryField(name: string): boolean {
@@ -2790,7 +3064,21 @@ struct Index {
   }
 
   private categoryFieldSummary(category: string): string {
-    return this.templateFieldNames(category).join('、');
+    return this.templateFieldsForCategory(category)
+      .map((field: FieldTemplate) => {
+        const name = field.name.trim();
+        const valueType = this.templateFieldValueType(field);
+        if (valueType === 'entryReference') {
+          const targetCategory = field.targetCategory?.trim() ?? '';
+          return `${name} → ${targetCategory.length > 0 ? targetCategory : '不限分类'}`;
+        }
+        if (!isEditableCategoryFieldType(valueType)) {
+          return `${name}（只读）`;
+        }
+        return name;
+      })
+      .filter((name: string) => name.length > 0)
+      .join('、');
   }
 
   private categoryEntryCount(category: string): number {
@@ -3181,35 +3469,85 @@ struct Index {
       }
       ForEach(this.categoryDraftCustomFields, (field: CustomField) => {
         Column({ space: 8 }) {
-          TextInput({ placeholder: '字段名称', text: field.name })
-            .width('100%')
-            .height(48)
-            .backgroundColor(UI_SURFACE_ALT)
-            .fontColor(UI_TEXT)
-            .placeholderColor(UI_MUTED)
-            .caretColor(UI_ACCENT)
-            .onFocus(() => {
-              this.scheduleKeyboardAvoidAreaSync();
-            })
-            .border({ width: 1, color: UI_STROKE })
-            .borderRadius(12)
-            .padding({ left: 14, right: 14 })
-            .onChange((value: string) => {
-              this.updateCategoryDraftCustomFieldName(field.id, value);
-            });
-          Row({ space: 8 }) {
-            Text('删除')
-              .height(36)
-              .padding({ left: 10, right: 10 })
-              .fontSize(13)
+          if (this.isCategoryDraftFieldReadOnly(field.id)) {
+            Text(field.name.length > 0 ? field.name : '未知字段')
+              .fontSize(14)
               .fontWeight(FontWeight.Bold)
+              .fontColor(UI_TEXT)
+              .width('100%');
+            Text(`字段类型: ${this.categoryDraftFieldValueType(field.id)}`)
+              .fontSize(12)
+              .fontColor(UI_MUTED)
+              .width('100%');
+            Text('当前版本无法编辑该字段，原配置已保留。')
+              .fontSize(12)
               .fontColor(UI_DANGER)
-              .textAlign(TextAlign.Center)
-              .backgroundColor(UI_DANGER_SURFACE)
-              .borderRadius(999)
-              .onClick(() => {
-                this.removeCategoryDraftCustomField(field.id);
+              .width('100%');
+          } else {
+            TextInput({ placeholder: '字段名称', text: field.name })
+              .width('100%')
+              .height(48)
+              .backgroundColor(UI_SURFACE_ALT)
+              .fontColor(UI_TEXT)
+              .placeholderColor(UI_MUTED)
+              .caretColor(UI_ACCENT)
+              .onFocus(() => {
+                this.scheduleKeyboardAvoidAreaSync();
+              })
+              .border({ width: 1, color: UI_STROKE })
+              .borderRadius(12)
+              .padding({ left: 14, right: 14 })
+              .onChange((value: string) => {
+                this.updateCategoryDraftCustomFieldName(field.id, value);
               });
+            if (this.isCategoryDraftFieldTypeLocked(field.id)) {
+              Text(`字段类型: ${this.categoryDraftFieldValueType(field.id) === 'entryReference' ? '关联条目' : '文本'}`)
+                .fontSize(12)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(UI_MUTED)
+                .width('100%');
+              Text('已有条目保存了该字段值，可修改名称和关联范围，但不能删除或更改字段类型。')
+                .fontSize(12)
+                .fontColor(UI_MUTED)
+                .width('100%');
+            } else {
+              Text('字段类型')
+                .fontSize(12)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(UI_MUTED)
+                .width('100%');
+              Flex({ wrap: FlexWrap.Wrap }) {
+                this.ChoiceChip('文本', this.categoryDraftFieldValueType(field.id) === 'text', () => {
+                  this.updateCategoryDraftFieldType(field.id, 'text');
+                });
+                this.ChoiceChip(
+                  '关联条目',
+                  this.categoryDraftFieldValueType(field.id) === 'entryReference',
+                  () => {
+                    this.updateCategoryDraftFieldType(field.id, 'entryReference');
+                  },
+                );
+              }
+            }
+            if (this.categoryDraftFieldValueType(field.id) === 'entryReference') {
+              this.CategoryDraftTargetCategoryEditor(field);
+            }
+            if (!this.isCategoryDraftFieldTypeLocked(field.id)) {
+              Row({ space: 8 }) {
+                Text('删除')
+                  .height(36)
+                  .padding({ left: 10, right: 10 })
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(UI_DANGER)
+                  .textAlign(TextAlign.Center)
+                  .backgroundColor(UI_DANGER_SURFACE)
+                  .borderRadius(999)
+                  .onClick(() => {
+                    this.removeCategoryDraftCustomField(field.id);
+                  });
+              }
+            }
           }
         }
         .padding(10)
@@ -3221,6 +3559,35 @@ struct Index {
         this.addCategoryDraftCustomField();
       });
     }
+  }
+
+  @Builder
+  private CategoryDraftTargetCategoryEditor(field: CustomField) {
+    Column({ space: 6 }) {
+      Text('目标分类')
+        .fontSize(12)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_MUTED)
+        .width('100%');
+      Text('关联条目只会从所选分类中选择；不限分类会显示全部可用条目。')
+        .fontSize(12)
+        .fontColor(UI_MUTED)
+        .width('100%');
+      Flex({ wrap: FlexWrap.Wrap }) {
+        this.ChoiceChip('不限分类', field.value.trim().length === 0, () => {
+          this.updateCategoryDraftTargetCategory(field.id, '');
+        });
+        if (this.categoryDraftHasMissingTargetCategory(field)) {
+          this.ChoiceChip(`已删除: ${field.value.trim()}`, true, () => {});
+        }
+        ForEach(this.categories, (category: string) => {
+          this.ChoiceChip(category, this.sameCategoryName(field.value, category), () => {
+            this.updateCategoryDraftTargetCategory(field.id, category);
+          });
+        }, (category: string) => category);
+      }
+    }
+    .width('100%');
   }
 
   @Builder
@@ -3314,6 +3681,88 @@ struct Index {
     .border({ width: 1, color: UI_STROKE })
     .borderRadius(12)
     .onClick(action);
+  }
+
+  @Builder
+  private EntryReferenceFieldsEditor() {
+    if (this.editableDraftReferenceFields().length > 0) {
+      Column({ space: 6 }) {
+        Text('关联字段')
+          .fontSize(12)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_MUTED)
+          .width('100%');
+        ForEach(this.editableDraftReferenceFields(), (field: CustomField) => {
+          this.EntryReferenceFieldEditor(field);
+        }, (field: CustomField) => field.id);
+      }
+      .width('100%');
+    }
+  }
+
+  @Builder
+  private EntryReferenceFieldEditor(field: CustomField) {
+    Column({ space: 8 }) {
+      Text(field.name.length > 0 ? field.name : '关联字段')
+        .fontSize(14)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_TEXT)
+        .width('100%');
+      Text(this.entryReferenceDraftDisplayValue(field))
+        .fontSize(13)
+        .fontColor(this.entryReferenceDraftStatusColor(field))
+        .width('100%')
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis });
+      Text(this.entryReferenceDraftConstraintText(field))
+        .fontSize(12)
+        .fontColor(UI_MUTED)
+        .width('100%');
+      Row({ space: 8 }) {
+        Column() {
+          this.PrimaryTextButton(this.entryReferenceDraftActionLabel(field), () => {
+            this.openEntryReferenceSelectOverlay(field.id);
+          });
+        }
+        .layoutWeight(1);
+        if (field.value.length > 0) {
+          Column() {
+            this.SecondaryTextButton('清除关联', () => {
+              this.updateDraftCustomFieldValue(field.id, '');
+            });
+          }
+          .layoutWeight(1);
+        }
+      }
+      .width('100%');
+    }
+    .width('100%')
+    .padding(10)
+    .backgroundColor(UI_SURFACE_ALT)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(12);
+  }
+
+  @Builder
+  private UnsupportedDraftFieldsNotice() {
+    if (this.unsupportedDraftCustomFields().length > 0) {
+      Column({ space: 4 }) {
+        Text(`另有 ${this.unsupportedDraftCustomFields().length} 个当前版本不支持的字段`)
+          .fontSize(12)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_DANGER)
+          .width('100%');
+        Text('这些字段不会显示原值，也不会被修改或删除；保存时会原样保留。')
+          .fontSize(12)
+          .fontColor(UI_MUTED)
+          .width('100%');
+      }
+      .width('100%')
+      .padding(10)
+      .backgroundColor(UI_DANGER_SURFACE)
+      .border({ width: 1, color: UI_DANGER })
+      .borderRadius(12);
+    }
   }
 
   private async saveJsonExportFile(prefix: string, name: string, contents: string): Promise<string> {
@@ -3542,6 +3991,10 @@ struct Index {
       this.clearEntryDraft();
       this.entryEditorVisible = false;
     }
+    if (this.topOverlayPanel === 'entryReferenceSelect') {
+      this.restoreEntryEditorOverlay();
+      return;
+    }
     if ((this.topOverlayPanel === 'categorySelect' || this.topOverlayPanel === 'categoryCreate') &&
       (this.categorySelectReturnToEntry || this.categoryCreateReturnToEntry)) {
       this.restoreEntryEditorOverlay();
@@ -3558,6 +4011,9 @@ struct Index {
     this.categoryRenameSource = '';
     this.categoryDraft = '';
     this.categoryDraftCustomFields = [];
+    this.categoryDraftFieldTypes = [];
+    this.draftReferenceFieldId = '';
+    this.draftReferenceSearch = '';
     this.entryEditorVisible = false;
     this.activePanel = 'home';
     this.topOverlayPanel = 'entryEditor';
@@ -3576,6 +4032,7 @@ struct Index {
     this.categorySelectReturnToEntry = false;
     this.categoryRenameSource = '';
     this.categoryDraftCustomFields = [];
+    this.categoryDraftFieldTypes = [];
     this.topOverlayPanel = 'categoryCreate';
   }
 
@@ -3588,6 +4045,102 @@ struct Index {
     this.draftCategorySearch = '';
     this.categorySelectReturnToEntry = this.topOverlayPanel === 'entryEditor';
     this.topOverlayPanel = 'categorySelect';
+  }
+
+  private openEntryReferenceSelectOverlay(fieldId: string): void {
+    const field = this.draftCustomFields.find(
+      (candidate: CustomField) => candidate.id === fieldId,
+    );
+    if (field === undefined || !this.isEditableDraftReferenceField(field)) {
+      return;
+    }
+    this.draftReferenceFieldId = fieldId;
+    this.draftReferenceSearch = '';
+    this.topOverlayPanel = 'entryReferenceSelect';
+  }
+
+  private openEntryDetailOverlay(entry: VaultEntry): void {
+    this.selectedEntryId = entry.id;
+    this.exportEntryId = '';
+    this.topOverlayPanel = 'entryDetail';
+  }
+
+  private activeDraftReferenceField(): CustomField | null {
+    if (this.draftReferenceFieldId.length === 0) {
+      return null;
+    }
+    const field = this.draftCustomFields.find(
+      (candidate: CustomField) => candidate.id === this.draftReferenceFieldId,
+    );
+    return field === undefined ? null : field;
+  }
+
+  private activeDraftReferenceTemplate(): FieldTemplate | null {
+    const field = this.activeDraftReferenceField();
+    if (field === null) {
+      return null;
+    }
+    const definition = this.templateDefinitionForCustomField(field, this.draftCategory);
+    return definition !== undefined && this.isEntryReferenceTemplateField(definition)
+      ? definition
+      : null;
+  }
+
+  private activeDraftReferenceValue(): string {
+    return this.activeDraftReferenceField()?.value ?? '';
+  }
+
+  private filteredEntryReferenceCandidates(): EntryReferenceCandidate[] {
+    const template = this.activeDraftReferenceTemplate();
+    if (template === null) {
+      return [];
+    }
+    return entryReferenceCandidates(
+      this.entries,
+      typeof template.targetCategory === 'string' ? template.targetCategory : '',
+      this.draftReferenceSearch,
+    );
+  }
+
+  private entryReferenceSelectorTitle(): string {
+    const field = this.activeDraftReferenceField();
+    return field === null || field.name.trim().length === 0
+      ? '选择关联条目'
+      : `选择“${field.name.trim()}”`;
+  }
+
+  private entryReferenceSelectorHint(): string {
+    const template = this.activeDraftReferenceTemplate();
+    const category = template?.targetCategory?.trim() ?? '';
+    return category.length > 0
+      ? `仅显示“${category}”分类中的可用条目。`
+      : '显示全部分类中的可用条目。';
+  }
+
+  private entryReferenceSelectorEmptyText(): string {
+    const template = this.activeDraftReferenceTemplate();
+    const category = template?.targetCategory?.trim() ?? '';
+    return category.length > 0
+      ? `“${category}”分类暂无可关联条目`
+      : '暂无可关联条目';
+  }
+
+  private selectActiveDraftReference(entryId: string): void {
+    const field = this.activeDraftReferenceField();
+    if (field === null) {
+      return;
+    }
+    this.updateDraftCustomFieldValue(field.id, entryId);
+    this.restoreEntryEditorOverlay();
+  }
+
+  private clearActiveDraftReference(): void {
+    const field = this.activeDraftReferenceField();
+    if (field === null) {
+      return;
+    }
+    this.updateDraftCustomFieldValue(field.id, '');
+    this.restoreEntryEditorOverlay();
   }
 
   private openClearDataOverlay(): void {
@@ -3732,6 +4285,8 @@ struct Index {
 
   private floatingPanelUsesAvailableHeight(): boolean {
     return this.topOverlayPanel === 'entryEditor' ||
+      this.topOverlayPanel === 'entryReferenceSelect' ||
+      this.topOverlayPanel === 'entryDetail' ||
       this.topOverlayPanel === 'categoryCreate' ||
       this.topOverlayPanel === 'settings';
   }
@@ -3840,6 +4395,10 @@ struct Index {
 
   private categorySelectListHeight(): number {
     return Math.max(Math.min(this.floatingPanelMaxHeight() - 126, 360), 96);
+  }
+
+  private entryReferenceSelectListHeight(): number {
+    return Math.max(this.floatingPanelMaxHeight() - 190, 96);
   }
 
   private categoryCreatePanelScrollHeight(): number {
@@ -4000,17 +4559,26 @@ struct Index {
       return;
     }
     const category = this.draftCategorySearch.trim();
-    const customFieldNames = this.categoryDraftCustomFieldNames();
-    await this.controller().addCategory(category, customFieldNames);
+    await this.controller().addCategoryWithTemplateFields(
+      category,
+      this.categoryDraftTemplateFieldDefinitions(),
+    );
     this.categoryDraftCustomFields = [];
+    this.categoryDraftFieldTypes = [];
     this.refreshData();
     this.selectDraftCategory(category);
   }
 
   private selectDraftCategory(category: string): void {
+    if (this.sameCategoryName(category, this.draftCategory)) {
+      this.draftCategorySearch = '';
+      return;
+    }
+    this.protectDraftFieldsBeforeCategorySwitch();
     this.draftCategory = category;
     this.draftCategorySearch = '';
     this.categoryDraftCustomFields = [];
+    this.categoryDraftFieldTypes = [];
     this.applyCategoryTemplateToDraft(category);
   }
 
@@ -4054,9 +4622,12 @@ struct Index {
     const usedExistingIndexes = new Set<number>();
     const seen = new Set<string>();
     const nextFields: CustomField[] = [];
+    const nextFieldCategories: DraftCustomFieldCategoryState[] = [];
     this.templateFieldsForCategory(category).forEach((templateField: FieldTemplate) => {
       if (!this.isTextTemplateField(templateField)) {
-        return;
+        if (!this.isEntryReferenceTemplateField(templateField)) {
+          return;
+        }
       }
       const name = templateField.name.trim();
       const key = name.toLowerCase();
@@ -4069,9 +4640,18 @@ struct Index {
         existingIndex = this.draftCustomFields.findIndex(
           (field: CustomField, index: number) =>
             !usedExistingIndexes.has(index) &&
-            !this.draftProtectedCustomFieldIds.includes(field.id) &&
-            field.templateFieldId === templateField.id,
+            field.templateFieldId === templateField.id &&
+            (
+              !this.draftProtectedCustomFieldIds.includes(field.id) ||
+              this.draftFieldBelongsToCategory(field.id, category)
+            ),
         );
+        if (existingIndex >= 0) {
+          const matchedId = this.draftCustomFields[existingIndex].id;
+          this.draftProtectedCustomFieldIds = this.draftProtectedCustomFieldIds.filter(
+            (id: string) => id !== matchedId,
+          );
+        }
       }
       if (existingIndex < 0) {
         existingIndex = this.draftCustomFields.findIndex(
@@ -4095,19 +4675,31 @@ struct Index {
         value: existing?.value ?? '',
       };
       nextFields.push(nextField);
+      nextFieldCategories.push({ fieldId: nextField.id, category });
     });
     this.draftCustomFields.forEach((field: CustomField, index: number) => {
       if (usedExistingIndexes.has(index)) {
         return;
       }
-      nextFields.push({
+      const nextField: CustomField = {
         id: field.id.length > 0 ? field.id : this.nextUiId(),
         templateFieldId: field.templateFieldId,
         name: field.name,
         value: field.value,
-      });
+      };
+      nextFields.push(nextField);
+      const existingCategory = this.draftCustomFieldCategories.find(
+        (state: DraftCustomFieldCategoryState) => state.fieldId === field.id,
+      );
+      if (existingCategory !== undefined) {
+        nextFieldCategories.push({
+          fieldId: nextField.id,
+          category: existingCategory.category,
+        });
+      }
     });
     this.draftCustomFields = nextFields;
+    this.draftCustomFieldCategories = nextFieldCategories;
   }
 
   private clearEntryDraft(): void {
@@ -4118,6 +4710,9 @@ struct Index {
     this.draftSelectedTags = [];
     this.draftCustomFields = [];
     this.draftProtectedCustomFieldIds = [];
+    this.draftCustomFieldCategories = [];
+    this.draftReferenceFieldId = '';
+    this.draftReferenceSearch = '';
     this.editingEntryId = '';
   }
 
@@ -4143,6 +4738,13 @@ struct Index {
     this.draftCategory = this.entryCategory(entry);
     this.draftSelectedTags = [...entry.tags];
     this.draftCustomFields = this.copyCustomFields(entry.customFields);
+    this.draftCustomFieldCategories = this.draftCustomFields.map((field: CustomField) => {
+      const state: DraftCustomFieldCategoryState = {
+        fieldId: field.id,
+        category: this.draftCategory,
+      };
+      return state;
+    });
     this.draftProtectedCustomFieldIds = this.protectedCustomFieldIdsForCategory(
       this.draftCustomFields,
       this.draftCategory,
@@ -4200,6 +4802,12 @@ struct Index {
 
   private removeDraftCustomField(id: string): void {
     this.draftCustomFields = this.draftCustomFields.filter((field: CustomField) => field.id !== id);
+    this.draftProtectedCustomFieldIds = this.draftProtectedCustomFieldIds.filter(
+      (fieldId: string) => fieldId !== id,
+    );
+    this.draftCustomFieldCategories = this.draftCustomFieldCategories.filter(
+      (state: DraftCustomFieldCategoryState) => state.fieldId !== id,
+    );
   }
 
   private addCategoryDraftCustomField(): void {
@@ -4209,6 +4817,10 @@ struct Index {
       value: '',
     };
     this.categoryDraftCustomFields = [...this.categoryDraftCustomFields, field];
+    this.categoryDraftFieldTypes = [
+      ...this.categoryDraftFieldTypes,
+      { fieldId: field.id, valueType: 'text', readOnly: false, typeLocked: false },
+    ];
   }
 
   private addCategoryDraftShortcutFields(preset: CategoryTypePreset): void {
@@ -4225,13 +4837,15 @@ struct Index {
         return;
       }
       existing.add(key);
-      this.categoryDraftCustomFields = [
-        ...this.categoryDraftCustomFields,
-        {
-          id: this.nextUiId(),
-          name: name,
-          value: '',
-        },
+      const field: CustomField = {
+        id: this.nextUiId(),
+        name: name,
+        value: '',
+      };
+      this.categoryDraftCustomFields = [...this.categoryDraftCustomFields, field];
+      this.categoryDraftFieldTypes = [
+        ...this.categoryDraftFieldTypes,
+        { fieldId: field.id, valueType: 'text', readOnly: false, typeLocked: false },
       ];
     });
   }
@@ -4243,30 +4857,106 @@ struct Index {
       }
       return {
         id: field.id,
+        templateFieldId: field.templateFieldId,
         name: value,
-        value: '',
+        value: field.value,
       };
     });
   }
 
   private removeCategoryDraftCustomField(id: string): void {
+    if (this.isCategoryDraftFieldTypeLocked(id)) {
+      return;
+    }
     this.categoryDraftCustomFields =
       this.categoryDraftCustomFields.filter((field: CustomField) => field.id !== id);
+    this.categoryDraftFieldTypes = this.categoryDraftFieldTypes.filter(
+      (field: CategoryFieldTypeState) => field.fieldId !== id,
+    );
   }
 
-  private categoryDraftCustomFieldNames(): string[] {
-    const seen = new Set<string>();
-    const names: string[] = [];
-    this.categoryDraftCustomFields.forEach((field: CustomField) => {
-      const name = field.name.trim();
-      const key = name.toLowerCase();
-      if (name.length === 0 || seen.has(key)) {
-        return;
+  private categoryDraftTemplateFieldDefinitions(): FieldTemplate[] {
+    return this.categoryDraftCustomFields
+      .filter((field: CustomField) => field.name.trim().length > 0)
+      .map((field: CustomField) => {
+        const valueType = this.categoryDraftFieldValueType(field.id);
+        const definition: FieldTemplate = {
+          id: typeof field.templateFieldId === 'string' && field.templateFieldId.length > 0
+            ? field.templateFieldId
+            : field.id,
+          name: field.name.trim(),
+          valueType,
+          targetCategory: valueType === 'entryReference' ? field.value.trim() : '',
+        };
+        return definition;
+      });
+  }
+
+  private categoryDraftFieldValueType(fieldId: string): string {
+    const state = this.categoryDraftFieldTypes.find(
+      (field: CategoryFieldTypeState) => field.fieldId === fieldId,
+    );
+    return state === undefined ? 'text' : state.valueType;
+  }
+
+  private isCategoryDraftFieldReadOnly(fieldId: string): boolean {
+    const state = this.categoryDraftFieldTypes.find(
+      (field: CategoryFieldTypeState) => field.fieldId === fieldId,
+    );
+    return state?.readOnly === true;
+  }
+
+  private isCategoryDraftFieldTypeLocked(fieldId: string): boolean {
+    const state = this.categoryDraftFieldTypes.find(
+      (field: CategoryFieldTypeState) => field.fieldId === fieldId,
+    );
+    return state?.typeLocked === true;
+  }
+
+  private updateCategoryDraftFieldType(fieldId: string, valueType: string): void {
+    if (
+      this.isCategoryDraftFieldReadOnly(fieldId) ||
+      this.isCategoryDraftFieldTypeLocked(fieldId)
+    ) {
+      return;
+    }
+    this.categoryDraftFieldTypes = this.categoryDraftFieldTypes.map(
+      (field: CategoryFieldTypeState) => {
+        if (field.fieldId !== fieldId) {
+          return field;
+        }
+        return {
+          fieldId: field.fieldId,
+          valueType,
+          readOnly: false,
+          typeLocked: field.typeLocked,
+        };
+      },
+    );
+    if (valueType === 'text') {
+      this.updateCategoryDraftTargetCategory(fieldId, '');
+    }
+  }
+
+  private updateCategoryDraftTargetCategory(fieldId: string, category: string): void {
+    this.categoryDraftCustomFields = this.categoryDraftCustomFields.map((field: CustomField) => {
+      if (field.id !== fieldId) {
+        return field;
       }
-      seen.add(key);
-      names.push(name);
+      return {
+        id: field.id,
+        templateFieldId: field.templateFieldId,
+        name: field.name,
+        value: category,
+      };
     });
-    return names;
+  }
+
+  private categoryDraftHasMissingTargetCategory(field: CustomField): boolean {
+    const target = field.value.trim();
+    return target.length > 0 && !this.categories.some(
+      (category: string) => this.sameCategoryName(category, target),
+    );
   }
 
   private normalizedDraftCustomFields(): CustomField[] {
@@ -4305,21 +4995,132 @@ struct Index {
     );
   }
 
-  private isEditableDraftCustomField(field: CustomField): boolean {
+  private editableDraftReferenceFields(): CustomField[] {
+    return this.draftCustomFields.filter((field: CustomField) =>
+      this.isEditableDraftReferenceField(field)
+    );
+  }
+
+  private isEditableDraftReferenceField(field: CustomField): boolean {
     if (this.draftProtectedCustomFieldIds.includes(field.id)) {
       return false;
     }
     const definition = this.templateDefinitionForCustomField(field, this.draftCategory);
-    return definition === undefined || this.isTextTemplateField(definition);
+    return definition !== undefined && this.isEntryReferenceTemplateField(definition);
+  }
+
+  private unsupportedDraftCustomFields(): CustomField[] {
+    return this.draftCustomFields.filter((field: CustomField) => {
+      if (this.draftProtectedCustomFieldIds.includes(field.id)) {
+        return true;
+      }
+      const definition = this.templateDefinitionForCustomField(field, this.draftCategory);
+      if (definition === undefined) {
+        return this.hasTemplateFieldBinding(field);
+      }
+      return !isEditableCategoryFieldType(this.templateFieldValueType(definition));
+    });
+  }
+
+  private entryReferenceDraftResolution(field: CustomField): EntryReferenceResolution | null {
+    return this.controller().resolveEntryReferenceField(field, this.draftCategory);
+  }
+
+  private entryReferenceDraftDisplayValue(field: CustomField): string {
+    const resolution = this.entryReferenceDraftResolution(field);
+    if (resolution === null || resolution.status === EntryReferenceStatus.EMPTY) {
+      return '未选择关联条目';
+    }
+    if (resolution.status === EntryReferenceStatus.MISSING) {
+      return '关联条目不存在';
+    }
+    if (resolution.status === EntryReferenceStatus.DELETED) {
+      return resolution.target === undefined
+        ? '关联条目已删除'
+        : `${resolution.target.label} · 已删除`;
+    }
+    if (resolution.status === EntryReferenceStatus.CATEGORY_MISMATCH) {
+      return resolution.target === undefined
+        ? '关联条目分类不匹配'
+        : `${resolution.target.label} · 当前分类: ${resolution.target.category || '未分类'}`;
+    }
+    return resolution.target === undefined
+      ? '关联条目不存在'
+      : `${resolution.target.label} · ${resolution.target.category || '未分类'}`;
+  }
+
+  private entryReferenceDraftStatusColor(field: CustomField): Resource {
+    const resolution = this.entryReferenceDraftResolution(field);
+    if (
+      resolution === null ||
+      resolution.status === EntryReferenceStatus.EMPTY ||
+      resolution.status === EntryReferenceStatus.RESOLVED
+    ) {
+      return resolution?.status === EntryReferenceStatus.RESOLVED ? UI_TEXT : UI_MUTED;
+    }
+    return UI_DANGER;
+  }
+
+  private entryReferenceDraftConstraintText(field: CustomField): string {
+    const definition = this.templateDefinitionForCustomField(field, this.draftCategory);
+    const targetCategory = definition?.targetCategory?.trim() ?? '';
+    return targetCategory.length > 0
+      ? `目标分类: ${targetCategory}`
+      : '目标分类: 不限分类';
+  }
+
+  private entryReferenceDraftActionLabel(field: CustomField): string {
+    const resolution = this.entryReferenceDraftResolution(field);
+    if (resolution === null || resolution.status === EntryReferenceStatus.EMPTY) {
+      return '选择';
+    }
+    if (resolution.status === EntryReferenceStatus.RESOLVED) {
+      return '更换';
+    }
+    return '重新选择';
+  }
+
+  private isEditableDraftCustomField(field: CustomField): boolean {
+    if (this.draftProtectedCustomFieldIds.includes(field.id)) {
+      return false;
+    }
+    return canExposeRawCustomFieldValue(
+      field,
+      this.categoryTemplate(this.draftCategory),
+    );
   }
 
   private protectedCustomFieldIdsForCategory(fields: CustomField[], category: string): string[] {
     return fields
       .filter((field: CustomField) => {
         const definition = this.templateDefinitionForCustomField(field, category);
-        return definition !== undefined && !this.isTextTemplateField(definition);
+        if (definition === undefined) {
+          return this.hasTemplateFieldBinding(field);
+        }
+        return !isEditableCategoryFieldType(this.templateFieldValueType(definition));
       })
       .map((field: CustomField) => field.id);
+  }
+
+  private protectDraftFieldsBeforeCategorySwitch(): void {
+    const protectedIds = new Set<string>(this.draftProtectedCustomFieldIds);
+    this.draftCustomFields.forEach((field: CustomField) => {
+      const definition = this.templateDefinitionForCustomField(field, this.draftCategory);
+      if (
+        (definition === undefined && this.hasTemplateFieldBinding(field)) ||
+        (definition !== undefined && !this.isTextTemplateField(definition))
+      ) {
+        protectedIds.add(field.id);
+      }
+    });
+    this.draftProtectedCustomFieldIds = Array.from(protectedIds.values());
+  }
+
+  private draftFieldBelongsToCategory(fieldId: string, category: string): boolean {
+    const state = this.draftCustomFieldCategories.find(
+      (candidate: DraftCustomFieldCategoryState) => candidate.fieldId === fieldId,
+    );
+    return state !== undefined && this.sameCategoryName(state.category, category);
   }
 
   private templateDefinitionForCustomField(
@@ -4339,6 +5140,124 @@ struct Index {
     return templateFields.find(
       (templateField: FieldTemplate) => templateField.name.trim().toLowerCase() === name,
     );
+  }
+
+  private isEntryReferenceCustomField(entry: VaultEntry, field: CustomField): boolean {
+    const definition = this.templateDefinitionForCustomField(field, this.entryCategory(entry));
+    return definition !== undefined && this.isEntryReferenceTemplateField(definition);
+  }
+
+  private isUnsupportedCustomField(entry: VaultEntry, field: CustomField): boolean {
+    return !canExposeRawCustomFieldValue(
+      field,
+      this.categoryTemplate(this.entryCategory(entry)),
+    );
+  }
+
+  private hasTemplateFieldBinding(field: CustomField): boolean {
+    return typeof field.templateFieldId === 'string' && field.templateFieldId.length > 0;
+  }
+
+  private entryReferenceDetailResolution(
+    entry: VaultEntry,
+    field: CustomField,
+  ): EntryReferenceResolution | null {
+    return this.controller().resolveEntryReferenceField(field, this.entryCategory(entry));
+  }
+
+  private entryReferenceDetailText(entry: VaultEntry, field: CustomField): string {
+    const resolution = this.entryReferenceDetailResolution(entry, field);
+    if (resolution === null || resolution.status === EntryReferenceStatus.EMPTY) {
+      return '未选择关联条目';
+    }
+    if (resolution.status === EntryReferenceStatus.MISSING) {
+      return '关联条目不存在';
+    }
+    if (resolution.status === EntryReferenceStatus.DELETED) {
+      return resolution.target === undefined
+        ? '关联条目已删除'
+        : `${resolution.target.label} · 已删除`;
+    }
+    if (resolution.status === EntryReferenceStatus.CATEGORY_MISMATCH) {
+      const definition = this.templateDefinitionForCustomField(field, this.entryCategory(entry));
+      const requiredCategory = definition?.targetCategory?.trim() ?? '';
+      if (resolution.target === undefined) {
+        return requiredCategory.length > 0
+          ? `关联条目已不在“${requiredCategory}”分类`
+          : '关联条目分类不匹配';
+      }
+      return requiredCategory.length > 0
+        ? `${resolution.target.label} · 当前: ${resolution.target.category || '未分类'} · 要求: ${requiredCategory}`
+        : `${resolution.target.label} · 分类不匹配`;
+    }
+    return resolution.target === undefined
+      ? '关联条目不存在'
+      : `${resolution.target.label} · ${resolution.target.category || '未分类'}`;
+  }
+
+  private entryReferenceDetailColor(entry: VaultEntry, field: CustomField): Resource {
+    const resolution = this.entryReferenceDetailResolution(entry, field);
+    if (
+      resolution === null ||
+      resolution.status === EntryReferenceStatus.EMPTY
+    ) {
+      return UI_MUTED;
+    }
+    return resolution.status === EntryReferenceStatus.RESOLVED ? UI_TEXT : UI_DANGER;
+  }
+
+  private entryReferenceRepairLabel(entry: VaultEntry, field: CustomField): string {
+    const resolution = this.entryReferenceDetailResolution(entry, field);
+    if (resolution === null || resolution.status === EntryReferenceStatus.EMPTY) {
+      return '选择关联';
+    }
+    if (resolution.status === EntryReferenceStatus.RESOLVED) {
+      return '更换关联';
+    }
+    return '修复关联';
+  }
+
+  private entryReferenceTargetCanOpen(entry: VaultEntry, field: CustomField): boolean {
+    const resolution = this.entryReferenceDetailResolution(entry, field);
+    if (resolution === null || resolution.target === undefined) {
+      return false;
+    }
+    return resolution.status !== EntryReferenceStatus.DELETED &&
+      resolution.status !== EntryReferenceStatus.MISSING;
+  }
+
+  private openEntryReferenceTarget(entry: VaultEntry, field: CustomField): void {
+    const target = this.entryReferenceDetailResolution(entry, field)?.target;
+    if (target === undefined) {
+      return;
+    }
+    this.searchQuery = '';
+    this.selectedTag = '';
+    this.focusCategory(target.category);
+    this.selectedEntryId = target.id;
+    if (this.topOverlayPanel === 'entryDetail') {
+      this.topOverlayPanel = 'none';
+    }
+    setTimeout(() => {
+      const targetIndex = this.filteredEntries().findIndex(
+        (candidate: VaultEntry) => candidate.id === target.id,
+      );
+      if (targetIndex >= 0) {
+        this.entryListFirstVisibleIndex = targetIndex;
+        this.entryListScroller.scrollToIndex(targetIndex);
+      }
+    }, 0);
+  }
+
+  private repairEntryReference(entry: VaultEntry, field: CustomField): void {
+    this.startEditEntry(entry);
+    this.openEntryReferenceSelectOverlay(field.id);
+  }
+
+  private prepareClearEntryReference(entry: VaultEntry, field: CustomField): void {
+    this.startEditEntry(entry);
+    this.updateDraftCustomFieldValue(field.id, '');
+    this.toast('关联已清除，保存后生效');
   }
 
   private toggleExportPanel(entry: VaultEntry): void {
@@ -4456,9 +5375,7 @@ struct Index {
   }
 
   private nextUiId(): string {
-    const ts = Date.now().toString(36);
-    const rand = Math.floor(Math.random() * 1000000).toString(36);
-    return `${ts}-${rand}`;
+    return util.generateRandomUUID().toLowerCase();
   }
 
   private remainingUnlockAttempts(): number {
@@ -4702,8 +5619,9 @@ struct Index {
       this.addSearchArray(values, payload.serverIds);
       this.addSearchAccounts(values, payload.accounts, false);
       entry.customFields.forEach((customField: CustomField) => {
-        values.push(customField.name);
-        values.push(customField.value);
+        this.safeCustomFieldSearchValues(entry, customField).forEach(
+          (value: string) => values.push(value),
+        );
       });
       return values;
     }
@@ -4808,8 +5726,9 @@ struct Index {
     if (field === 'custom') {
       const values: string[] = [];
       entry.customFields.forEach((customField: CustomField) => {
-        values.push(customField.name);
-        values.push(customField.value);
+        this.safeCustomFieldSearchValues(entry, customField).forEach(
+          (value: string) => values.push(value),
+        );
       });
       return values;
     }
@@ -4823,11 +5742,20 @@ struct Index {
       const customKey = this.normalizeSearchField(customField.name);
       if (customKey.length > 0 &&
           (customKey === key || customKey.includes(key) || key.includes(customKey))) {
-        values.push(customField.name);
-        values.push(customField.value);
+        this.safeCustomFieldSearchValues(entry, customField).forEach(
+          (value: string) => values.push(value),
+        );
       }
     });
     return values;
+  }
+
+  private safeCustomFieldSearchValues(entry: VaultEntry, field: CustomField): string[] {
+    return referenceSafeCustomFieldSearchValues(
+      field,
+      this.categoryTemplate(this.entryCategory(entry)),
+      this.entries,
+    );
   }
 
   private addSearchValue(values: string[], value: string | undefined): void {
@@ -4952,9 +5880,10 @@ struct Index {
 
   private entrySummary(entry: VaultEntry): string {
     const filledFields = entry.customFields
-      .filter((field: CustomField) => field.value.trim().length > 0)
+      .map((field: CustomField) => this.entrySummaryField(entry, field))
+      .filter((value: string) => value.length > 0)
       .slice(0, 3)
-      .map((field: CustomField) => `${field.name.trim().length > 0 ? field.name.trim() : '字段'}: ${field.value}`);
+      .map((value: string) => value);
     if (filledFields.length > 0) {
       return filledFields.join('  ');
     }
@@ -4963,6 +5892,24 @@ struct Index {
       .slice(0, 3)
       .map((field: CustomField) => field.name.trim());
     return templateFields.length > 0 ? `字段: ${templateFields.join('、')}` : '暂无字段数据';
+  }
+
+  private entrySummaryField(entry: VaultEntry, field: CustomField): string {
+    const name = field.name.trim().length > 0 ? field.name.trim() : '字段';
+    if (this.isEntryReferenceCustomField(entry, field)) {
+      const resolution = this.entryReferenceDetailResolution(entry, field);
+      if (resolution === null || resolution.status === EntryReferenceStatus.EMPTY) {
+        return `${name}: 未关联`;
+      }
+      if (resolution.status === EntryReferenceStatus.RESOLVED && resolution.target !== undefined) {
+        return `${name}: ${resolution.target.label}`;
+      }
+      return `${name}: 关联失效`;
+    }
+    if (this.isUnsupportedCustomField(entry, field)) {
+      return `${name}: 不支持的字段`;
+    }
+    return field.value.trim().length > 0 ? `${name}: ${field.value}` : '';
   }
 
   private toast(message: string): void {

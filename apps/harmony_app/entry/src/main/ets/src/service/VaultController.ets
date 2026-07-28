@@ -1,4 +1,5 @@
 import { Context } from '@kit.AbilityKit';
+import { util } from '@kit.ArkTS';
 import fs from '@ohos.file.fs';
 import {
   CategoryTemplate,
@@ -35,7 +36,12 @@ import {
   WebDavSyncClient,
 } from '../sync/RemoteSyncClient';
 import { VaultStore } from '../storage/VaultStore';
-import { propagateEntryReferenceCategoryRename } from '../domain/FieldReferenceResolver';
+import {
+  EntryReferenceResolution,
+  propagateEntryReferenceCategoryRename,
+  resolveEntryReference,
+} from '../domain/FieldReferenceResolver';
+import { categoryTemplateFieldsForUserSave } from '../domain/CategoryTemplateEditing';
 import {
   remapEntryReferenceCustomFields,
   resolvedEntryReferenceSearchValues,
@@ -304,12 +310,30 @@ export class VaultController {
     );
   }
 
+  categoryTemplateFieldHasStoredValue(category: string, templateFieldId: string): boolean {
+    this.ensureUnlocked();
+    return this.categoryTemplateFieldIdsWithStoredValues(category).has(templateFieldId);
+  }
+
   getEntries(): VaultEntry[] {
     const visible = this.snapshot.entries.filter(
       (entry: VaultEntry) => !entry.isDeleted,
     );
     visible.sort((a: VaultEntry, b: VaultEntry) => b.updatedAt - a.updatedAt);
     return visible.map((entry: VaultEntry) => deepCopyEntry(entry));
+  }
+
+  resolveEntryReferenceField(
+    field: CustomField,
+    category: string,
+  ): EntryReferenceResolution | null {
+    this.ensureUnlocked();
+    const categoryKey = category.trim().toLowerCase();
+    const template = this.snapshot.categoryTemplates.find(
+      (candidate: CategoryTemplate) =>
+        candidate.category.trim().toLowerCase() === categoryKey,
+    ) ?? null;
+    return resolveEntryReference(field, template, this.snapshot.entries);
   }
 
   getSyncSettings(): SyncSettings {
@@ -1098,6 +1122,29 @@ export class VaultController {
     await this.persist();
   }
 
+  async addCategoryWithTemplateFields(
+    category: string,
+    customFields: FieldTemplate[],
+  ): Promise<void> {
+    this.ensureUnlocked();
+    const clean = category.trim();
+    if (
+      clean.length === 0 ||
+      this.snapshot.categories.some(
+        (existing: string) => existing.trim().toLowerCase() === clean.toLowerCase(),
+      )
+    ) {
+      return;
+    }
+    this.snapshot.categories.push(clean);
+    this.snapshot.categories.sort((a: string, b: string) => a.localeCompare(b));
+    this.upsertCategoryTemplate(
+      clean,
+      categoryTemplateFieldsForUserSave([], customFields),
+    );
+    await this.persist();
+  }
+
   async applyCategoryPreset(
     category: string,
     preset: CategoryTypePreset,
@@ -1137,6 +1184,32 @@ export class VaultController {
       mergeEditableTemplateFields(
         existing?.fields ?? [],
         fieldsForCategoryPreset('', customFieldNames),
+      ),
+    );
+    await this.persist();
+  }
+
+  async saveCategoryTemplateFields(
+    category: string,
+    customFields: FieldTemplate[],
+  ): Promise<void> {
+    this.ensureUnlocked();
+    const clean = category.trim();
+    if (clean.length === 0) {
+      return;
+    }
+    this.mergeCategories([clean]);
+    const existing = this.snapshot.categoryTemplates.find(
+      (template: CategoryTemplate) =>
+        template.category.trim().toLowerCase() === clean.toLowerCase(),
+    );
+    const storedValueFieldIds = this.categoryTemplateFieldIdsWithStoredValues(clean);
+    this.upsertCategoryTemplate(
+      clean,
+      categoryTemplateFieldsForUserSave(
+        existing?.fields ?? [],
+        customFields,
+        storedValueFieldIds,
       ),
     );
     await this.persist();
@@ -1418,6 +1491,37 @@ export class VaultController {
 
   private entryCategory(entry: VaultEntry): string {
     return resolveEntryCategory(entry);
+  }
+
+  private categoryTemplateFieldIdsWithStoredValues(category: string): Set<string> {
+    const categoryKey = category.trim().toLowerCase();
+    const ids = new Set<string>();
+    const template = this.snapshot.categoryTemplates.find(
+      (candidate: CategoryTemplate) =>
+        candidate.category.trim().toLowerCase() === categoryKey,
+    );
+    if (template === undefined) {
+      return ids;
+    }
+    const templateFieldIds = new Set<string>();
+    template.fields.forEach((field: FieldTemplate) => {
+      if (field.id.length > 0) {
+        templateFieldIds.add(field.id);
+      }
+    });
+    this.snapshot.entries.forEach((entry: VaultEntry) => {
+      entry.customFields.forEach((field: CustomField) => {
+        if (
+          typeof field.templateFieldId === 'string' &&
+          field.templateFieldId.length > 0 &&
+          templateFieldIds.has(field.templateFieldId) &&
+          field.value.length > 0
+        ) {
+          ids.add(field.templateFieldId);
+        }
+      });
+    });
+    return ids;
   }
 
   private scheduleAutoSyncAfterUnlock(): void {
@@ -2982,7 +3086,7 @@ function normalizeCustomFields(fields: CustomField[] | undefined): CustomField[]
     }
     const id = canonicalIdString(field.id);
     const normalized: CustomField = {
-      id: id.length > 0 ? id : nextId(),
+      id: id.length > 0 ? id : nextFieldId(),
       templateFieldId,
       name,
       value,
@@ -3011,6 +3115,10 @@ function normalizeServiceAccounts(accounts: ServiceAccount[] | undefined): Servi
     });
   });
   return result;
+}
+
+function nextFieldId(): string {
+  return util.generateRandomUUID().toLowerCase();
 }
 
 function nextId(): string {

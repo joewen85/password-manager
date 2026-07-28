@@ -16,7 +16,7 @@ Multiple references, cascading deletion, automatic dependency export, and catego
 
 ## Rollout Status
 
-P1 implements lossless reading, writing, synchronization, and import/export of the additive fields on every maintained client. P2a adds the same pure reference resolver and safe display projection to Android, HarmonyOS, iOS, macOS, and the shared native core. P2b connects category-rename propagation and verifies that delete, restore, and category-move lifecycles retain stored references. P2c adds safe resolved-target search projection, copy-import ID remapping, and conflict-preservation coverage. Reference creation, editing, and detail display remain staged for the platform UI phases.
+P1 implements lossless reading, writing, synchronization, and import/export of the additive fields on every maintained client. P2a adds the same pure reference resolver and safe display projection to Android, HarmonyOS, iOS, macOS, and the shared native core. P2b connects category-rename propagation and verifies that delete, restore, and category-move lifecycles retain stored references. P2c adds safe resolved-target search projection, copy-import ID remapping, and conflict-preservation coverage. P3 exposes the first complete HarmonyOS UI vertical slice: category templates can select text or entry-reference fields and an optional target category; entry editing can select, replace, or clear a live matching target; details show the five resolution states with repair actions without displaying or copying the stored ID. Other platform UIs remain staged.
 
 ## JSON Shape
 
@@ -83,6 +83,7 @@ Scoped exports that carry field semantics use version 2:
 - A version-1 scoped export without `categoryTemplates` remains readable and is treated as having no included templates. New scoped exports use version 2.
 - Existing text values are never interpreted as references unless their template field explicitly has `valueType = entryReference`.
 - During template application, implementations match by non-empty `templateFieldId` first and fall back to the existing normalized field-name match for legacy data.
+- A custom field with a non-empty `templateFieldId` that does not match the current category template is treated as an opaque, unsupported field. Its stored value is preserved but must not be displayed, copied, edited, or indexed as ordinary text.
 - New writers include `valueType`, `targetCategory`, and `templateFieldId` so all maintained clients preserve the same shape.
 - The encrypted envelope and sync payload versions do not change because this is an additive change inside the encrypted vault JSON. Adding a snapshot version alone would not protect data: existing clients neither negotiate capabilities nor reject future versions before rewriting them.
 
@@ -91,7 +92,7 @@ There is no database schema in this repository. Vault data is stored as encrypte
 ### Identifier Rules
 
 - A non-empty `FieldTemplate.id` is an opaque, stable value. Implementations preserve it exactly and never recalculate it when the field name changes.
-- New user-created template fields use canonical lowercase UUID strings.
+- New user-created template fields and custom-field instances use canonical lowercase UUID strings.
 - Existing non-empty `VaultEntry.id` and `CustomField.id` values are also preserved as opaque strings. Decoders must not replace a non-UUID ID with a generated UUID.
 - The built-in name and notes fields keep well-known IDs defined by the shared contract.
 - When legacy input has no template field ID, all clients synthesize the same deterministic `template_<normalized-name>` fallback. Normalization lowercases the trimmed name, retains ASCII letters, digits, and CJK Unified Ideographs U+4E00 through U+9FFF, replaces every other run with one underscore, and trims leading/trailing underscores. If that normalized name is empty but the trimmed name is not, clients use `template_u_<utf8-hex>`, where `utf8-hex` is the lowercase hexadecimal encoding of the trimmed original name's UTF-8 bytes (for example, `😀` becomes `template_u_f09f9880` and `!!!` becomes `template_u_212121`). An empty original name uses `template_empty` defensively, although empty-named template fields are discarded during normalization.
@@ -106,6 +107,7 @@ There is no database schema in this repository. Vault data is stored as encrypte
 - Moving a referenced entry to another category does not silently clear the stored reference.
 - Soft-deleting a referenced entry does not cascade to the source entry.
 - An unresolved, deleted, or category-mismatched reference remains stored and is presented as unavailable until the user clears or replaces it.
+- Once a template field has a non-empty stored value, clients must not silently delete the field definition or change its `valueType` between `text` and `entryReference`. Renaming the field or changing an `entryReference` target-category constraint keeps the same stored-value semantics and stable field ID.
 - A source entry cannot expose secret fields from the referenced entry without the normal vault-unlocked access path.
 
 ## Resolution Semantics
@@ -132,6 +134,7 @@ When a category is deleted:
 - entries currently in that category follow the existing behavior and become uncategorized;
 - reference field definitions retain their target category text;
 - existing reference values are retained;
+- custom fields whose source template no longer exists become opaque unsupported fields, preserving their value without displaying, copying, editing, or indexing it as text;
 - the client reports the target category or referenced entry as unavailable rather than deleting data silently.
 
 Soft-deleting a referenced entry retains the source value and changes resolution to `deleted`. Restoring the same entry ID can return it to `resolved`. Moving the live target to another category, including the uncategorized state produced by category deletion, retains the source value and resolves to `categoryMismatch` while the configured category constraint is no longer satisfied.
@@ -143,6 +146,8 @@ Reference field definitions live in `categoryTemplates`. Reference values live i
 All maintained clients must preserve the three additive properties before any client exposes reference editing. A mixed deployment with an older client can otherwise rewrite a template with only `id` and `name`, so users must update every synchronized client before enabling reference fields.
 
 The current version-1 sync envelope has no peer-capability negotiation, and already-deployed clients cannot be made to reject a future payload retroactively. Therefore deployment uses an explicit minimum-client gate: P1 adds lossless readers/writers on every maintained client without exposing reference editing; reference UI can ship only after those compatible builds are available for every synchronized platform. Rollback to an earlier client after reference fields are created is unsupported and must be called out in release notes.
+
+The removed legacy Flutter application is not a maintained writer and does not implement the additive reference contract. Historical Flutter vaults may be migrated into a current maintained client, but after a reference field is created, an old Flutter build must not write to the same synchronized vault. Downgrading or resuming legacy Flutter writeback is unsupported.
 
 Concurrent edits continue to use the repository's existing snapshot, category-template, and entry version-vector rules. Entry content comparison includes `customFields`; keep-both conflict copies retain reference values and `templateFieldId`. This contract does not introduce a second conflict system.
 

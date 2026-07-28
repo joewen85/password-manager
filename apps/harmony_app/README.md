@@ -16,7 +16,7 @@
 - 已接入生物识别解锁：主密码凭据使用 HUKS AES-GCM 硬件密钥加密，解密需要 Face/Fingerprint 认证 token，新增生物特征后密钥失效。
 - 已支持单条、分类、全库 JSON 导出到用户选择位置并落盘为本地文件。
 - 已支持通过系统文件选择器导入单条/分类 JSON，并提供导入预览与冲突处理策略：保留副本、覆盖现有、跳过冲突。
-- 字段关联已支持无损数据契约、五态解析和生命周期传播；搜索仅加入成功解析目标的名称与分类，不索引原始引用 ID 或目标秘密。同批复制导入会在完整 ID 映射建立后重写内部引用，未包含目标时保留原 ID；同步比较和冲突副本保留完整引用字段。标签职责不变，当前仍不提供关联编辑或详情 UI，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
+- 字段关联已完成首个完整 UI 垂直切片：分类字段可选择“文本/关联条目”和可选目标分类，条目编辑可按约束选择、更换或清空目标，详情覆盖未选择、正常、缺失、已删除、分类不匹配五态并提供查看或修复入口。已有存值的模板字段禁止静默改型或删除；孤儿绑定和未知类型只读保留。候选、详情、摘要和搜索只使用安全目标投影，不显示、复制或索引原始引用 ID 与目标秘密；标签职责不变。格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
 - 已完成权限最小化声明：`ohos.permission.INTERNET`、`ohos.permission.ACCESS_BIOMETRIC`。
 - 已提供权限/隐私清单、签名指南、DevEco 编译与真机验证手册，以及 Flutter 旧数据到 Harmony 端的加密兼容回归清单。
 - 当前命令行预检与 `assembleHap` 已验证通过，产物为 `entry-default-unsigned.hap`。
@@ -102,8 +102,12 @@ apps/harmony_app/entry/build/default/outputs/default/entry-default-unsigned.hap
 11. 新增或删除系统生物特征后，验证旧生物解锁凭据失效并需要主密码重新启用。
 12. 执行单条、分类、全库 JSON 导出，确认文件写入用户选择的位置。
 13. 执行单条/分类 JSON 导入，确认预览、保留副本、覆盖现有、跳过冲突策略符合预期。
-14. 执行 WebDAV 或 S3 同步，确认 revision、冲突策略和同步日志符合 Flutter 端契约。
-15. 按 `docs/CRYPTO_COMPATIBILITY_REGRESSION_CHECKLIST.md` 验证 Flutter 历史数据可被 Harmony 端读取，Harmony 写回后 Flutter 仍可读取。
+14. 新建未使用的分类模板字段，分别验证“文本/关联条目”切换、“不限分类”和指定目标分类；字段一旦已有存值，删除和类型切换应被阻止，名称及关联范围仍可安全修改；未知字段类型应保持只读且配置不丢失。
+15. 新建或编辑条目，验证关联候选只包含未删除且符合目标分类的记录，并验证选择、更换、清空和重启后的数据保真。
+16. 分别制造未选择、正常、缺失、已删除、分类不匹配五态，验证详情文案、查看目标和修复入口。
+17. 用引用 ID、目标密码、Token、Secret 和备注搜索，确认列表、详情、摘要、搜索和剪贴板不泄露这些值。
+18. 执行 WebDAV 或 S3 同步，确认 revision、冲突策略和同步日志符合当前跨端契约。
+19. 按 `docs/CRYPTO_COMPATIBILITY_REGRESSION_CHECKLIST.md` 验证 Flutter 历史数据可迁移到 Harmony；创建字段关联后不得再使用旧 Flutter 写入同一保险库。
 
 ### 签名构建
 
@@ -199,6 +203,8 @@ hdc list targets
 - [x] 已实现 WebDAV/S3 同步状态机、revision、冲突策略和同步日志。
 - [x] 已实现单条、分类、全库 JSON 导出。
 - [x] 已实现单条/分类 JSON 导入、预览和冲突策略。
+- [x] 已实现字段关联分类配置、条目选择/清空、五态详情和修复入口。
+- [x] 字段关联专项合同测试、ArkTS 编译与 unsigned HAP 构建已通过。
 - [x] 已配置生产 bundleName/vendor metadata，并与 Android applicationId 对齐为 `life.devops.passwordmanager`。
 - [x] `harmony_preflight.sh` 和 HAP 构建脚本会校验生产 metadata 与无横杠 bundleName，防止回退到 example 或非法包名。
 - [x] HAP verifier 会结构化校验生产 metadata/权限，并区分 unsigned 与 signed 产物。
@@ -209,7 +215,7 @@ hdc list targets
 - [ ] signed HAP 已用发布签名材料生成。
 - [ ] signed HAP 已安装到 HarmonyOS 6 真机。
 - [ ] 真机冒烟回归完成并记录到结果模板。
-- [ ] Flutter 旧数据到 Harmony 端、Harmony 写回到 Flutter 的加密兼容回归完成。
+- [ ] Flutter 历史数据到 Harmony 的只读迁移兼容回归完成；已确认创建关联后不再使用旧 Flutter 写回。
 - [ ] WebDAV/S3 真实服务端到端同步验证完成。
 - [ ] AppGallery Connect metadata、隐私政策、权限说明、截图和发布说明已准备。
 - [ ] AppGallery 测试/灰度通道安装验证完成。
@@ -218,6 +224,7 @@ hdc list targets
 ### 当前验证结论
 
 - 命令行预检与 `assembleHap` 已通过，当前产物为 `entry-default-unsigned.hap`；HAP 内 `pack.info` / `module.json` 的生产 metadata、权限和 unsigned 状态已通过脚本校验。
+- 字段关联专项测试已覆盖模板类型/目标分类、已用字段改型/删除门禁、分类往返字段复用、UUID、未知/孤儿类型保真、候选过滤、五态解析，以及详情、摘要、搜索和剪贴板的原始 ID/目标秘密隔离。
 - 生物识别解锁代码已通过 ArkTS 编译；真机上的 Face/Fingerprint/HUKS token 流程仍需安装 signed HAP 后验证。
 - 当前环境 `hdc` 曾可用，但设备列表为空，尚不能执行安装与真机回归。
 - 当前签名配置仍缺少 `HARMONY_SIGN_PROFILE` 与 `HARMONY_SIGN_CERTPATH`，无法生成可安装 signed HAP。
@@ -240,9 +247,9 @@ This directory contains the native HarmonyOS 6 application target, used to build
 - Biometric unlock is implemented: the master-password credential is encrypted by a HUKS AES-GCM hardware key and decryption requires a Face/Fingerprint authentication token. The key is invalidated when new biometric credentials are enrolled.
 - Item, category, and full-vault JSON export to a user-selected local location is implemented.
 - Item/category JSON import through the system picker is implemented with import preview and conflict strategies: keep copy, overwrite existing, and skip conflicts.
-- Entry references now cover lossless persistence, five-state resolution, and lifecycle propagation. Search adds only a successfully resolved target label and category, never the raw reference ID or target secrets. Batch copy import rewrites internal references after the complete ID map is available and keeps IDs for targets not included; sync comparison and conflict copies retain complete reference fields. Tags remain unchanged; reference editing and detail UI are still not exposed. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
+- Entry references now provide the first complete UI vertical slice. Category fields can choose text or entry-reference behavior plus an optional target category; entry editing can select, replace, or clear a matching target; details cover empty, resolved, missing, deleted, and category-mismatch states with open and repair actions. Candidates, details, summaries, and search use only the safe target projection and never display, copy, or index the stored reference ID or target secrets. Tags remain unchanged. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
 - Permission declaration is minimized to `ohos.permission.INTERNET` and `ohos.permission.ACCESS_BIOMETRIC`.
-- Documentation exists for permissions/privacy review, signing, DevEco build and device validation, and Flutter-to-Harmony crypto compatibility regression.
+- Documentation exists for permissions/privacy review, signing, DevEco build and device validation, and historical Flutter-to-Harmony migration compatibility regression.
 - Command-line preflight and `assembleHap` have passed and produced `entry-default-unsigned.hap`.
 - The HAP build flow runs `scripts/harmony_verify_hap.sh` to validate production bundleName, vendor, version, and permissions from `pack.info` / `module.json`; unsigned builds reject accidentally signed artifacts, and signed builds require Harmony `hap-sign-tool` verification to pass.
 - Signed HAP generation, device regression, real sync-service compatibility validation, final permissions/privacy review, and AppGallery submission validation remain required before production release.
@@ -326,8 +333,12 @@ After changing the native HarmonyOS app, cover at least this flow:
 11. Add or remove an enrolled system biometric credential and verify the old biometric-unlock credential is invalidated and must be re-enabled with the master password.
 12. Export item, category, and full-vault JSON files and confirm they are written to the user-selected location.
 13. Import item/category JSON files and verify preview, keep-copy, overwrite-existing, and skip-conflict behavior.
-14. Run WebDAV or S3 sync and confirm revisions, conflict strategy, and sync logs match the Flutter contract.
-15. Use `docs/CRYPTO_COMPATIBILITY_REGRESSION_CHECKLIST.md` to verify Flutter historical data can be read by HarmonyOS and that Flutter can still read after HarmonyOS writes back.
+14. Create category template fields and verify text/reference switching, unrestricted and specific target categories, plus read-only preservation of unknown field types.
+15. Create or edit entries and verify candidates include only live matching records, then verify select, replace, clear, restart, and persistence behavior.
+16. Exercise empty, resolved, missing, deleted, and category-mismatch states and verify detail copy, open-target, and repair actions.
+17. Search for stored reference IDs and target passwords, tokens, secrets, and notes; verify lists, details, summaries, search, and clipboard never expose them.
+18. Run WebDAV or S3 sync and confirm revisions, conflict strategy, and sync logs match the current cross-platform contract.
+19. Use `docs/CRYPTO_COMPATIBILITY_REGRESSION_CHECKLIST.md` to verify historical Flutter data can migrate into HarmonyOS; after creating references, do not use a legacy Flutter build to write the same vault.
 
 ### Signed Build
 
@@ -417,6 +428,8 @@ Official entry points:
 - [x] WebDAV/S3 sync state machine, revisions, conflict strategy, and logs are implemented.
 - [x] Item, category, and full-vault JSON export are implemented.
 - [x] Item/category JSON import, preview, and conflict strategies are implemented.
+- [x] Entry-reference category configuration, target selection/clear, five-state details, and repair actions are implemented.
+- [x] Entry-reference UI contract tests, ArkTS compilation, and unsigned HAP build have passed.
 - [x] Production bundleName/vendor metadata is configured and aligned with the Android applicationId as `life.devops.passwordmanager`.
 - [x] `harmony_preflight.sh` and the HAP build script verify production metadata and a hyphen-free bundleName so example or invalid package names cannot regress.
 - [x] The HAP verifier structurally validates production metadata/permissions and distinguishes unsigned from signed artifacts.
@@ -426,7 +439,7 @@ Official entry points:
 - [ ] Signed HAP is generated with release signing materials.
 - [ ] Signed HAP is installed on a HarmonyOS 6 device.
 - [ ] Device smoke regression is completed and recorded in the result template.
-- [ ] Flutter historical data to HarmonyOS, then HarmonyOS writeback to Flutter, is validated.
+- [ ] Read-only migration compatibility from historical Flutter data to HarmonyOS is validated, and legacy Flutter writeback is retired once references exist.
 - [ ] Real WebDAV/S3 end-to-end sync validation is complete.
 - [ ] AppGallery Connect metadata, privacy policy, permissions explanation, screenshots, and release notes are ready.
 - [ ] AppGallery testing/staged channel install validation is complete.
@@ -435,6 +448,7 @@ Official entry points:
 ### Current Verification Status
 
 - Command-line preflight and `assembleHap` have passed, with `entry-default-unsigned.hap` recorded as the current artifact; the HAP `pack.info` / `module.json` production metadata, permissions, and unsigned state are verified by script.
+- Entry-reference tests cover template type/target-category editing, unknown-type preservation, candidate filtering, five-state resolution, and raw-ID/target-secret isolation across details, summaries, search, and clipboard paths.
 - Biometric unlock code has passed ArkTS compilation; the device Face/Fingerprint/HUKS token flow still requires signed-HAP installation validation.
 - `hdc` was previously available in the local environment, but the device list was empty, so install and device regression could not be run.
 - Signing config is still missing `HARMONY_SIGN_PROFILE` and `HARMONY_SIGN_CERTPATH`, so an installable signed HAP cannot be generated yet.
