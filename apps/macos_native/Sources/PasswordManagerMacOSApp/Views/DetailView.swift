@@ -3,9 +3,13 @@ import SwiftUI
 
 struct DetailView: View {
     var entry: VaultEntry?
+    var entries: [VaultEntry] = []
+    var categoryTemplates: [CategoryTemplate] = []
     var editEntry: (VaultEntry) -> Void
     var deleteEntry: (VaultEntry) -> Void
     var exportEntry: (VaultEntry) -> Void
+    var openEntryReference: (VaultEntry) -> Void = { _ in }
+    var updateEntryReference: (VaultEntry, String, String) -> Void = { _, _, _ in }
 
     var body: some View {
         Group {
@@ -36,7 +40,13 @@ struct DetailView: View {
                                         PayloadFieldsView(payload: entry.payload)
                                     }
                                     if !entry.customFields.isEmpty {
-                                        CustomFieldsView(fields: entry.customFields)
+                                        CustomFieldsView(
+                                            entry: entry,
+                                            template: categoryTemplate(for: entry),
+                                            entries: entries,
+                                            openEntryReference: openEntryReference,
+                                            updateEntryReference: updateEntryReference
+                                        )
                                     }
                                 }
                             }
@@ -52,6 +62,14 @@ struct DetailView: View {
                     Text(L10n.t("Entry details and actions appear here."))
                 }
             }
+        }
+    }
+
+    private func categoryTemplate(for entry: VaultEntry) -> CategoryTemplate? {
+        let category = entry.payload.category.trimmingCharacters(in: .whitespacesAndNewlines)
+        return categoryTemplates.first {
+            $0.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(category) == .orderedSame
         }
     }
 }
@@ -154,14 +172,145 @@ private struct PayloadFieldRow: Identifiable {
 }
 
 private struct CustomFieldsView: View {
-    var fields: [CustomField]
+    let entry: VaultEntry
+    let template: CategoryTemplate?
+    let entries: [VaultEntry]
+    let openEntryReference: (VaultEntry) -> Void
+    let updateEntryReference: (VaultEntry, String, String) -> Void
 
     var body: some View {
-        Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 12) {
-            ForEach(fields) { field in
-                FieldRow(field.name, field.value)
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(entry.customFields) { field in
+                switch customFieldSemantics(field: field, template: template).semantic {
+                case .text:
+                    if let value = exposedCustomFieldValue(field: field, template: template) {
+                        Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 12) {
+                            FieldRow(field.name, value)
+                        }
+                    }
+                case .entryReference:
+                    if let template {
+                        EntryReferenceDetailRow(
+                            entry: entry,
+                            field: field,
+                            template: template,
+                            entries: entries,
+                            openEntryReference: openEntryReference,
+                            updateEntryReference: updateEntryReference
+                        )
+                    }
+                case .unsupported:
+                    UnsupportedCustomFieldRow(name: field.name)
+                }
             }
         }
+    }
+}
+
+private struct UnsupportedCustomFieldRow: View {
+    let name: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(name.isEmpty ? L10n.t("Unsupported Field") : name)
+                .font(.callout.weight(.medium))
+            Label(
+                L10n.t("Unsupported field value is preserved read-only."),
+                systemImage: "exclamationmark.shield"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
+    }
+}
+
+private struct EntryReferenceDetailRow: View {
+    let entry: VaultEntry
+    let field: CustomField
+    let template: CategoryTemplate
+    let entries: [VaultEntry]
+    let openEntryReference: (VaultEntry) -> Void
+    let updateEntryReference: (VaultEntry, String, String) -> Void
+
+    @State private var isSelecting = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(field.name.isEmpty ? L10n.t("Custom Field") : field.name)
+                    .font(.callout.weight(.medium))
+                Spacer()
+                Label(L10n.t("Entry Reference"), systemImage: "link")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(entryReferenceStatusText(resolution))
+                .font(.callout)
+                .foregroundStyle(isFailure ? .red : .primary)
+
+            HStack {
+                if let liveTarget {
+                    Button {
+                        openEntryReference(liveTarget)
+                    } label: {
+                        Label(L10n.t("View Entry"), systemImage: "arrow.right.circle")
+                    }
+                }
+
+                Button {
+                    isSelecting = true
+                } label: {
+                    Label(entryReferenceActionTitle(resolution), systemImage: "link.badge.plus")
+                }
+                .buttonStyle(.borderedProminent)
+
+                if !field.value.isEmpty {
+                    Button {
+                        updateEntryReference(entry, field.id, "")
+                    } label: {
+                        Label(L10n.t("Clear Reference"), systemImage: "xmark.circle")
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
+        .sheet(isPresented: $isSelecting) {
+            EntryReferencePickerView(
+                fieldName: field.name,
+                currentValue: field.value,
+                targetCategory: targetCategory,
+                entries: entries,
+                onSelect: { targetID in
+                    updateEntryReference(entry, field.id, targetID)
+                    isSelecting = false
+                },
+                onCancel: { isSelecting = false }
+            )
+        }
+    }
+
+    private var resolution: EntryReferenceResolution? {
+        resolveEntryReference(field: field, template: template, entries: entries)
+    }
+
+    private var targetCategory: String {
+        customFieldSemantics(field: field, template: template)
+            .templateField?.targetCategory ?? ""
+    }
+
+    private var liveTarget: VaultEntry? {
+        guard resolution?.status == .resolved, let targetID = resolution?.target?.id else { return nil }
+        return entries.first { $0.id == targetID && !$0.isDeleted }
+    }
+
+    private var isFailure: Bool {
+        resolution?.status == .missing
+            || resolution?.status == .deleted
+            || resolution?.status == .categoryMismatch
     }
 }
 

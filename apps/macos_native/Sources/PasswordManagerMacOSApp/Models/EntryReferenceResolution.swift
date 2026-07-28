@@ -8,6 +8,22 @@ enum EntryReferenceStatus: Equatable, Sendable {
     case categoryMismatch
 }
 
+enum CustomFieldSemantic: Equatable, Sendable {
+    case text
+    case entryReference
+    case unsupported
+}
+
+struct CustomFieldSemantics: Equatable, Sendable {
+    let semantic: CustomFieldSemantic
+    let templateField: FieldTemplate?
+
+    init(semantic: CustomFieldSemantic, templateField: FieldTemplate? = nil) {
+        self.semantic = semantic
+        self.templateField = templateField
+    }
+}
+
 struct EntryReferenceTarget: Equatable, Sendable {
     let id: String
     let label: String
@@ -22,6 +38,75 @@ struct EntryReferenceResolution: Equatable, Sendable {
         self.status = status
         self.target = target
     }
+}
+
+struct EntryReferenceCandidate: Identifiable, Equatable, Sendable {
+    let id: String
+    let label: String
+    let category: String
+}
+
+func customFieldSemantics(
+    field: CustomField,
+    template: CategoryTemplate?
+) -> CustomFieldSemantics {
+    guard let templateField = matchingReferenceTemplateField(field: field, template: template) else {
+        return CustomFieldSemantics(
+            semantic: field.templateFieldId.isEmpty ? .text : .unsupported
+        )
+    }
+    let semantic: CustomFieldSemantic
+    switch templateField.normalizedValueType {
+    case "text":
+        semantic = .text
+    case "entryReference":
+        semantic = .entryReference
+    default:
+        semantic = .unsupported
+    }
+    return CustomFieldSemantics(semantic: semantic, templateField: templateField)
+}
+
+func exposedCustomFieldValue(
+    field: CustomField,
+    template: CategoryTemplate?
+) -> String? {
+    customFieldSemantics(field: field, template: template).semantic == .text
+        ? field.value
+        : nil
+}
+
+func entryReferenceCandidates(
+    entries: [VaultEntry],
+    targetCategory: String,
+    query: String = ""
+) -> [EntryReferenceCandidate] {
+    let category = targetCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+    let searchQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    return entries
+        .lazy
+        .filter { !$0.isDeleted }
+        .map {
+            EntryReferenceCandidate(
+                id: $0.id,
+                label: $0.label,
+                category: $0.payload.category.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+        .filter {
+            category.isEmpty || $0.category.caseInsensitiveCompare(category) == .orderedSame
+        }
+        .filter {
+            searchQuery.isEmpty
+                || $0.label.localizedCaseInsensitiveContains(searchQuery)
+                || $0.category.localizedCaseInsensitiveContains(searchQuery)
+        }
+        .sorted {
+            let labelComparison = $0.label.localizedCaseInsensitiveCompare($1.label)
+            if labelComparison != .orderedSame { return labelComparison == .orderedAscending }
+            if $0.label != $1.label { return $0.label < $1.label }
+            return $0.id < $1.id
+        }
 }
 
 func propagateEntryReferenceCategoryRename(
@@ -54,8 +139,9 @@ func resolveEntryReference(
     template: CategoryTemplate?,
     entries: [VaultEntry]
 ) -> EntryReferenceResolution? {
-    guard let templateField = matchingReferenceTemplateField(field: field, template: template),
-          templateField.valueType == "entryReference" else {
+    let semantics = customFieldSemantics(field: field, template: template)
+    guard semantics.semantic == .entryReference,
+          let templateField = semantics.templateField else {
         return nil
     }
     guard !field.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -89,22 +175,29 @@ extension VaultEntry {
     ) -> VaultEntry {
         var projectedEntry = self
         projectedEntry.customFields = customFields.map { field in
-            guard let resolution = resolveEntryReference(
-                field: field,
-                template: template,
-                entries: entries
-            ) else {
+            switch customFieldSemantics(field: field, template: template).semantic {
+            case .text:
                 return field
-            }
-            var projectedField = field
-            if resolution.status == .resolved, let target = resolution.target {
-                projectedField.value = [target.label, target.category]
-                    .filter { !$0.isEmpty }
-                    .joined(separator: " ")
-            } else {
+            case .unsupported:
+                var projectedField = field
                 projectedField.value = ""
+                return projectedField
+            case .entryReference:
+                let resolution = resolveEntryReference(
+                    field: field,
+                    template: template,
+                    entries: entries
+                )
+                var projectedField = field
+                if resolution?.status == .resolved, let target = resolution?.target {
+                    projectedField.value = [target.label, target.category]
+                        .filter { !$0.isEmpty }
+                        .joined(separator: " ")
+                } else {
+                    projectedField.value = ""
+                }
+                return projectedField
             }
-            return projectedField
         }
         return projectedEntry
     }
@@ -124,6 +217,12 @@ extension VaultEntry {
             return remappedField
         }
         return remappedEntry
+    }
+}
+
+extension FieldTemplate {
+    var normalizedValueType: String {
+        valueType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "text" : valueType
     }
 }
 

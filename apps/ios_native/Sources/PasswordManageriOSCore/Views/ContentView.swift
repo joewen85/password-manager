@@ -10,10 +10,12 @@ struct ContentView: View {
     @State private var isPresentingScopedImport = false
     @State private var isPresentingSettings = false
     @State private var isPresentingCategoryCreation = false
+    @State private var isPresentingCategoryTemplateEditor = false
     @State private var importFileName = ""
     @State private var scopedImportFileName = ""
     @State private var importStrategy: ImportConflictStrategy = .keepCopy
     @State private var editingEntry: VaultEntry?
+    @State private var editingCategoryTemplate = ""
     @State private var exportingEntry: VaultEntry?
 
     var body: some View {
@@ -29,6 +31,10 @@ struct ContentView: View {
                     exportSnapshot: store.exportSnapshot,
                     importSnapshot: { isPresentingImport = true },
                     exportCategory: store.exportCategory,
+                    editCategoryFields: { category in
+                        editingCategoryTemplate = category
+                        isPresentingCategoryTemplateEditor = true
+                    },
                     syncNow: store.syncNow,
                     createCategory: { isPresentingCategoryCreation = true },
                     showSettings: { isPresentingSettings = true }
@@ -41,9 +47,23 @@ struct ContentView: View {
             } detail: {
                 DetailView(
                     entry: selectedEntry,
+                    entries: store.entries,
+                    categoryTemplates: store.categoryTemplates,
                     editEntry: beginEditing,
                     deleteEntry: deleteSelectedEntry,
-                    exportEntry: { exportingEntry = $0 }
+                    exportEntry: { exportingEntry = $0 },
+                    openReference: { target in
+                        filter = .all
+                        searchText = ""
+                        selection = target.id
+                    },
+                    updateReference: { entry, fieldID, targetID in
+                        _ = store.updateEntryReference(
+                            entryID: entry.id,
+                            fieldID: fieldID,
+                            targetID: targetID
+                        )
+                    }
                 )
             }
             .sheet(isPresented: $isPresentingEditor) {
@@ -52,15 +72,19 @@ struct ContentView: View {
                     initialCategory: currentCategoryFilter,
                     categories: store.categories,
                     categoryTemplates: store.categoryTemplates,
+                    entries: store.entries,
                     tags: store.tags,
                     onCreateCategory: { category, preset, customFieldNames in
                         store.addCategory(category, preset: preset, customFieldNames: customFieldNames)
                     },
                     onCreateTag: store.addTag,
                     onSave: { draft in
-                        store.upsert(draft, editing: editingEntry)
+                        guard store.upsert(draft, editing: editingEntry) else {
+                            return store.statusMessage ?? "Entry could not be saved."
+                        }
                         selection = store.entries.sorted { $0.updatedAt > $1.updatedAt }.first?.id
                         isPresentingEditor = false
+                        return nil
                     },
                     onCancel: {
                         isPresentingEditor = false
@@ -89,6 +113,12 @@ struct ContentView: View {
                 CategoryCreationView(store: store) {
                     validateCurrentFilter()
                 }
+            }
+            .sheet(isPresented: $isPresentingCategoryTemplateEditor) {
+                CategoryTemplateEditorView(
+                    store: store,
+                    category: editingCategoryTemplate
+                )
             }
             .sheet(isPresented: $isPresentingImport) {
                 VStack(alignment: .leading, spacing: 16) {

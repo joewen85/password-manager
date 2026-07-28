@@ -440,10 +440,11 @@ struct FieldReferenceContractTests {
             CustomField(
                 id: "harmony-field:owner",
                 templateFieldId: "template_owner",
-                name: "Owner",
+                name: "Renamed Owner",
                 value: "harmony-entry:account"
             )
         ])
+        #expect(draft.protectedCustomFieldIds.isEmpty)
     }
 
     @Test("Entry drafts preserve protected template fields across editing and category changes")
@@ -485,24 +486,29 @@ struct FieldReferenceContractTests {
         draft.customFields = [referenceField, textField, unknownField]
         draft.configureTemplateFields(templates)
 
-        #expect(draft.protectedCustomFieldIds == [referenceField.id, unknownField.id])
+        #expect(draft.protectedCustomFieldIds == [unknownField.id])
         let textIndex = try #require(draft.customFields.firstIndex { $0.id == textField.id })
         draft.customFields[textIndex].value = " edited text "
         let normalized = draft.normalizedCustomFields
         #expect(normalized.first { $0.id == textField.id }?.value == " edited text ")
-        #expect(normalized.first { $0.id == referenceField.id } == referenceField)
+        #expect(normalized.first { $0.id == referenceField.id } == CustomField(
+            id: referenceField.id,
+            templateFieldId: referenceField.templateFieldId,
+            name: "Owner",
+            value: referenceField.value
+        ))
         #expect(normalized.first { $0.id == unknownField.id } == unknownField)
 
         draft.configureTemplateFields(templates)
         draft.configureTemplateFields([FieldTemplate(id: "template_other", name: "Other")])
         draft.configureTemplateFields(templates)
 
-        #expect(draft.normalizedCustomFields.filter { $0.id == referenceField.id } == [referenceField])
+        #expect(draft.normalizedCustomFields.filter { $0.id == referenceField.id }.map(\.value) == [referenceField.value])
         #expect(draft.normalizedCustomFields.filter { $0.id == unknownField.id } == [unknownField])
 
         var newDraft = EntryDraft()
         newDraft.configureTemplateFields(templates)
-        #expect(newDraft.customFields.map(\.templateFieldId) == [textTemplate.id])
+        #expect(newDraft.customFields.map(\.templateFieldId) == [textTemplate.id, referenceTemplate.id])
         #expect(newDraft.protectedCustomFieldIds.isEmpty)
     }
 

@@ -69,7 +69,8 @@ struct TaxonomyManagementView: View {
                                     Button {
                                         fieldEditRequest = CategoryFieldsEditRequest(
                                             category: value,
-                                            fields: editableFields(for: value)
+                                            fields: editableFields(for: value),
+                                            storedValueFieldIDs: store.categoryTemplateStoredValueFieldIDs(value)
                                         )
                                     } label: {
                                         Label(L10n.t("Fields"), systemImage: "square.and.pencil")
@@ -101,7 +102,8 @@ struct TaxonomyManagementView: View {
                                     Button {
                                         fieldEditRequest = CategoryFieldsEditRequest(
                                             category: value,
-                                            fields: editableFields(for: value)
+                                            fields: editableFields(for: value),
+                                            storedValueFieldIDs: store.categoryTemplateStoredValueFieldIDs(value)
                                         )
                                     } label: {
                                         Label(L10n.t("Fields"), systemImage: "square.and.pencil")
@@ -153,7 +155,7 @@ struct TaxonomyManagementView: View {
             CategoryFieldsEditView(store: store, request: request) {
                 onChange()
             }
-            .frame(width: 460, height: 360)
+            .frame(width: 500, height: 520)
         }
         .alert(item: $deleteRequest) { request in
             Alert(
@@ -167,17 +169,24 @@ struct TaxonomyManagementView: View {
         }
     }
 
-    private func editableFields(for category: String) -> [CustomField] {
+    private func editableFields(for category: String) -> [FieldTemplate] {
         let fields = store.categoryTemplates
             .first { $0.category.compare(category, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }?
-            .fields ?? CategoryTemplate.defaultCategoryFields()
-        return fields
-            .filter {
-                $0.valueType == "text"
-                    && $0.name.compare("名称", options: [.caseInsensitive, .diacriticInsensitive]) != .orderedSame
+            .fields
+            ?? CategoryTemplate.defaultCategoryFields()
+        return fields.filter {
+                $0.name.compare("名称", options: [.caseInsensitive, .diacriticInsensitive]) != .orderedSame
             }
-            .map {
-                CustomField(templateFieldId: $0.id, name: $0.name)
+            .map { field in
+                var editable = field
+                if field.normalizedValueType == "text" {
+                    editable.valueType = "text"
+                    editable.targetCategory = ""
+                } else if field.normalizedValueType == "entryReference" {
+                    editable.valueType = "entryReference"
+                    editable.targetCategory = field.targetCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                return editable
             }
     }
 
@@ -283,7 +292,8 @@ private struct TaxonomyEditRequest: Identifiable {
 
 private struct CategoryFieldsEditRequest: Identifiable {
     let category: String
-    let fields: [CustomField]
+    let fields: [FieldTemplate]
+    let storedValueFieldIDs: Set<String>
 
     var id: String { category }
 }
@@ -291,14 +301,16 @@ private struct CategoryFieldsEditRequest: Identifiable {
 private struct CategoryFieldsEditView: View {
     @Bindable var store: VaultStore
     let category: String
+    let storedValueFieldIDs: Set<String>
     var onSaved: () -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var fields: [CustomField]
+    @State private var fields: [FieldTemplate]
 
     init(store: VaultStore, request: CategoryFieldsEditRequest, onSaved: @escaping () -> Void) {
         self.store = store
         self.category = request.category
+        self.storedValueFieldIDs = request.storedValueFieldIDs
         self.onSaved = onSaved
         _fields = State(initialValue: request.fields)
     }
@@ -307,7 +319,11 @@ private struct CategoryFieldsEditView: View {
         NavigationStack {
             Form {
                 Section(category) {
-                    CategoryTemplateFieldNameEditor(fields: $fields)
+                    CategoryTemplateFieldEditor(
+                        fields: $fields,
+                        categories: store.categories,
+                        storedValueFieldIDs: storedValueFieldIDs
+                    )
                 }
             }
             .formStyle(.grouped)
@@ -327,9 +343,102 @@ private struct CategoryFieldsEditView: View {
     }
 
     private func save() {
-        guard store.updateCategoryTemplate(category, customFields: fields) else { return }
+        guard store.updateCategoryTemplate(category, fields: fields) else { return }
         onSaved()
         dismiss()
+    }
+}
+
+private struct CategoryTemplateFieldEditor: View {
+    @Binding var fields: [FieldTemplate]
+    let categories: [String]
+    let storedValueFieldIDs: Set<String>
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(fields.indices, id: \.self) { index in
+                let isKnown = fields[index].normalizedValueType == "text"
+                    || fields[index].normalizedValueType == "entryReference"
+                let isLocked = storedValueFieldIDs.contains(fields[index].id)
+                VStack(alignment: .leading, spacing: 8) {
+                    if isKnown {
+                        TextField(L10n.t("Field Name"), text: $fields[index].name)
+                            .textFieldStyle(.roundedBorder)
+
+                        Picker(L10n.t("Field Type"), selection: $fields[index].valueType) {
+                            Text(L10n.t("Text")).tag("text")
+                            Text(L10n.t("Entry Reference")).tag("entryReference")
+                        }
+                        .pickerStyle(.segmented)
+                        .disabled(isLocked)
+
+                        if fields[index].normalizedValueType == "entryReference" {
+                            Picker(L10n.t("Target Category"), selection: $fields[index].targetCategory) {
+                                Text(L10n.t("Any Category")).tag("")
+                                if !fields[index].targetCategory.isEmpty,
+                                   !categories.contains(where: {
+                                       $0.caseInsensitiveCompare(fields[index].targetCategory) == .orderedSame
+                                   }) {
+                                    Text(fields[index].targetCategory).tag(fields[index].targetCategory)
+                                }
+                                ForEach(categories, id: \.self) { category in
+                                    Text(category).tag(category)
+                                }
+                            }
+                        }
+
+                        if isLocked {
+                            Label(
+                                L10n.t("Saved values lock this field's type and deletion."),
+                                systemImage: "lock.fill"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text(fields[index].name.isEmpty ? L10n.t("Unsupported Field") : fields[index].name)
+                            .font(.callout.weight(.medium))
+                        Text(L10n.t("Unsupported field metadata and values are preserved read-only."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if isKnown && !isLocked {
+                        HStack {
+                            Spacer()
+                            Button(role: .destructive) {
+                                fields.remove(at: index)
+                            } label: {
+                                Label(L10n.t("Remove Field"), systemImage: "trash")
+                            }
+                            .labelStyle(.iconOnly)
+                            .help(L10n.t("Remove Field"))
+                        }
+                    }
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                )
+                .onChange(of: fields[index].valueType) { _, valueType in
+                    if valueType == "text" {
+                        fields[index].targetCategory = ""
+                    }
+                }
+            }
+
+            Button {
+                fields.append(FieldTemplate(name: ""))
+            } label: {
+                Label(L10n.t("Add Field"), systemImage: "plus")
+            }
+            .controlSize(.small)
+        }
     }
 }
 

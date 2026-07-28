@@ -24,6 +24,12 @@ struct EntryReferenceResolution: Equatable, Sendable {
     }
 }
 
+struct EntryReferenceCandidate: Identifiable, Equatable, Sendable {
+    let id: String
+    let label: String
+    let category: String
+}
+
 func propagateEntryReferenceCategoryRename(
     templates: [CategoryTemplate],
     from oldCategory: String,
@@ -89,22 +95,29 @@ extension VaultEntry {
     ) -> VaultEntry {
         var projectedEntry = self
         projectedEntry.customFields = customFields.map { field in
-            guard let resolution = resolveEntryReference(
-                field: field,
-                template: template,
-                entries: entries
-            ) else {
+            switch customFieldSemantics(field: field, template: template).semantic {
+            case .text:
                 return field
-            }
-            var projectedField = field
-            if resolution.status == .resolved, let target = resolution.target {
-                projectedField.value = [target.label, target.category]
-                    .filter { !$0.isEmpty }
-                    .joined(separator: " ")
-            } else {
+            case .unsupported:
+                var projectedField = field
                 projectedField.value = ""
+                return projectedField
+            case .entryReference:
+                let resolution = resolveEntryReference(
+                    field: field,
+                    template: template,
+                    entries: entries
+                )
+                var projectedField = field
+                if resolution?.status == .resolved, let target = resolution?.target {
+                    projectedField.value = [target.label, target.category]
+                        .filter { !$0.isEmpty }
+                        .joined(separator: " ")
+                } else {
+                    projectedField.value = ""
+                }
+                return projectedField
             }
-            return projectedField
         }
         return projectedEntry
     }
@@ -125,6 +138,40 @@ extension VaultEntry {
         }
         return remappedEntry
     }
+}
+
+func entryReferenceCandidates(
+    entries: [VaultEntry],
+    targetCategory: String,
+    query: String = ""
+) -> [EntryReferenceCandidate] {
+    let normalizedCategory = targetCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    return entries
+        .lazy
+        .filter { !$0.isDeleted }
+        .map {
+            EntryReferenceCandidate(
+                id: $0.id,
+                label: $0.label,
+                category: $0.payload.category.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+        .filter {
+            normalizedCategory.isEmpty
+                || $0.category.caseInsensitiveCompare(normalizedCategory) == .orderedSame
+        }
+        .filter {
+            normalizedQuery.isEmpty
+                || $0.label.localizedCaseInsensitiveContains(normalizedQuery)
+                || $0.category.localizedCaseInsensitiveContains(normalizedQuery)
+        }
+        .sorted {
+            let labelOrder = $0.label.localizedCaseInsensitiveCompare($1.label)
+            if labelOrder != .orderedSame { return labelOrder == .orderedAscending }
+            if $0.label != $1.label { return $0.label < $1.label }
+            return $0.id < $1.id
+        }
 }
 
 private func matchingReferenceTemplateField(

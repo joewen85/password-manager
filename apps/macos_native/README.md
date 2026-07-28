@@ -9,7 +9,7 @@
 - 使用 SwiftUI 和 macOS 26 SDK 构建 macOS 应用，包含 `WindowGroup`、原生侧边栏/列表/详情布局、菜单命令和 Settings 场景；搜索和工具栏采用 macOS 26 / Liquid Glass 时代的系统级 `NavigationSplitView`、`searchToolbarBehavior` 和 `ToolbarSpacer` 结构。
 - 首个原生等价切片：初始化/解锁保险库、锁定保险库、条目列表、搜索/筛选、详情页 Overview/Fields 分段、详情字段复制/敏感字段显示、新增/编辑/删除 credential/server/service 条目、分类和标签字段、分类/标签管理、清空保险库数据、基于 TOTP 的二次验证解锁、Keychain + Touch ID 解锁、手动同步入口、本地加密备份、完整快照 JSON 导入/导出。
 - 数据模型对齐现有共享契约：`credential`、`server`、`service`、PBKDF 元数据记录、AES-GCM payload 记录形状、软删除字段、删除 tombstone 时间戳、版本映射和 `updatedBy`。
-- 字段关联已支持无损数据契约、五态解析和生命周期传播；搜索仅加入成功解析目标的名称与分类，不索引原始引用 ID 或目标秘密。同批复制导入会先分配目标 ID 再重写内部引用，未包含目标时保留原 ID；同步比较和冲突副本保留引用字段及 `templateFieldId`。标签职责不变，当前仍不提供关联编辑或详情 UI，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
+- 字段关联已完成 macOS 原生 UI 垂直切片：分类模板可配置文本或单条条目关联及目标分类；已有存储值的字段不可删除或改型，但仍可改名和调整目标分类，未知字段类型只读保留。条目编辑器可按目标分类选择、更换或清空 live 条目；详情展示 empty、resolved、missing、deleted、categoryMismatch 五态，并支持查看目标、修复和清空。搜索只加入成功解析目标的名称与分类，不索引或展示原始引用 ID、未知/孤儿字段值或目标秘密。标签继续承担宽松分组、搜索和筛选，字段关联承担精确单条引用；格式和生命周期规则见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
 - 已实现本地加密文件持久化。应用会将加密后的保险库 envelope 写入 Application Support，并使用 PBKDF2-SHA256 验证主密码、使用 AES-256-GCM 加密 payload。
 - PBKDF2 默认参数与 Dart package 契约对齐：新建 macOS 原生保险库使用 600000 次迭代。
 - 单元测试已覆盖 PBKDF2 verifier 确定性、AES-GCM 往返、篡改拒绝、TOTP 生成/验证、加密 envelope 持久化不泄露明文 secret、恢复最新加密备份、备份保留策略、同步合并数据层，以及解密由 `packages/crypto` 生成的多条目 fixture。
@@ -131,6 +131,10 @@ swift test
 - 同步引擎覆盖无远端时上传本地 payload、远端支配时只应用不上传、并发冲突时合并并上传下一 revision。
 - 同步敏感字段 redaction、Keychain secret store 边界、普通配置文件无明文同步 secret、in-memory secret store 生命周期，以及 `VaultStore` 同步设置持久化。
 - `VaultStore.syncNow(client:)` 会通过同步引擎上传本地快照、更新 revision/status/logs，并把结果写回加密保险库。
+- 分类字段模板编辑覆盖文本/关联条目类型、目标分类、稳定小写 UUID 字段 ID、未知类型无损保留，以及已有值字段的删除/改型门禁。
+- 条目关联编辑覆盖 A→A、A→B→A 和跨分类复用相同 legacy 模板 ID；切换分类不会串用其他分类的字段实例，引用 ID 按不透明字符串原样保存。
+- 详情和搜索覆盖引用五态、安全目标投影、查看/修复/清空，以及未知/孤儿字段不展示、不复制、不索引原值。
+- 关联候选只包含 live 条目，并按目标分类过滤；候选搜索仅使用条目名称与分类，Store 保存边界会再次校验目标存在、未删除且分类匹配。
 
 有意修改 Dart 加密契约后，重新生成 Dart crypto fixture：
 
@@ -221,6 +225,8 @@ EXPECTED_SIGNING_CERT_SHA256=AA:BB:CC:... \
 ```
 
 privacy manifest 当前声明不追踪、不列出 tracking domains、不声明数据收集或 required-reason API。若后续加入 telemetry、第三方 SDK、账号系统、剪贴板/磁盘空间/文件时间戳等 required-reason API 使用，需要同步更新 `ReleaseSupport/PrivacyInfo.xcprivacy` 和 App Store Connect 隐私信息。
+
+字段关联 UI 只读取本地加密快照中已有的条目 ID、名称和分类，不增加网络端点、系统权限、数据采集或追踪行为，因此本次无需修改 privacy manifest 或 entitlements。
 
 app icon 当前由 `scripts/generate_app_icon.swift` 在打包时生成，输出到 `dist/release/AppIcon.iconset` 和 app bundle 内的 `Contents/Resources/AppIcon.icns`。`ReleaseSupport/Info.plist` 已声明 `CFBundleIconFile=AppIcon`。正式品牌视觉确定后，可以替换生成脚本或改为提交设计团队提供的 `.icns`，但发布包仍需保留 `CFBundleIconFile` 与 bundle resource 的一致性。
 
@@ -339,7 +345,7 @@ This directory contains the native macOS application target, used to build macOS
 - SwiftUI macOS app built with the macOS 26 SDK using `WindowGroup`, native sidebar/list/detail layout, menu commands, and a Settings scene; search and toolbar structure use the macOS 26 / Liquid Glass-era system `NavigationSplitView`, `searchToolbarBehavior`, and `ToolbarSpacer` APIs.
 - First native parity slice: initialize/unlock vault, lock vault, list entries, search/filter, detail field copy and secret reveal, add/edit/delete credential/server/service entries, category and tag fields, category/tag management, clear vault data, TOTP-based 2FA unlock verification, manual sync entry point, local encrypted backup creation, and full snapshot JSON import/export.
 - Data model mirrors the current shared contract: `credential`, `server`, `service`, PBKDF metadata records, AES-GCM payload record shape, soft-delete fields, deletion tombstone timestamps, version map, and `updatedBy`.
-- Entry references now cover lossless persistence, five-state resolution, and lifecycle propagation. Search adds only a successfully resolved target label and category, never the raw reference ID or target secrets. Batch copy import assigns destination IDs before rewriting internal references and keeps IDs for targets not included; sync comparison and conflict copies retain reference fields and `templateFieldId`. Tags remain unchanged; reference editing and detail UI are still not exposed. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
+- Entry references now have a complete native macOS UI slice. Category templates can define text or single-entry references and a target category; fields with stored values cannot be deleted or retyped but can still be renamed or point to a different target category, while unknown field types remain read-only and lossless. Entry editing can select, replace, or clear a live target filtered by category. Detail presents empty, resolved, missing, deleted, and categoryMismatch states with view, repair, and clear actions. Search includes only a successfully resolved target label and category, never raw reference IDs, unknown/orphan values, or target secrets. Tags remain the loose grouping and filtering mechanism; references provide exact single-entry links. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and lifecycle rules.
 - Local encrypted file persistence is implemented. The app writes an encrypted vault envelope to Application Support using PBKDF2-SHA256 master password verification and AES-256-GCM payload encryption.
 - PBKDF2 defaults are aligned with the Dart package contract: 600000 iterations for new native macOS vaults.
 - Unit coverage exists for PBKDF2 verifier determinism, AES-GCM round trip, tamper rejection, TOTP generation/verification, encrypted envelope persistence without plaintext secret leakage, latest encrypted backup restore, backup retention, sync merge data layer, and decrypting a multi-entry fixture generated by `packages/crypto`.
@@ -457,6 +463,10 @@ The automated test suite currently verifies:
 - Sync engine coverage for uploading local payloads when the remote is missing, applying remote-dominant payloads without upload, and merging concurrent conflicts into the next uploaded revision.
 - Sync sensitive-field redaction, Keychain secret-store boundary, no plaintext sync secrets in normal config files, in-memory secret-store lifecycle, and `VaultStore` sync settings persistence.
 - `VaultStore.syncNow(client:)` uploads the local snapshot through the sync engine, updates revision/status/logs, and writes the result back to the encrypted vault.
+- Category template editing covers text/reference types, target category, stable lowercase UUID field IDs, lossless unknown types, and stored-value deletion/type-change guards.
+- Reference editing covers A-to-A, A-to-B-to-A, and reused legacy template IDs across categories without cross-category value bleed; opaque reference IDs are preserved exactly.
+- Detail and search cover all five reference states, safe target projection, view/repair/clear actions, and suppression of raw unknown/orphan/reference values from display, copy, and indexing.
+- Candidate selection contains only live entries, filters by target category, and searches only labels/categories; the Store boundary revalidates target existence, deletion state, and category before saving.
 
 Regenerate the Dart crypto fixture after intentional Dart crypto contract changes:
 
@@ -558,6 +568,8 @@ EXPECTED_SIGNING_CERT_SHA256=AA:BB:CC:... \
 ```
 
 The current privacy manifest declares no tracking, no tracking domains, no collected data types, and no required-reason API usage. If telemetry, third-party SDKs, accounts, pasteboard, disk-space, file-timestamp, or other required-reason API usage is added later, update `ReleaseSupport/PrivacyInfo.xcprivacy` and the App Store Connect privacy answers at the same time.
+
+The field-reference UI reads only entry IDs, labels, and categories already present in the local encrypted snapshot. It adds no network endpoint, system permission, data collection, or tracking, so this change requires no privacy manifest or entitlement update.
 
 The app icon is currently generated by `scripts/generate_app_icon.swift` during packaging. The script writes `dist/release/AppIcon.iconset`, converts it to `Contents/Resources/AppIcon.icns`, and `ReleaseSupport/Info.plist` declares `CFBundleIconFile=AppIcon`. Once final brand artwork exists, replace the generator or commit a design-provided `.icns`, but keep `CFBundleIconFile` aligned with the bundled resource.
 

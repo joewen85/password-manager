@@ -2,9 +2,13 @@ import SwiftUI
 
 struct DetailView: View {
     var entry: VaultEntry?
+    var entries: [VaultEntry] = []
+    var categoryTemplates: [CategoryTemplate] = []
     var editEntry: (VaultEntry) -> Void
     var deleteEntry: (VaultEntry) -> Void
     var exportEntry: (VaultEntry) -> Void
+    var openReference: (VaultEntry) -> Void = { _ in }
+    var updateReference: (VaultEntry, String, String) -> Void = { _, _, _ in }
 
     var body: some View {
         Group {
@@ -34,7 +38,13 @@ struct DetailView: View {
 
                         if !entry.customFields.isEmpty {
                             DetailSection(title: "Custom Fields") {
-                                CustomFieldsView(fields: entry.customFields)
+                                CustomFieldsView(
+                                    entry: entry,
+                                    entries: entries,
+                                    template: categoryTemplate(for: entry.payload.category),
+                                    openReference: openReference,
+                                    updateReference: updateReference
+                                )
                             }
                         }
                     }
@@ -44,6 +54,14 @@ struct DetailView: View {
             } else {
                 ContentUnavailableView("Select an Entry", systemImage: "sidebar.left")
             }
+        }
+    }
+
+    private func categoryTemplate(for category: String) -> CategoryTemplate? {
+        let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        return categoryTemplates.first {
+            $0.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(normalized) == .orderedSame
         }
     }
 }
@@ -148,14 +166,171 @@ private struct PayloadFieldRow: Identifiable {
 }
 
 private struct CustomFieldsView: View {
-    var fields: [CustomField]
+    var entry: VaultEntry
+    var entries: [VaultEntry]
+    var template: CategoryTemplate?
+    var openReference: (VaultEntry) -> Void
+    var updateReference: (VaultEntry, String, String) -> Void
 
     var body: some View {
-        Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 12) {
-            ForEach(fields) { field in
-                FieldRow(field.name, field.value)
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(entry.customFields) { field in
+                let semantics = customFieldSemantics(field: field, template: template)
+                switch semantics.semantic {
+                case .text:
+                    Grid(alignment: .leading, horizontalSpacing: 16) {
+                        FieldRow(field.name, field.value)
+                    }
+                case .unsupported:
+                    UnsupportedCustomFieldRow(name: field.name)
+                case .entryReference:
+                    if let templateField = semantics.templateField {
+                        EntryReferenceDetailRow(
+                            entry: entry,
+                            field: field,
+                            templateField: templateField,
+                            template: template,
+                            entries: entries,
+                            openReference: openReference,
+                            updateReference: updateReference
+                        )
+                    }
+                }
             }
         }
+    }
+}
+
+private struct UnsupportedCustomFieldRow: View {
+    var name: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(name.isEmpty ? "Custom Field" : name)
+                .foregroundStyle(.secondary)
+            Text("This field is not supported by this version. Its stored value is preserved.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct EntryReferenceDetailRow: View {
+    var entry: VaultEntry
+    var field: CustomField
+    var templateField: FieldTemplate
+    var template: CategoryTemplate?
+    var entries: [VaultEntry]
+    var openReference: (VaultEntry) -> Void
+    var updateReference: (VaultEntry, String, String) -> Void
+
+    @State private var isPresentingSelection = false
+    @State private var searchText = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(templateField.name.isEmpty ? "Entry Reference" : templateField.name)
+                .foregroundStyle(.secondary)
+            Text(presentation.text)
+                .foregroundStyle(statusColor)
+
+            HStack(spacing: 8) {
+                if let targetEntry {
+                    Button("View") {
+                        openReference(targetEntry)
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                Button(presentation.actionTitle) {
+                    isPresentingSelection = true
+                }
+                .buttonStyle(.borderedProminent)
+                .popover(isPresented: $isPresentingSelection, arrowEdge: .bottom) {
+                    selectionContent
+                }
+
+                if !field.value.isEmpty {
+                    Button("Clear", role: .destructive) {
+                        updateReference(entry, field.id, "")
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+    }
+
+    private var resolution: EntryReferenceResolution? {
+        resolveEntryReference(field: field, template: template, entries: entries)
+    }
+
+    private var targetEntry: VaultEntry? {
+        guard presentation.canOpenTarget, let targetID = resolution?.target?.id else { return nil }
+        return entries.first { $0.id == targetID && !$0.isDeleted }
+    }
+
+    private var presentation: EntryReferencePresentation {
+        entryReferencePresentation(resolution)
+    }
+
+    private var statusColor: Color {
+        presentation.isError ? .red : (resolution?.status == .resolved ? .primary : .secondary)
+    }
+
+    private var candidates: [EntryReferenceCandidate] {
+        entryReferenceCandidates(
+            entries: entries,
+            targetCategory: templateField.targetCategory,
+            query: searchText
+        )
+    }
+
+    private var selectionContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TextField("Search entries", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    if candidates.isEmpty {
+                        Text("No matching entries")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 8)
+                    } else {
+                        ForEach(candidates) { candidate in
+                            Button {
+                                updateReference(entry, field.id, candidate.id)
+                                searchText = ""
+                                isPresentingSelection = false
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(candidate.label.isEmpty ? "Untitled" : candidate.label)
+                                        Text(candidate.category.isEmpty ? "Uncategorized" : candidate.category)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    if field.value == candidate.id {
+                                        Image(systemName: "checkmark")
+                                            .foregroundStyle(.tint)
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 260)
+        }
+        .padding(12)
+        .frame(width: 340)
     }
 }
 

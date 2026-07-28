@@ -5,6 +5,7 @@ struct EntryEditorView: View {
     var initialCategory: String
     var categories: [String]
     var categoryTemplates: [CategoryTemplate]
+    var entries: [VaultEntry]
     var tags: [String]
     var onCreateCategory: (String, CategoryTypePreset?, [String]) -> Bool
     var onCreateTag: (String) -> Bool
@@ -22,6 +23,7 @@ struct EntryEditorView: View {
         initialCategory: String = "",
         categories: [String],
         categoryTemplates: [CategoryTemplate] = [],
+        entries: [VaultEntry] = [],
         tags: [String],
         onCreateCategory: @escaping (String, CategoryTypePreset?, [String]) -> Bool = { _, _, _ in false },
         onCreateTag: @escaping (String) -> Bool = { _ in false },
@@ -32,6 +34,7 @@ struct EntryEditorView: View {
         self.initialCategory = initialCategory
         self.categories = categories
         self.categoryTemplates = categoryTemplates
+        self.entries = entries
         self.tags = tags
         self.onCreateCategory = onCreateCategory
         self.onCreateTag = onCreateTag
@@ -82,7 +85,9 @@ struct EntryEditorView: View {
                 if usesTemplateFields {
                     TemplateFieldsEditor(
                         fields: $draft.customFields,
-                        protectedFieldIDs: draft.protectedCustomFieldIds
+                        protectedFieldIDs: draft.protectedCustomFieldIds,
+                        template: currentCategoryTemplate,
+                        entries: entries
                     )
                 } else {
                     switch draft.payload {
@@ -96,7 +101,9 @@ struct EntryEditorView: View {
 
                     CustomFieldsEditor(
                         fields: $draft.customFields,
-                        protectedFieldIDs: draft.protectedCustomFieldIds
+                        protectedFieldIDs: draft.protectedCustomFieldIds,
+                        template: currentCategoryTemplate,
+                        entries: entries
                     )
                 }
             }
@@ -144,6 +151,8 @@ struct EntryEditorView: View {
                 in: categoryTemplates
             ), let fields = Self.categoryTemplateFields(for: draft.category, in: categoryTemplates) {
                 draft.configureTemplateFields(fields)
+            } else {
+                draft.protectUnsupportedCustomFields(template: currentCategoryTemplate(for: draft.category))
             }
             nextDraft = draft
         } else {
@@ -213,6 +222,18 @@ struct EntryEditorView: View {
             isCreating: entry == nil,
             in: categoryTemplates
         )
+    }
+
+    private var currentCategoryTemplate: CategoryTemplate? {
+        currentCategoryTemplate(for: draft.category)
+    }
+
+    private func currentCategoryTemplate(for category: String) -> CategoryTemplate? {
+        let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        return categoryTemplates.first {
+            $0.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(normalized) == .orderedSame
+        }
     }
 
     private static func shouldUseTemplateFields(
@@ -581,9 +602,15 @@ private struct ServiceAccountsEditor: View {
 private struct CustomFieldsEditor: View {
     @Binding var fields: [CustomField]
     var protectedFieldIDs: Set<String>
+    var template: CategoryTemplate?
+    var entries: [VaultEntry]
 
     private var editableIndices: [Int] {
         fields.indices.filter { !protectedFieldIDs.contains(fields[$0].id) }
+    }
+
+    private var hasProtectedFields: Bool {
+        fields.contains { protectedFieldIDs.contains($0.id) }
     }
 
     var body: some View {
@@ -593,8 +620,17 @@ private struct CustomFieldsEditor: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(editableIndices, id: \.self) { index in
-                    CustomFieldRow(field: $fields[index], showsValue: true, remove: { remove(at: index) })
+                    customFieldEditor(at: index)
                 }
+            }
+
+            if hasProtectedFields {
+                Label(
+                    L10n.t("Unsupported field values are preserved read-only."),
+                    systemImage: "exclamationmark.shield"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             Button(action: addField) {
@@ -610,15 +646,35 @@ private struct CustomFieldsEditor: View {
     private func remove(at index: Int) {
         guard fields.indices.contains(index) else { return }
         fields.remove(at: index)
+    }
+
+    @ViewBuilder
+    private func customFieldEditor(at index: Int) -> some View {
+        if let template,
+           customFieldSemantics(field: fields[index], template: template).semantic == .entryReference {
+            EntryReferenceFieldEditor(
+                field: $fields[index],
+                template: template,
+                entries: entries
+            )
+        } else {
+            CustomFieldRow(field: $fields[index], showsValue: true, remove: { remove(at: index) })
+        }
     }
 }
 
 private struct TemplateFieldsEditor: View {
     @Binding var fields: [CustomField]
     var protectedFieldIDs: Set<String>
+    var template: CategoryTemplate?
+    var entries: [VaultEntry]
 
     private var editableIndices: [Int] {
         fields.indices.filter { !protectedFieldIDs.contains(fields[$0].id) }
+    }
+
+    private var hasProtectedFields: Bool {
+        fields.contains { protectedFieldIDs.contains($0.id) }
     }
 
     var body: some View {
@@ -628,8 +684,17 @@ private struct TemplateFieldsEditor: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(editableIndices, id: \.self) { index in
-                    CustomFieldRow(field: $fields[index], showsValue: true, remove: { remove(at: index) })
+                    customFieldEditor(at: index)
                 }
+            }
+
+            if hasProtectedFields {
+                Label(
+                    L10n.t("Unsupported field values are preserved read-only."),
+                    systemImage: "exclamationmark.shield"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             Button(action: addField) {
@@ -645,6 +710,20 @@ private struct TemplateFieldsEditor: View {
     private func remove(at index: Int) {
         guard fields.indices.contains(index) else { return }
         fields.remove(at: index)
+    }
+
+    @ViewBuilder
+    private func customFieldEditor(at index: Int) -> some View {
+        if let template,
+           customFieldSemantics(field: fields[index], template: template).semantic == .entryReference {
+            EntryReferenceFieldEditor(
+                field: $fields[index],
+                template: template,
+                entries: entries
+            )
+        } else {
+            CustomFieldRow(field: $fields[index], showsValue: true, remove: { remove(at: index) })
+        }
     }
 }
 

@@ -10,6 +10,7 @@ struct SidebarView: View {
     var exportSnapshot: () -> Void
     var importSnapshot: () -> Void
     var exportCategory: (String) -> Void
+    var editCategoryFields: (String) -> Void
     var syncNow: () -> Void
     var createCategory: () -> Void
     var showSettings: () -> Void
@@ -35,6 +36,9 @@ struct SidebarView: View {
                             Label(category, systemImage: "folder")
                         }
                             .contextMenu {
+                                Button("Edit Fields") {
+                                    editCategoryFields(category)
+                                }
                                 Button("Export Category") {
                                     exportCategory(category)
                                 }

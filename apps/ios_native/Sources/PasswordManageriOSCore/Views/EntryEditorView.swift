@@ -5,10 +5,11 @@ struct EntryEditorView: View {
     var initialCategory: String
     var categories: [String]
     var categoryTemplates: [CategoryTemplate]
+    var entries: [VaultEntry]
     var tags: [String]
     var onCreateCategory: (String, CategoryTypePreset?, [String]) -> Bool
     var onCreateTag: (String) -> Bool
-    var onSave: (EntryDraft) -> Void
+    var onSave: (EntryDraft) -> String?
     var onCancel: () -> Void
 
     @State private var draft: EntryDraft
@@ -22,16 +23,18 @@ struct EntryEditorView: View {
         initialCategory: String = "",
         categories: [String],
         categoryTemplates: [CategoryTemplate] = [],
+        entries: [VaultEntry] = [],
         tags: [String],
         onCreateCategory: @escaping (String, CategoryTypePreset?, [String]) -> Bool = { _, _, _ in false },
         onCreateTag: @escaping (String) -> Bool = { _ in false },
-        onSave: @escaping (EntryDraft) -> Void,
+        onSave: @escaping (EntryDraft) -> String?,
         onCancel: @escaping () -> Void
     ) {
         self.entry = entry
         self.initialCategory = initialCategory
         self.categories = categories
         self.categoryTemplates = categoryTemplates
+        self.entries = entries
         self.tags = tags
         self.onCreateCategory = onCreateCategory
         self.onCreateTag = onCreateTag
@@ -68,7 +71,10 @@ struct EntryEditorView: View {
                 if usesTemplateFields {
                     TemplateFieldsEditor(
                         fields: $draft.customFields,
-                        protectedFieldIDs: draft.protectedCustomFieldIds
+                        hiddenFieldIDs: draft.hiddenCustomFieldIds,
+                        template: currentCategoryTemplate,
+                        entries: entries,
+                        addField: { draft.addCustomField() }
                     )
                 } else {
                     switch draft.type {
@@ -82,7 +88,10 @@ struct EntryEditorView: View {
 
                     CustomFieldsEditor(
                         fields: $draft.customFields,
-                        protectedFieldIDs: draft.protectedCustomFieldIds
+                        hiddenFieldIDs: draft.hiddenCustomFieldIds,
+                        template: currentCategoryTemplate,
+                        entries: entries,
+                        addField: { draft.addCustomField() }
                     )
                 }
             }
@@ -94,10 +103,7 @@ struct EntryEditorView: View {
             HStack {
                 Button("Cancel", action: onCancel)
                 Spacer()
-                Button(entry == nil ? "Add Entry" : "Save Changes") {
-                    draft.tags = selectedTags.sorted()
-                    onSave(draft)
-                }
+                Button(entry == nil ? "Add Entry" : "Save Changes", action: save)
                 .buttonStyle(.borderedProminent)
                 .disabled(draft.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -142,13 +148,9 @@ struct EntryEditorView: View {
         let nextDraft: EntryDraft
         if let entry {
             var draft = EntryDraft(entry: entry)
-            if Self.shouldUseTemplateFields(
-                for: draft,
-                isCreating: false,
-                in: categoryTemplates
-            ), let fields = Self.categoryTemplateFields(for: draft.category, in: categoryTemplates) {
-                draft.configureTemplateFields(fields)
-            }
+            draft.configureTemplateFields(
+                Self.categoryTemplateFields(for: draft.category, in: categoryTemplates) ?? []
+            )
             nextDraft = draft
         } else {
             var draft = EntryDraft()
@@ -188,6 +190,19 @@ struct EntryEditorView: View {
         }
     }
 
+    private func save() {
+        draft.tags = selectedTags.sorted()
+        if let duplicateName = draft.duplicateActiveTemplateBindingName(template: currentCategoryTemplate) {
+            taxonomyMessage = "Field name already exists: \(duplicateName)."
+            return
+        }
+        if let errorMessage = onSave(draft) {
+            taxonomyMessage = errorMessage
+        } else {
+            taxonomyMessage = nil
+        }
+    }
+
     private func mergedValues(_ values: [String]) -> [String] {
         Array(Set(values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
     }
@@ -206,9 +221,17 @@ struct EntryEditorView: View {
         } else if entry == nil {
             fields = CategoryTemplate.defaultFields
         } else {
-            return
+            fields = []
         }
         draft.configureTemplateFields(fields)
+    }
+
+    private var currentCategoryTemplate: CategoryTemplate? {
+        let normalized = draft.category.trimmingCharacters(in: .whitespacesAndNewlines)
+        return categoryTemplates.first {
+            $0.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(normalized) == .orderedSame
+        }
     }
 
     private var usesTemplateFields: Bool {
@@ -386,24 +409,23 @@ private struct CategorySelectField: View {
 
 private struct TemplateFieldsEditor: View {
     @Binding var fields: [CustomField]
-    var protectedFieldIDs: Set<String>
+    var hiddenFieldIDs: Set<String>
+    var template: CategoryTemplate?
+    var entries: [VaultEntry]
+    var addField: () -> Void
 
-    private var editableIndices: [Int] {
-        fields.indices.filter { !protectedFieldIDs.contains(fields[$0].id) }
+    private var visibleIndices: [Int] {
+        fields.indices.filter { !hiddenFieldIDs.contains(fields[$0].id) }
     }
 
     var body: some View {
         Section("Fields") {
-            if editableIndices.isEmpty {
+            if visibleIndices.isEmpty {
                 Text("No custom fields.")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(editableIndices, id: \.self) { index in
-                    CustomFieldRow(
-                        field: $fields[index],
-                        showsValue: true,
-                        remove: { remove(fields[index].id) }
-                    )
+                ForEach(visibleIndices, id: \.self) { index in
+                    fieldEditor(at: index)
                 }
             }
 
@@ -413,8 +435,22 @@ private struct TemplateFieldsEditor: View {
         }
     }
 
-    private func addField() {
-        fields.append(CustomField())
+    @ViewBuilder
+    private func fieldEditor(at index: Int) -> some View {
+        let semantics = customFieldSemantics(field: fields[index], template: template)
+        if semantics.semantic == .entryReference, let templateField = semantics.templateField {
+            EntryReferenceFieldEditor(
+                field: $fields[index],
+                templateField: templateField,
+                entries: entries
+            )
+        } else if semantics.semantic == .text {
+            CustomFieldRow(
+                field: $fields[index],
+                showsValue: true,
+                remove: { remove(fields[index].id) }
+            )
+        }
     }
 
     private func remove(_ id: String) {
@@ -499,24 +535,23 @@ private struct CustomFieldRow: View {
 
 private struct CustomFieldsEditor: View {
     @Binding var fields: [CustomField]
-    var protectedFieldIDs: Set<String>
+    var hiddenFieldIDs: Set<String>
+    var template: CategoryTemplate?
+    var entries: [VaultEntry]
+    var addField: () -> Void
 
-    private var editableIndices: [Int] {
-        fields.indices.filter { !protectedFieldIDs.contains(fields[$0].id) }
+    private var visibleIndices: [Int] {
+        fields.indices.filter { !hiddenFieldIDs.contains(fields[$0].id) }
     }
 
     var body: some View {
         Section("Custom Fields") {
-            if editableIndices.isEmpty {
+            if visibleIndices.isEmpty {
                 Text("No custom fields.")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(editableIndices, id: \.self) { index in
-                    CustomFieldRow(
-                        field: $fields[index],
-                        showsValue: true,
-                        remove: { remove(fields[index].id) }
-                    )
+                ForEach(visibleIndices, id: \.self) { index in
+                    fieldEditor(at: index)
                 }
             }
 
@@ -526,12 +561,151 @@ private struct CustomFieldsEditor: View {
         }
     }
 
-    private func addField() {
-        fields.append(CustomField())
+    @ViewBuilder
+    private func fieldEditor(at index: Int) -> some View {
+        let semantics = customFieldSemantics(field: fields[index], template: template)
+        if semantics.semantic == .entryReference, let templateField = semantics.templateField {
+            EntryReferenceFieldEditor(
+                field: $fields[index],
+                templateField: templateField,
+                entries: entries
+            )
+        } else if semantics.semantic == .text {
+            CustomFieldRow(
+                field: $fields[index],
+                showsValue: true,
+                remove: { remove(fields[index].id) }
+            )
+        }
     }
 
     private func remove(_ id: String) {
         fields.removeAll { $0.id == id }
+    }
+}
+
+private struct EntryReferenceFieldEditor: View {
+    @Binding var field: CustomField
+    var templateField: FieldTemplate
+    var entries: [VaultEntry]
+
+    @State private var isPresented = false
+    @State private var searchText = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(templateField.name.isEmpty ? "Entry Reference" : templateField.name)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            Button {
+                isPresented = true
+            } label: {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(statusText)
+                        .foregroundStyle(statusColor)
+                        .multilineTextAlignment(.leading)
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.bordered)
+            .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 10) {
+                    TextField("Search entries", text: $searchText)
+                        .textFieldStyle(.roundedBorder)
+
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 4) {
+                            if candidates.isEmpty {
+                                Text("No matching entries")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.vertical, 8)
+                            } else {
+                                ForEach(candidates) { candidate in
+                                    Button {
+                                        field.value = candidate.id
+                                        searchText = ""
+                                        isPresented = false
+                                    } label: {
+                                        HStack {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(candidate.label.isEmpty ? "Untitled" : candidate.label)
+                                                Text(candidate.category.isEmpty ? "Uncategorized" : candidate.category)
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                            Spacer()
+                                            if field.value == candidate.id {
+                                                Image(systemName: "checkmark")
+                                                    .foregroundStyle(.tint)
+                                            }
+                                        }
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 6)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 260)
+
+                    if !field.value.isEmpty {
+                        Button("Clear Selection", role: .destructive) {
+                            field.value = ""
+                            searchText = ""
+                            isPresented = false
+                        }
+                    }
+                }
+                .padding(12)
+                .frame(width: 340)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.secondary.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+        )
+    }
+
+    private var template: CategoryTemplate {
+        CategoryTemplate(category: "", fields: [templateField])
+    }
+
+    private var resolution: EntryReferenceResolution? {
+        resolveEntryReference(field: field, template: template, entries: entries)
+    }
+
+    private var candidates: [EntryReferenceCandidate] {
+        entryReferenceCandidates(
+            entries: entries,
+            targetCategory: templateField.targetCategory,
+            query: searchText
+        )
+    }
+
+    private var statusText: String {
+        let presentation = entryReferencePresentation(resolution)
+        return resolution?.status == .empty || resolution == nil
+            ? "Select an entry"
+            : presentation.text
+    }
+
+    private var statusColor: Color {
+        let presentation = entryReferencePresentation(resolution)
+        return presentation.isError ? .red : (resolution?.status == .resolved ? .primary : .secondary)
     }
 }
 

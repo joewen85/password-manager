@@ -10,7 +10,8 @@
 - 当前切片复用并迁移 macOS 原生端已验证的 Swift 核心：数据模型、本地加密持久化、TOTP、导入导出、备份、同步设置、远端同步 transport、同步合并和同步引擎。
 - SwiftUI 视图已放入 `PasswordManageriOSCore`，并提供 `PasswordManageriOSAppRoot` 作为 Xcode iOS app target 的根视图。
 - 当前包含 SwiftPM 可测试核心模块和 `PasswordManageriOS.xcodeproj` 原生 app target。
-- 字段关联已支持无损数据契约、五态解析和生命周期传播；搜索仅加入成功解析目标的名称与分类，不索引原始引用 ID 或目标秘密。同批复制导入会先分配目标 ID 再重写内部引用，未包含目标时保留原 ID；同步比较和冲突副本保留引用字段及 `templateFieldId`。标签职责不变，当前仍不提供关联编辑或详情 UI，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
+- 字段关联已接入完整 SwiftUI 垂直切片：分类模板可配置文本或单条条目关联及目标分类；条目编辑可按目标分类选择、更换或清空；详情覆盖空值、已解析、缺失、已删除和分类不匹配五态，并支持查看、修复和清空。搜索只加入成功解析目标的名称与分类，不索引原始引用 ID、未知/孤儿值或目标秘密；未知类型和孤儿绑定在 UI 中隐藏原值并无损保存。标签继续承担宽松分组与筛选，格式规则见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
+- 本次关联 UI 仅使用现有本地 vault 数据和 SwiftUI 控件，没有新增 entitlement、required-reason API、网络端点或数据采集；`PasswordManageriOS.entitlements` 与 `PrivacyInfo.xcprivacy` 无需扩展。
 - 已配置 Debug/Release build configuration、bundle identifier、生成式 launch screen、asset catalog、空 entitlements、包含 UserDefaults required-reason 声明的 privacy manifest，以及本机可运行的 Release simulator build/install/launch smoke + generic iOS archive contract gate。生产发布前仍需配置 Apple Developer Team/signing、真机验证和 App Store Connect 验证。
 - 本目录不依赖已移除的 Flutter iOS 工程。
 
@@ -110,6 +111,8 @@ IOS_ALLOW_PROVISIONING_UPDATES=true \
 - WebDAV / S3 presigned URL remote sync transport 行为。
 - 同步设置 redaction、secret store 生命周期和普通配置文件无明文 sync secrets。
 - 同步合并和 `VaultStore.syncNow(client:)` 写回流程。
+- 分类模板字段安全编辑：未知类型只读保留，有存值字段不可删除或改型，但可改名及调整关联目标分类。
+- 条目关联候选、选择/更换/清空、五态详情安全文案、A→A、A→B→A、跨分类相同 legacy 模板 ID 和未知/孤儿值隐私隔离。
 - iOS 首屏启动 UI smoke：初始化/解锁标题、主密码输入框和主操作按钮。
 
 已在 iPhone 17 Pro simulator 启动验证初始 `Initialize Vault` 界面。真机和发布候选环境仍需手动验证：
@@ -117,11 +120,12 @@ IOS_ALLOW_PROVISIONING_UPDATES=true \
 1. 初始化密码库。
 2. 新增 credential、server、service 条目。
 3. 搜索、分类、标签筛选。
-4. 锁定、解锁和 TOTP 解锁。
-5. 杀进程重启后数据保留。
-6. 导入、导出、备份、恢复。
-7. WebDAV 或 S3 presigned URL 真实服务同步。
-8. iPhone portrait/landscape、iPad split view、Dynamic Type、深色模式和 VoiceOver 基础可访问性。
+4. 编辑分类关联字段，验证选择、更换、清空、查看目标及五种详情状态。
+5. 锁定、解锁和 TOTP 解锁。
+6. 杀进程重启后数据保留。
+7. 导入、导出、备份、恢复。
+8. WebDAV 或 S3 presigned URL 真实服务同步。
+9. iPhone portrait/landscape、iPad split view、Dynamic Type、深色模式和 VoiceOver 基础可访问性。
 
 ### 发布构建
 
@@ -199,7 +203,8 @@ This directory contains the native iOS application target, used to build iOS-nat
 - The current slice migrates the already-verified Swift core from the native macOS target: data models, local encrypted persistence, TOTP, import/export, backup, sync settings, remote sync transport, sync merge, and sync engine.
 - SwiftUI views are included in `PasswordManageriOSCore`, and `PasswordManageriOSAppRoot` is used as the root view for the Xcode iOS app target.
 - The current form includes a SwiftPM-tested core module and a `PasswordManageriOS.xcodeproj` native app target.
-- Entry references now cover lossless persistence, five-state resolution, and lifecycle propagation. Search adds only a successfully resolved target label and category, never the raw reference ID or target secrets. Batch copy import assigns destination IDs before rewriting internal references and keeps IDs for targets not included; sync comparison and conflict copies retain reference fields and `templateFieldId`. Tags remain unchanged; reference editing and detail UI are still not exposed. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
+- Entry references now have a complete SwiftUI vertical slice: category templates configure text or single-entry references and target categories; entry editing selects, replaces, or clears a category-scoped target; detail covers empty, resolved, missing, deleted, and category-mismatch states with view, repair, and clear actions. Search adds only a successfully resolved target label and category, never raw reference IDs, unknown/orphan values, or target secrets. Unsupported and orphan-bound values remain hidden in UI and are preserved losslessly. Tags remain the loose grouping and filtering mechanism. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for format rules.
+- The reference UI uses only existing local vault data and SwiftUI controls. It adds no entitlement, required-reason API, network endpoint, or data collection, so `PasswordManageriOS.entitlements` and `PrivacyInfo.xcprivacy` require no expansion.
 - Debug/Release build configurations, bundle identifier, generated launch screen, asset catalog, empty entitlements, a privacy manifest with the UserDefaults required-reason disclosure, and a locally runnable Release simulator build/install/launch smoke + generic iOS archive contract gate are configured. Production release still needs Apple Developer Team/signing, device validation, and App Store Connect validation.
 - This directory does not depend on the removed Flutter iOS project.
 
@@ -299,6 +304,8 @@ The current automated scope covers:
 - WebDAV / S3 presigned URL remote sync transport behavior.
 - Sync settings redaction, secret-store lifecycle, and no plaintext sync secrets in normal config files.
 - Sync merge and `VaultStore.syncNow(client:)` writeback flow.
+- Safe category-template editing: unknown types remain read-only; fields with stored values cannot be deleted or retyped, but can be renamed and can change reference target category.
+- Reference candidate filtering, select/replace/clear, five-state safe detail presentation, A-to-A, A-to-B-to-A, shared legacy template IDs across categories, and unknown/orphan value isolation.
 - iOS first-screen launch UI smoke: setup/unlock title, master-password field, and primary action.
 
 The initial `Initialize Vault` screen has been launched on an iPhone 17 Pro simulator. Device and release-candidate environments still need manual verification:
@@ -306,11 +313,12 @@ The initial `Initialize Vault` screen has been launched on an iPhone 17 Pro simu
 1. Initialize the vault.
 2. Add credential, server, and service entries.
 3. Search, category filtering, and tag filtering.
-4. Lock, unlock, and TOTP unlock.
-5. Data retention after process kill and relaunch.
-6. Import, export, backup, and restore.
-7. Real WebDAV or S3 presigned URL sync.
-8. iPhone portrait/landscape, iPad split view, Dynamic Type, dark mode, and basic VoiceOver accessibility.
+4. Edit a category reference field and verify select, replace, clear, view-target, and all five detail states.
+5. Lock, unlock, and TOTP unlock.
+6. Data retention after process kill and relaunch.
+7. Import, export, backup, and restore.
+8. Real WebDAV or S3 presigned URL sync.
+9. iPhone portrait/landscape, iPad split view, Dynamic Type, dark mode, and basic VoiceOver accessibility.
 
 ### Release Build
 

@@ -145,23 +145,25 @@ struct VaultStoreTaxonomyTests {
 
         #expect(store.updateCategoryTemplate("ops", customFieldNames: ["Endpoint", "备注", "endpoint", ""]))
         let updatedTemplate = try #require(store.categoryTemplates.first { $0.category == "Ops" })
-        #expect(updatedTemplate.fields.map(\.name) == ["名称", "备注", "Endpoint"])
+        #expect(updatedTemplate.fields.map(\.name) == ["名称", "备注", "Endpoint", "Owner"])
 
         let savedEntry = try #require(store.entries.first)
         var editDraft = EntryDraft(entry: savedEntry)
         editDraft.configureTemplateFields(updatedTemplate.fields)
 
-        #expect(editDraft.customFields.map(\.name) == ["备注", "Endpoint"])
+        #expect(editDraft.customFields.filter {
+            !editDraft.protectedCustomFieldIds.contains($0.id)
+        }.map(\.name) == ["备注", "Endpoint", "Owner"])
         #expect(editDraft.customFields.first { $0.name == "备注" }?.value == "keep this note")
         #expect(editDraft.customFields.first { $0.name == "Endpoint" }?.value == "")
-        #expect(editDraft.customFields.contains { $0.name == "Owner" } == false)
+        #expect(editDraft.customFields.first { $0.name == "Owner" }?.value == "alice")
 
         let reloadedStore = VaultStore(
             repository: repository,
             syncSettingsRepository: nil
         )
         #expect(reloadedStore.unlock(password: "test-password"))
-        #expect(reloadedStore.categoryTemplates.first { $0.category == "Ops" }?.fields.map(\.name) == ["名称", "备注", "Endpoint"])
+        #expect(reloadedStore.categoryTemplates.first { $0.category == "Ops" }?.fields.map(\.name) == ["名称", "备注", "Endpoint", "Owner"])
     }
 
     @MainActor

@@ -315,6 +315,45 @@ final class VaultStore {
 
     func updateCategoryTemplate(_ category: String, customFields: [CustomField]) -> Bool {
         let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        let existingFields = categoryTemplates
+            .first { $0.category.caseInsensitiveEquals(normalized) }?
+            .fields ?? CategoryTemplate.defaultCategoryFields()
+        let protectedFieldNames = Set(existingFields.filter {
+            $0.normalizedValueType != "text"
+        }.map {
+            $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        })
+        var requestedFields: [FieldTemplate] = customFields.compactMap { customField in
+            let name = customField.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty,
+                  !name.caseInsensitiveEquals("名称") else {
+                return nil
+            }
+            let exactExistingField = existingFields.first {
+                !customField.templateFieldId.isEmpty && $0.id == customField.templateFieldId
+            }
+            guard exactExistingField != nil || !protectedFieldNames.contains(name.lowercased()) else {
+                return nil
+            }
+            let existingField = exactExistingField ?? existingFields.first {
+                $0.normalizedValueType == "text" && $0.name.caseInsensitiveEquals(name)
+            }
+            return FieldTemplate(
+                id: existingField?.id ?? customField.templateFieldId,
+                name: name,
+                valueType: existingField?.valueType ?? "text",
+                targetCategory: existingField?.targetCategory ?? ""
+            )
+        }
+        let requestedIDs = Set(requestedFields.map(\.id))
+        requestedFields.append(contentsOf: existingFields.filter {
+            $0.normalizedValueType != "text" && !requestedIDs.contains($0.id)
+        })
+        return updateCategoryTemplate(category, fields: requestedFields)
+    }
+
+    func updateCategoryTemplate(_ category: String, fields requestedFields: [FieldTemplate]) -> Bool {
+        let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else {
             statusMessage = "Value is required."
             return false
@@ -329,49 +368,194 @@ final class VaultStore {
             .fields ?? CategoryTemplate.defaultCategoryFields()
         let nameField = existingFields.first { $0.name.caseInsensitiveEquals("名称") }
             ?? CategoryTemplate.defaultCategoryFields()[0]
-        let protectedFields = existingFields.filter { $0.valueType != "text" }
-        var updatedFields = [nameField]
-        var includedFieldIds = Set([nameField.id])
-        var includedNames = Set(
-            [nameField.name.lowercased()] + protectedFields.map { $0.name.lowercased() }
+        let storedValueFieldIDs = categoryTemplateStoredValueFieldIDs(canonicalCategory)
+        let requestedByID = Dictionary(
+            requestedFields.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
         )
+        let mandatoryFields = existingFields.filter {
+            storedValueFieldIDs.contains($0.id)
+                || ($0.normalizedValueType != "text" && $0.normalizedValueType != "entryReference")
+        }
+        var claimedMandatoryNames = Set([nameField.name.lowercased()])
+        var mandatoryFinalFields: [FieldTemplate] = []
+        for existing in mandatoryFields {
+            let isUnknown = existing.normalizedValueType != "text"
+                && existing.normalizedValueType != "entryReference"
+            if isUnknown {
+                claimedMandatoryNames.insert(
+                    existing.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                )
+                mandatoryFinalFields.append(existing)
+                continue
+            }
+            let requested = requestedByID[existing.id]
+            let requestedName = requested?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let requestedNameKey = requestedName.lowercased()
+            let conflictsWithMandatoryField = mandatoryFields.contains {
+                $0.id != existing.id
+                    && $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == requestedNameKey
+            }
+            let canRename = !requestedName.isEmpty
+                && !requestedName.caseInsensitiveEquals("名称")
+                && !conflictsWithMandatoryField
+                && !claimedMandatoryNames.contains(requestedNameKey)
+            let name = canRename ? requestedName : existing.name
+            claimedMandatoryNames.insert(name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+            mandatoryFinalFields.append(FieldTemplate(
+                id: existing.id,
+                name: name,
+                valueType: existing.normalizedValueType,
+                targetCategory: existing.normalizedValueType == "entryReference"
+                    ? (requested?.targetCategory ?? existing.targetCategory)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    : ""
+            ))
+        }
+        let reservedMandatoryNames = Set(mandatoryFinalFields.map {
+            $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        })
+        var updatedFields = [nameField]
+        var includedIDs = Set([nameField.id])
+        var includedNames = Set([nameField.name.lowercased()])
 
-        for customField in customFields {
-            let name = customField.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            let nameKey = name.lowercased()
-            guard !name.isEmpty,
-                  !name.caseInsensitiveEquals("名称"),
-                  includedNames.insert(nameKey).inserted else {
+        for requested in requestedFields {
+            let existing = existingFields.first { $0.id == requested.id }
+            if let mandatory = mandatoryFinalFields.first(where: { $0.id == requested.id }) {
+                appendTemplateField(
+                    mandatory,
+                    to: &updatedFields,
+                    includedIDs: &includedIDs,
+                    includedNames: &includedNames
+                )
                 continue
             }
 
-            let existingField = existingFields.first {
-                !customField.templateFieldId.isEmpty && $0.id == customField.templateFieldId
-            } ?? existingFields.first {
-                $0.valueType == "text" && $0.name.caseInsensitiveEquals(name)
-            }
-            if var existingField {
-                existingField.name = name
-                updatedFields.append(existingField)
-                includedFieldIds.insert(existingField.id)
-            } else {
-                let newField = FieldTemplate(name: name)
-                updatedFields.append(newField)
-                includedFieldIds.insert(newField.id)
-            }
+            let name = requested.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, !name.caseInsensitiveEquals("名称") else { continue }
+            guard !reservedMandatoryNames.contains(name.lowercased()) else { continue }
+            let requestedType = requested.normalizedValueType
+            guard requestedType == "text" || requestedType == "entryReference" else { continue }
+
+            let targetCategory = requestedType == "entryReference"
+                ? requested.targetCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+                : ""
+            let field = FieldTemplate(
+                id: existing?.id ?? requested.id,
+                name: name,
+                valueType: requestedType,
+                targetCategory: targetCategory
+            )
+            appendTemplateField(
+                field,
+                to: &updatedFields,
+                includedIDs: &includedIDs,
+                includedNames: &includedNames
+            )
         }
 
-        updatedFields.append(contentsOf: protectedFields.filter {
-            !includedFieldIds.contains($0.id)
-        })
-        upsertCategoryTemplate(
-            category: canonicalCategory,
-            fields: updatedFields
-        )
+        for mandatory in mandatoryFinalFields where !includedIDs.contains(mandatory.id) {
+            appendTemplateField(
+                mandatory,
+                to: &updatedFields,
+                includedIDs: &includedIDs,
+                includedNames: &includedNames
+            )
+        }
+
+        upsertCategoryTemplate(category: canonicalCategory, fields: updatedFields)
         rebuildCollections()
         persistUnlockedSnapshot()
         statusMessage = "Category updated."
         return true
+    }
+
+    func categoryTemplateStoredValueFieldIDs(_ category: String) -> Set<String> {
+        let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let template = categoryTemplates.first(where: {
+            $0.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(normalized) == .orderedSame
+        }) else {
+            return []
+        }
+        return Set(entries.lazy
+            .filter {
+                $0.payload.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .caseInsensitiveCompare(normalized) == .orderedSame
+            }
+            .flatMap { entry in
+                entry.customFields.compactMap { field -> String? in
+                    guard !field.value.isEmpty,
+                          let templateField = customFieldSemantics(field: field, template: template).templateField else {
+                        return nil
+                    }
+                    return templateField.id
+                }
+            })
+    }
+
+    func updateEntryReference(entryID: String, fieldID: String, targetID: String) -> Bool {
+        guard let entryIndex = entries.firstIndex(where: { $0.id == entryID && !$0.isDeleted }) else {
+            statusMessage = "Entry not found."
+            return false
+        }
+        let entry = entries[entryIndex]
+        let template = categoryTemplates.first {
+            $0.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(
+                    entry.payload.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                ) == .orderedSame
+        }
+        guard let fieldIndex = entry.customFields.firstIndex(where: { $0.id == fieldID }) else {
+            statusMessage = "Entry reference field not found."
+            return false
+        }
+        let semantics = customFieldSemantics(field: entry.customFields[fieldIndex], template: template)
+        guard semantics.semantic == .entryReference, let templateField = semantics.templateField else {
+            statusMessage = "Entry reference field not found."
+            return false
+        }
+        if !targetID.isEmpty {
+            guard let target = entries.first(where: { $0.id == targetID && !$0.isDeleted }) else {
+                statusMessage = "Entry reference target not found."
+                return false
+            }
+            let requiredCategory = templateField.targetCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+            let actualCategory = target.payload.category.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard requiredCategory.isEmpty
+                    || actualCategory.caseInsensitiveCompare(requiredCategory) == .orderedSame else {
+                statusMessage = "Entry reference target is outside the required category."
+                return false
+            }
+        }
+
+        let now = Date()
+        entries[entryIndex].customFields[fieldIndex].value = targetID
+        entries[entryIndex].updatedAt = now
+        entries[entryIndex].markLocalEntryChange(deviceId: syncSettings.deviceId, updatedAt: now)
+        rebuildCollections()
+        persistUnlockedSnapshot()
+        statusMessage = "Entry reference updated."
+        return true
+    }
+
+    func liveEntry(id: String) -> VaultEntry? {
+        entries.first { $0.id == id && !$0.isDeleted }
+    }
+
+    private func appendTemplateField(
+        _ field: FieldTemplate,
+        to fields: inout [FieldTemplate],
+        includedIDs: inout Set<String>,
+        includedNames: inout Set<String>
+    ) {
+        let nameKey = field.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !nameKey.isEmpty,
+              includedIDs.insert(field.id).inserted,
+              includedNames.insert(nameKey).inserted else {
+            return
+        }
+        fields.append(field)
     }
 
     func deleteCategory(_ category: String) -> Bool {
@@ -1347,14 +1531,46 @@ struct BackupInfo: Identifiable, Equatable {
     var id: String { fileName }
 }
 
+private struct DraftCustomFieldState: Equatable {
+    var field: CustomField
+    var sourceCategory: String
+    var isProtected: Bool
+    var mustPreserveOriginal: Bool
+}
+
 struct EntryDraft: Equatable {
     var label = ""
     private var payloadKind: VaultEntryType = .credential
     var credential = CredentialPayload()
     var server = ServerPayload()
     var service = ServicePayload()
-    var customFields: [CustomField] = []
-    private(set) var protectedCustomFieldIds: Set<String> = []
+    private var customFieldStates: [DraftCustomFieldState] = []
+
+    var customFields: [CustomField] {
+        get { customFieldStates.map(\.field) }
+        set {
+            let existingById = Dictionary(
+                customFieldStates.map { ($0.field.id, $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            customFieldStates = newValue.map { field in
+                guard var existing = existingById[field.id] else {
+                    return DraftCustomFieldState(
+                        field: field,
+                        sourceCategory: category.trimmingCharacters(in: .whitespacesAndNewlines),
+                        isProtected: false,
+                        mustPreserveOriginal: false
+                    )
+                }
+                existing.field = field
+                return existing
+            }
+        }
+    }
+
+    var protectedCustomFieldIds: Set<String> {
+        Set(customFieldStates.lazy.filter(\.isProtected).map { $0.field.id })
+    }
 
     var category: String {
         get { payload.category }
@@ -1383,17 +1599,18 @@ struct EntryDraft: Equatable {
     }
 
     var normalizedCustomFields: [CustomField] {
-        customFields.compactMap { field in
-            if protectedCustomFieldIds.contains(field.id) {
-                return field
+        customFieldStates.compactMap { state in
+            if state.isProtected {
+                return state.mustPreserveOriginal ? state.field : nil
             }
+            let field = state.field
             let normalized = CustomField(
                 id: field.id,
                 templateFieldId: field.templateFieldId,
                 name: field.name.trimmingCharacters(in: .whitespacesAndNewlines),
                 value: field.value
             )
-            return normalized.name.isEmpty && normalized.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return normalized.name.isEmpty && normalized.value.isEmpty && normalized.templateFieldId.isEmpty
                 ? nil
                 : normalized
         }
@@ -1409,7 +1626,6 @@ struct EntryDraft: Equatable {
 
     init(entry: VaultEntry) {
         label = entry.label
-        customFields = entry.customFields
         switch entry.payload {
         case .credential(let payload):
             payloadKind = .credential
@@ -1427,78 +1643,122 @@ struct EntryDraft: Equatable {
             category = payload.category
             tags = payload.tags
         }
+        customFieldStates = entry.customFields.map {
+            DraftCustomFieldState(
+                field: $0,
+                sourceCategory: category.trimmingCharacters(in: .whitespacesAndNewlines),
+                isProtected: false,
+                mustPreserveOriginal: false
+            )
+        }
     }
 
     mutating func applyTemplateFields(_ fields: [FieldTemplate]) {
-        for field in fields {
-            let name = field.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        for templateField in fields {
+            let name = templateField.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty else { continue }
-            if let existing = customFields.first(where: {
-                (!$0.templateFieldId.isEmpty && $0.templateFieldId == field.id)
-                    || $0.name.caseInsensitiveEquals(name)
+            if let existingIndex = customFieldStates.firstIndex(where: {
+                $0.field.matches(templateField: templateField)
             }) {
-                if field.valueType != "text" {
-                    protectedCustomFieldIds.insert(existing.id)
+                if templateField.normalizedValueType != "text" {
+                    customFieldStates[existingIndex].isProtected = true
+                    customFieldStates[existingIndex].mustPreserveOriginal = true
                 }
                 continue
             }
-            guard field.valueType == "text" else { continue }
-            let customField = CustomField(templateFieldId: field.id, name: name)
-            customFields.append(customField)
+            guard templateField.normalizedValueType == "text" else { continue }
+            customFieldStates.append(DraftCustomFieldState(
+                field: CustomField(templateFieldId: templateField.id, name: name),
+                sourceCategory: category.trimmingCharacters(in: .whitespacesAndNewlines),
+                isProtected: false,
+                mustPreserveOriginal: false
+            ))
         }
     }
 
     mutating func configureTemplateFields(_ fields: [FieldTemplate]) {
-        let previousProtectedIds = protectedCustomFieldIds
-        var existingByTemplateId: [String: CustomField] = [:]
-        var existingByName: [String: CustomField] = [:]
-        var editableByName: [String: CustomField] = [:]
-        for field in customFields {
-            if !field.templateFieldId.isEmpty, existingByTemplateId[field.templateFieldId] == nil {
-                existingByTemplateId[field.templateFieldId] = field
+        let targetCategory = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        let template = CategoryTemplate(category: targetCategory, fields: fields)
+        var usedStateIndexes = Set<Int>()
+        var seenNames = Set<String>()
+        var nextStates: [DraftCustomFieldState] = []
+
+        for templateField in fields {
+            guard templateField.normalizedValueType == "text"
+                    || templateField.normalizedValueType == "entryReference" else {
+                continue
             }
-            let key = field.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if !key.isEmpty, existingByName[key] == nil {
-                existingByName[key] = field
+            let name = templateField.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let nameKey = name.lowercased()
+            guard !name.isEmpty,
+                  !name.caseInsensitiveEquals("名称"),
+                  seenNames.insert(nameKey).inserted else {
+                continue
             }
-            if !key.isEmpty,
-               !previousProtectedIds.contains(field.id),
-               editableByName[key] == nil {
-                editableByName[key] = field
+            let existingIndex = customFieldStates.indices.first { index in
+                !usedStateIndexes.contains(index)
+                    && customFieldStates[index].sourceCategory.caseInsensitiveEquals(targetCategory)
+                    && customFieldStates[index].field.matches(templateField: templateField)
+            }
+            let existing = existingIndex.map { customFieldStates[$0] }
+            if let existingIndex { usedStateIndexes.insert(existingIndex) }
+            nextStates.append(DraftCustomFieldState(
+                field: CustomField(
+                    id: existing?.field.id ?? UUID().uuidString.lowercased(),
+                    templateFieldId: templateField.id,
+                    name: name,
+                    value: existing?.field.value ?? ""
+                ),
+                sourceCategory: targetCategory,
+                isProtected: false,
+                mustPreserveOriginal: false
+            ))
+        }
+
+        for index in customFieldStates.indices where !usedStateIndexes.contains(index) {
+            var state = customFieldStates[index]
+            let belongsToTarget = state.sourceCategory.caseInsensitiveEquals(targetCategory)
+            if !belongsToTarget {
+                state.isProtected = true
+                nextStates.append(state)
+                continue
+            }
+            switch customFieldSemantics(field: state.field, template: template).semantic {
+            case .text:
+                state.isProtected = false
+            case .entryReference, .unsupported:
+                state.isProtected = true
+                state.mustPreserveOriginal = true
+            }
+            nextStates.append(state)
+        }
+        customFieldStates = nextStates
+    }
+
+    mutating func protectUnsupportedCustomFields(template: CategoryTemplate?) {
+        for index in customFieldStates.indices {
+            guard customFieldStates[index].sourceCategory.caseInsensitiveEquals(category) else {
+                customFieldStates[index].isProtected = true
+                continue
+            }
+            if customFieldSemantics(field: customFieldStates[index].field, template: template).semantic == .unsupported {
+                customFieldStates[index].isProtected = true
+                customFieldStates[index].mustPreserveOriginal = true
             }
         }
-        var consumedExistingIds = Set<String>()
-        var nextProtectedIds = Set<String>()
-        var configuredFields = fields.compactMap { field -> CustomField? in
-            let name = field.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty, !name.caseInsensitiveEquals("名称") else { return nil }
-            let existing = existingByTemplateId[field.id]
-                ?? (field.valueType == "text" ? editableByName[name.lowercased()] : existingByName[name.lowercased()])
-            if let existing {
-                consumedExistingIds.insert(existing.id)
-            }
-            if field.valueType != "text" {
-                guard let existing else { return nil }
-                nextProtectedIds.insert(existing.id)
-                return existing
-            }
-            if let existing, previousProtectedIds.contains(existing.id) {
-                nextProtectedIds.insert(existing.id)
-                return existing
-            }
-            return CustomField(
-                id: existing?.id ?? UUID().uuidString.lowercased(),
-                templateFieldId: field.id,
-                name: name,
-                value: existing?.value ?? ""
-            )
+    }
+
+}
+
+private extension CustomField {
+    func matches(templateField: FieldTemplate) -> Bool {
+        if !templateFieldId.isEmpty {
+            return templateFieldId == templateField.id
         }
-        for field in customFields where previousProtectedIds.contains(field.id) && !consumedExistingIds.contains(field.id) {
-            configuredFields.append(field)
-            nextProtectedIds.insert(field.id)
-        }
-        customFields = configuredFields
-        protectedCustomFieldIds = nextProtectedIds
+        return name.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare(
+                templateField.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            ) == .orderedSame
     }
 }
 

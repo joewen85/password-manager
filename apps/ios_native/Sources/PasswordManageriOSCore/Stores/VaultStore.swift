@@ -134,7 +134,15 @@ final class VaultStore {
         }
     }
 
-    func upsert(_ draft: EntryDraft, editing entry: VaultEntry?) {
+    @discardableResult
+    func upsert(_ draft: EntryDraft, editing entry: VaultEntry?) -> Bool {
+        if let duplicateName = draft.duplicateActiveTemplateBindingName(
+            template: categoryTemplate(for: draft.category)
+        ) {
+            statusMessage = "Field name already exists: \(duplicateName)."
+            return false
+        }
+
         let now = Date()
         let payload = draft.payload
         let normalizedTags = draft.tags
@@ -166,6 +174,7 @@ final class VaultStore {
         }
         rebuildCollections()
         persistUnlockedSnapshot()
+        return true
     }
 
     func delete(_ entry: VaultEntry) {
@@ -293,6 +302,130 @@ final class VaultStore {
         upsertCategoryTemplate(category: normalized, fields: fields)
         persistUnlockedSnapshot()
         statusMessage = "Category added."
+        return true
+    }
+
+    func categoryTemplate(for category: String) -> CategoryTemplate? {
+        let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        return categoryTemplates.first {
+            $0.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(normalized) == .orderedSame
+        }
+    }
+
+    func categoryTemplateStoredValueFieldIds(_ category: String) -> Set<String> {
+        guard let template = categoryTemplate(for: category) else { return [] }
+        let normalizedCategory = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Set(template.fields.compactMap { templateField in
+            let hasStoredValue = entries
+                .filter {
+                    $0.payload.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .caseInsensitiveCompare(normalizedCategory) == .orderedSame
+                }
+                .flatMap(\.customFields)
+                .contains { field in
+                    !field.value.isEmpty && field.matchesTemplateField(templateField)
+                }
+            return hasStoredValue ? templateField.id : nil
+        })
+    }
+
+    func updateCategoryTemplate(category: String, requestedCustomFields: [FieldTemplate]) -> Bool {
+        let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            statusMessage = "Category is required."
+            return false
+        }
+        guard !requestedCustomFields.contains(where: {
+            isEditableCategoryFieldType($0.valueType)
+                && $0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }) else {
+            statusMessage = "Field name is required."
+            return false
+        }
+
+        let existing = categoryTemplate(for: normalized)
+            ?? CategoryTemplate(category: normalized)
+        let updatedFields = categoryTemplateFieldsForUserSave(
+            existing: existing.fields,
+            requestedCustomFields: requestedCustomFields,
+            storedValueFieldIds: categoryTemplateStoredValueFieldIds(normalized)
+        )
+        if let duplicateName = duplicateEditableCategoryTemplateFieldName(updatedFields) {
+            statusMessage = "Field name already exists: \(duplicateName)."
+            return false
+        }
+        let updated = CategoryTemplate(category: normalized, fields: updatedFields)
+        if let index = categoryTemplates.firstIndex(where: {
+            $0.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(normalized) == .orderedSame
+        }) {
+            categoryTemplates[index] = updated
+        } else {
+            categoryTemplates.append(updated)
+        }
+        if !categories.contains(where: { $0.caseInsensitiveCompare(normalized) == .orderedSame }) {
+            categories.append(normalized)
+            categories.sort()
+        }
+        categoryTemplates.sort {
+            $0.category.localizedCaseInsensitiveCompare($1.category) == .orderedAscending
+        }
+        persistUnlockedSnapshot()
+        statusMessage = "Category template updated."
+        return true
+    }
+
+    func entryReferenceCandidates(targetCategory: String, query: String = "") -> [EntryReferenceCandidate] {
+        PasswordManageriOSCore.entryReferenceCandidates(
+            entries: entries,
+            targetCategory: targetCategory,
+            query: query
+        )
+    }
+
+    func resolveEntryReference(_ field: CustomField, sourceCategory: String) -> EntryReferenceResolution? {
+        PasswordManageriOSCore.resolveEntryReference(
+            field: field,
+            template: categoryTemplate(for: sourceCategory),
+            entries: entries
+        )
+    }
+
+    func liveEntry(_ id: String) -> VaultEntry? {
+        entries.first { $0.id == id && !$0.isDeleted }
+    }
+
+    @discardableResult
+    func updateEntryReference(entryID: String, fieldID: String, targetID: String) -> Bool {
+        guard let entryIndex = entries.firstIndex(where: { $0.id == entryID && !$0.isDeleted }),
+              let fieldIndex = entries[entryIndex].customFields.firstIndex(where: { $0.id == fieldID }) else {
+            statusMessage = "Reference field is no longer available."
+            return false
+        }
+        let field = entries[entryIndex].customFields[fieldIndex]
+        let semantics = customFieldSemantics(
+            field: field,
+            template: categoryTemplate(for: entries[entryIndex].payload.category)
+        )
+        guard semantics.semantic == .entryReference, let templateField = semantics.templateField else {
+            statusMessage = "Reference field is no longer available."
+            return false
+        }
+        if !targetID.isEmpty {
+            guard entryReferenceCandidates(targetCategory: templateField.targetCategory)
+                .contains(where: { $0.id == targetID }) else {
+                statusMessage = "Selected entry is not available for this field."
+                return false
+            }
+        }
+
+        let now = Date()
+        entries[entryIndex].customFields[fieldIndex].value = targetID
+        entries[entryIndex].updatedAt = now
+        entries[entryIndex].markLocalEntryChange(deviceId: syncSettings.deviceId, updatedAt: now)
+        persistUnlockedSnapshot()
+        statusMessage = targetID.isEmpty ? "Reference cleared." : "Reference updated."
         return true
     }
 
@@ -816,6 +949,8 @@ struct EntryDraft: Equatable {
     var service = ServicePayload()
     var customFields: [CustomField] = []
     private(set) var protectedCustomFieldIds: Set<String> = []
+    private(set) var hiddenCustomFieldIds: Set<String> = []
+    private var customFieldSourceCategories: [String: String] = [:]
 
     var category: String {
         get { payload.category }
@@ -844,7 +979,12 @@ struct EntryDraft: Equatable {
     }
 
     var normalizedCustomFields: [CustomField] {
-        customFields.compactMap { field in
+        let currentCategory = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        return customFields.compactMap { field in
+            if let sourceCategory = customFieldSourceCategories[field.id],
+               !sameCategory(sourceCategory, currentCategory) {
+                return nil
+            }
             if protectedCustomFieldIds.contains(field.id) {
                 return field
             }
@@ -886,58 +1026,142 @@ struct EntryDraft: Equatable {
         }
     }
 
-    mutating func configureTemplateFields(_ fields: [FieldTemplate]) {
-        let previousProtectedIds = protectedCustomFieldIds
-        var existingByTemplateId: [String: CustomField] = [:]
-        var existingByName: [String: CustomField] = [:]
-        var editableByName: [String: CustomField] = [:]
-        for field in customFields {
-            if !field.templateFieldId.isEmpty, existingByTemplateId[field.templateFieldId] == nil {
-                existingByTemplateId[field.templateFieldId] = field
-            }
-            let key = field.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if !key.isEmpty, existingByName[key] == nil {
-                existingByName[key] = field
-            }
-            if !key.isEmpty,
-               !previousProtectedIds.contains(field.id),
-               editableByName[key] == nil {
-                editableByName[key] = field
-            }
-        }
-        var consumedExistingIds = Set<String>()
-        var nextProtectedIds = Set<String>()
-        var configuredFields = fields.compactMap { field -> CustomField? in
-            let name = field.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty, name.caseInsensitiveCompare("名称") != .orderedSame else { return nil }
-            let existing = existingByTemplateId[field.id]
-                ?? (field.valueType == "text" ? editableByName[name.lowercased()] : existingByName[name.lowercased()])
-            if let existing {
-                consumedExistingIds.insert(existing.id)
-            }
-            if field.valueType != "text" {
-                guard let existing else { return nil }
-                nextProtectedIds.insert(existing.id)
-                return existing
-            }
-            if let existing, previousProtectedIds.contains(existing.id) {
-                nextProtectedIds.insert(existing.id)
-                return existing
-            }
-            return CustomField(
-                id: existing?.id ?? UUID().uuidString.lowercased(),
-                templateFieldId: field.id,
-                name: name,
-                value: existing?.value ?? ""
-            )
-        }
-        for field in customFields where previousProtectedIds.contains(field.id) && !consumedExistingIds.contains(field.id) {
-            configuredFields.append(field)
-            nextProtectedIds.insert(field.id)
-        }
-        customFields = configuredFields
-        protectedCustomFieldIds = nextProtectedIds
+    mutating func addCustomField(_ field: CustomField = CustomField()) {
+        customFields.append(field)
+        customFieldSourceCategories[field.id] = category.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    func duplicateActiveTemplateBindingName(template: CategoryTemplate?) -> String? {
+        let currentCategory = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        for templateField in template?.fields ?? []
+        where templateField.normalizedValueType == customFieldTextValueType
+            || templateField.normalizedValueType == customFieldEntryReferenceValueType {
+            let activeBindingCount = customFields.lazy.filter { field in
+                guard field.matchesTemplateField(templateField) else { return false }
+                guard let sourceCategory = customFieldSourceCategories[field.id] else { return true }
+                return sameCategory(sourceCategory, currentCategory)
+            }.prefix(2).count
+            if activeBindingCount > 1 {
+                return templateField.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return nil
+    }
+
+    mutating func configureTemplateFields(_ fields: [FieldTemplate]) {
+        let targetCategory = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        let template = CategoryTemplate(category: targetCategory, fields: fields)
+        var usedIndices = Set<Int>()
+        var seenNames = Set<String>()
+        var configuredFields: [CustomField] = []
+        var nextSources: [String: String] = [:]
+        var nextProtectedIds = Set<String>()
+        var nextHiddenIds = Set<String>()
+
+        for templateField in fields {
+            guard templateField.normalizedValueType == customFieldTextValueType
+                    || templateField.normalizedValueType == customFieldEntryReferenceValueType else {
+                continue
+            }
+            let name = templateField.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let nameKey = name.lowercased()
+            guard !name.isEmpty,
+                  name.caseInsensitiveCompare("名称") != .orderedSame,
+                  seenNames.insert(nameKey).inserted else {
+                continue
+            }
+
+            let matchingIndices = customFields.indices.filter { index in
+                !usedIndices.contains(index) && customFields[index].matchesTemplateField(templateField)
+            }
+            let sameSourceIndices = matchingIndices.filter {
+                guard let sourceCategory = customFieldSourceCategories[customFields[$0].id] else {
+                    return false
+                }
+                return sameCategory(sourceCategory, targetCategory)
+            }
+            let unknownSourceIndices = matchingIndices.filter {
+                customFieldSourceCategories[customFields[$0].id] == nil
+            }
+            let existingIndex = sameSourceIndices.first {
+                customFields[$0].nameMatches(templateField)
+            } ?? sameSourceIndices.first ?? unknownSourceIndices.first {
+                customFields[$0].nameMatches(templateField)
+            } ?? unknownSourceIndices.first
+            let existing = existingIndex.map { customFields[$0] }
+            if let existingIndex { usedIndices.insert(existingIndex) }
+            let configured: CustomField
+            if templateField.normalizedValueType == customFieldEntryReferenceValueType,
+               var existing {
+                if existing.templateFieldId.isEmpty {
+                    existing.templateFieldId = templateField.id
+                }
+                configured = existing
+            } else {
+                configured = CustomField(
+                    id: existing?.id ?? UUID().uuidString.lowercased(),
+                    templateFieldId: templateField.id,
+                    name: name,
+                    value: existing?.value ?? ""
+                )
+            }
+            configuredFields.append(configured)
+            nextSources[configured.id] = targetCategory
+            if templateField.normalizedValueType == customFieldEntryReferenceValueType {
+                nextProtectedIds.insert(configured.id)
+            }
+        }
+
+        for index in customFields.indices where !usedIndices.contains(index) {
+            let field = customFields[index]
+            configuredFields.append(field)
+            let sourceCategory = customFieldSourceCategories[field.id]
+            if let sourceCategory {
+                nextSources[field.id] = sourceCategory
+            }
+            let duplicatesActiveBinding = fields.contains { templateField in
+                (templateField.normalizedValueType == customFieldTextValueType
+                    || templateField.normalizedValueType == customFieldEntryReferenceValueType)
+                    && field.matchesTemplateField(templateField)
+            }
+            let isHidden = sourceCategory.map { !sameCategory($0, targetCategory) } ?? false
+                || duplicatesActiveBinding
+                || customFieldSemantics(field: field, template: template).semantic == .unsupported
+            if isHidden {
+                nextHiddenIds.insert(field.id)
+                nextProtectedIds.insert(field.id)
+            }
+        }
+
+        customFields = configuredFields
+        customFieldSourceCategories = nextSources
+        protectedCustomFieldIds = nextProtectedIds
+        hiddenCustomFieldIds = nextHiddenIds
+    }
+}
+
+private extension CustomField {
+    func matchesTemplateField(_ templateField: FieldTemplate) -> Bool {
+        if !templateFieldId.isEmpty {
+            return templateFieldId == templateField.id
+        }
+        return name.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare(
+                templateField.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            ) == .orderedSame
+    }
+
+    func nameMatches(_ templateField: FieldTemplate) -> Bool {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare(
+                templateField.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            ) == .orderedSame
+    }
+}
+
+private func sameCategory(_ left: String, _ right: String) -> Bool {
+    left.trimmingCharacters(in: .whitespacesAndNewlines)
+        .caseInsensitiveCompare(right.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
 }
 
 private extension VaultPayload {

@@ -509,8 +509,9 @@ struct FieldReferenceContractTests {
 
         var newDraft = EntryDraft()
         newDraft.configureTemplateFields(templates)
-        #expect(newDraft.customFields.map(\.templateFieldId) == [textTemplate.id])
-        #expect(newDraft.protectedCustomFieldIds.isEmpty)
+        #expect(newDraft.customFields.map(\.templateFieldId) == [textTemplate.id, referenceTemplate.id])
+        #expect(newDraft.protectedCustomFieldIds == [newDraft.customFields[1].id])
+        #expect(newDraft.hiddenCustomFieldIds.isEmpty)
     }
 
     private func fixtureData(_ name: String) throws -> Data {

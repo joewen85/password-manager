@@ -64,9 +64,13 @@ struct ContentView: View {
             } detail: {
                 DetailView(
                     entry: selectedEntry,
+                    entries: store.entries,
+                    categoryTemplates: store.categoryTemplates,
                     editEntry: beginEditing,
                     deleteEntry: deleteSelectedEntry,
-                    exportEntry: exportEntry
+                    exportEntry: exportEntry,
+                    openEntryReference: openEntryReference,
+                    updateEntryReference: updateEntryReference
                 )
             }
             .toolbar {
@@ -118,6 +122,7 @@ struct ContentView: View {
                     initialCategory: session.initialCategory,
                     categories: store.categories,
                     categoryTemplates: store.categoryTemplates,
+                    entries: store.entries,
                     tags: store.tags,
                     onCreateCategory: { category, preset, customFieldNames in
                         store.addCategory(category, preset: preset, customFieldNames: customFieldNames)
@@ -593,6 +598,17 @@ struct ContentView: View {
 
     private func beginEditing(_ entry: VaultEntry) {
         editorSession = EntryEditorSession(entry: entry)
+    }
+
+    private func openEntryReference(_ entry: VaultEntry) {
+        guard !entry.isDeleted else { return }
+        filter = .all
+        searchText = ""
+        selection = entry.id
+    }
+
+    private func updateEntryReference(_ entry: VaultEntry, fieldID: String, targetID: String) {
+        _ = store.updateEntryReference(entryID: entry.id, fieldID: fieldID, targetID: targetID)
     }
 
     private func deleteSelectedEntry(_ entry: VaultEntry) {
