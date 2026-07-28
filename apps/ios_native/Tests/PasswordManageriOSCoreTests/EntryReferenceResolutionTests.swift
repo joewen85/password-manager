@@ -166,6 +166,80 @@ struct EntryReferenceResolutionTests {
         ) == nil)
     }
 
+    @Test("Category rename only updates matching entry-reference targets")
+    func categoryRenameOnlyUpdatesMatchingEntryReferenceTargets() throws {
+        let reference = FieldTemplate(
+            id: "template-owner",
+            name: "Owner",
+            valueType: "entryReference",
+            targetCategory: " Accounts "
+        )
+        let text = FieldTemplate(
+            id: "template-text",
+            name: "Text",
+            valueType: "text",
+            targetCategory: "accounts"
+        )
+        let unknown = FieldTemplate(
+            id: "template-future",
+            name: "Future",
+            valueType: "futureReference",
+            targetCategory: "ACCOUNTS"
+        )
+        let templates = [
+            CategoryTemplate(category: "Servers", fields: [reference, text, unknown]),
+            CategoryTemplate(
+                category: "Services",
+                fields: [FieldTemplate(
+                    id: "template-service-owner",
+                    name: "Service Owner",
+                    valueType: "entryReference",
+                    targetCategory: "accounts"
+                )]
+            )
+        ]
+
+        let renamed = propagateEntryReferenceCategoryRename(
+            templates: templates,
+            from: " accounts\n",
+            to: " Identity "
+        )
+
+        #expect(renamed[0].fields[0] == FieldTemplate(
+            id: reference.id,
+            name: reference.name,
+            valueType: reference.valueType,
+            targetCategory: "Identity"
+        ))
+        #expect(renamed[0].fields[1] == text)
+        #expect(renamed[0].fields[2] == unknown)
+        #expect(renamed[1].fields[0].targetCategory == "Identity")
+    }
+
+    @Test("Target lifecycle preserves the reference value and changes only resolution state")
+    func targetLifecyclePreservesReferenceValueAndChangesResolutionState() throws {
+        let field = referenceField(value: "target-id")
+        let template = referenceTemplate(targetCategory: "Accounts")
+        var target = targetEntry(id: field.value, category: "Accounts")
+
+        #expect(resolveEntryReference(field: field, template: template, entries: [target])?.status == .resolved)
+
+        target.isDeleted = true
+        #expect(field.value == "target-id")
+        #expect(resolveEntryReference(field: field, template: template, entries: [target])?.status == .deleted)
+
+        target.isDeleted = false
+        #expect(field.value == "target-id")
+        #expect(resolveEntryReference(field: field, template: template, entries: [target])?.status == .resolved)
+
+        target.payload = .credential(CredentialPayload(category: "Archive"))
+        #expect(field.value == "target-id")
+        #expect(
+            resolveEntryReference(field: field, template: template, entries: [target])?.status ==
+                .categoryMismatch
+        )
+    }
+
     private func referenceTemplate(targetCategory: String) -> CategoryTemplate {
         CategoryTemplate(
             category: "Servers",

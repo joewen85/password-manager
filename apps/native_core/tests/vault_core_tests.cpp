@@ -1,5 +1,6 @@
 #include "../src/vault_core.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <fstream>
@@ -271,6 +272,98 @@ int main() {
     );
     assert(unrestrictedReference.has_value());
     assert(unrestrictedReference->status == pm::EntryReferenceStatus::Resolved);
+
+    auto lifecycleTemplates = referenceFixture.categoryTemplates;
+    lifecycleTemplates[1].fields[0].targetCategory = " accounts ";
+    lifecycleTemplates[1].fields.push_back(pm::FieldTemplate{
+        "template_text",
+        "Text",
+        "text",
+        "Accounts",
+    });
+    lifecycleTemplates[1].fields.push_back(pm::FieldTemplate{
+        "template_future",
+        "Future",
+        "futureReference",
+        "ACCOUNTS",
+    });
+    const auto renamedTemplates = pm::propagateEntryReferenceCategoryRename(
+        lifecycleTemplates,
+        " ACCOUNTS ",
+        " Identity "
+    );
+    const auto& renamedFields = renamedTemplates[1].fields;
+    assert(renamedFields[0].id == lifecycleTemplates[1].fields[0].id);
+    assert(renamedFields[0].name == lifecycleTemplates[1].fields[0].name);
+    assert(renamedFields[0].valueType == lifecycleTemplates[1].fields[0].valueType);
+    assert(renamedFields[0].targetCategory == "Identity");
+    const auto renamedTextField = std::find_if(
+        renamedFields.begin(),
+        renamedFields.end(),
+        [](const pm::FieldTemplate& field) { return field.id == "template_text"; }
+    );
+    const auto renamedFutureField = std::find_if(
+        renamedFields.begin(),
+        renamedFields.end(),
+        [](const pm::FieldTemplate& field) { return field.id == "template_future"; }
+    );
+    assert(renamedTextField != renamedFields.end());
+    assert(renamedTextField->targetCategory == "Accounts");
+    assert(renamedFutureField != renamedFields.end());
+    assert(renamedFutureField->targetCategory == "ACCOUNTS");
+
+    auto lifecycleEntries = referenceFixture.entries;
+    lifecycleEntries[0].category = "Identity";
+    referenceField.value = referenceTarget.id;
+    const auto renamedReference = pm::resolveEntryReference(
+        referenceField,
+        renamedFields,
+        lifecycleEntries
+    );
+    assert(renamedReference.has_value());
+    assert(renamedReference->status == pm::EntryReferenceStatus::Resolved);
+    assert(referenceField.value == referenceTarget.id);
+
+    lifecycleEntries[0].isDeleted = true;
+    const auto lifecycleDeleted = pm::resolveEntryReference(
+        referenceField,
+        renamedFields,
+        lifecycleEntries
+    );
+    assert(lifecycleDeleted.has_value());
+    assert(lifecycleDeleted->status == pm::EntryReferenceStatus::Deleted);
+    assert(referenceField.value == referenceTarget.id);
+
+    lifecycleEntries[0].isDeleted = false;
+    const auto lifecycleRestored = pm::resolveEntryReference(
+        referenceField,
+        renamedFields,
+        lifecycleEntries
+    );
+    assert(lifecycleRestored.has_value());
+    assert(lifecycleRestored->status == pm::EntryReferenceStatus::Resolved);
+    assert(referenceField.value == referenceTarget.id);
+
+    lifecycleEntries[0].category.clear();
+    const auto categoryDeletedReference = pm::resolveEntryReference(
+        referenceField,
+        renamedFields,
+        lifecycleEntries
+    );
+    assert(categoryDeletedReference.has_value());
+    assert(categoryDeletedReference->status == pm::EntryReferenceStatus::CategoryMismatch);
+    assert(renamedFields[0].targetCategory == "Identity");
+    assert(referenceField.value == referenceTarget.id);
+
+    lifecycleEntries[0].category = "Archive";
+    const auto lifecycleMoved = pm::resolveEntryReference(
+        referenceField,
+        renamedFields,
+        lifecycleEntries
+    );
+    assert(lifecycleMoved.has_value());
+    assert(lifecycleMoved->status == pm::EntryReferenceStatus::CategoryMismatch);
+    assert(referenceField.value == referenceTarget.id);
 
     auto legacyReferenceField = referenceField;
     legacyReferenceField.templateFieldId.clear();

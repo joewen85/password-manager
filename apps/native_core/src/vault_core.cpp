@@ -1719,6 +1719,28 @@ std::optional<EntryReferenceResolution> resolveEntryReference(
     return EntryReferenceResolution{EntryReferenceStatus::Resolved, projection};
 }
 
+std::vector<CategoryTemplate> propagateEntryReferenceCategoryRename(
+    const std::vector<CategoryTemplate>& templates,
+    const std::string& oldCategory,
+    const std::string& newCategory
+) {
+    const auto oldNormalized = trimCopy(oldCategory);
+    const auto newNormalized = trimCopy(newCategory);
+    if (oldNormalized.empty() || newNormalized.empty()) return templates;
+
+    auto updatedTemplates = templates;
+    const auto oldKey = lowerCopy(oldNormalized);
+    for (auto& categoryTemplate : updatedTemplates) {
+        for (auto& field : categoryTemplate.fields) {
+            if (field.valueType == "entryReference" &&
+                lowerCopy(trimCopy(field.targetCategory)) == oldKey) {
+                field.targetCategory = newNormalized;
+            }
+        }
+    }
+    return updatedTemplates;
+}
+
 std::vector<FieldTemplate> defaultCategoryFields() {
     return fieldsFromNames({"名称", "备注"});
 }

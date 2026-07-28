@@ -18,7 +18,7 @@
 - 折叠/紧凑态操作区已提供分类和标签入口：分类/标签仍来自条目字段，入口会预填新建条目的 category 或 tags，不引入新的数据模型。
 - UI 文案已拆分为英文默认资源和中文 `values-zh` 资源，条目类型、同步 provider、冲突策略等用户可见枚举也走资源化文本；系统语言为中文时显示中文。颜色已拆分为 light/night 资源，默认跟随系统深色/浅色模式。
 - 条目/分类级 JSON 导入导出已实现，导入时支持 Keep Copy、Overwrite、Skip 冲突策略。
-- 字段关联已支持模型、快照、同步和条目/分类导入导出的无损数据契约，并提供 `empty/resolved/missing/deleted/categoryMismatch` 纯领域解析及安全目标投影；标签职责不变。当前不提供关联编辑 UI，尚未接入搜索、生命周期传播或导入重映射，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
+- 字段关联已支持模型、快照、同步和条目/分类导入导出的无损数据契约，并提供 `empty/resolved/missing/deleted/categoryMismatch` 纯领域解析及安全目标投影；分类改名会传播匹配的目标分类配置，分类删除及条目删除/恢复/移动会保留引用值。标签职责不变。当前不提供关联编辑 UI，尚未接入搜索或导入重映射，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
 - 本地备份支持恢复最新加密备份，并自动保留最近 5 个备份文件。
 - 同步合并数据层已对齐 Flutter 的 version-vector 规则：本地/远端支配、并发冲突、delete-vs-update tombstone、keep-both conflict copy 均有 JVM 测试覆盖。
 - 远端同步 transport 层已对齐 Flutter 的 WebDAV 和 S3 presigned URL 行为：路径归一化、Basic Auth、JSON PUT、404/204 空远端、timeout/error 状态映射均有 JVM 测试覆盖。
@@ -312,7 +312,7 @@ This directory contains the native Android application target, used to build And
 - JVM unit tests cover PBKDF2 verifier behavior, AES-GCM round trip, TOTP generation/verification, JSON snapshot round trip for credential/server/service/tombstone payloads, PBKDF2/AES-GCM Dart fixture compatibility, and the compact/expanded/fold-separating layout policy.
 - Service accounts on service entries are edited in the Android native form with the compact `username:password:note; ...` format and shown in details with passwords masked.
 - Item/category scoped JSON import/export is implemented with Keep Copy, Overwrite, and Skip conflict strategies.
-- The entry-reference data contract is preserved by the model, snapshots, sync, and item/category import/export. A pure resolver now returns `empty`, `resolved`, `missing`, `deleted`, or `categoryMismatch` with a safe target projection. Tags remain unchanged. Reference editing UI, search integration, lifecycle propagation, and import remapping are not exposed yet; see `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
+- The entry-reference data contract is preserved by the model, snapshots, sync, and item/category import/export. A pure resolver returns `empty`, `resolved`, `missing`, `deleted`, or `categoryMismatch` with a safe target projection. Category renames propagate matching target-category configuration, while category deletion and target delete/restore/move operations retain stored reference values. Tags remain unchanged. Reference editing UI, search integration, and import remapping are not exposed yet; see `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
 - Local backup supports restoring the latest encrypted backup and automatically keeps the latest 5 backup files.
 - Sync merge data layer matches the Flutter version-vector rules: local/remote dominance, concurrent conflicts, delete-vs-update tombstones, and keep-both conflict copies are covered by JVM tests.
 - Remote sync transport now matches the Flutter WebDAV and S3 presigned URL clients: path normalization, Basic Auth, JSON PUT, 404/204 empty remote handling, and timeout/error status mapping are covered by JVM tests.

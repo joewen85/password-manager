@@ -125,7 +125,7 @@ The effective precedence is `empty` -> `missing` -> `deleted` -> `categoryMismat
 
 ## Category Lifecycle
 
-When a category is renamed, every reference field whose `targetCategory` matches the old category name is updated to the new canonical name.
+When a category is renamed, every template field whose `valueType` is exactly `entryReference` and whose trimmed `targetCategory` matches the trimmed old category name without case sensitivity is updated to the trimmed new canonical name. Field IDs, names, source values, template ownership, and all other metadata remain unchanged. Text fields and unknown future field types are never rewritten by this propagation rule.
 
 When a category is deleted:
 
@@ -133,6 +133,8 @@ When a category is deleted:
 - reference field definitions retain their target category text;
 - existing reference values are retained;
 - the client reports the target category or referenced entry as unavailable rather than deleting data silently.
+
+Soft-deleting a referenced entry retains the source value and changes resolution to `deleted`. Restoring the same entry ID can return it to `resolved`. Moving the live target to another category, including the uncategorized state produced by category deletion, retains the source value and resolves to `categoryMismatch` while the configured category constraint is no longer satisfied.
 
 ## Persistence And Sync
 

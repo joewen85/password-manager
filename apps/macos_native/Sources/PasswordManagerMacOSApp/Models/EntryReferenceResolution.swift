@@ -24,6 +24,31 @@ struct EntryReferenceResolution: Equatable, Sendable {
     }
 }
 
+func propagateEntryReferenceCategoryRename(
+    templates: [CategoryTemplate],
+    from oldCategory: String,
+    to newCategory: String
+) -> [CategoryTemplate] {
+    let oldNormalized = oldCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+    let newNormalized = newCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !oldNormalized.isEmpty, !newNormalized.isEmpty else { return templates }
+
+    return templates.map { template in
+        var updatedTemplate = template
+        updatedTemplate.fields = template.fields.map { field in
+            guard field.valueType == "entryReference",
+                  field.targetCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .caseInsensitiveCompare(oldNormalized) == .orderedSame else {
+                return field
+            }
+            var updatedField = field
+            updatedField.targetCategory = newNormalized
+            return updatedField
+        }
+        return updatedTemplate
+    }
+}
+
 func resolveEntryReference(
     field: CustomField,
     template: CategoryTemplate?,

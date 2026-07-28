@@ -262,6 +262,11 @@ final class VaultStore {
         removeTaxonomyValue(oldNormalized, from: &manualCategories)
         manualCategories.insert(newNormalized)
         renameCategoryTemplate(oldValue: oldNormalized, to: newNormalized)
+        categoryTemplates = propagateEntryReferenceCategoryRename(
+            templates: categoryTemplates,
+            from: oldNormalized,
+            to: newNormalized
+        )
         for index in entries.indices where entries[index].payload.category.caseInsensitiveEquals(oldNormalized) {
             let now = Date()
             entries[index].payload = entries[index].payload.replacingCategory(

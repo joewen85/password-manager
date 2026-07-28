@@ -24,6 +24,45 @@ export interface EntryReferenceResolution {
   target?: EntryReferenceTarget;
 }
 
+export function propagateEntryReferenceCategoryRename(
+  templates: CategoryTemplate[],
+  oldCategory: string,
+  newCategory: string,
+): CategoryTemplate[] {
+  const oldNormalized = oldCategory.trim();
+  const newNormalized = newCategory.trim();
+  if (oldNormalized.length === 0 || newNormalized.length === 0) {
+    return templates;
+  }
+  const oldKey = oldNormalized.toLowerCase();
+  return templates.map((template: CategoryTemplate) => {
+    let changed = false;
+    const fields = template.fields.map((field: FieldTemplate) => {
+      const targetCategory = field.targetCategory?.trim() ?? '';
+      if (
+        field.valueType !== 'entryReference' ||
+        targetCategory.toLowerCase() !== oldKey
+      ) {
+        return field;
+      }
+      changed = true;
+      return {
+        id: field.id,
+        name: field.name,
+        valueType: field.valueType,
+        targetCategory: newNormalized,
+      };
+    });
+    if (!changed) {
+      return template;
+    }
+    return {
+      category: template.category,
+      fields,
+    };
+  });
+}
+
 export function resolveEntryReference(
   field: CustomField,
   template: CategoryTemplate | null,

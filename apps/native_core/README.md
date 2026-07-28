@@ -19,8 +19,11 @@ link these sources instead of copying them into each app directory.
 - The entry-reference data contract is preserved in shared snapshot and sync
   serialization. The shared core also resolves opaque target IDs into
   `empty`, `resolved`, `missing`, `deleted`, or category-mismatch states while
-  exposing only the target ID, label, and category. Reference editing/display
-  remains outside this CLI slice; see `../../docs/FIELD_REFERENCE_CONTRACT.md`.
+  exposing only the target ID, label, and category. Its domain helper propagates
+  matching category-renamed target configuration, while category deletion and
+  target delete/restore/move scenarios retain stored reference values.
+  Reference editing/display remains outside this CLI slice; see
+  `../../docs/FIELD_REFERENCE_CONTRACT.md`.
 
 ## Verify
 

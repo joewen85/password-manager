@@ -200,6 +200,11 @@ std::optional<EntryReferenceResolution> resolveEntryReference(
     const std::vector<FieldTemplate>& templateFields,
     const std::vector<VaultEntry>& entries
 );
+std::vector<CategoryTemplate> propagateEntryReferenceCategoryRename(
+    const std::vector<CategoryTemplate>& templates,
+    const std::string& oldCategory,
+    const std::string& newCategory
+);
 std::vector<FieldTemplate> defaultCategoryFields();
 std::vector<FieldTemplate> categoryFieldsForPreset(CategoryTypePreset preset, const std::vector<std::string>& customFieldNames = {});
 std::vector<FieldTemplate> categoryFieldsWithCustom(const std::vector<std::string>& customFieldNames);

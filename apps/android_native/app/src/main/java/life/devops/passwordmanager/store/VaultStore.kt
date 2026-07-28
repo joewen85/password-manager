@@ -353,6 +353,19 @@ class VaultStore(
             categoryTemplates.remove(oldTemplate.key)
             categoryTemplates[newNormalized] = oldTemplate.value.copy(category = newNormalized)
         }
+        categoryTemplates.replaceAll { _, template ->
+            val updatedFields = template.fields.map { field ->
+                if (
+                    field.valueType == "entryReference" &&
+                    field.targetCategory.trim().equals(oldNormalized, ignoreCase = true)
+                ) {
+                    field.copy(targetCategory = newNormalized)
+                } else {
+                    field
+                }
+            }
+            if (updatedFields == template.fields) template else template.copy(fields = updatedFields)
+        }
         val now = Instant.now()
         entries.replaceAll { entry ->
             if (!entry.isDeleted && entry.payload.category.equals(oldNormalized, ignoreCase = true)) {

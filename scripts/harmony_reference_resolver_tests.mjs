@@ -26,7 +26,7 @@ function loadResolverRuntime() {
     .replace(/import\s*{[\s\S]*?}\s*from\s*'\.\.\/model\/VaultTypes';\s*/, '')
     .replace(/\bexport\s+/g, '');
   const executable = stripTypeScriptTypes(
-    `${source}\n;({ EntryReferenceStatus, resolveEntryReference });`,
+    `${source}\n;({ EntryReferenceStatus, propagateEntryReferenceCategoryRename, resolveEntryReference });`,
     { mode: 'transform' },
   );
   return vm.runInNewContext(executable, {});
@@ -52,7 +52,11 @@ function makeEntry(id, label, category, isDeleted = false) {
 
 function main() {
   assert(fs.existsSync(resolverPath), 'Harmony field reference resolver exists');
-  const { EntryReferenceStatus, resolveEntryReference } = loadResolverRuntime();
+  const {
+    EntryReferenceStatus,
+    propagateEntryReferenceCategoryRename,
+    resolveEntryReference,
+  } = loadResolverRuntime();
   assert(
     JSON.stringify(EntryReferenceStatus) === JSON.stringify({
       EMPTY: 'EMPTY',
@@ -88,6 +92,42 @@ function main() {
   };
   const liveTarget = makeEntry('Target-Entry', 'Primary Account', ' accounts ');
   const entries = [liveTarget];
+
+  const renamedTemplates = propagateEntryReferenceCategoryRename(
+    [
+      referenceCategoryTemplate,
+      {
+        category: 'Services',
+        fields: [{
+          id: 'Template-Service-Owner',
+          name: 'Service Owner',
+          valueType: 'entryReference',
+          targetCategory: 'ACCOUNTS',
+        }],
+      },
+    ],
+    ' accounts ',
+    ' Identity ',
+  );
+  assert(
+    renamedTemplates[0].fields[0].targetCategory === 'Identity' &&
+      renamedTemplates[1].fields[0].targetCategory === 'Identity',
+    'Category rename propagates across reference templates with trimmed case-insensitive matching',
+  );
+  assert(
+    JSON.stringify(renamedTemplates[0].fields[0]) === JSON.stringify({
+      id: referenceTemplate.id,
+      name: referenceTemplate.name,
+      valueType: referenceTemplate.valueType,
+      targetCategory: 'Identity',
+    }),
+    'Category rename preserves reference field IDs and metadata',
+  );
+  assert(
+    renamedTemplates[0].fields[1] === textTemplate &&
+      renamedTemplates[0].fields[2] === unknownTemplate,
+    'Category rename leaves text and unknown template types unchanged',
+  );
 
   assert(
     resolveEntryReference(
@@ -223,6 +263,39 @@ function main() {
   assert(
     unrestricted.status === EntryReferenceStatus.RESOLVED,
     'Empty trimmed target categories do not restrict reference resolution',
+  );
+
+  const lifecycleField = {
+    id: 'Lifecycle-Field',
+    templateFieldId: referenceTemplate.id,
+    name: 'Owner',
+    value: liveTarget.id,
+  };
+  const renamedReferenceTemplate = renamedTemplates[0];
+  const movedTarget = makeEntry(liveTarget.id, liveTarget.label, 'Archive');
+  assert(
+    lifecycleField.value === liveTarget.id &&
+      resolveEntryReference(
+        lifecycleField,
+        renamedReferenceTemplate,
+        [makeEntry(liveTarget.id, liveTarget.label, 'Identity', true)],
+      ).status === EntryReferenceStatus.DELETED,
+    'Soft-deleting a target keeps the reference value and reports DELETED',
+  );
+  assert(
+    lifecycleField.value === liveTarget.id &&
+      resolveEntryReference(
+        lifecycleField,
+        renamedReferenceTemplate,
+        [makeEntry(liveTarget.id, liveTarget.label, 'Identity')],
+      ).status === EntryReferenceStatus.RESOLVED,
+    'Restoring a target keeps the reference value and reports RESOLVED',
+  );
+  assert(
+    lifecycleField.value === liveTarget.id &&
+      resolveEntryReference(lifecycleField, renamedReferenceTemplate, [movedTarget]).status ===
+        EntryReferenceStatus.CATEGORY_MISMATCH,
+    'Moving a target keeps the reference value and reports CATEGORY_MISMATCH',
   );
 
   if (failures > 0) {

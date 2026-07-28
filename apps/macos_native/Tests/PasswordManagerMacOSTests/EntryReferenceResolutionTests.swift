@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import PasswordManagerMacOSApp
 
@@ -164,6 +165,170 @@ struct EntryReferenceResolutionTests {
             template: referenceTemplate(targetCategory: "Accounts"),
             entries: [target]
         ) == nil)
+    }
+
+    @Test("Category rename only updates matching entry-reference targets")
+    func categoryRenameOnlyUpdatesMatchingEntryReferenceTargets() {
+        let reference = FieldTemplate(
+            id: "template-owner",
+            name: "Owner",
+            valueType: "entryReference",
+            targetCategory: " Accounts "
+        )
+        let text = FieldTemplate(
+            id: "template-text",
+            name: "Text",
+            valueType: "text",
+            targetCategory: "accounts"
+        )
+        let unknown = FieldTemplate(
+            id: "template-future",
+            name: "Future",
+            valueType: "futureReference",
+            targetCategory: "ACCOUNTS"
+        )
+        let templates = [
+            CategoryTemplate(category: "Servers", fields: [reference, text, unknown]),
+            CategoryTemplate(
+                category: "Services",
+                fields: [FieldTemplate(
+                    id: "template-service-owner",
+                    name: "Service Owner",
+                    valueType: "entryReference",
+                    targetCategory: "accounts"
+                )]
+            )
+        ]
+
+        let renamed = propagateEntryReferenceCategoryRename(
+            templates: templates,
+            from: " accounts\n",
+            to: " Identity "
+        )
+
+        #expect(renamed[0].fields[0] == FieldTemplate(
+            id: reference.id,
+            name: reference.name,
+            valueType: reference.valueType,
+            targetCategory: "Identity"
+        ))
+        #expect(renamed[0].fields[1] == text)
+        #expect(renamed[0].fields[2] == unknown)
+        #expect(renamed[1].fields[0].targetCategory == "Identity")
+    }
+
+    @MainActor
+    @Test("Vault lifecycle preserves reference values and updates resolution state")
+    func vaultLifecyclePreservesReferenceValuesAndUpdatesResolutionState() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManagerMacOSReferenceLifecycleTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(repository: repository, syncSettingsRepository: nil)
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+
+        let reference = FieldTemplate(
+            id: "template-owner",
+            name: "Owner",
+            valueType: "entryReference",
+            targetCategory: " Accounts "
+        )
+        let text = FieldTemplate(
+            id: "template-text",
+            name: "Text",
+            valueType: "text",
+            targetCategory: "Accounts"
+        )
+        let unknown = FieldTemplate(
+            id: "template-future",
+            name: "Future",
+            valueType: "futureReference",
+            targetCategory: "ACCOUNTS"
+        )
+        let target = targetEntry(id: "target-id", category: "Accounts")
+        let source = VaultEntry(
+            id: "source-id",
+            label: "Server",
+            type: .credential,
+            payload: .credential(CredentialPayload(category: "Servers")),
+            customFields: [referenceField(value: target.id)]
+        )
+        let snapshot = VaultSnapshot(
+            entries: [target, source],
+            categories: ["Accounts", "Archive", "Servers"],
+            categoryTemplates: [
+                CategoryTemplate(category: "Accounts"),
+                CategoryTemplate(category: "Archive"),
+                CategoryTemplate(category: "Servers", fields: [reference, text, unknown])
+            ]
+        )
+        let importURL = directory.appendingPathComponent("reference-lifecycle.json")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try repository.encodeSnapshot(snapshot).write(to: importURL)
+        store.importSnapshot(from: importURL)
+
+        #expect(store.renameCategory(" accounts ", to: " Identity "))
+        let renamedTemplate = try #require(store.categoryTemplates.first { $0.category == "Servers" })
+        let renamedReference = try #require(renamedTemplate.fields.first { $0.id == reference.id })
+        #expect(renamedReference == FieldTemplate(
+            id: reference.id,
+            name: reference.name,
+            valueType: reference.valueType,
+            targetCategory: "Identity"
+        ))
+        #expect(renamedTemplate.fields.first { $0.id == text.id } == text)
+        #expect(renamedTemplate.fields.first { $0.id == unknown.id } == unknown)
+        #expect(referenceStatus(store: store, sourceID: source.id) == .resolved)
+
+        let liveTarget = try #require(store.entries.first { $0.id == target.id })
+        store.delete(liveTarget)
+        #expect(referenceValue(store: store, sourceID: source.id) == target.id)
+        #expect(referenceStatus(store: store, sourceID: source.id) == .deleted)
+
+        let deletedTarget = try #require(store.entries.first { $0.id == target.id })
+        var restoreDraft = EntryDraft(entry: deletedTarget)
+        restoreDraft.category = "Identity"
+        store.upsert(restoreDraft, editing: deletedTarget)
+        #expect(referenceValue(store: store, sourceID: source.id) == target.id)
+        #expect(referenceStatus(store: store, sourceID: source.id) == .resolved)
+
+        #expect(store.deleteCategory(" identity "))
+        #expect(referenceValue(store: store, sourceID: source.id) == target.id)
+        #expect(referenceTargetCategory(store: store, sourceID: source.id) == "Identity")
+        #expect(referenceStatus(store: store, sourceID: source.id) == .categoryMismatch)
+
+        let uncategorizedTarget = try #require(store.entries.first { $0.id == target.id })
+        var moveDraft = EntryDraft(entry: uncategorizedTarget)
+        moveDraft.category = "Archive"
+        store.upsert(moveDraft, editing: uncategorizedTarget)
+        #expect(referenceValue(store: store, sourceID: source.id) == target.id)
+        #expect(referenceStatus(store: store, sourceID: source.id) == .categoryMismatch)
+    }
+
+    @MainActor
+    private func referenceStatus(store: VaultStore, sourceID: String) -> EntryReferenceStatus? {
+        guard let source = store.entries.first(where: { $0.id == sourceID }),
+              let template = store.categoryTemplates.first(where: {
+                  $0.category.caseInsensitiveCompare(source.payload.category) == .orderedSame
+              }),
+              let field = source.customFields.first else {
+            return nil
+        }
+        return resolveEntryReference(field: field, template: template, entries: store.entries)?.status
+    }
+
+    @MainActor
+    private func referenceValue(store: VaultStore, sourceID: String) -> String? {
+        store.entries.first(where: { $0.id == sourceID })?.customFields.first?.value
+    }
+
+    @MainActor
+    private func referenceTargetCategory(store: VaultStore, sourceID: String) -> String? {
+        guard let source = store.entries.first(where: { $0.id == sourceID }) else { return nil }
+        return store.categoryTemplates.first(where: {
+            $0.category.caseInsensitiveCompare(source.payload.category) == .orderedSame
+        })?.fields.first(where: { $0.valueType == "entryReference" })?.targetCategory
     }
 
     private func referenceTemplate(targetCategory: String) -> CategoryTemplate {

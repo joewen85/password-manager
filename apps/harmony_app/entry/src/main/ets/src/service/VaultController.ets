@@ -35,6 +35,7 @@ import {
   WebDavSyncClient,
 } from '../sync/RemoteSyncClient';
 import { VaultStore } from '../storage/VaultStore';
+import { propagateEntryReferenceCategoryRename } from '../domain/FieldReferenceResolver';
 
 interface VaultRuntimePayload extends VaultPayloadRecord {
   categoryTemplates: CategoryTemplate[];
@@ -1189,6 +1190,11 @@ export class VaultController {
         fields: template.fields,
       });
     });
+    this.snapshot.categoryTemplates = propagateEntryReferenceCategoryRename(
+      this.snapshot.categoryTemplates,
+      from,
+      to,
+    );
     this.snapshot.entries.forEach((entry: VaultEntry) => {
       if (entry.isDeleted) {
         return;
