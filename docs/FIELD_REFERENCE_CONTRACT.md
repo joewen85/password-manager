@@ -16,7 +16,7 @@ Multiple references, cascading deletion, automatic dependency export, and catego
 
 ## Rollout Status
 
-P1 implements lossless reading, writing, synchronization, and import/export of the additive fields on every maintained client. It does not expose reference creation or editing, resolve references for display or search, apply lifecycle rules, or remap reference IDs during copy imports. Those behaviors are staged for P2 and the platform UI phases; the corresponding sections below define their required end state rather than current P1 behavior.
+P1 implements lossless reading, writing, synchronization, and import/export of the additive fields on every maintained client. P2a adds the same pure reference resolver and safe display projection to Android, HarmonyOS, iOS, macOS, and the shared native core. The resolver is not yet connected to reference creation, editing, UI display, search, lifecycle propagation, or copy-import ID remapping. Those integrations remain staged for P2b/P2c and the platform UI phases; the corresponding sections below define their required end state rather than current behavior.
 
 ## JSON Shape
 
@@ -107,6 +107,21 @@ There is no database schema in this repository. Vault data is stored as encrypte
 - Soft-deleting a referenced entry does not cascade to the source entry.
 - An unresolved, deleted, or category-mismatched reference remains stored and is presented as unavailable until the user clears or replaces it.
 - A source entry cannot expose secret fields from the referenced entry without the normal vault-unlocked access path.
+
+## Resolution Semantics
+
+Resolution applies only when the source custom field matches a template field whose `valueType` is exactly `entryReference`:
+
+- A non-empty `templateFieldId` is matched exactly as an opaque, case-sensitive ID. Implementations do not fall back to a field-name match when that ID is present but unknown.
+- Only a truly empty `templateFieldId` enables the legacy fallback, which compares trimmed field names without case sensitivity.
+- A whitespace-only reference value resolves to `empty` before any target lookup.
+- A non-empty reference value matches a target entry ID exactly and case-sensitively. Labels, names, categories, and tags never participate in identity matching.
+- A target that is not present resolves to `missing`.
+- A target whose current `isDeleted` flag is set resolves to `deleted`, even if its category also differs.
+- For a live target, a non-empty `targetCategory` is compared after trimming both categories and without case sensitivity. A failed comparison resolves to `categoryMismatch`; an empty target category imposes no restriction.
+- A live target satisfying the category constraint resolves to `resolved`.
+
+The effective precedence is `empty` -> `missing` -> `deleted` -> `categoryMismatch` -> `resolved`. `empty` and `missing` have no target projection. Every found-target state (`deleted`, `categoryMismatch`, and `resolved`) may expose only a projection containing the target `id`, `label`, and trimmed `category`; it must never return the target entry, payload, username, password, token, secret, notes, tags, or custom fields.
 
 ## Category Lifecycle
 

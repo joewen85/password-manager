@@ -206,6 +206,85 @@ int main() {
     assert(referenceRoundTrip.entries[1].customFields[0].templateFieldId == "44444444-4444-4444-8444-444444444444");
     assert(referenceRoundTrip.categoryTemplates[1].fields[0].valueType == "entryReference");
 
+    const auto& referenceTarget = referenceFixture.entries[0];
+    auto referenceField = referenceFixture.entries[1].customFields[0];
+    auto referenceTemplateFields = referenceFixture.categoryTemplates[1].fields;
+    referenceTemplateFields[0].targetCategory = " accounts ";
+    const auto resolvedReference = pm::resolveEntryReference(
+        referenceField,
+        referenceTemplateFields,
+        referenceFixture.entries
+    );
+    assert(resolvedReference.has_value());
+    assert(resolvedReference->status == pm::EntryReferenceStatus::Resolved);
+    assert(resolvedReference->target.has_value());
+    assert(resolvedReference->target->id == referenceTarget.id);
+    assert(resolvedReference->target->label == referenceTarget.label);
+    assert(resolvedReference->target->category == referenceTarget.category);
+
+    referenceField.value = " \t\n";
+    const auto emptyReference = pm::resolveEntryReference(referenceField, referenceTemplateFields, referenceFixture.entries);
+    assert(emptyReference.has_value());
+    assert(emptyReference->status == pm::EntryReferenceStatus::Empty);
+    assert(!emptyReference->target.has_value());
+
+    referenceField.value = "missing_target";
+    const auto missingReference = pm::resolveEntryReference(referenceField, referenceTemplateFields, referenceFixture.entries);
+    assert(missingReference.has_value());
+    assert(missingReference->status == pm::EntryReferenceStatus::Missing);
+    assert(!missingReference->target.has_value());
+
+    referenceField.value = "HARMONY_TARGET_01";
+    const auto caseChangedId = pm::resolveEntryReference(referenceField, referenceTemplateFields, referenceFixture.entries);
+    assert(caseChangedId.has_value());
+    assert(caseChangedId->status == pm::EntryReferenceStatus::Missing);
+
+    auto deletedEntries = referenceFixture.entries;
+    deletedEntries[0].isDeleted = true;
+    deletedEntries[0].deletedAt = "2026-07-28T06:00:00Z";
+    referenceField.value = referenceTarget.id;
+    referenceTemplateFields[0].targetCategory = "Different Category";
+    const auto deletedReference = pm::resolveEntryReference(
+        referenceField,
+        referenceTemplateFields,
+        deletedEntries
+    );
+    assert(deletedReference.has_value());
+    assert(deletedReference->status == pm::EntryReferenceStatus::Deleted);
+    assert(deletedReference->target.has_value());
+
+    referenceTemplateFields[0].targetCategory = "Servers";
+    const auto mismatchedReference = pm::resolveEntryReference(
+        referenceField,
+        referenceTemplateFields,
+        referenceFixture.entries
+    );
+    assert(mismatchedReference.has_value());
+    assert(mismatchedReference->status == pm::EntryReferenceStatus::CategoryMismatch);
+    assert(mismatchedReference->target.has_value());
+
+    referenceTemplateFields[0].targetCategory = " \n";
+    const auto unrestrictedReference = pm::resolveEntryReference(
+        referenceField,
+        referenceTemplateFields,
+        referenceFixture.entries
+    );
+    assert(unrestrictedReference.has_value());
+    assert(unrestrictedReference->status == pm::EntryReferenceStatus::Resolved);
+
+    auto legacyReferenceField = referenceField;
+    legacyReferenceField.templateFieldId.clear();
+    legacyReferenceField.name = " owner ";
+    assert(pm::resolveEntryReference(legacyReferenceField, referenceTemplateFields, referenceFixture.entries).has_value());
+
+    auto invalidReferenceField = legacyReferenceField;
+    invalidReferenceField.templateFieldId = "   ";
+    assert(!pm::resolveEntryReference(invalidReferenceField, referenceTemplateFields, referenceFixture.entries).has_value());
+
+    auto textTemplateFields = referenceTemplateFields;
+    textTemplateFields[0].valueType = "text";
+    assert(!pm::resolveEntryReference(referenceField, textTemplateFields, referenceFixture.entries).has_value());
+
     const auto legacyFixture = pm::parseSnapshotJson(
         readContractFixture("snapshot-legacy-text.json")
     );

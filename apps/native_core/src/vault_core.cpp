@@ -1671,6 +1671,54 @@ VaultEntry makeEntry(const std::string& label, const std::string& type, const st
     return entry;
 }
 
+std::optional<EntryReferenceResolution> resolveEntryReference(
+    const CustomField& field,
+    const std::vector<FieldTemplate>& templateFields,
+    const std::vector<VaultEntry>& entries
+) {
+    const FieldTemplate* templateField = nullptr;
+    if (!field.templateFieldId.empty()) {
+        const auto match = std::find_if(templateFields.begin(), templateFields.end(), [&](const FieldTemplate& candidate) {
+            return candidate.id == field.templateFieldId;
+        });
+        if (match != templateFields.end()) templateField = &*match;
+    } else {
+        const auto fieldName = trimCopy(field.name);
+        if (!fieldName.empty()) {
+            const auto match = std::find_if(templateFields.begin(), templateFields.end(), [&](const FieldTemplate& candidate) {
+                return lowerCopy(trimCopy(candidate.name)) == lowerCopy(fieldName);
+            });
+            if (match != templateFields.end()) templateField = &*match;
+        }
+    }
+    if (templateField == nullptr || templateField->valueType != "entryReference") {
+        return std::nullopt;
+    }
+
+    if (trimCopy(field.value).empty()) {
+        return EntryReferenceResolution{EntryReferenceStatus::Empty, std::nullopt};
+    }
+
+    const auto target = std::find_if(entries.begin(), entries.end(), [&](const VaultEntry& entry) {
+        return entry.id == field.value;
+    });
+    if (target == entries.end()) {
+        return EntryReferenceResolution{EntryReferenceStatus::Missing, std::nullopt};
+    }
+
+    const EntryReferenceTarget projection{target->id, target->label, trimCopy(target->category)};
+    if (target->isDeleted) {
+        return EntryReferenceResolution{EntryReferenceStatus::Deleted, projection};
+    }
+
+    const auto expectedCategory = lowerCopy(trimCopy(templateField->targetCategory));
+    if (!expectedCategory.empty() && lowerCopy(trimCopy(target->category)) != expectedCategory) {
+        return EntryReferenceResolution{EntryReferenceStatus::CategoryMismatch, projection};
+    }
+
+    return EntryReferenceResolution{EntryReferenceStatus::Resolved, projection};
+}
+
 std::vector<FieldTemplate> defaultCategoryFields() {
     return fieldsFromNames({"名称", "备注"});
 }
