@@ -36,6 +36,8 @@
 - 同步链路仅使用用户配置的 HTTPS 端点（WebDAV/S3 预签名 URL）。
 - 同步日志已做敏感信息脱敏（password/token/authorization/Bearer）。
 - 应用默认不上传遥测或统计数据。
+- 字段关联只在现有加密 vault JSON 内保存模板元数据和稳定条目 ID，不新增权限、网络端点、SDK 或数据采集。
+- 单条/分类导出不得因引用而隐式导出其他条目，搜索与日志不得索引或记录被引用目标的密码、Token、Secret 等敏感字段；完整规则见 `../../../docs/FIELD_REFERENCE_CONTRACT.md`。
 
 ## 4. 发布前核对项
 

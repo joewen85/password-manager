@@ -322,7 +322,7 @@ struct VaultSyncEngineTests {
     @Test("Concurrent payload merges and uploads next revision")
     func concurrentPayloadMergesAndUploadsNextRevision() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let conflictId = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!
+        let conflictId = "33333333-3333-3333-3333-333333333333"
         let engine = VaultSyncEngine(now: { now }, idGenerator: { conflictId })
         var settings = SyncSettings.defaults(deviceId: "mac-device")
         settings.lastSyncRevision = 2
@@ -514,7 +514,13 @@ struct VaultSyncEngineTests {
                 "updatedBy": "flutter-device",
                 "isDeleted": false,
                 "category": "Mobile",
-                "tags": ["flutter", "sync"]
+                "tags": ["flutter", "sync"],
+                "customFields": [[
+                    "id": "harmony-field:owner",
+                    "templateFieldId": "template_owner",
+                    "name": "Owner",
+                    "value": "harmony-entry:account"
+                ]]
             ]),
             key: metadataKey,
             nonceBytes: Data((45...56).map(UInt8.init))
@@ -523,6 +529,15 @@ struct VaultSyncEngineTests {
             try jsonData([
                 "categories": ["Mobile"],
                 "tags": ["flutter", "sync"],
+                "categoryTemplates": [[
+                    "category": "Mobile",
+                    "fields": [[
+                        "id": "template_owner",
+                        "name": "Owner",
+                        "valueType": "entryReference",
+                        "targetCategory": "Accounts"
+                    ]]
+                ]],
                 "sortOrder": "updatedDesc",
                 "tagsUpdatedAt": 1_800_000_001_000,
                 "categoriesUpdatedAt": 1_800_000_001_000,
@@ -549,7 +564,7 @@ struct VaultSyncEngineTests {
                 "kdfIterations": 120_000
             ],
             "items": [[
-                "id": "55555555-6666-7777-8888-999999999999",
+                "id": "harmony-entry:mobile",
                 "encryptedPayload": encryptedPayloadJson(payloadRecord),
                 "encryptedMetadata": encryptedPayloadJson(metadataRecord),
                 "kdfSalt": recordSalt.base64EncodedString(),
@@ -569,12 +584,33 @@ struct VaultSyncEngineTests {
         #expect(decoded.revision == 7)
         #expect(decoded.snapshot.categories == ["Mobile"])
         #expect(decoded.snapshot.tags == ["flutter", "sync"])
-        #expect(entry.id.uuidString.lowercased() == "55555555-6666-7777-8888-999999999999")
+        #expect(entry.id == "harmony-entry:mobile")
         #expect(entry.label == "Flutter Credential")
         #expect(entry.updatedBy == "flutter-device")
         #expect(entry.version == ["flutter-device": 7])
         #expect(entry.payload.category == "Mobile")
         #expect(entry.payload.tags == ["flutter", "sync"])
+        #expect(entry.customFields == [
+            CustomField(
+                id: "harmony-field:owner",
+                templateFieldId: "template_owner",
+                name: "Owner",
+                value: "harmony-entry:account"
+            )
+        ])
+        #expect(decoded.snapshot.categoryTemplates == [
+            CategoryTemplate(
+                category: "Mobile",
+                fields: [
+                    FieldTemplate(
+                        id: "template_owner",
+                        name: "Owner",
+                        valueType: "entryReference",
+                        targetCategory: "Accounts"
+                    )
+                ]
+            )
+        ])
         guard case .credential(let credential) = entry.payload else {
             Issue.record("Expected credential payload")
             return
@@ -661,7 +697,7 @@ private func makeEntry(
     isDeleted: Bool = false
 ) -> VaultEntry {
     VaultEntry(
-        id: UUID(uuidString: id)!,
+        id: id,
         label: label,
         type: .credential,
         payload: .credential(

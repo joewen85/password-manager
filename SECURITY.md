@@ -15,6 +15,9 @@
 - Local data is stored only as encrypted blobs.
 - Sync providers only ever see encrypted payloads.
 - Backups are encrypted and integrity‑checked.
+- Entry-reference definitions and values remain inside the existing encrypted vault snapshot and require no new platform permission or network endpoint.
+- Scoped item/category export does not automatically include a referenced entry. A reference must never expose or cause search/log indexing of the target entry's password, token, secret, or other sensitive fields.
+- Reference fields can only be enabled for editing after every synchronized maintained client supports lossless preservation of the additive contract fields.
 
 ## Threat Mitigations
 - Memory zeroization where applicable (planned)

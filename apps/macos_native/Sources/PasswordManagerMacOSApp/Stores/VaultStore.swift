@@ -278,6 +278,25 @@ final class VaultStore {
     }
 
     func updateCategoryTemplate(_ category: String, customFieldNames: [String]) -> Bool {
+        let existingFields = categoryTemplates
+            .first { $0.category.caseInsensitiveEquals(category) }?
+            .fields ?? []
+        let customFields = CategoryTemplate.fields(for: nil, customFieldNames: customFieldNames)
+            .filter { !$0.name.caseInsensitiveEquals("名称") }
+            .map { field in
+                let name = field.name
+                let existing = existingFields.first {
+                    $0.valueType == "text" && $0.name.caseInsensitiveEquals(name)
+                }
+                return CustomField(
+                    templateFieldId: existing?.id ?? "",
+                    name: name
+                )
+            }
+        return updateCategoryTemplate(category, customFields: customFields)
+    }
+
+    func updateCategoryTemplate(_ category: String, customFields: [CustomField]) -> Bool {
         let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else {
             statusMessage = "Value is required."
@@ -288,9 +307,49 @@ final class VaultStore {
             return false
         }
 
+        let existingFields = categoryTemplates
+            .first { $0.category.caseInsensitiveEquals(canonicalCategory) }?
+            .fields ?? CategoryTemplate.defaultCategoryFields()
+        let nameField = existingFields.first { $0.name.caseInsensitiveEquals("名称") }
+            ?? CategoryTemplate.defaultCategoryFields()[0]
+        let protectedFields = existingFields.filter { $0.valueType != "text" }
+        var updatedFields = [nameField]
+        var includedFieldIds = Set([nameField.id])
+        var includedNames = Set(
+            [nameField.name.lowercased()] + protectedFields.map { $0.name.lowercased() }
+        )
+
+        for customField in customFields {
+            let name = customField.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let nameKey = name.lowercased()
+            guard !name.isEmpty,
+                  !name.caseInsensitiveEquals("名称"),
+                  includedNames.insert(nameKey).inserted else {
+                continue
+            }
+
+            let existingField = existingFields.first {
+                !customField.templateFieldId.isEmpty && $0.id == customField.templateFieldId
+            } ?? existingFields.first {
+                $0.valueType == "text" && $0.name.caseInsensitiveEquals(name)
+            }
+            if var existingField {
+                existingField.name = name
+                updatedFields.append(existingField)
+                includedFieldIds.insert(existingField.id)
+            } else {
+                let newField = FieldTemplate(name: name)
+                updatedFields.append(newField)
+                includedFieldIds.insert(newField.id)
+            }
+        }
+
+        updatedFields.append(contentsOf: protectedFields.filter {
+            !includedFieldIds.contains($0.id)
+        })
         upsertCategoryTemplate(
             category: canonicalCategory,
-            fields: CategoryTemplate.fields(for: nil, customFieldNames: customFieldNames)
+            fields: updatedFields
         )
         rebuildCollections()
         persistUnlockedSnapshot()
@@ -565,7 +624,7 @@ final class VaultStore {
             return
         }
         do {
-            let exportURL = try repository.saveEntryExport(entry)
+            let exportURL = try repository.saveEntryExport(entry, categoryTemplates: categoryTemplates)
             statusMessage = "Entry export saved: \(exportURL.lastPathComponent)"
         } catch {
             statusMessage = error.localizedDescription
@@ -578,7 +637,11 @@ final class VaultStore {
             return nil
         }
         do {
-            let export = try repository.makeEntryExport(entry, selectedFieldIDs: selectedFieldIDs)
+            let export = try repository.makeEntryExport(
+                entry,
+                selectedFieldIDs: selectedFieldIDs,
+                categoryTemplates: categoryTemplates
+            )
             statusMessage = "Entry export ready: \(export.fileName)"
             return export
         } catch {
@@ -596,7 +659,11 @@ final class VaultStore {
             let exportedEntries = entries
                 .filter { !$0.isDeleted && $0.payload.category == category }
                 .sorted { $0.label < $1.label }
-            let exportURL = try repository.saveCategoryExport(category: category, entries: exportedEntries)
+            let exportURL = try repository.saveCategoryExport(
+                category: category,
+                entries: exportedEntries,
+                categoryTemplates: categoryTemplates
+            )
             statusMessage = "Category export saved: \(exportURL.lastPathComponent)"
         } catch {
             statusMessage = error.localizedDescription
@@ -612,7 +679,11 @@ final class VaultStore {
             let exportedEntries = entries
                 .filter { !$0.isDeleted && $0.payload.category == category }
                 .sorted { $0.label < $1.label }
-            let export = try repository.makeCategoryExport(category: category, entries: exportedEntries)
+            let export = try repository.makeCategoryExport(
+                category: category,
+                entries: exportedEntries,
+                categoryTemplates: categoryTemplates
+            )
             statusMessage = "Category export ready: \(export.fileName)"
             return export
         } catch {
@@ -999,6 +1070,7 @@ final class VaultStore {
         _ scopedExport: ScopedVaultExport,
         strategy: ImportConflictStrategy
     ) throws -> (created: Int, updated: Int, skipped: Int) {
+        let templatesChanged = mergeImportedCategoryTemplates(scopedExport.categoryTemplates)
         let importedEntries: [VaultEntry]
         switch scopedExport.scope {
         case .item:
@@ -1008,7 +1080,7 @@ final class VaultStore {
         }
         let result = applyImportedEntries(importedEntries, strategy: strategy)
         rebuildCollections()
-        if result.created > 0 || result.updated > 0 {
+        if templatesChanged || result.created > 0 || result.updated > 0 {
             try recordLocalMutationForSync()
         }
         try saveSnapshot()
@@ -1052,11 +1124,11 @@ final class VaultStore {
                     )
                     updated += 1
                 case .keepCopy:
-                    entries.append(imported.copyForImport(id: UUID(), updatedAt: Date()))
+                    entries.append(imported.copyForImport(id: UUID().uuidString.lowercased(), updatedAt: Date()))
                     created += 1
                 }
             } else {
-                entries.append(imported.copyForImport(id: UUID(), updatedAt: Date()))
+                entries.append(imported.copyForImport(id: UUID().uuidString.lowercased(), updatedAt: Date()))
                 created += 1
             }
         }
@@ -1105,6 +1177,42 @@ final class VaultStore {
         } else {
             categoryTemplates.append(CategoryTemplate(category: category, fields: fields))
         }
+    }
+
+    private func mergeImportedCategoryTemplates(_ importedTemplates: [CategoryTemplate]) -> Bool {
+        var changed = false
+        for importedTemplate in importedTemplates {
+            let importedCategory = importedTemplate.category.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !importedCategory.isEmpty else { continue }
+            if !manualCategories.contains(where: { $0.caseInsensitiveEquals(importedCategory) }) {
+                manualCategories.insert(importedCategory)
+                changed = true
+            }
+            if let templateIndex = categoryTemplates.firstIndex(where: {
+                $0.category.caseInsensitiveEquals(importedCategory)
+            }) {
+                var mergedTemplate = categoryTemplates[templateIndex]
+                for importedField in importedTemplate.fields {
+                    if let fieldIndex = mergedTemplate.fields.firstIndex(where: { $0.id == importedField.id }) {
+                        if mergedTemplate.fields[fieldIndex] != importedField {
+                            mergedTemplate.fields[fieldIndex] = importedField
+                            changed = true
+                        }
+                    } else {
+                        mergedTemplate.fields.append(importedField)
+                        changed = true
+                    }
+                }
+                categoryTemplates[templateIndex] = mergedTemplate
+            } else {
+                categoryTemplates.append(CategoryTemplate(category: importedCategory, fields: importedTemplate.fields))
+                changed = true
+            }
+        }
+        categoryTemplates.sort {
+            $0.category.localizedCaseInsensitiveCompare($1.category) == .orderedAscending
+        }
+        return changed
     }
 
     private func renameCategoryTemplate(oldValue: String, to newValue: String) {
@@ -1175,6 +1283,7 @@ struct EntryDraft: Equatable {
     var server = ServerPayload()
     var service = ServicePayload()
     var customFields: [CustomField] = []
+    private(set) var protectedCustomFieldIds: Set<String> = []
 
     var category: String {
         get { payload.category }
@@ -1203,15 +1312,20 @@ struct EntryDraft: Equatable {
     }
 
     var normalizedCustomFields: [CustomField] {
-        customFields
-            .map {
-                CustomField(
-                    id: $0.id,
-                    name: $0.name.trimmingCharacters(in: .whitespacesAndNewlines),
-                    value: $0.value
-                )
+        customFields.compactMap { field in
+            if protectedCustomFieldIds.contains(field.id) {
+                return field
             }
-            .filter { !$0.name.isEmpty || !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            let normalized = CustomField(
+                id: field.id,
+                templateFieldId: field.templateFieldId,
+                name: field.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                value: field.value
+            )
+            return normalized.name.isEmpty && normalized.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? nil
+                : normalized
+        }
     }
 
     init() {}
@@ -1248,24 +1362,72 @@ struct EntryDraft: Equatable {
         for field in fields {
             let name = field.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty else { continue }
-            guard !customFields.contains(where: { $0.name.caseInsensitiveEquals(name) }) else { continue }
-            customFields.append(CustomField(name: name))
+            if let existing = customFields.first(where: {
+                (!$0.templateFieldId.isEmpty && $0.templateFieldId == field.id)
+                    || $0.name.caseInsensitiveEquals(name)
+            }) {
+                if field.valueType != "text" {
+                    protectedCustomFieldIds.insert(existing.id)
+                }
+                continue
+            }
+            guard field.valueType == "text" else { continue }
+            let customField = CustomField(templateFieldId: field.id, name: name)
+            customFields.append(customField)
         }
     }
 
     mutating func configureTemplateFields(_ fields: [FieldTemplate]) {
-        var existingByName: [String: String] = [:]
+        let previousProtectedIds = protectedCustomFieldIds
+        var existingByTemplateId: [String: CustomField] = [:]
+        var existingByName: [String: CustomField] = [:]
+        var editableByName: [String: CustomField] = [:]
         for field in customFields {
+            if !field.templateFieldId.isEmpty, existingByTemplateId[field.templateFieldId] == nil {
+                existingByTemplateId[field.templateFieldId] = field
+            }
             let key = field.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if !key.isEmpty, existingByName[key] == nil {
-                existingByName[key] = field.value
+                existingByName[key] = field
+            }
+            if !key.isEmpty,
+               !previousProtectedIds.contains(field.id),
+               editableByName[key] == nil {
+                editableByName[key] = field
             }
         }
-        customFields = fields.compactMap { field in
+        var consumedExistingIds = Set<String>()
+        var nextProtectedIds = Set<String>()
+        var configuredFields = fields.compactMap { field -> CustomField? in
             let name = field.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty, !name.caseInsensitiveEquals("名称") else { return nil }
-            return CustomField(name: name, value: existingByName[name.lowercased()] ?? "")
+            let existing = existingByTemplateId[field.id]
+                ?? (field.valueType == "text" ? editableByName[name.lowercased()] : existingByName[name.lowercased()])
+            if let existing {
+                consumedExistingIds.insert(existing.id)
+            }
+            if field.valueType != "text" {
+                guard let existing else { return nil }
+                nextProtectedIds.insert(existing.id)
+                return existing
+            }
+            if let existing, previousProtectedIds.contains(existing.id) {
+                nextProtectedIds.insert(existing.id)
+                return existing
+            }
+            return CustomField(
+                id: existing?.id ?? UUID().uuidString.lowercased(),
+                templateFieldId: field.id,
+                name: name,
+                value: existing?.value ?? ""
+            )
         }
+        for field in customFields where previousProtectedIds.contains(field.id) && !consumedExistingIds.contains(field.id) {
+            configuredFields.append(field)
+            nextProtectedIds.insert(field.id)
+        }
+        customFields = configuredFields
+        protectedCustomFieldIds = nextProtectedIds
     }
 }
 

@@ -80,7 +80,10 @@ struct EntryEditorView: View {
                 }
 
                 if usesTemplateFields {
-                    TemplateFieldsEditor(fields: $draft.customFields)
+                    TemplateFieldsEditor(
+                        fields: $draft.customFields,
+                        protectedFieldIDs: draft.protectedCustomFieldIds
+                    )
                 } else {
                     switch draft.payload {
                     case .credential:
@@ -91,7 +94,10 @@ struct EntryEditorView: View {
                         ServiceEditor(payload: $draft.service)
                     }
 
-                    CustomFieldsEditor(fields: $draft.customFields)
+                    CustomFieldsEditor(
+                        fields: $draft.customFields,
+                        protectedFieldIDs: draft.protectedCustomFieldIds
+                    )
                 }
             }
             .formStyle(.grouped)
@@ -574,14 +580,19 @@ private struct ServiceAccountsEditor: View {
 
 private struct CustomFieldsEditor: View {
     @Binding var fields: [CustomField]
+    var protectedFieldIDs: Set<String>
+
+    private var editableIndices: [Int] {
+        fields.indices.filter { !protectedFieldIDs.contains(fields[$0].id) }
+    }
 
     var body: some View {
         Section(L10n.t("Fields")) {
-            if fields.isEmpty {
+            if editableIndices.isEmpty {
                 Text(L10n.t("No custom fields."))
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(fields.indices, id: \.self) { index in
+                ForEach(editableIndices, id: \.self) { index in
                     CustomFieldRow(field: $fields[index], showsValue: true, remove: { remove(at: index) })
                 }
             }
@@ -604,14 +615,19 @@ private struct CustomFieldsEditor: View {
 
 private struct TemplateFieldsEditor: View {
     @Binding var fields: [CustomField]
+    var protectedFieldIDs: Set<String>
+
+    private var editableIndices: [Int] {
+        fields.indices.filter { !protectedFieldIDs.contains(fields[$0].id) }
+    }
 
     var body: some View {
         Section(L10n.t("Fields")) {
-            if fields.isEmpty {
+            if editableIndices.isEmpty {
                 Text(L10n.t("No custom fields."))
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(fields.indices, id: \.self) { index in
+                ForEach(editableIndices, id: \.self) { index in
                     CustomFieldRow(field: $fields[index], showsValue: true, remove: { remove(at: index) })
                 }
             }

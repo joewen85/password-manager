@@ -76,11 +76,14 @@ data class CustomField(
     val id: String = UUID.randomUUID().toString(),
     val name: String = "",
     val value: String = "",
+    val templateFieldId: String = "",
 )
 
 data class FieldTemplate(
     val id: String = UUID.randomUUID().toString(),
     val name: String,
+    val valueType: String = "text",
+    val targetCategory: String = "",
 )
 
 data class CategoryTemplate(
@@ -106,10 +109,20 @@ data class CategoryTemplate(
                 .filter { it.name.trim().isNotEmpty() }
                 .distinctBy { it.name.trim().lowercase() }
 
-        private fun stableFieldId(name: String): String =
-            "template_${name.trim().lowercase().replace(Regex("""[^a-z0-9\u4e00-\u9fa5]+"""), "_")}"
+        internal fun stableFieldId(name: String): String {
+            val trimmed = name.trim()
+            val normalized = trimmed.lowercase()
+                .replace(Regex("""[^a-z0-9\u4e00-\u9fff]+"""), "_")
                 .trim('_')
-                .ifBlank { UUID.nameUUIDFromBytes(name.toByteArray()).toString().replace("-", "") }
+            val suffix = when {
+                normalized.isNotEmpty() -> normalized
+                trimmed.isEmpty() -> "empty"
+                else -> "u_${trimmed.toByteArray(Charsets.UTF_8).joinToString("") { byte ->
+                    (byte.toInt() and 0xff).toString(16).padStart(2, '0')
+                }}"
+            }
+            return "template_$suffix"
+        }
 
         private fun CategoryTypePreset?.orEmptyFields(): List<String> =
             this?.fields ?: emptyList()
@@ -217,12 +230,13 @@ enum class ScopedExportScope {
 }
 
 data class ScopedVaultExport(
-    val version: Int = 1,
+    val version: Int = 2,
     val scope: ScopedExportScope,
     val exportedAt: Instant = Instant.now(),
     val item: VaultEntry? = null,
     val category: String? = null,
     val items: List<VaultEntry>? = null,
+    val categoryTemplates: List<CategoryTemplate> = emptyList(),
 )
 
 enum class ImportConflictStrategy(val title: String) {

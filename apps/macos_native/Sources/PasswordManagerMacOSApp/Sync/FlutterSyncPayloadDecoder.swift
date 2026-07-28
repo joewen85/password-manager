@@ -116,12 +116,17 @@ struct FlutterSyncPayloadDecoder: Sendable {
             category: metadata.category,
             tags: metadata.tags
         )
+        let customFields = payloadJson.keys.contains("customFields")
+            ? Self.customFields(payloadJson["customFields"])
+            : metadata.customFields
+        let rawId = Self.stringValue(rawRecord["id"])
 
         return VaultEntry(
-            id: UUID(uuidString: rawRecord["id"] as? String ?? "") ?? UUID(),
+            id: rawId.isEmpty ? UUID().uuidString.lowercased() : rawId,
             label: metadata.label,
             type: metadata.type,
             payload: normalizedPayload,
+            customFields: customFields,
             createdAt: metadata.createdAt,
             updatedAt: metadata.updatedAt,
             isDeleted: metadata.isDeleted,
@@ -275,9 +280,31 @@ struct FlutterSyncPayloadDecoder: Sendable {
             let fields = (template["fields"] as? [[String: Any]] ?? []).compactMap { field -> FieldTemplate? in
                 let name = stringValue(field["name"]).trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !name.isEmpty else { return nil }
-                return FieldTemplate(id: optionalStringValue(field["id"]), name: name)
+                let decodedId = stringValue(field["id"])
+                let decodedValueType = stringValue(field["valueType"])
+                return FieldTemplate(
+                    id: decodedId.isEmpty ? FieldTemplate.stableFieldId(name) : decodedId,
+                    name: name,
+                    valueType: decodedValueType.isEmpty ? "text" : decodedValueType,
+                    targetCategory: stringValue(field["targetCategory"])
+                )
             }
             return CategoryTemplate(category: category, fields: fields)
+        }
+    }
+
+    private static func customFields(_ raw: Any?) -> [CustomField] {
+        guard let rawFields = raw as? [[String: Any]] else {
+            return []
+        }
+        return rawFields.map { field in
+            let decodedId = stringValue(field["id"])
+            return CustomField(
+                id: decodedId.isEmpty ? UUID().uuidString.lowercased() : decodedId,
+                templateFieldId: stringValue(field["templateFieldId"]),
+                name: stringValue(field["name"]),
+                value: stringValue(field["value"])
+            )
         }
     }
 
@@ -359,6 +386,7 @@ struct FlutterSyncPayloadDecoder: Sendable {
         var deletedAt: Date?
         var category: String
         var tags: [String]
+        var customFields: [CustomField]
 
         init(json: [String: Any]) {
             label = stringValue(json["label"])
@@ -371,6 +399,7 @@ struct FlutterSyncPayloadDecoder: Sendable {
             deletedAt = parseDate(json["deletedAt"])
             category = stringValue(json["category"])
             tags = stringArray(json["tags"])
+            customFields = FlutterSyncPayloadDecoder.customFields(json["customFields"])
         }
 
         private static func versionMap(_ raw: Any?) -> [String: Int] {

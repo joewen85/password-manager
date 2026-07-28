@@ -39,6 +39,12 @@
 - 删除：用户可清除 app data；后续发布如加入账号/云端服务，需要补充远端删除流程。
 - 数据共享：当前应用代码未集成第三方共享；用户自配置同步端点不应描述为开发者主动共享给第三方 SDK。
 
+### 字段关联权限与隐私结论
+
+- 字段关联只在现有加密 vault JSON 内增加模板元数据和稳定条目 ID，不新增 Android 权限、网络端点、SDK 或数据采集。
+- 单条/分类导出不得因为引用而隐式导出目标条目，也不得泄露目标条目的名称、用户名、密码、Token 或 Secret；只有显式包含在导出范围内的条目才能输出自身数据。
+- 搜索和日志不得索引或记录被引用目标的敏感字段。该能力的数据格式见 `../../../docs/FIELD_REFERENCE_CONTRACT.md`。
+
 ### 发布验证
 
 每次 release 前运行：
@@ -92,6 +98,12 @@ The current manifest does not declare:
 - Plain sync settings are stored in app-private `files/sync_settings.json`, with sensitive sync fields redacted.
 - Sync secrets are stored in app-private `files/sync_secrets.json`, encrypted by an Android Keystore AES-GCM wrapping key.
 - `android:allowBackup="false"` prevents system cloud backup from copying the local encrypted vault, backups, and sync secret files.
+
+### Entry-Reference Permissions And Privacy
+
+- Entry references add only template metadata and stable entry IDs inside the existing encrypted vault JSON. They add no Android permission, network endpoint, SDK, or data collection.
+- Item/category export must not include a referenced target implicitly or disclose its label, username, password, token, or secret. Only entries explicitly selected by the export scope may output their own data.
+- Search and logs must not index or record sensitive fields from referenced targets. See `../../../docs/FIELD_REFERENCE_CONTRACT.md` for the data contract.
 
 ### Google Play Data Safety Guidance
 

@@ -29,6 +29,7 @@ struct CustomField {
     std::string id;
     std::string name;
     std::string value;
+    std::string templateFieldId;
 };
 
 struct VaultEntry {
@@ -53,6 +54,8 @@ struct VaultEntry {
 struct FieldTemplate {
     std::string id;
     std::string name;
+    std::string valueType = "text";
+    std::string targetCategory;
 };
 
 struct CategoryTemplate {

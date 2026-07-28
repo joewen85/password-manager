@@ -11,6 +11,7 @@ import {
   CreateServiceInput,
   CredentialPayload,
   CustomField,
+  FieldTemplate,
   SecuritySettings,
   ServerPayload,
   ServicePayload,
@@ -197,6 +198,7 @@ struct Index {
   @State private draftTagSearch: string = '';
   @State private draftSelectedTags: string[] = [];
   @State private draftCustomFields: CustomField[] = [];
+  @State private draftProtectedCustomFieldIds: string[] = [];
   @State private editingEntryId: string = '';
   @State private exportEntryId: string = '';
   @State private exportSelectedFieldIds: string[] = [];
@@ -2704,14 +2706,33 @@ struct Index {
   }
 
   private templateFieldNames(category: string): string[] {
-    const template = this.categoryTemplate(category);
-    if (template === null) {
-      return ['名称', '备注'];
-    }
-    const names = template.fields
-      .map((field) => field.name.trim())
+    const names = this.templateFieldsForCategory(category)
+      .map((field: FieldTemplate) => field.name.trim())
       .filter((name: string) => name.length > 0);
     return names.length > 0 ? names : ['名称', '备注'];
+  }
+
+  private templateFieldsForCategory(category: string): FieldTemplate[] {
+    const template = this.categoryTemplate(category);
+    if (template !== null) {
+      return template.fields;
+    }
+    return [
+      { id: 'template_名称', name: '名称', valueType: 'text', targetCategory: '' },
+      { id: 'template_备注', name: '备注', valueType: 'text', targetCategory: '' },
+    ];
+  }
+
+  private templateFieldValueType(field: FieldTemplate): string {
+    const valueType = field.valueType;
+    if (typeof valueType !== 'string' || valueType.trim().length === 0) {
+      return 'text';
+    }
+    return valueType;
+  }
+
+  private isTextTemplateField(field: FieldTemplate): boolean {
+    return this.templateFieldValueType(field) === 'text';
   }
 
   private categoryTemplate(category: string): CategoryTemplate | null {
@@ -2744,8 +2765,11 @@ struct Index {
   private categoryTemplateDraftFields(category: string): CustomField[] {
     const fields: CustomField[] = [];
     const seen = new Set<string>();
-    this.templateFieldNames(category).forEach((fieldName: string) => {
-      const name = fieldName.trim();
+    this.templateFieldsForCategory(category).forEach((templateField: FieldTemplate) => {
+      if (!this.isTextTemplateField(templateField)) {
+        return;
+      }
+      const name = templateField.name.trim();
       const key = name.toLowerCase();
       if (name.length === 0 || this.isBaseCategoryField(name) || seen.has(key)) {
         return;
@@ -3203,12 +3227,12 @@ struct Index {
   private CustomFieldsEditor() {
     Column({ space: 6 }) {
       Text('字段').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
-      if (this.draftCustomFields.length === 0) {
+      if (this.editableDraftCustomFields().length === 0) {
         Text('字段默认只有名称和备注，可在下方添加自定义字段')
           .fontSize(12)
           .fontColor(UI_MUTED);
       }
-      ForEach(this.draftCustomFields, (field: CustomField) => {
+      ForEach(this.editableDraftCustomFields(), (field: CustomField) => {
         Column({ space: 8 }) {
           TextInput({ placeholder: '字段名称', text: field.name })
             .width('100%')
@@ -4027,42 +4051,59 @@ struct Index {
   }
 
   private applyCategoryTemplateToDraft(category: string): void {
-    const existingValues = new Map<string, string>();
-    const existingIds = new Map<string, string>();
-    this.draftCustomFields.forEach((field: CustomField) => {
-      const key = field.name.trim().toLowerCase();
-      if (key.length > 0) {
-        existingValues.set(key, field.value);
-        existingIds.set(key, field.id);
-      }
-    });
+    const usedExistingIndexes = new Set<number>();
     const seen = new Set<string>();
-    const fields = this.templateFieldNames(category);
     const nextFields: CustomField[] = [];
-    fields.forEach((fieldName: string) => {
-      const name = fieldName.trim();
+    this.templateFieldsForCategory(category).forEach((templateField: FieldTemplate) => {
+      if (!this.isTextTemplateField(templateField)) {
+        return;
+      }
+      const name = templateField.name.trim();
       const key = name.toLowerCase();
       if (name.length === 0 || key === '名称' || seen.has(key)) {
         return;
       }
       seen.add(key);
+      let existingIndex = -1;
+      if (templateField.id.length > 0) {
+        existingIndex = this.draftCustomFields.findIndex(
+          (field: CustomField, index: number) =>
+            !usedExistingIndexes.has(index) &&
+            !this.draftProtectedCustomFieldIds.includes(field.id) &&
+            field.templateFieldId === templateField.id,
+        );
+      }
+      if (existingIndex < 0) {
+        existingIndex = this.draftCustomFields.findIndex(
+          (field: CustomField, index: number) =>
+            !usedExistingIndexes.has(index) &&
+            !this.draftProtectedCustomFieldIds.includes(field.id) &&
+            field.name.trim().toLowerCase() === key,
+        );
+      }
+      const existing = existingIndex >= 0 ? this.draftCustomFields[existingIndex] : undefined;
+      if (existingIndex >= 0) {
+        usedExistingIndexes.add(existingIndex);
+      }
       const nextField: CustomField = {
-        id: existingIds.get(key) ?? this.nextUiId(),
+        id: existing !== undefined && existing.id.length > 0 ? existing.id : this.nextUiId(),
+        templateFieldId: existing !== undefined &&
+          typeof existing.templateFieldId === 'string' && existing.templateFieldId.length > 0
+          ? existing.templateFieldId
+          : templateField.id,
         name: name,
-        value: existingValues.get(key) ?? '',
+        value: existing?.value ?? '',
       };
       nextFields.push(nextField);
     });
-    this.draftCustomFields.forEach((field: CustomField) => {
-      const name = field.name.trim();
-      const key = name.toLowerCase();
-      if (name.length === 0 || key === '名称' || seen.has(key)) {
+    this.draftCustomFields.forEach((field: CustomField, index: number) => {
+      if (usedExistingIndexes.has(index)) {
         return;
       }
-      seen.add(key);
       nextFields.push({
         id: field.id.length > 0 ? field.id : this.nextUiId(),
-        name: name,
+        templateFieldId: field.templateFieldId,
+        name: field.name,
         value: field.value,
       });
     });
@@ -4076,6 +4117,7 @@ struct Index {
     this.draftTagSearch = '';
     this.draftSelectedTags = [];
     this.draftCustomFields = [];
+    this.draftProtectedCustomFieldIds = [];
     this.editingEntryId = '';
   }
 
@@ -4101,6 +4143,10 @@ struct Index {
     this.draftCategory = this.entryCategory(entry);
     this.draftSelectedTags = [...entry.tags];
     this.draftCustomFields = this.copyCustomFields(entry.customFields);
+    this.draftProtectedCustomFieldIds = this.protectedCustomFieldIdsForCategory(
+      this.draftCustomFields,
+      this.draftCategory,
+    );
     this.draftType = this.draftTypeFromEntry(entry);
     this.applyCategoryTemplateToDraft(this.draftCategory);
   }
@@ -4131,6 +4177,7 @@ struct Index {
       }
       return {
         id: field.id,
+        templateFieldId: field.templateFieldId,
         name: value,
         value: field.value,
       };
@@ -4144,6 +4191,7 @@ struct Index {
       }
       return {
         id: field.id,
+        templateFieldId: field.templateFieldId,
         name: field.name,
         value: value,
       };
@@ -4226,23 +4274,71 @@ struct Index {
       .map((field: CustomField) => {
         const normalized: CustomField = {
           id: field.id.length > 0 ? field.id : this.nextUiId(),
-          name: field.name.trim(),
+          templateFieldId: field.templateFieldId,
+          name: this.isEditableDraftCustomField(field) ? field.name.trim() : field.name,
           value: field.value,
         };
         return normalized;
       })
-      .filter((field: CustomField) => field.name.length > 0 || field.value.trim().length > 0);
+      .filter((field: CustomField) =>
+        field.name.length > 0 ||
+        field.value.trim().length > 0 ||
+        (typeof field.templateFieldId === 'string' && field.templateFieldId.length > 0)
+      );
   }
 
   private copyCustomFields(fields: CustomField[]): CustomField[] {
     return fields.map((field: CustomField) => {
       const copy: CustomField = {
         id: field.id.length > 0 ? field.id : this.nextUiId(),
+        templateFieldId: field.templateFieldId,
         name: field.name,
         value: field.value,
       };
       return copy;
     });
+  }
+
+  private editableDraftCustomFields(): CustomField[] {
+    return this.draftCustomFields.filter((field: CustomField) =>
+      this.isEditableDraftCustomField(field)
+    );
+  }
+
+  private isEditableDraftCustomField(field: CustomField): boolean {
+    if (this.draftProtectedCustomFieldIds.includes(field.id)) {
+      return false;
+    }
+    const definition = this.templateDefinitionForCustomField(field, this.draftCategory);
+    return definition === undefined || this.isTextTemplateField(definition);
+  }
+
+  private protectedCustomFieldIdsForCategory(fields: CustomField[], category: string): string[] {
+    return fields
+      .filter((field: CustomField) => {
+        const definition = this.templateDefinitionForCustomField(field, category);
+        return definition !== undefined && !this.isTextTemplateField(definition);
+      })
+      .map((field: CustomField) => field.id);
+  }
+
+  private templateDefinitionForCustomField(
+    field: CustomField,
+    category: string,
+  ): FieldTemplate | undefined {
+    const templateFields = this.templateFieldsForCategory(category);
+    if (typeof field.templateFieldId === 'string' && field.templateFieldId.length > 0) {
+      return templateFields.find(
+        (templateField: FieldTemplate) => templateField.id === field.templateFieldId,
+      );
+    }
+    const name = field.name.trim().toLowerCase();
+    if (name.length === 0) {
+      return undefined;
+    }
+    return templateFields.find(
+      (templateField: FieldTemplate) => templateField.name.trim().toLowerCase() === name,
+    );
   }
 
   private toggleExportPanel(entry: VaultEntry): void {

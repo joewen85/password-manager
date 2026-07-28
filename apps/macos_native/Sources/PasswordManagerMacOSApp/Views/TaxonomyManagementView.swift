@@ -172,9 +172,13 @@ struct TaxonomyManagementView: View {
             .first { $0.category.compare(category, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }?
             .fields ?? CategoryTemplate.defaultCategoryFields()
         return fields
-            .map(\.name)
-            .filter { $0.compare("名称", options: [.caseInsensitive, .diacriticInsensitive]) != .orderedSame }
-            .map { CustomField(name: $0) }
+            .filter {
+                $0.valueType == "text"
+                    && $0.name.compare("名称", options: [.caseInsensitive, .diacriticInsensitive]) != .orderedSame
+            }
+            .map {
+                CustomField(templateFieldId: $0.id, name: $0.name)
+            }
     }
 
     private var isAddDisabled: Bool {
@@ -323,7 +327,7 @@ private struct CategoryFieldsEditView: View {
     }
 
     private func save() {
-        guard store.updateCategoryTemplate(category, customFieldNames: fields.map(\.name)) else { return }
+        guard store.updateCategoryTemplate(category, customFields: fields) else { return }
         onSaved()
         dismiss()
     }

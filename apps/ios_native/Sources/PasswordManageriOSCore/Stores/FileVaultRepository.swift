@@ -114,15 +114,20 @@ struct FileVaultRepository {
     func saveEntryExport(
         _ entry: VaultEntry,
         selectedFieldIDs: Set<String>? = nil,
+        categoryTemplates: [CategoryTemplate] = [],
         at date: Date = Date()
     ) throws -> URL {
         let exportedEntry = selectedFieldIDs.map { entry.keepingExportFields($0) } ?? entry
+        let sourceTemplates = categoryTemplates.filter {
+            $0.category.caseInsensitiveCompare(entry.payload.category) == .orderedSame
+        }
         let export = ScopedVaultExport(
             scope: .item,
             exportedAt: date,
             item: exportedEntry,
             category: nil,
-            items: nil
+            items: nil,
+            categoryTemplates: sourceTemplates
         )
         let exportURL = try exportsDirectoryURL
             .appendingPathComponent("entry-export-\(entry.safeExportName)-\(Self.backupTimestamp.string(from: date)).json")
@@ -130,13 +135,22 @@ struct FileVaultRepository {
         return exportURL
     }
 
-    func saveCategoryExport(category: String, entries: [VaultEntry], at date: Date = Date()) throws -> URL {
+    func saveCategoryExport(
+        category: String,
+        entries: [VaultEntry],
+        categoryTemplates: [CategoryTemplate] = [],
+        at date: Date = Date()
+    ) throws -> URL {
+        let sourceTemplates = categoryTemplates.filter {
+            $0.category.caseInsensitiveCompare(category) == .orderedSame
+        }
         let export = ScopedVaultExport(
             scope: .category,
             exportedAt: date,
             item: nil,
             category: category,
-            items: entries
+            items: entries,
+            categoryTemplates: sourceTemplates
         )
         let exportURL = try exportsDirectoryURL
             .appendingPathComponent("category-export-\(category.safeExportName)-\(Self.backupTimestamp.string(from: date)).json")

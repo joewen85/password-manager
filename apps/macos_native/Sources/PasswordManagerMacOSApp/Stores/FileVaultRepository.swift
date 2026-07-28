@@ -132,21 +132,40 @@ struct FileVaultRepository {
         )
     }
 
-    func saveEntryExport(_ entry: VaultEntry, selectedFieldIDs: Set<String>? = nil, at date: Date = Date()) throws -> URL {
-        let export = try makeEntryExport(entry, selectedFieldIDs: selectedFieldIDs, at: date)
+    func saveEntryExport(
+        _ entry: VaultEntry,
+        selectedFieldIDs: Set<String>? = nil,
+        categoryTemplates: [CategoryTemplate] = [],
+        at date: Date = Date()
+    ) throws -> URL {
+        let export = try makeEntryExport(
+            entry,
+            selectedFieldIDs: selectedFieldIDs,
+            categoryTemplates: categoryTemplates,
+            at: date
+        )
         let exportURL = try exportsDirectoryURL.appendingPathComponent(export.fileName)
         try export.data.write(to: exportURL, options: [.atomic])
         return exportURL
     }
 
-    func makeEntryExport(_ entry: VaultEntry, selectedFieldIDs: Set<String>? = nil, at date: Date = Date()) throws -> VaultExportFile {
+    func makeEntryExport(
+        _ entry: VaultEntry,
+        selectedFieldIDs: Set<String>? = nil,
+        categoryTemplates: [CategoryTemplate] = [],
+        at date: Date = Date()
+    ) throws -> VaultExportFile {
         let exportedEntry = selectedFieldIDs.map { entry.keepingExportFields($0) } ?? entry
+        let sourceTemplates = categoryTemplates.filter {
+            $0.category.caseInsensitiveCompare(entry.payload.category) == .orderedSame
+        }
         let export = ScopedVaultExport(
             scope: .item,
             exportedAt: date,
             item: exportedEntry,
             category: nil,
-            items: nil
+            items: nil,
+            categoryTemplates: sourceTemplates
         )
         return VaultExportFile(
             fileName: "entry-export-\(entry.safeExportName)-\(Self.backupTimestamp.string(from: date)).json",
@@ -154,20 +173,39 @@ struct FileVaultRepository {
         )
     }
 
-    func saveCategoryExport(category: String, entries: [VaultEntry], at date: Date = Date()) throws -> URL {
-        let export = try makeCategoryExport(category: category, entries: entries, at: date)
+    func saveCategoryExport(
+        category: String,
+        entries: [VaultEntry],
+        categoryTemplates: [CategoryTemplate] = [],
+        at date: Date = Date()
+    ) throws -> URL {
+        let export = try makeCategoryExport(
+            category: category,
+            entries: entries,
+            categoryTemplates: categoryTemplates,
+            at: date
+        )
         let exportURL = try exportsDirectoryURL.appendingPathComponent(export.fileName)
         try export.data.write(to: exportURL, options: [.atomic])
         return exportURL
     }
 
-    func makeCategoryExport(category: String, entries: [VaultEntry], at date: Date = Date()) throws -> VaultExportFile {
+    func makeCategoryExport(
+        category: String,
+        entries: [VaultEntry],
+        categoryTemplates: [CategoryTemplate] = [],
+        at date: Date = Date()
+    ) throws -> VaultExportFile {
+        let sourceTemplates = categoryTemplates.filter {
+            $0.category.caseInsensitiveCompare(category) == .orderedSame
+        }
         let export = ScopedVaultExport(
             scope: .category,
             exportedAt: date,
             item: nil,
             category: category,
-            items: entries
+            items: entries,
+            categoryTemplates: sourceTemplates
         )
         return VaultExportFile(
             fileName: "category-export-\(category.safeExportName)-\(Self.backupTimestamp.string(from: date)).json",

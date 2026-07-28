@@ -23,6 +23,7 @@ Password Manager 是一款本地加密优先的跨平台密码保险库，用来
 - **可控同步**：围绕 WebDAV、NAS WebDAV、S3 Presigned URL 和对象存储设计同步接口、revision、冲突策略和同步日志。
 - **备份与迁移**：支持本地加密备份、快照 JSON 导入导出、单条或分类导入导出，以及冲突处理策略。
 - **跨端一致契约**：共享 Dart 包、Swift/Kotlin 原生实现和 C++ portable core 围绕同一数据模型、加密格式和同步语义演进。
+- **字段关联契约**：分类模板字段可声明可选的单条记录引用，引用值使用稳定条目 ID；标签继续用于宽松分组、搜索和筛选。当前阶段只提供全端无损读写兼容，尚未开放关联编辑 UI，完整格式与上线约束见 `docs/FIELD_REFERENCE_CONTRACT.md`。
 
 ## 当前状态
 
@@ -90,6 +91,7 @@ Password Manager 是一款本地加密优先的跨平台密码保险库，用来
 - macOS/Linux：`./scripts/test_all.sh`
 - Windows：`powershell -ExecutionPolicy Bypass -File .\\scripts\\test_all.ps1`
 - Windows/Linux 原生端：`./scripts/verify_desktop_native.sh`
+- 字段关联共享 fixture：`node scripts/verify_vault_contract_fixtures.mjs --check`
 
 ### 4.1 测试可行性说明（macOS）
 - **全量共享包测试** 需要 `dart` 命令。

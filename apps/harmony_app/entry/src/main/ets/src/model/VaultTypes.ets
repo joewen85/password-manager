@@ -57,11 +57,14 @@ export interface CustomField {
   id: string;
   name: string;
   value: string;
+  templateFieldId?: string;
 }
 
 export interface FieldTemplate {
   id: string;
   name: string;
+  valueType?: string;
+  targetCategory?: string;
 }
 
 export interface CategoryTemplate {

@@ -237,36 +237,43 @@ struct ServicePayload: Codable, Equatable, Sendable {
 }
 
 struct CustomField: Identifiable, Codable, Equatable, Sendable {
-    var id: UUID = UUID()
+    var id: String = UUID().uuidString.lowercased()
+    var templateFieldId: String = ""
     var name: String = ""
     var value: String = ""
 
     private enum CodingKeys: String, CodingKey {
         case id
+        case templateFieldId
         case name
         case value
     }
 
     init(
-        id: UUID = UUID(),
+        id: String = UUID().uuidString.lowercased(),
+        templateFieldId: String = "",
         name: String = "",
         value: String = ""
     ) {
         self.id = id
+        self.templateFieldId = templateFieldId
         self.name = name
         self.value = value
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        let decodedId = try container.decodeIfPresent(String.self, forKey: .id) ?? ""
+        id = decodedId.isEmpty ? UUID().uuidString.lowercased() : decodedId
+        templateFieldId = try container.decodeIfPresent(String.self, forKey: .templateFieldId) ?? ""
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
         value = try container.decodeIfPresent(String.self, forKey: .value) ?? ""
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(id.uuidString.lowercased(), forKey: .id)
+        try container.encode(id, forKey: .id)
+        try container.encode(templateFieldId, forKey: .templateFieldId)
         try container.encode(name, forKey: .name)
         try container.encode(value, forKey: .value)
     }
@@ -275,26 +282,64 @@ struct CustomField: Identifiable, Codable, Equatable, Sendable {
 struct FieldTemplate: Identifiable, Codable, Equatable, Hashable, Sendable {
     var id: String
     var name: String
+    var valueType: String
+    var targetCategory: String
 
-    init(id: String? = nil, name: String) {
-        self.name = name
-        self.id = id ?? Self.stableFieldId(name)
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case valueType
+        case targetCategory
     }
 
-    private static func stableFieldId(_ name: String) -> String {
-        var scalars: [String] = []
+    init(
+        id: String? = nil,
+        name: String,
+        valueType: String = "text",
+        targetCategory: String = ""
+    ) {
+        self.name = name
+        self.id = id.flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString.lowercased()
+        self.valueType = valueType
+        self.targetCategory = targetCategory
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        let decodedId = try container.decodeIfPresent(String.self, forKey: .id) ?? ""
+        id = decodedId.isEmpty ? Self.stableFieldId(name) : decodedId
+        let decodedValueType = try container.decodeIfPresent(String.self, forKey: .valueType) ?? ""
+        valueType = decodedValueType.isEmpty ? "text" : decodedValueType
+        targetCategory = try container.decodeIfPresent(String.self, forKey: .targetCategory) ?? ""
+    }
+
+    static func stableFieldId(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var parts: [String] = []
         var previousWasSeparator = false
-        for scalar in name.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars {
-            if CharacterSet.alphanumerics.contains(scalar) || (0x4e00...0x9fa5).contains(Int(scalar.value)) {
-                scalars.append(String(scalar).lowercased())
+        for scalar in trimmed.unicodeScalars {
+            let value = scalar.value
+            let isASCIIAlphaNumeric = (48...57).contains(value)
+                || (65...90).contains(value)
+                || (97...122).contains(value)
+            if isASCIIAlphaNumeric || (0x4e00...0x9fff).contains(value) {
+                parts.append(String(scalar).lowercased())
                 previousWasSeparator = false
             } else if !previousWasSeparator {
-                scalars.append("-")
+                parts.append("_")
                 previousWasSeparator = true
             }
         }
-        let slug = scalars.joined().trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        return "template-\(slug.isEmpty ? UUID().uuidString.lowercased() : slug)"
+        let normalized = parts.joined().trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+        if !normalized.isEmpty {
+            return "template_\(normalized)"
+        }
+        guard !trimmed.isEmpty else {
+            return "template_empty"
+        }
+        let hex = trimmed.utf8.map { String(format: "%02x", $0) }.joined()
+        return "template_u_\(hex)"
     }
 }
 
@@ -309,8 +354,8 @@ struct CategoryTemplate: Codable, Equatable, Hashable, Sendable {
 
     static func defaultCategoryFields() -> [FieldTemplate] {
         [
-            FieldTemplate(name: "名称"),
-            FieldTemplate(name: "备注")
+            FieldTemplate(id: FieldTemplate.stableFieldId("名称"), name: "名称"),
+            FieldTemplate(id: FieldTemplate.stableFieldId("备注"), name: "备注")
         ]
     }
 
@@ -425,7 +470,7 @@ enum VaultPayload: Codable, Equatable, Sendable {
 }
 
 struct VaultEntry: Identifiable, Codable, Equatable, Sendable {
-    var id: UUID = UUID()
+    var id: String = UUID().uuidString.lowercased()
     var label: String
     var type: VaultEntryType
     var payload: VaultPayload
@@ -452,7 +497,7 @@ struct VaultEntry: Identifiable, Codable, Equatable, Sendable {
     }
 
     init(
-        id: UUID = UUID(),
+        id: String = UUID().uuidString.lowercased(),
         label: String,
         type: VaultEntryType,
         payload: VaultPayload,
@@ -479,7 +524,8 @@ struct VaultEntry: Identifiable, Codable, Equatable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        let decodedId = try container.decodeIfPresent(String.self, forKey: .id) ?? ""
+        id = decodedId.isEmpty ? UUID().uuidString.lowercased() : decodedId
         label = try container.decode(String.self, forKey: .label)
         type = try container.decode(VaultEntryType.self, forKey: .type)
         payload = try container.decode(VaultPayload.self, forKey: .payload)
@@ -494,7 +540,7 @@ struct VaultEntry: Identifiable, Codable, Equatable, Sendable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(id.uuidString.lowercased(), forKey: .id)
+        try container.encode(id, forKey: .id)
         try container.encode(label, forKey: .label)
         try container.encode(type, forKey: .type)
         try container.encode(payload, forKey: .payload)
@@ -614,12 +660,52 @@ enum ScopedExportScope: String, Codable, Sendable {
 }
 
 struct ScopedVaultExport: Codable, Equatable, Sendable {
-    var version = 1
+    var version: Int
     var scope: ScopedExportScope
     var exportedAt: Date
     var item: VaultEntry?
     var category: String?
     var items: [VaultEntry]?
+    var categoryTemplates: [CategoryTemplate]
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case scope
+        case exportedAt
+        case item
+        case category
+        case items
+        case categoryTemplates
+    }
+
+    init(
+        version: Int = 2,
+        scope: ScopedExportScope,
+        exportedAt: Date,
+        item: VaultEntry?,
+        category: String?,
+        items: [VaultEntry]?,
+        categoryTemplates: [CategoryTemplate] = []
+    ) {
+        self.version = version
+        self.scope = scope
+        self.exportedAt = exportedAt
+        self.item = item
+        self.category = category
+        self.items = items
+        self.categoryTemplates = categoryTemplates
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        scope = try container.decode(ScopedExportScope.self, forKey: .scope)
+        exportedAt = try container.decode(Date.self, forKey: .exportedAt)
+        item = try container.decodeIfPresent(VaultEntry.self, forKey: .item)
+        category = try container.decodeIfPresent(String.self, forKey: .category)
+        items = try container.decodeIfPresent([VaultEntry].self, forKey: .items)
+        categoryTemplates = try container.decodeIfPresent([CategoryTemplate].self, forKey: .categoryTemplates) ?? []
+    }
 }
 
 struct EntryExportField: Identifiable, Hashable, Sendable {
@@ -675,7 +761,7 @@ extension VaultEntry {
         "\(label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())|\(payload.category.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
     }
 
-    func copyForImport(id: UUID, updatedAt: Date) -> VaultEntry {
+    func copyForImport(id: String, updatedAt: Date) -> VaultEntry {
         VaultEntry(
             id: id,
             label: label,
@@ -736,16 +822,16 @@ extension VaultEntry {
         }
 
         fields += customFields.map {
-            EntryExportField(id: "custom.\($0.id.uuidString)", title: $0.name.isEmpty ? L10n.t("Custom Field") : $0.name)
+            EntryExportField(id: "custom.\($0.id)", title: $0.name.isEmpty ? L10n.t("Custom Field") : $0.name)
         }
         return fields
     }
 
     func keepingExportFields(_ selectedFieldIDs: Set<String>) -> VaultEntry {
         let selectedCustomIDs = Set(
-            selectedFieldIDs.compactMap { id -> UUID? in
+            selectedFieldIDs.compactMap { id -> String? in
                 guard id.hasPrefix("custom.") else { return nil }
-                return UUID(uuidString: String(id.dropFirst("custom.".count)))
+                return String(id.dropFirst("custom.".count))
             }
         )
         return VaultEntry(

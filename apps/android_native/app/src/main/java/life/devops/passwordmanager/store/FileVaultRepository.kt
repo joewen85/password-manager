@@ -1,6 +1,7 @@
 package life.devops.passwordmanager.store
 
 import android.content.Context
+import life.devops.passwordmanager.model.CategoryTemplate
 import life.devops.passwordmanager.model.ScopedVaultExport
 import life.devops.passwordmanager.model.VaultEntry
 import life.devops.passwordmanager.model.VaultPersistenceEnvelope
@@ -73,7 +74,11 @@ class FileVaultRepository(private val baseDirectory: File) {
         return exportFile
     }
 
-    fun saveEntryExport(entry: VaultEntry, at: Instant = Instant.now()): File {
+    fun saveEntryExport(
+        entry: VaultEntry,
+        categoryTemplates: List<CategoryTemplate>,
+        at: Instant = Instant.now(),
+    ): File {
         val exportFile = File(
             exportsDirectory,
             "entry-export-${entry.safeExportName}-${backupTimestamp.format(at)}.json",
@@ -86,13 +91,19 @@ class FileVaultRepository(private val baseDirectory: File) {
                     item = entry,
                     category = null,
                     items = null,
+                    categoryTemplates = categoryTemplates,
                 )
             )
         )
         return exportFile
     }
 
-    fun saveCategoryExport(category: String, entries: List<VaultEntry>, at: Instant = Instant.now()): File {
+    fun saveCategoryExport(
+        category: String,
+        entries: List<VaultEntry>,
+        categoryTemplates: List<CategoryTemplate>,
+        at: Instant = Instant.now(),
+    ): File {
         val exportFile = File(
             exportsDirectory,
             "category-export-${category.safeExportName}-${backupTimestamp.format(at)}.json",
@@ -105,6 +116,7 @@ class FileVaultRepository(private val baseDirectory: File) {
                     item = null,
                     category = category,
                     items = entries,
+                    categoryTemplates = categoryTemplates,
                 )
             )
         )

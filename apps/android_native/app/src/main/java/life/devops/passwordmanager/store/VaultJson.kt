@@ -21,7 +21,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONObject.NULL
 import java.time.Instant
-import java.util.Locale
 import java.util.UUID
 
 object VaultJson {
@@ -97,6 +96,7 @@ object VaultJson {
             .put("item", export.item?.toJson() ?: NULL)
             .put("category", export.category ?: NULL)
             .put("items", export.items?.let { JSONArray(it.map { entry -> entry.toJson() }) } ?: NULL)
+            .put("categoryTemplates", JSONArray(export.categoryTemplates.map { it.toJson() }))
             .toString(2)
 
     fun decodeScopedExport(raw: String): ScopedVaultExport {
@@ -123,6 +123,7 @@ object VaultJson {
             item = item?.toVaultEntry(),
             category = json.optNullableString("category"),
             items = items.toVaultEntryList(),
+            categoryTemplates = json.optJSONArray("categoryTemplates").toCategoryTemplateList(),
         )
     }
 
@@ -339,12 +340,14 @@ object VaultJson {
     private fun CustomField.toJson(): JSONObject =
         JSONObject()
             .put("id", id.canonicalUuidString())
+            .put("templateFieldId", templateFieldId)
             .put("name", name)
             .put("value", value)
 
     private fun JSONObject.toCustomField(): CustomField =
         CustomField(
             id = optString("id").canonicalUuidString().ifBlank { UUID.randomUUID().toString() },
+            templateFieldId = optString("templateFieldId"),
             name = optString("name"),
             value = optString("value"),
         )
@@ -353,12 +356,18 @@ object VaultJson {
         JSONObject()
             .put("id", id)
             .put("name", name)
+            .put("valueType", valueType)
+            .put("targetCategory", targetCategory)
 
-    private fun JSONObject.toFieldTemplate(): FieldTemplate =
-        FieldTemplate(
-            id = optString("id").ifBlank { UUID.randomUUID().toString().replace("-", "") },
-            name = optString("name"),
+    private fun JSONObject.toFieldTemplate(): FieldTemplate {
+        val name = optString("name")
+        return FieldTemplate(
+            id = optString("id").ifBlank { CategoryTemplate.stableFieldId(name) },
+            name = name,
+            valueType = optString("valueType", "text").ifBlank { "text" },
+            targetCategory = optString("targetCategory"),
         )
+    }
 
     private fun CategoryTemplate.toJson(): JSONObject =
         JSONObject()
@@ -585,8 +594,8 @@ object VaultJson {
 
     private fun String.canonicalUuidString(): String {
         val trimmed = trim()
-        if (trimmed.isEmpty()) return trimmed
+        if (trimmed.isEmpty()) return ""
         return runCatching { UUID.fromString(trimmed).toString() }
-            .getOrElse { trimmed.lowercase(Locale.ROOT) }
+            .getOrElse { trimmed }
     }
 }

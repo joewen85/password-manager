@@ -163,4 +163,77 @@ struct VaultStoreTaxonomyTests {
         #expect(reloadedStore.unlock(password: "test-password"))
         #expect(reloadedStore.categoryTemplates.first { $0.category == "Ops" }?.fields.map(\.name) == ["名称", "备注", "Endpoint"])
     }
+
+    @MainActor
+    @Test("Category template editing preserves stable IDs and unsupported field metadata")
+    func categoryTemplateEditingPreservesStableIdsAndUnsupportedMetadata() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManagerMacOSTemplateMetadataTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(repository: repository, syncSettingsRepository: nil)
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+        #expect(store.addCategory("Ops", preset: nil, customFieldNames: ["Owner"]))
+
+        let ownerField = try #require(
+            store.categoryTemplates.first?.fields.first { $0.name == "Owner" }
+        )
+        let referenceField = FieldTemplate(
+            id: "template_account",
+            name: "Account",
+            valueType: "entryReference",
+            targetCategory: "Accounts"
+        )
+        let futureField = FieldTemplate(
+            id: "opaque-template:future",
+            name: "Future",
+            valueType: "futureRelationV3",
+            targetCategory: "Targets"
+        )
+        let scopedExport = ScopedVaultExport(
+            scope: .item,
+            exportedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            item: nil,
+            category: nil,
+            items: nil,
+            categoryTemplates: [
+                CategoryTemplate(
+                    category: "Ops",
+                    fields: [ownerField, referenceField, futureField]
+                )
+            ]
+        )
+        let importURL = directory.appendingPathComponent("template-metadata-import.json")
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(scopedExport).write(to: importURL)
+        store.importScopedExport(from: importURL, strategy: .skip)
+
+        #expect(store.updateCategoryTemplate(
+            "ops",
+            customFields: [
+                CustomField(
+                    templateFieldId: ownerField.id,
+                    name: "Primary Owner"
+                ),
+                CustomField(name: "Account")
+            ]
+        ))
+
+        let updatedTemplate = try #require(store.categoryTemplates.first)
+        let renamedOwner = try #require(updatedTemplate.fields.first { $0.name == "Primary Owner" })
+        #expect(renamedOwner.id == ownerField.id)
+        #expect(renamedOwner.valueType == "text")
+        #expect(updatedTemplate.fields.contains(referenceField))
+        #expect(updatedTemplate.fields.contains(futureField))
+        #expect(updatedTemplate.fields.filter { $0.name == "Account" } == [referenceField])
+
+        let reloadedStore = VaultStore(repository: repository, syncSettingsRepository: nil)
+        #expect(reloadedStore.unlock(password: "test-password"))
+        let reloadedTemplate = try #require(reloadedStore.categoryTemplates.first)
+        #expect(reloadedTemplate.fields.first { $0.name == "Primary Owner" }?.id == ownerField.id)
+        #expect(reloadedTemplate.fields.contains(referenceField))
+        #expect(reloadedTemplate.fields.contains(futureField))
+    }
 }

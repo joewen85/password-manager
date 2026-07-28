@@ -38,11 +38,11 @@ enum VaultSyncEngineError: LocalizedError, Equatable, Sendable {
 
 struct VaultSyncEngine: Sendable {
     var now: @Sendable () -> Date = Date.init
-    var idGenerator: @Sendable () -> UUID = UUID.init
+    var idGenerator: @Sendable () -> String = { UUID().uuidString.lowercased() }
 
     init(
         now: @escaping @Sendable () -> Date = Date.init,
-        idGenerator: @escaping @Sendable () -> UUID = UUID.init
+        idGenerator: @escaping @Sendable () -> String = { UUID().uuidString.lowercased() }
     ) {
         self.now = now
         self.idGenerator = idGenerator

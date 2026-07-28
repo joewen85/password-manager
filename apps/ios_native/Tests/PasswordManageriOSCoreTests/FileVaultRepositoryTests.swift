@@ -395,7 +395,7 @@ struct FileVaultRepositoryTests {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let repository = FileVaultRepository(baseDirectory: directory)
-        let customFieldID = UUID()
+        let customFieldID = UUID().uuidString.lowercased()
         let entry = VaultEntry(
             label: "Scoped Email",
             type: .credential,
@@ -416,7 +416,7 @@ struct FileVaultRepositoryTests {
 
         let exportURL = try repository.saveEntryExport(
             entry,
-            selectedFieldIDs: ["label", "credential.username", "custom.\(customFieldID.uuidString)"],
+            selectedFieldIDs: ["label", "credential.username", "custom.\(customFieldID)"],
             at: Date(timeIntervalSince1970: 1_700_000_001)
         )
         let decoder = JSONDecoder()

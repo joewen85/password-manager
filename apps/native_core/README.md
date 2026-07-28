@@ -16,6 +16,10 @@ link these sources instead of copying them into each app directory.
   backup/export/import, and libcurl-backed remote object sync.
 - `tests/vault_core_tests.cpp`: shared regression tests run by both
   `apps/windows_native` and `apps/linux_native`.
+- The P1 entry-reference data contract is preserved in shared snapshot and sync
+  serialization, including template type, target category, template-field ID,
+  and opaque stable IDs. Reference editing/display is outside this CLI slice;
+  see `../../docs/FIELD_REFERENCE_CONTRACT.md`.
 
 ## Verify
 

@@ -394,33 +394,78 @@ std::string trimCopy(const std::string& value) {
 
 std::string canonicalIdString(const std::string& value) {
     std::string normalized = trimCopy(value);
-    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    bool isUuid = normalized.size() == 36;
+    for (std::size_t index = 0; isUuid && index < normalized.size(); ++index) {
+        const bool shouldBeHyphen = index == 8 || index == 13 || index == 18 || index == 23;
+        if (shouldBeHyphen) {
+            isUuid = normalized[index] == '-';
+        } else {
+            isUuid = std::isxdigit(static_cast<unsigned char>(normalized[index])) != 0;
+        }
+    }
+    if (isUuid) {
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+    }
     return normalized;
 }
 
 std::string stableFieldId(const std::string& name) {
     std::string slug;
     bool previousWasSeparator = false;
-    for (char raw : trimCopy(name)) {
-        const auto ch = static_cast<unsigned char>(raw);
-        if (std::isalnum(ch)) {
+    const auto clean = trimCopy(name);
+    for (std::size_t index = 0; index < clean.size();) {
+        const auto ch = static_cast<unsigned char>(clean[index]);
+        if (ch < 0x80 && std::isalnum(ch)) {
             slug.push_back(static_cast<char>(std::tolower(ch)));
             previousWasSeparator = false;
+            ++index;
+            continue;
+        }
+
+        std::size_t length = 1;
+        std::uint32_t codePoint = ch;
+        if ((ch & 0xE0) == 0xC0 && index + 1 < clean.size()) {
+            length = 2;
+            codePoint = ch & 0x1F;
+        } else if ((ch & 0xF0) == 0xE0 && index + 2 < clean.size()) {
+            length = 3;
+            codePoint = ch & 0x0F;
+        } else if ((ch & 0xF8) == 0xF0 && index + 3 < clean.size()) {
+            length = 4;
+            codePoint = ch & 0x07;
+        }
+        bool valid = length > 1;
+        for (std::size_t offset = 1; valid && offset < length; ++offset) {
+            const auto continuation = static_cast<unsigned char>(clean[index + offset]);
+            valid = (continuation & 0xC0) == 0x80;
+            codePoint = (codePoint << 6) | (continuation & 0x3F);
+        }
+        if (valid && codePoint >= 0x4E00 && codePoint <= 0x9FFF) {
+            slug.append(clean, index, length);
+            previousWasSeparator = false;
         } else if (!previousWasSeparator) {
-            slug.push_back('-');
+            slug.push_back('_');
             previousWasSeparator = true;
         }
+        index += valid ? length : 1;
     }
-    while (!slug.empty() && slug.front() == '-') slug.erase(slug.begin());
-    while (!slug.empty() && slug.back() == '-') slug.pop_back();
-    return "template-" + (slug.empty() ? canonicalIdString(name) : slug);
+    while (!slug.empty() && slug.front() == '_') slug.erase(slug.begin());
+    while (!slug.empty() && slug.back() == '_') slug.pop_back();
+    if (!slug.empty()) return "template_" + slug;
+    if (clean.empty()) return "template_empty";
+    std::ostringstream encoded;
+    encoded << std::hex << std::setfill('0');
+    for (const auto raw : clean) {
+        encoded << std::setw(2) << static_cast<int>(static_cast<unsigned char>(raw));
+    }
+    return "template_u_" + encoded.str();
 }
 
 FieldTemplate makeFieldTemplate(const std::string& name) {
     const auto clean = trimCopy(name);
-    return FieldTemplate{stableFieldId(clean), clean};
+    return FieldTemplate{stableFieldId(clean), clean, "text", ""};
 }
 
 std::vector<FieldTemplate> normalizeFieldTemplates(const std::vector<FieldTemplate>& fields) {
@@ -431,7 +476,12 @@ std::vector<FieldTemplate> normalizeFieldTemplates(const std::vector<FieldTempla
         if (cleanName.empty()) continue;
         const auto key = lowerCopy(cleanName);
         if (!seen.insert(key).second) continue;
-        normalized.push_back(FieldTemplate{field.id.empty() ? stableFieldId(cleanName) : field.id, cleanName});
+        normalized.push_back(FieldTemplate{
+            field.id.empty() ? stableFieldId(cleanName) : field.id,
+            cleanName,
+            field.valueType.empty() ? "text" : field.valueType,
+            field.targetCategory,
+        });
     }
     return normalized;
 }
@@ -492,6 +542,8 @@ CustomField readCustomField(JsonReader& reader) {
             const auto key = reader.key();
             if (key == "id") {
                 field.id = reader.string();
+            } else if (key == "templateFieldId") {
+                field.templateFieldId = reader.string();
             } else if (key == "name") {
                 field.name = reader.string();
             } else if (key == "value") {
@@ -552,6 +604,7 @@ std::string customFieldsJson(const std::vector<CustomField>& fields) {
         if (index > 0) out << ",";
         const auto& field = fields[index];
         out << "{\"id\":" << jsonString(canonicalIdString(field.id))
+            << ",\"templateFieldId\":" << jsonString(field.templateFieldId)
             << ",\"name\":" << jsonString(field.name)
             << ",\"value\":" << jsonString(field.value) << "}";
     }
@@ -807,6 +860,10 @@ FieldTemplate readFieldTemplate(JsonReader& reader) {
                 field.id = reader.string();
             } else if (key == "name") {
                 field.name = reader.string();
+            } else if (key == "valueType") {
+                field.valueType = reader.string();
+            } else if (key == "targetCategory") {
+                field.targetCategory = reader.string();
             } else {
                 reader.skipValue();
             }
@@ -1470,7 +1527,10 @@ std::string serializeSnapshotJson(const VaultSnapshot& snapshot) {
         for (std::size_t fieldIndex = 0; fieldIndex < templateEntry.fields.size(); ++fieldIndex) {
             const auto& field = templateEntry.fields[fieldIndex];
             if (fieldIndex > 0) out << ",";
-            out << "{\"id\":\"" << escapeJson(field.id) << "\",\"name\":\"" << escapeJson(field.name) << "\"}";
+            out << "{\"id\":" << jsonString(field.id)
+                << ",\"name\":" << jsonString(field.name)
+                << ",\"valueType\":" << jsonString(field.valueType.empty() ? "text" : field.valueType)
+                << ",\"targetCategory\":" << jsonString(field.targetCategory) << "}";
         }
         out << "]}";
     }

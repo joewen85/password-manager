@@ -58,6 +58,9 @@ import life.devops.passwordmanager.model.ServicePayload
 import life.devops.passwordmanager.model.VaultEntry
 import life.devops.passwordmanager.model.VaultEntryType
 import life.devops.passwordmanager.model.VaultPayload
+import life.devops.passwordmanager.model.editableCustomFieldsForLegacyEditor
+import life.devops.passwordmanager.model.replaceWithTemplate
+import life.devops.passwordmanager.model.templateCustomFields
 import life.devops.passwordmanager.store.BiometricCredentialStore
 import life.devops.passwordmanager.store.BackupInfo
 import life.devops.passwordmanager.store.VaultStore
@@ -1055,6 +1058,7 @@ class MainActivity : FragmentActivity() {
         presetTag: String = "",
     ) {
         val isCreating = entry == null
+        val currentTemplate = entry?.let { current -> store.categoryTemplate(current.payload.category) }
         val draft = entry?.toDraft() ?: EntryDraft(
             label = "",
             type = VaultEntryType.CREDENTIAL,
@@ -1069,7 +1073,7 @@ class MainActivity : FragmentActivity() {
         var selectedEntryType = draft.type
         var selectedCategory = draft.category
         val selectedTags = draft.tags.toMutableSet()
-        val customFields = draft.customFields.toMutableList()
+        val customFields = editableCustomFieldsForLegacyEditor(draft.customFields, currentTemplate)
         fun removeDraftCustomField(fieldId: String) {
             customFields.removeAll { it.id == fieldId }
         }
@@ -1250,9 +1254,7 @@ class MainActivity : FragmentActivity() {
                     type = selectedEntryType,
                     category = selectedCategory,
                     tags = selectedTags.sorted(),
-                    customFields = customFields
-                        .map { it.copy(name = it.name.trim(), value = it.value.trim()) }
-                        .filter { it.name.isNotBlank() || it.value.isNotBlank() },
+                    customFields = customFields,
                     credential = credentialPayload(payloadInputs),
                     server = serverPayload(payloadInputs),
                     service = servicePayload(payloadInputs),
@@ -3001,36 +3003,6 @@ private fun VaultEntry.detailPairs(activity: MainActivity): List<Pair<String, St
     }).filter { (_, value) -> value.isNotBlank() } + customFields.map { field ->
         field.name.ifBlank { activity.getString(R.string.custom_field) } to field.value
     }
-
-private fun templateCustomFields(template: CategoryTemplate?): MutableList<CustomField> {
-    val seen = mutableSetOf<String>()
-    return (template?.fields ?: CategoryTemplate.defaultCategoryFields())
-        .mapNotNull { field ->
-            val name = field.name.trim()
-            val key = name.lowercase()
-            if (name.isEmpty() || key == "名称" || !seen.add(key)) {
-                null
-            } else {
-                CustomField(name = name)
-            }
-        }
-        .toMutableList()
-}
-
-private fun MutableList<CustomField>.replaceWithTemplate(template: CategoryTemplate?) {
-    val valuesByName = mutableMapOf<String, String>()
-    forEach { field ->
-        val key = field.name.trim().lowercase()
-        if (key.isNotEmpty() && !valuesByName.containsKey(key)) {
-            valuesByName[key] = field.value
-        }
-    }
-    val nextFields = templateCustomFields(template).map { field ->
-        field.copy(value = valuesByName[field.name.trim().lowercase()].orEmpty())
-    }
-    clear()
-    addAll(nextFields)
-}
 
 private class SimpleTextWatcher(
     private val onChanged: (String) -> Unit,

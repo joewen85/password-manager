@@ -80,6 +80,7 @@ interface ExportSingleItemRecord {
   scope: string;
   exportedAt: string;
   item: object;
+  categoryTemplates: CategoryTemplate[];
 }
 
 interface ExportCategoryRecord {
@@ -89,6 +90,7 @@ interface ExportCategoryRecord {
   category: string;
   count: number;
   items: ExportItemRecord[];
+  categoryTemplates: CategoryTemplate[];
 }
 
 export interface BackupInfo {
@@ -110,13 +112,23 @@ interface SelectedExportItemRecord {
 }
 
 interface ImportSingleItemRecord {
+  version?: number;
   scope?: string;
   item?: ExportItemRecord;
+  categoryTemplates?: CategoryTemplate[];
 }
 
 interface ImportCategoryRecord {
+  version?: number;
   scope?: string;
   items?: ExportItemRecord[];
+  categoryTemplates?: CategoryTemplate[];
+}
+
+interface DecodedScopedImportRecord {
+  version: number;
+  items: ExportItemRecord[];
+  categoryTemplates: CategoryTemplate[];
 }
 
 export enum ImportConflictStrategy {
@@ -1085,7 +1097,16 @@ export class VaultController {
       return;
     }
     this.mergeCategories([clean]);
-    this.upsertCategoryTemplate(clean, fieldsForCategoryPreset(preset, customFieldNames));
+    const existing = this.snapshot.categoryTemplates.find(
+      (template: CategoryTemplate) => template.category.toLowerCase() === clean.toLowerCase(),
+    );
+    this.upsertCategoryTemplate(
+      clean,
+      mergeEditableTemplateFields(
+        existing?.fields ?? [],
+        fieldsForCategoryPreset(preset, customFieldNames),
+      ),
+    );
     await this.persist();
   }
 
@@ -1096,7 +1117,16 @@ export class VaultController {
       return;
     }
     this.mergeCategories([clean]);
-    this.upsertCategoryTemplate(clean, fieldsForCategoryPreset('', customFieldNames));
+    const existing = this.snapshot.categoryTemplates.find(
+      (template: CategoryTemplate) => template.category.toLowerCase() === clean.toLowerCase(),
+    );
+    this.upsertCategoryTemplate(
+      clean,
+      mergeEditableTemplateFields(
+        existing?.fields ?? [],
+        fieldsForCategoryPreset('', customFieldNames),
+      ),
+    );
     await this.persist();
   }
 
@@ -1221,14 +1251,14 @@ export class VaultController {
     if (entry === undefined) {
       throw new Error('条目不存在或已删除');
     }
-    const payload: ExportSingleItemRecord = {
-      version: VaultController.SCHEMA_VERSION,
-      scope: 'item',
-      exportedAt: new Date().toISOString(),
-      item: selectedFieldIds === null
-        ? this.buildExportItem(entry)
-        : this.buildSelectedExportItem(entry, selectedFieldIds),
-    };
+    const item = selectedFieldIds === null
+      ? this.buildExportItem(entry)
+      : this.buildSelectedExportItem(entry, selectedFieldIds);
+    const payload = createScopedItemExportRecord(
+      item,
+      categoryTemplatesForExport(this.snapshot.categoryTemplates, [this.entryCategory(entry)]),
+      new Date().toISOString(),
+    );
     return JSON.stringify(payload, null, 2);
   }
 
@@ -1241,28 +1271,28 @@ export class VaultController {
       .sort(
         (left: ExportItemRecord, right: ExportItemRecord) => left.label.localeCompare(right.label),
       );
-    const payload: ExportCategoryRecord = {
-      version: VaultController.SCHEMA_VERSION,
-      scope: 'category',
-      exportedAt: new Date().toISOString(),
-      category: clean,
-      count: items.length,
-      items: items,
-    };
+    const payload = createScopedCategoryExportRecord(
+      clean,
+      items,
+      categoryTemplatesForExport(this.snapshot.categoryTemplates, [clean]),
+      new Date().toISOString(),
+    );
     return JSON.stringify(payload, null, 2);
   }
 
   async importEntryData(contents: string): Promise<number> {
-    const result = await this.applyImportPlan(
-      await this.buildImportPlan(contents, 'item'),
+    const result = await this.applyScopedImport(
+      contents,
+      'item',
       ImportConflictStrategy.KEEP_COPY,
     );
     return result.createdCount + result.updatedCount;
   }
 
   async importCategoryData(contents: string): Promise<number> {
-    const result = await this.applyImportPlan(
-      await this.buildImportPlan(contents, 'category'),
+    const result = await this.applyScopedImport(
+      contents,
+      'category',
       ImportConflictStrategy.KEEP_COPY,
     );
     return result.createdCount + result.updatedCount;
@@ -1280,14 +1310,14 @@ export class VaultController {
     contents: string,
     strategy: ImportConflictStrategy,
   ): Promise<ImportExecutionResult> {
-    return this.applyImportPlan(await this.buildImportPlan(contents, 'item'), strategy);
+    return this.applyScopedImport(contents, 'item', strategy);
   }
 
   async importCategoryDataWithStrategy(
     contents: string,
     strategy: ImportConflictStrategy,
   ): Promise<ImportExecutionResult> {
-    return this.applyImportPlan(await this.buildImportPlan(contents, 'category'), strategy);
+    return this.applyScopedImport(contents, 'category', strategy);
   }
 
   private ensureUnlocked(): void {
@@ -1322,6 +1352,8 @@ export class VaultController {
         const templateField: FieldTemplate = {
           id: field.id,
           name: field.name,
+          valueType: normalizeFieldValueType(field.valueType),
+          targetCategory: readPreservedString(field.targetCategory),
         };
         return templateField;
       }),
@@ -1336,6 +1368,35 @@ export class VaultController {
     }
     this.snapshot.categoryTemplates.sort((a: CategoryTemplate, b: CategoryTemplate) =>
       a.category.localeCompare(b.category));
+  }
+
+  private async applyScopedImport(
+    contents: string,
+    scope: string,
+    strategy: ImportConflictStrategy,
+  ): Promise<ImportExecutionResult> {
+    const decoded = decodeScopedImportRecord(contents, scope);
+    const plan = await this.buildImportPlan(contents, scope);
+    const templatesChanged = this.mergeImportedCategoryTemplates(decoded.categoryTemplates);
+    const result = await this.applyImportPlan(plan, strategy);
+    if (templatesChanged) {
+      await this.persist();
+    }
+    return result;
+  }
+
+  private mergeImportedCategoryTemplates(importedTemplates: CategoryTemplate[]): boolean {
+    const previousCategories = JSON.stringify(this.snapshot.categories);
+    const previousTemplates = JSON.stringify(this.snapshot.categoryTemplates);
+    this.mergeCategories(
+      importedTemplates.map((template: CategoryTemplate) => template.category),
+    );
+    this.snapshot.categoryTemplates = mergeImportedCategoryTemplateDefinitions(
+      this.snapshot.categoryTemplates,
+      importedTemplates,
+    );
+    return previousCategories !== JSON.stringify(this.snapshot.categories) ||
+      previousTemplates !== JSON.stringify(this.snapshot.categoryTemplates);
   }
 
   private entryCategory(entry: VaultEntry): string {
@@ -1530,19 +1591,8 @@ export class VaultController {
   }
 
   private parseImportItems(contents: string, scope: string): ExportItemRecord[] {
-    const parsed = JSON.parse(contents) as ImportSingleItemRecord | ImportCategoryRecord;
-    if (scope === 'item') {
-      const single = parsed as ImportSingleItemRecord;
-      if (single.scope !== 'item' || single.item === undefined) {
-        throw new Error('不是单条条目导出 JSON');
-      }
-      return [normalizeExportItem(single.item)];
-    }
-    const category = parsed as ImportCategoryRecord;
-    if (category.scope !== 'category' || category.items === undefined) {
-      throw new Error('不是分类导出 JSON');
-    }
-    return category.items.map((item: ExportItemRecord) => normalizeExportItem(item));
+    return decodeScopedImportRecord(contents, scope).items
+      .map((item: ExportItemRecord) => normalizeExportItem(item));
   }
 
   private findImportTarget(item: ExportItemRecord): VaultEntry | undefined {
@@ -2073,6 +2123,67 @@ function createEmptyPayload(): VaultRuntimePayload {
   };
 }
 
+function createScopedItemExportRecord(
+  item: object,
+  categoryTemplates: CategoryTemplate[],
+  exportedAt: string,
+): ExportSingleItemRecord {
+  return {
+    version: 2,
+    scope: 'item',
+    exportedAt,
+    item,
+    categoryTemplates: categoryTemplates.map((template: CategoryTemplate) =>
+      cloneCategoryTemplate(template)
+    ),
+  };
+}
+
+function createScopedCategoryExportRecord(
+  category: string,
+  items: ExportItemRecord[],
+  categoryTemplates: CategoryTemplate[],
+  exportedAt: string,
+): ExportCategoryRecord {
+  return {
+    version: 2,
+    scope: 'category',
+    exportedAt,
+    category,
+    count: items.length,
+    items,
+    categoryTemplates: categoryTemplates.map((template: CategoryTemplate) =>
+      cloneCategoryTemplate(template)
+    ),
+  };
+}
+
+function decodeScopedImportRecord(contents: string, scope: string): DecodedScopedImportRecord {
+  const parsed = JSON.parse(contents) as ImportSingleItemRecord | ImportCategoryRecord;
+  const version = typeof parsed.version === 'number' ? parsed.version : 1;
+  const categoryTemplates = normalizeCategoryTemplates(parsed.categoryTemplates, []);
+  if (scope === 'item') {
+    const single = parsed as ImportSingleItemRecord;
+    if (single.scope !== 'item' || single.item === undefined) {
+      throw new Error('不是单条条目导出 JSON');
+    }
+    return {
+      version,
+      items: [single.item],
+      categoryTemplates,
+    };
+  }
+  const category = parsed as ImportCategoryRecord;
+  if (category.scope !== 'category' || category.items === undefined) {
+    throw new Error('不是分类导出 JSON');
+  }
+  return {
+    version,
+    items: category.items,
+    categoryTemplates,
+  };
+}
+
 function sanitizeRuntimePayload(
   input: VaultPayloadRecord | VaultRuntimePayload,
 ): VaultRuntimePayload {
@@ -2180,7 +2291,13 @@ function readString(value: string | undefined): string {
 }
 
 function canonicalIdString(value: string | undefined): string {
-  return readString(value).toLowerCase();
+  const clean = readString(value);
+  if (clean.length === 0) {
+    return '';
+  }
+  const uuidPattern =
+    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+  return uuidPattern.test(clean) ? clean.toLowerCase() : clean;
 }
 
 function normalizeReferenceIds(values: string[] | undefined): string[] {
@@ -2439,18 +2556,21 @@ function createFieldTemplate(name: string): FieldTemplate {
   return {
     id: stableFieldId(name),
     name,
+    valueType: 'text',
+    targetCategory: '',
   };
 }
 
 function stableFieldId(name: string): string {
-  const clean = name.trim().toLowerCase();
+  const trimmed = name.trim();
+  const clean = trimmed.toLowerCase();
   let output = '';
   for (let index = 0; index < clean.length; index++) {
     const char = clean.charAt(index);
     const keep =
       (char >= 'a' && char <= 'z') ||
       (char >= '0' && char <= '9') ||
-      (char >= '\u4e00' && char <= '\u9fa5');
+      (char >= '\u4e00' && char <= '\u9fff');
     output += keep ? char : '_';
   }
   output = output.replace(/_+/g, '_');
@@ -2460,7 +2580,22 @@ function stableFieldId(name: string): string {
   while (output.endsWith('_')) {
     output = output.substring(0, output.length - 1);
   }
-  return `template_${output.length > 0 ? output : nextId()}`;
+  if (output.length > 0) {
+    return `template_${output}`;
+  }
+  if (trimmed.length === 0) {
+    return 'template_empty';
+  }
+  return `template_u_${utf8Hex(trimmed)}`;
+}
+
+function utf8Hex(value: string): string {
+  const encoded = unescape(encodeURIComponent(value));
+  let output = '';
+  for (let index = 0; index < encoded.length; index++) {
+    output += encoded.charCodeAt(index).toString(16).padStart(2, '0');
+  }
+  return output;
 }
 
 function normalizeCategoryTemplates(
@@ -2512,12 +2647,61 @@ function normalizeFieldTemplates(fields: FieldTemplate[] | undefined): FieldTemp
       return;
     }
     seen.add(key);
+    const id = canonicalIdString(field.id);
     output.push({
-      id: readString(field.id).length > 0 ? readString(field.id) : stableFieldId(name),
+      id: id.length > 0 ? id : stableFieldId(name),
       name,
+      valueType: normalizeFieldValueType(field.valueType),
+      targetCategory: readPreservedString(field.targetCategory),
     });
   });
   return output.length > 0 ? output : defaultCategoryFields();
+}
+
+function mergeEditableTemplateFields(
+  existing: FieldTemplate[],
+  requested: FieldTemplate[],
+): FieldTemplate[] {
+  const existingFields = normalizeFieldTemplates(existing);
+  const requestedFields = normalizeFieldTemplates(requested);
+  const usedExistingIndexes = new Set<number>();
+  const merged: FieldTemplate[] = [];
+
+  requestedFields.forEach((requestedField: FieldTemplate) => {
+    const requestedName = readString(requestedField.name).toLowerCase();
+    let existingIndex = existingFields.findIndex(
+      (field: FieldTemplate, index: number) =>
+        !usedExistingIndexes.has(index) && readString(field.name).toLowerCase() === requestedName,
+    );
+    if (existingIndex < 0) {
+      existingIndex = existingFields.findIndex(
+        (field: FieldTemplate, index: number) =>
+          !usedExistingIndexes.has(index) && normalizeFieldValueType(field.valueType) === 'text',
+      );
+    }
+    if (existingIndex < 0) {
+      merged.push(requestedField);
+      return;
+    }
+    usedExistingIndexes.add(existingIndex);
+    const existingField = existingFields[existingIndex];
+    merged.push({
+      id: existingField.id,
+      name: requestedField.name,
+      valueType: normalizeFieldValueType(existingField.valueType),
+      targetCategory: readPreservedString(existingField.targetCategory),
+    });
+  });
+
+  existingFields.forEach((field: FieldTemplate, index: number) => {
+    if (
+      !usedExistingIndexes.has(index) &&
+      normalizeFieldValueType(field.valueType) !== 'text'
+    ) {
+      merged.push(cloneFieldTemplate(field));
+    }
+  });
+  return normalizeFieldTemplates(merged);
 }
 
 function mergeCategoryTemplates(
@@ -2550,17 +2734,88 @@ function mergeCategoryTemplates(
   return normalizeCategoryTemplates(output, categories);
 }
 
+function mergeImportedCategoryTemplateDefinitions(
+  existing: CategoryTemplate[],
+  imported: CategoryTemplate[],
+): CategoryTemplate[] {
+  const merged = existing.map((template: CategoryTemplate) =>
+    normalizeCategoryTemplate(template)
+  );
+  imported.forEach((template: CategoryTemplate) => {
+    const incoming = normalizeCategoryTemplate(template);
+    if (incoming.category.length === 0) {
+      return;
+    }
+    const templateIndex = merged.findIndex((candidate: CategoryTemplate) =>
+      candidate.category.toLowerCase() === incoming.category.toLowerCase()
+    );
+    if (templateIndex < 0) {
+      merged.push(incoming);
+      return;
+    }
+    const fields = merged[templateIndex].fields.map((field: FieldTemplate) =>
+      cloneFieldTemplate(field)
+    );
+    incoming.fields.forEach((field: FieldTemplate) => {
+      const fieldIndex = fields.findIndex((candidate: FieldTemplate) => candidate.id === field.id);
+      if (fieldIndex < 0) {
+        fields.push(cloneFieldTemplate(field));
+      } else {
+        fields[fieldIndex] = cloneFieldTemplate(field);
+      }
+    });
+    merged[templateIndex] = {
+      category: incoming.category,
+      fields,
+    };
+  });
+  return normalizeCategoryTemplates(merged, []);
+}
+
 function cloneCategoryTemplate(template: CategoryTemplate): CategoryTemplate {
   return {
     category: template.category,
-    fields: template.fields.map((field: FieldTemplate) => {
-      const copy: FieldTemplate = {
-        id: field.id,
-        name: field.name,
-      };
-      return copy;
-    }),
+    fields: template.fields.map((field: FieldTemplate) => cloneFieldTemplate(field)),
   };
+}
+
+function cloneFieldTemplate(field: FieldTemplate): FieldTemplate {
+  return {
+    id: field.id,
+    name: field.name,
+    valueType: normalizeFieldValueType(field.valueType),
+    targetCategory: readPreservedString(field.targetCategory),
+  };
+}
+
+function categoryTemplatesForExport(
+  templates: CategoryTemplate[],
+  categories: string[],
+): CategoryTemplate[] {
+  const selectedCategories = new Set<string>();
+  categories.forEach((category: string) => {
+    const clean = readString(category);
+    if (clean.length > 0) {
+      selectedCategories.add(clean.toLowerCase());
+    }
+  });
+  return templates
+    .map((template: CategoryTemplate) => normalizeCategoryTemplate(template))
+    .filter((template: CategoryTemplate) =>
+      selectedCategories.has(template.category.toLowerCase())
+    )
+    .map((template: CategoryTemplate) => cloneCategoryTemplate(template));
+}
+
+function normalizeFieldValueType(value: string | undefined): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return 'text';
+  }
+  return value;
+}
+
+function readPreservedString(value: string | undefined): string {
+  return typeof value === 'string' ? value : '';
 }
 
 function cloneSecuritySettings(settings: SecuritySettings): SecuritySettings {
@@ -2694,12 +2949,14 @@ function normalizeCustomFields(fields: CustomField[] | undefined): CustomField[]
   fields.forEach((field: CustomField) => {
     const name = readString(field.name);
     const value = typeof field.value === 'string' ? field.value : '';
-    if (name.length === 0 && value.trim().length === 0) {
+    const templateFieldId = canonicalIdString(field.templateFieldId);
+    if (name.length === 0 && value.trim().length === 0 && templateFieldId.length === 0) {
       return;
     }
     const id = canonicalIdString(field.id);
     const normalized: CustomField = {
       id: id.length > 0 ? id : nextId(),
+      templateFieldId,
       name,
       value,
     };

@@ -66,7 +66,10 @@ struct EntryEditorView: View {
                 }
 
                 if usesTemplateFields {
-                    TemplateFieldsEditor(fields: $draft.customFields)
+                    TemplateFieldsEditor(
+                        fields: $draft.customFields,
+                        protectedFieldIDs: draft.protectedCustomFieldIds
+                    )
                 } else {
                     switch draft.type {
                     case .credential:
@@ -77,7 +80,10 @@ struct EntryEditorView: View {
                         ServiceEditor(payload: $draft.service)
                     }
 
-                    CustomFieldsEditor(fields: $draft.customFields)
+                    CustomFieldsEditor(
+                        fields: $draft.customFields,
+                        protectedFieldIDs: draft.protectedCustomFieldIds
+                    )
                 }
             }
             .formStyle(.grouped)
@@ -380,15 +386,24 @@ private struct CategorySelectField: View {
 
 private struct TemplateFieldsEditor: View {
     @Binding var fields: [CustomField]
+    var protectedFieldIDs: Set<String>
+
+    private var editableIndices: [Int] {
+        fields.indices.filter { !protectedFieldIDs.contains(fields[$0].id) }
+    }
 
     var body: some View {
         Section("Fields") {
-            if fields.isEmpty {
+            if editableIndices.isEmpty {
                 Text("No custom fields.")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach($fields) { $field in
-                    CustomFieldRow(field: $field, showsValue: true, remove: { remove(field.id) })
+                ForEach(editableIndices, id: \.self) { index in
+                    CustomFieldRow(
+                        field: $fields[index],
+                        showsValue: true,
+                        remove: { remove(fields[index].id) }
+                    )
                 }
             }
 
@@ -402,7 +417,7 @@ private struct TemplateFieldsEditor: View {
         fields.append(CustomField())
     }
 
-    private func remove(_ id: UUID) {
+    private func remove(_ id: String) {
         fields.removeAll { $0.id == id }
     }
 }
@@ -437,7 +452,7 @@ private struct CategoryTemplateFieldNameEditor: View {
         fields.append(CustomField())
     }
 
-    private func remove(_ id: UUID) {
+    private func remove(_ id: String) {
         fields.removeAll { $0.id == id }
     }
 }
@@ -484,15 +499,24 @@ private struct CustomFieldRow: View {
 
 private struct CustomFieldsEditor: View {
     @Binding var fields: [CustomField]
+    var protectedFieldIDs: Set<String>
+
+    private var editableIndices: [Int] {
+        fields.indices.filter { !protectedFieldIDs.contains(fields[$0].id) }
+    }
 
     var body: some View {
         Section("Custom Fields") {
-            if fields.isEmpty {
+            if editableIndices.isEmpty {
                 Text("No custom fields.")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach($fields) { $field in
-                    CustomFieldRow(field: $field, showsValue: true, remove: { remove(field.id) })
+                ForEach(editableIndices, id: \.self) { index in
+                    CustomFieldRow(
+                        field: $fields[index],
+                        showsValue: true,
+                        remove: { remove(fields[index].id) }
+                    )
                 }
             }
 
@@ -506,7 +530,7 @@ private struct CustomFieldsEditor: View {
         fields.append(CustomField())
     }
 
-    private func remove(_ id: UUID) {
+    private func remove(_ id: String) {
         fields.removeAll { $0.id == id }
     }
 }

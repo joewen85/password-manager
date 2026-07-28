@@ -322,7 +322,7 @@ struct VaultSyncEngineTests {
     @Test("Concurrent payload merges and uploads next revision")
     func concurrentPayloadMergesAndUploadsNextRevision() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let conflictId = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!
+        let conflictId = "33333333-3333-3333-3333-333333333333"
         let engine = VaultSyncEngine(now: { now }, idGenerator: { conflictId })
         var settings = SyncSettings.defaults(deviceId: "mac-device")
         settings.lastSyncRevision = 2
@@ -538,7 +538,7 @@ private func makeEntry(
     isDeleted: Bool = false
 ) -> VaultEntry {
     VaultEntry(
-        id: UUID(uuidString: id)!,
+        id: id,
         label: label,
         type: .credential,
         payload: .credential(

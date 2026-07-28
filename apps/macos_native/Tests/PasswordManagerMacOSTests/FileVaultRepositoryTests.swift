@@ -453,8 +453,8 @@ struct FileVaultRepositoryTests {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let repository = FileVaultRepository(baseDirectory: directory)
-        let customFieldID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
-        let omittedCustomFieldID = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!
+        let customFieldID = "22222222-2222-2222-2222-222222222222"
+        let omittedCustomFieldID = "33333333-3333-3333-3333-333333333333"
         let entry = VaultEntry(
             label: "Document Export",
             type: .credential,
@@ -497,7 +497,7 @@ struct FileVaultRepositoryTests {
                 "label",
                 "category",
                 "credential.username",
-                "custom.\(customFieldID.uuidString)"
+                "custom.\(customFieldID)"
             ],
             at: Date(timeIntervalSince1970: 1_700_000_004)
         )

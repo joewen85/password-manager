@@ -2,7 +2,9 @@ package life.devops.passwordmanager.store
 
 import life.devops.passwordmanager.model.EncryptedPayloadRecord
 import life.devops.passwordmanager.model.MasterKeyRecord
+import life.devops.passwordmanager.model.CategoryTemplate
 import life.devops.passwordmanager.model.CredentialPayload
+import life.devops.passwordmanager.model.FieldTemplate
 import life.devops.passwordmanager.model.ScopedExportScope
 import life.devops.passwordmanager.model.SecuritySettings
 import life.devops.passwordmanager.model.VaultEntry
@@ -195,14 +197,27 @@ class FileVaultRepositoryTest {
                     )
                 ),
             )
+            val template = CategoryTemplate(
+                category = "Scoped",
+                fields = listOf(
+                    FieldTemplate(
+                        id = "template-owner",
+                        name = "Owner",
+                        valueType = "entryReference",
+                        targetCategory = "Accounts",
+                    )
+                ),
+            )
 
             val entryExportFile = repository.saveEntryExport(
-                entry,
-                Instant.parse("2023-11-14T22:13:21Z"),
+                entry = entry,
+                categoryTemplates = listOf(template),
+                at = Instant.parse("2023-11-14T22:13:21Z"),
             )
             val categoryExportFile = repository.saveCategoryExport(
                 category = "Scoped",
                 entries = listOf(entry),
+                categoryTemplates = listOf(template),
                 at = Instant.parse("2023-11-14T22:13:22Z"),
             )
             entryExportFile.copyTo(File(repository.importsDirectory(), entryExportFile.name))
@@ -214,10 +229,14 @@ class FileVaultRepositoryTest {
             assertEquals("entry-export-Scoped_Email-20231114-221321.json", entryExportFile.name)
             assertEquals("category-export-Scoped-20231114-221322.json", categoryExportFile.name)
             assertEquals(ScopedExportScope.ITEM, entryImport.scope)
+            assertEquals(2, entryImport.version)
             assertEquals("Scoped Email", entryImport.item?.label)
+            assertEquals(listOf(template), entryImport.categoryTemplates)
             assertEquals(ScopedExportScope.CATEGORY, categoryImport.scope)
+            assertEquals(2, categoryImport.version)
             assertEquals("Scoped", categoryImport.category)
             assertEquals(1, categoryImport.items?.size)
+            assertEquals(listOf(template), categoryImport.categoryTemplates)
         } finally {
             directory.deleteRecursively()
         }

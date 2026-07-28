@@ -10,7 +10,7 @@ struct VaultSyncMergerTests {
         let merger = VaultSyncMerger(
             idGenerator: {
                 defer { counter += 1 }
-                return UUID(uuidString: "00000000-0000-0000-0000-\(String(format: "%012d", counter))")!
+                return "00000000-0000-0000-0000-\(String(format: "%012d", counter))"
             },
             conflictLabelBuilder: { _, _ in "(conflict)" },
             conflictStrategy: .keepBoth
@@ -28,8 +28,8 @@ struct VaultSyncMergerTests {
         #expect(result.stats.conflicts == 0)
     }
 
-    @Test("Vault entry JSON encoding keeps UUID identifiers lowercase")
-    func vaultEntryJSONEncodingKeepsUUIDIdentifiersLowercase() throws {
+    @Test("Vault entry JSON encoding preserves opaque identifiers")
+    func vaultEntryJSONEncodingPreservesOpaqueIdentifiers() throws {
         let entry = buildEntry(
             id: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
             label: "Canonical",
@@ -39,7 +39,7 @@ struct VaultSyncMergerTests {
         var entryWithCustomField = entry
         entryWithCustomField.customFields = [
             CustomField(
-                id: UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!,
+                id: "harmony-field:owner",
                 name: "Field",
                 value: "Value"
             )
@@ -49,8 +49,8 @@ struct VaultSyncMergerTests {
         let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let fields = try #require(object["customFields"] as? [[String: Any]])
 
-        #expect(object["id"] as? String == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-        #expect(fields.first?["id"] as? String == "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+        #expect(object["id"] as? String == "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")
+        #expect(fields.first?["id"] as? String == "harmony-field:owner")
     }
 
     @Test("Concurrent rename conflict produces conflict copy")
@@ -59,7 +59,7 @@ struct VaultSyncMergerTests {
         let merger = VaultSyncMerger(
             idGenerator: {
                 defer { counter += 1 }
-                return UUID(uuidString: "00000000-0000-0000-0000-\(String(format: "%012d", counter))")!
+                return "00000000-0000-0000-0000-\(String(format: "%012d", counter))"
             },
             conflictLabelBuilder: { _, _ in "(conflict)" },
             conflictStrategy: .localWins
@@ -85,7 +85,7 @@ struct VaultSyncMergerTests {
 
         #expect(result.stats.conflicts == 1)
         #expect(result.entries.count == 2)
-        #expect(result.entries.filter { $0.id.uuidString == "33333333-3333-3333-3333-333333333333" }.count == 1)
+        #expect(result.entries.filter { $0.id == "33333333-3333-3333-3333-333333333333" }.count == 1)
         #expect(result.entries.contains { $0.label.contains("Name-B") })
     }
 
@@ -95,7 +95,7 @@ struct VaultSyncMergerTests {
         let merger = VaultSyncMerger(
             idGenerator: {
                 defer { counter += 1 }
-                return UUID(uuidString: "00000000-0000-0000-0000-\(String(format: "%012d", counter))")!
+                return "00000000-0000-0000-0000-\(String(format: "%012d", counter))"
             },
             conflictLabelBuilder: { _, _ in "(conflict)" },
             conflictStrategy: .keepBoth
@@ -122,8 +122,8 @@ struct VaultSyncMergerTests {
         let result = merger.merge(localEntries: local, remoteEntries: remote)
 
         #expect(result.stats.conflicts == 1)
-        #expect(result.entries.contains { $0.id.uuidString == sharedId && $0.isDeleted })
-        #expect(result.entries.contains { $0.id.uuidString != sharedId && !$0.isDeleted })
+        #expect(result.entries.contains { $0.id == sharedId && $0.isDeleted })
+        #expect(result.entries.contains { $0.id != sharedId && !$0.isDeleted })
     }
 
     @Test("Both delete keeps single tombstone")
@@ -132,7 +132,7 @@ struct VaultSyncMergerTests {
         let merger = VaultSyncMerger(
             idGenerator: {
                 defer { counter += 1 }
-                return UUID(uuidString: "00000000-0000-0000-0000-\(String(format: "%012d", counter))")!
+                return "00000000-0000-0000-0000-\(String(format: "%012d", counter))"
             },
             conflictLabelBuilder: { _, _ in "(conflict)" },
             conflictStrategy: .keepBoth
@@ -164,6 +164,42 @@ struct VaultSyncMergerTests {
         #expect(result.entries.first?.isDeleted == true)
     }
 
+    @Test("Conflict copies preserve custom field references")
+    func conflictCopiesPreserveCustomFieldReferences() {
+        let merger = VaultSyncMerger(
+            idGenerator: { "conflict-copy" },
+            conflictLabelBuilder: { _, _ in "(conflict)" },
+            conflictStrategy: .keepBoth
+        )
+        var local = buildEntry(
+            id: "harmony-entry:server",
+            label: "Server",
+            updatedBy: "A",
+            version: ["A": 2, "B": 1]
+        )
+        local.customFields = [
+            CustomField(
+                id: "harmony-field:owner",
+                templateFieldId: "template_owner",
+                name: "Owner",
+                value: "harmony-entry:account-a"
+            )
+        ]
+        var remote = local
+        remote.version = ["A": 1, "B": 2]
+        remote.updatedBy = "B"
+        remote.customFields[0].value = "harmony-entry:account-b"
+
+        let result = merger.merge(localEntries: [local], remoteEntries: [remote])
+
+        #expect(result.stats.conflicts == 1)
+        #expect(Set(result.entries.flatMap(\.customFields).map(\.value)) == [
+            "harmony-entry:account-a",
+            "harmony-entry:account-b"
+        ])
+        #expect(result.entries.allSatisfy { $0.customFields.first?.templateFieldId == "template_owner" })
+    }
+
     @Test("Compare version classifies dominance and concurrent updates")
     func compareVersionClassifiesDominanceAndConcurrentUpdates() {
         #expect(VaultSyncMerger.compareVersion(local: ["A": 1], remote: ["A": 1]) == .equal)
@@ -181,7 +217,7 @@ struct VaultSyncMergerTests {
     ) -> VaultEntry {
         let now = Date(timeIntervalSince1970: 1_707_738_000)
         return VaultEntry(
-            id: UUID(uuidString: id)!,
+            id: id,
             label: label,
             type: .credential,
             payload: .credential(

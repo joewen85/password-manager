@@ -18,6 +18,7 @@ import life.devops.passwordmanager.model.VaultPersistenceEnvelope
 import life.devops.passwordmanager.model.VaultSnapshot
 import life.devops.passwordmanager.model.copyForImport
 import life.devops.passwordmanager.model.importMatchKey
+import life.devops.passwordmanager.model.mergeCustomFieldsForLegacyEditorSave
 import life.devops.passwordmanager.sync.EncryptedRemoteSyncClient
 import life.devops.passwordmanager.sync.RemoteSyncClient
 import life.devops.passwordmanager.sync.SyncClientFactory
@@ -199,15 +200,23 @@ class VaultStore(
     @Synchronized
     fun upsert(draft: EntryDraft, editingId: String? = null): VaultEntry {
         val now = Instant.now()
+        val existingIndex = editingId?.let { id -> entries.indexOfFirst { it.id == id } } ?: -1
+        val existingEntry = entries.getOrNull(existingIndex)
         val normalizedTags = draft.tags.map { it.trim() }.filter { it.isNotEmpty() }
+        val normalizedCustomFields = draft.customFields
+            .map { it.copy(name = it.name.trim(), value = it.value.trim()) }
+            .filter { it.name.isNotBlank() || it.value.isNotBlank() }
         val normalizedDraft = draft.copy(
             category = draft.category.trim(),
             tags = normalizedTags,
-            customFields = draft.customFields
-                .map { it.copy(name = it.name.trim(), value = it.value.trim()) }
-                .filter { it.name.isNotBlank() || it.value.isNotBlank() },
+            customFields = existingEntry?.let { current ->
+                mergeCustomFieldsForLegacyEditorSave(
+                    originalFields = current.customFields,
+                    editedFields = normalizedCustomFields,
+                    template = categoryTemplate(current.payload.category),
+                )
+            } ?: normalizedCustomFields,
         )
-        val existingIndex = editingId?.let { id -> entries.indexOfFirst { it.id == id } } ?: -1
         val entry = if (existingIndex >= 0) {
             entries[existingIndex].copy(
                 label = normalizedDraft.label,
@@ -699,7 +708,10 @@ class VaultStore(
             return
         }
         runCatching {
-            val exportFile = repository.saveEntryExport(entry)
+            val exportFile = repository.saveEntryExport(
+                entry = entry,
+                categoryTemplates = categoryTemplate(entry.payload.category)?.let(::listOf).orEmpty(),
+            )
             statusMessage = "Entry export saved: ${exportFile.name}"
         }.onFailure {
             statusMessage = it.message
@@ -721,6 +733,7 @@ class VaultStore(
                     item = exportedEntry,
                     category = null,
                     items = null,
+                    categoryTemplates = categoryTemplate(entry.payload.category)?.let(::listOf).orEmpty(),
                 )
             )
         }.getOrElse {
@@ -738,7 +751,11 @@ class VaultStore(
             val exportedEntries = entries
                 .filter { !it.isDeleted && it.payload.category == category }
                 .sortedBy { it.label }
-            val exportFile = repository.saveCategoryExport(category, exportedEntries)
+            val exportFile = repository.saveCategoryExport(
+                category = category,
+                entries = exportedEntries,
+                categoryTemplates = categoryTemplate(category)?.let(::listOf).orEmpty(),
+            )
             statusMessage = "Category export saved: ${exportFile.name}"
         }.onFailure {
             statusMessage = it.message
@@ -762,6 +779,7 @@ class VaultStore(
                     item = null,
                     category = category,
                     items = exportedEntries,
+                    categoryTemplates = categoryTemplate(category)?.let(::listOf).orEmpty(),
                 )
             )
         }.getOrElse {
@@ -817,8 +835,11 @@ class VaultStore(
                 ScopedExportScope.ITEM -> scopedExport.item?.let { listOf(it) }.orEmpty()
                 ScopedExportScope.CATEGORY -> scopedExport.items.orEmpty()
             }
+            val templatesChanged = mergeImportedCategoryTemplates(scopedExport.categoryTemplates)
             val result = applyImportedEntries(importedEntries, strategy)
-            persistUnlockedSnapshot(markLocalChange = result.created > 0 || result.updated > 0)
+            persistUnlockedSnapshot(
+                markLocalChange = templatesChanged || result.created > 0 || result.updated > 0,
+            )
             statusMessage = "Imported ${result.created} created, ${result.updated} updated, ${result.skipped} skipped."
         }.onFailure {
             statusMessage = it.message
@@ -837,8 +858,11 @@ class VaultStore(
                 ScopedExportScope.ITEM -> scopedExport.item?.let { listOf(it) }.orEmpty()
                 ScopedExportScope.CATEGORY -> scopedExport.items.orEmpty()
             }
+            val templatesChanged = mergeImportedCategoryTemplates(scopedExport.categoryTemplates)
             val result = applyImportedEntries(importedEntries, strategy)
-            persistUnlockedSnapshot(markLocalChange = result.created > 0 || result.updated > 0)
+            persistUnlockedSnapshot(
+                markLocalChange = templatesChanged || result.created > 0 || result.updated > 0,
+            )
             statusMessage = "Imported ${result.created} created, ${result.updated} updated, ${result.skipped} skipped."
             true
         }.onFailure {
@@ -1009,6 +1033,46 @@ class VaultStore(
         return ImportResult(created = created, updated = updated, skipped = skipped)
     }
 
+    private fun mergeImportedCategoryTemplates(importedTemplates: List<CategoryTemplate>): Boolean {
+        var changed = false
+        importedTemplates.forEach { importedTemplate ->
+            val importedCategory = importedTemplate.category.trim()
+            if (importedCategory.isBlank()) return@forEach
+
+            if (manualCategories.none { it.equals(importedCategory, ignoreCase = true) }) {
+                manualCategories += importedCategory
+                changed = true
+            }
+
+            val existingEntry = categoryTemplates.entries.firstOrNull {
+                it.key.equals(importedCategory, ignoreCase = true)
+            }
+            if (existingEntry == null) {
+                categoryTemplates[importedCategory] = importedTemplate.copy(category = importedCategory)
+                changed = true
+                return@forEach
+            }
+
+            val mergedFields = existingEntry.value.fields.toMutableList()
+            importedTemplate.fields.forEach { importedField ->
+                val existingIndex = mergedFields.indexOfFirst { it.id == importedField.id }
+                if (existingIndex < 0) {
+                    mergedFields += importedField
+                    changed = true
+                } else if (mergedFields[existingIndex] != importedField) {
+                    mergedFields[existingIndex] = importedField
+                    changed = true
+                }
+            }
+            if (existingEntry.value.category != importedCategory || existingEntry.value.fields != mergedFields) {
+                categoryTemplates.remove(existingEntry.key)
+                categoryTemplates[importedCategory] = CategoryTemplate(importedCategory, mergedFields)
+                changed = true
+            }
+        }
+        return changed
+    }
+
     private fun applySnapshotState(snapshot: VaultSnapshot) {
         entries.clear()
         entries += snapshot.entries
@@ -1085,9 +1149,15 @@ fun List<CustomField>.withTemplateDefaults(template: CategoryTemplate?): List<Cu
     if (template == null) return this
     val existingNames = map { it.name.trim().lowercase() }.toMutableSet()
     val additions = template.fields
+        .filter { field -> field.valueType == "text" }
         .filter { field -> field.name.trim().isNotEmpty() }
         .filter { field -> existingNames.add(field.name.trim().lowercase()) }
-        .map { field -> CustomField(name = field.name.trim()) }
+        .map { field ->
+            CustomField(
+                templateFieldId = field.id,
+                name = field.name.trim(),
+            )
+        }
     return this + additions
 }
 

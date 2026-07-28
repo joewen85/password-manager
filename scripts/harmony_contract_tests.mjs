@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import { stripTypeScriptTypes } from 'node:module';
 import path from 'node:path';
 import process from 'node:process';
+import vm from 'node:vm';
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 
@@ -9,6 +11,7 @@ const files = {
   appScope: 'apps/harmony_app/AppScope/app.json5',
   buildProfile: 'apps/harmony_app/build-profile.json5',
   module: 'apps/harmony_app/entry/src/main/module.json5',
+  model: 'apps/harmony_app/entry/src/main/ets/src/model/VaultTypes.ets',
   crypto: 'apps/harmony_app/entry/src/main/ets/src/security/VaultCryptoService.ets',
   totp: 'apps/harmony_app/entry/src/main/ets/src/security/TotpService.ets',
   controller: 'apps/harmony_app/entry/src/main/ets/src/service/VaultController.ets',
@@ -81,6 +84,74 @@ function assertPlatformIdentifier(value, label) {
   assert(platformIdentifierPattern.test(value), `${label} is a dot-separated platform identifier`);
 }
 
+function extractFunction(source, name) {
+  const start = source.indexOf(`function ${name}(`);
+  if (start < 0) {
+    throw new Error(`Cannot find Harmony controller function: ${name}`);
+  }
+  const bodyStart = source.indexOf('{', start);
+  let depth = 0;
+  let quote = '';
+  let escaped = false;
+  for (let index = bodyStart; index < source.length; index++) {
+    const char = source[index];
+    if (quote.length > 0) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === quote) {
+        quote = '';
+      }
+      continue;
+    }
+    if (char === "'" || char === '"' || char === '`') {
+      quote = char;
+      continue;
+    }
+    if (char === '{') {
+      depth += 1;
+    } else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(start, index + 1);
+      }
+    }
+  }
+  throw new Error(`Cannot find the end of Harmony controller function: ${name}`);
+}
+
+function loadHarmonyFieldReferenceRuntime() {
+  const controller = read(files.controller);
+  const functionNames = [
+    'createScopedItemExportRecord',
+    'createScopedCategoryExportRecord',
+    'decodeScopedImportRecord',
+    'readString',
+    'canonicalIdString',
+    'defaultCategoryFields',
+    'createFieldTemplate',
+    'stableFieldId',
+    'utf8Hex',
+    'normalizeCategoryTemplates',
+    'normalizeCategoryTemplate',
+    'normalizeFieldTemplates',
+    'mergeEditableTemplateFields',
+    'mergeImportedCategoryTemplateDefinitions',
+    'cloneCategoryTemplate',
+    'cloneFieldTemplate',
+    'categoryTemplatesForExport',
+    'normalizeFieldValueType',
+    'readPreservedString',
+    'normalizeCustomFields',
+    'nextId',
+  ];
+  const source = `${functionNames.map((name) => extractFunction(controller, name)).join('\n')}
+    ;({ ${functionNames.join(', ')} });`;
+  const executable = stripTypeScriptTypes(source, { mode: 'transform' });
+  return vm.runInNewContext(executable, {});
+}
+
 function checkReleaseMetadata() {
   const app = parseJson5(files.appScope).app;
   assert(app.bundleName === expectedBundleName, `Harmony bundleName is ${expectedBundleName}`);
@@ -120,8 +191,166 @@ function checkCryptoContract() {
 
 function checkTemplateIdContract() {
   const controller = read(files.controller);
-  assertIncludes(controller, 'return `template_${output.length > 0 ? output : nextId()}`;', 'Harmony field template IDs use underscores');
-  assertIncludes(controller, 'return `${ts}_${rand}`;', 'Harmony generated fallback IDs use underscores');
+  assertIncludes(controller, 'return `template_${output}`;', 'Harmony field template IDs use normalized underscores');
+  assertIncludes(controller, "return 'template_empty';", 'Harmony has a defensive empty-name template ID');
+  assertIncludes(controller, 'return `template_u_${utf8Hex(trimmed)}`;', 'Harmony uses deterministic UTF-8 hex for empty slugs');
+}
+
+function checkFieldReferenceBehavior() {
+  const runtime = loadHarmonyFieldReferenceRuntime();
+  assert(runtime.canonicalIdString('Entry-MixedCase') === 'Entry-MixedCase', 'Harmony preserves opaque entry IDs');
+  assert(
+    runtime.canonicalIdString('AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA') ===
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    'Harmony canonicalizes UUID IDs without changing opaque IDs',
+  );
+  const legacyTemplates = runtime.normalizeFieldTemplates([
+    { id: 'Template-MixedCase', name: 'Owner' },
+  ]);
+  assert(
+    JSON.stringify(legacyTemplates) === JSON.stringify([
+      {
+        id: 'Template-MixedCase',
+        name: 'Owner',
+        valueType: 'text',
+        targetCategory: '',
+      },
+    ]),
+    'Harmony legacy template fields receive text defaults without changing opaque IDs',
+  );
+
+  const emptySlugFixture = JSON.parse(read('fixtures/vault-contract/v1/snapshot-legacy-empty-slug.json'));
+  const emptySlugTemplates = runtime.normalizeFieldTemplates(emptySlugFixture.categoryTemplates[0].fields);
+  assert(
+    JSON.stringify(emptySlugTemplates.map((field) => field.id)) ===
+      JSON.stringify(['template_u_f09f9880', 'template_u_212121']),
+    'Harmony synthesizes deterministic empty-slug IDs from the shared fixture',
+  );
+
+  const futureTemplates = runtime.normalizeFieldTemplates([
+    {
+      id: 'Future-Template-ID',
+      name: 'Owner',
+      valueType: 'futureRelationV3',
+      targetCategory: 'Accounts',
+    },
+  ]);
+  assert(futureTemplates[0].valueType === 'futureRelationV3', 'Harmony preserves unknown non-empty field value types');
+  assert(futureTemplates[0].targetCategory === 'Accounts', 'Harmony preserves reference target categories');
+
+  const editedTemplates = runtime.mergeEditableTemplateFields(
+    [
+      { id: 'Opaque-Text-ID', name: 'Legacy Name', valueType: 'text', targetCategory: '' },
+      futureTemplates[0],
+    ],
+    [{ id: 'Generated-Replacement-ID', name: 'Renamed Text', valueType: 'text', targetCategory: '' }],
+  );
+  const renamedText = editedTemplates.find((field) => field.name === 'Renamed Text');
+  const preservedFuture = editedTemplates.find((field) => field.name === 'Owner');
+  assert(renamedText?.id === 'Opaque-Text-ID', 'Harmony category edits keep opaque template IDs when text fields are renamed');
+  assert(preservedFuture?.id === 'Future-Template-ID', 'Harmony legacy category edits cannot remove unsupported template fields');
+  assert(preservedFuture?.valueType === 'futureRelationV3', 'Harmony legacy category edits preserve unsupported field metadata');
+
+  const customFields = runtime.normalizeCustomFields([
+    {
+      id: 'Custom-Field-ID',
+      templateFieldId: 'Future-Template-ID',
+      name: 'Owner',
+      value: 'Target-Entry-ID',
+    },
+  ]);
+  assert(customFields[0].id === 'Custom-Field-ID', 'Harmony preserves opaque custom field IDs');
+  assert(customFields[0].templateFieldId === 'Future-Template-ID', 'Harmony preserves template field references');
+  assert(customFields[0].value === 'Target-Entry-ID', 'Harmony preserves referenced entry IDs as field values');
+
+  const sourceTemplates = [
+    { category: 'Servers', fields: futureTemplates },
+    {
+      category: 'Accounts',
+      fields: [{ id: 'Secret-Template', name: 'Password', valueType: 'text', targetCategory: '' }],
+    },
+  ];
+  const selectedTemplates = runtime.categoryTemplatesForExport(sourceTemplates, ['Servers']);
+  assert(selectedTemplates.length === 1 && selectedTemplates[0].category === 'Servers', 'Harmony scoped export includes only source category templates');
+  assert(selectedTemplates[0].fields[0].valueType === 'futureRelationV3', 'Harmony scoped export retains unknown field semantics');
+
+  const itemRecord = runtime.createScopedItemExportRecord(
+    { id: 'Entry-MixedCase' },
+    selectedTemplates,
+    '2026-07-28T03:00:00Z',
+  );
+  assert(itemRecord.version === 2 && itemRecord.scope === 'item', 'Harmony writes version 2 item exports');
+  assert(itemRecord.categoryTemplates.length === 1, 'Harmony item exports carry source category templates');
+
+  const categoryRecord = runtime.createScopedCategoryExportRecord(
+    'Servers',
+    [{ id: 'Entry-MixedCase' }],
+    selectedTemplates,
+    '2026-07-28T04:00:00Z',
+  );
+  assert(categoryRecord.version === 2 && categoryRecord.count === 1, 'Harmony writes version 2 category exports');
+  assert(categoryRecord.categoryTemplates.length === 1, 'Harmony category exports carry source category templates');
+
+  const legacyImport = runtime.decodeScopedImportRecord(
+    JSON.stringify({ scope: 'item', item: { id: 'Legacy-Entry-ID' } }),
+    'item',
+  );
+  assert(legacyImport.version === 1, 'Harmony defaults version 1 scoped imports when version is missing');
+  assert(legacyImport.categoryTemplates.length === 0, 'Harmony defaults missing scoped import templates to an empty list');
+
+  const currentImport = runtime.decodeScopedImportRecord(
+    JSON.stringify({
+      version: 2,
+      scope: 'item',
+      item: { id: 'Current-Entry-ID' },
+      categoryTemplates: sourceTemplates,
+    }),
+    'item',
+  );
+  assert(currentImport.version === 2, 'Harmony reads version 2 scoped imports');
+  const importedServers = currentImport.categoryTemplates.find((template) => template.category === 'Servers');
+  assert(importedServers?.fields[0].valueType === 'futureRelationV3', 'Harmony scoped import decoding preserves unknown field semantics');
+
+  const mergedImports = runtime.mergeImportedCategoryTemplateDefinitions(
+    [
+      {
+        category: 'Servers',
+        fields: [{ id: 'Existing-Text', name: 'Text', valueType: 'text', targetCategory: '' }],
+      },
+    ],
+    currentImport.categoryTemplates,
+  );
+  const mergedServers = mergedImports.find((template) => template.category === 'Servers');
+  assert(mergedServers?.fields.length === 2, 'Harmony scoped import merges source fields into an existing category template');
+  assert(
+    mergedServers?.fields.some((field) => field.id === 'Future-Template-ID'),
+    'Harmony scoped import preserves imported stable template IDs',
+  );
+
+  const fixtureDirectory = path.join(root, 'fixtures', 'vault-contract', 'v1');
+  const referenceFixture = JSON.parse(
+    fs.readFileSync(path.join(fixtureDirectory, 'snapshot-entry-reference.json'), 'utf8'),
+  );
+  const fixtureTemplates = runtime.normalizeFieldTemplates(
+    referenceFixture.categoryTemplates.find((template) => template.category === 'Servers').fields,
+  );
+  const fixtureCustomFields = runtime.normalizeCustomFields(
+    referenceFixture.entries.find((entry) => entry.label === 'Production Server').customFields,
+  );
+  assert(fixtureTemplates[0].valueType === 'entryReference', 'Harmony consumes the shared reference snapshot fixture');
+  assert(fixtureCustomFields[0].templateFieldId === fixtureTemplates[0].id, 'Harmony shared fixture keeps template binding');
+
+  for (const fixtureName of [
+    'scoped-item-entry-reference.json',
+    'scoped-category-entry-reference.json',
+  ]) {
+    const fixtureContents = fs.readFileSync(path.join(fixtureDirectory, fixtureName), 'utf8');
+    const fixtureScope = fixtureName.includes('item') ? 'item' : 'category';
+    const fixtureImport = runtime.decodeScopedImportRecord(fixtureContents, fixtureScope);
+    assert(fixtureImport.version === 2, `Harmony reads shared ${fixtureScope} export version`);
+    assert(fixtureImport.categoryTemplates[0].fields[0].valueType === 'entryReference', `Harmony preserves shared ${fixtureScope} export semantics`);
+    assert(!fixtureImport.items.some((item) => item.id === 'harmony_target_01'), `Harmony shared ${fixtureScope} export excludes the target entry`);
+  }
 }
 
 function checkTotpContract() {
@@ -227,9 +456,126 @@ function checkEntryEditorUiContract() {
   );
   assertBefore(
     customFieldsEditor,
-    'ForEach(this.draftCustomFields',
+    'ForEach(this.editableDraftCustomFields()',
     "this.AddFieldButton('添加字段'",
     'Harmony entry field add button appears after existing entry fields',
+  );
+}
+
+function checkFieldReferenceEditorProtection() {
+  const page = read(files.indexPage);
+  const applyTemplate = page.slice(
+    page.indexOf('private applyCategoryTemplateToDraft(category: string): void'),
+    page.indexOf('private clearEntryDraft(): void'),
+  );
+  assertIncludes(
+    applyTemplate,
+    'this.templateFieldsForCategory(category).forEach((templateField: FieldTemplate)',
+    'Harmony entry templates are applied from complete field definitions',
+  );
+  assertIncludes(
+    applyTemplate,
+    'if (!this.isTextTemplateField(templateField))',
+    'Harmony legacy entry editor does not generate fields for reference or unknown template types',
+  );
+  assertIncludes(
+    applyTemplate,
+    'field.templateFieldId === templateField.id',
+    'Harmony entry template application matches stable template field IDs first',
+  );
+  assert(
+    applyTemplate.match(/!this\.draftProtectedCustomFieldIds\.includes\(field\.id\)/g)?.length === 2,
+    'Harmony category switches cannot consume protected fields through ID or name fallback',
+  );
+  assertIncludes(
+    applyTemplate,
+    ': templateField.id,',
+    'Harmony generated text fields record their template field ID',
+  );
+  assertIncludes(
+    applyTemplate,
+    'templateFieldId: field.templateFieldId,',
+    'Harmony template application carries untouched custom-field bindings forward',
+  );
+
+  const updateFields = page.slice(
+    page.indexOf('private updateDraftCustomFieldName(id: string, value: string): void'),
+    page.indexOf('private removeDraftCustomField(id: string): void'),
+  );
+  assert(
+    updateFields.match(/templateFieldId:\s*field\.templateFieldId/g)?.length === 2,
+    'Harmony field name and value updates preserve templateFieldId',
+  );
+
+  const normalizeFields = page.slice(
+    page.indexOf('private normalizedDraftCustomFields(): CustomField[]'),
+    page.indexOf('private toggleExportPanel(entry: VaultEntry): void'),
+  );
+  assertIncludes(
+    normalizeFields,
+    'templateFieldId: field.templateFieldId,',
+    'Harmony draft copy and normalization preserve templateFieldId',
+  );
+  assertIncludes(
+    normalizeFields,
+    'name: this.isEditableDraftCustomField(field) ? field.name.trim() : field.name,',
+    'Harmony save keeps protected non-text field names unchanged',
+  );
+  assertIncludes(
+    normalizeFields,
+    'this.draftCustomFields.filter((field: CustomField)',
+    'Harmony legacy editor filters a view without removing protected fields from the draft',
+  );
+  assertIncludes(
+    normalizeFields,
+    'return definition === undefined || this.isTextTemplateField(definition);',
+    'Harmony hides known non-text fields and conservatively edits fields with missing definitions',
+  );
+  assertIncludes(
+    normalizeFields,
+    'if (this.draftProtectedCustomFieldIds.includes(field.id))',
+    'Harmony keeps fields protected after switching to another category',
+  );
+  assertIncludes(
+    page,
+    'this.draftProtectedCustomFieldIds = this.protectedCustomFieldIdsForCategory(',
+    'Harmony records protected field instances before applying another category template',
+  );
+  assertIncludes(
+    page,
+    'this.draftProtectedCustomFieldIds = [];',
+    'Harmony clears protected field state with the entry draft',
+  );
+
+  const categoryDraft = page.slice(
+    page.indexOf('private categoryTemplateDraftFields(category: string): CustomField[]'),
+    page.indexOf('private isBaseCategoryField(name: string): boolean'),
+  );
+  assertIncludes(
+    categoryDraft,
+    'this.templateFieldsForCategory(category).forEach((templateField: FieldTemplate)',
+    'Harmony category editor reads complete template definitions',
+  );
+  assertIncludes(
+    categoryDraft,
+    'if (!this.isTextTemplateField(templateField))',
+    'Harmony legacy category editor only exposes text template fields',
+  );
+
+  const customFieldsEditor = page.slice(
+    page.indexOf('private CustomFieldsEditor()'),
+    page.indexOf('private AddFieldButton'),
+  );
+  assertIncludes(
+    customFieldsEditor,
+    'ForEach(this.editableDraftCustomFields()',
+    'Harmony entry editor renders only legacy-editable text fields',
+  );
+  assert(!customFieldsEditor.includes('ForEach(this.draftCustomFields,'), 'Harmony protected fields are absent from the legacy editor list');
+  assertIncludes(
+    page,
+    'const customFields = this.normalizedDraftCustomFields();',
+    'Harmony entry save still submits the complete protected draft field set',
   );
 }
 
@@ -300,12 +646,14 @@ function main() {
   checkReleaseMetadata();
   checkCryptoContract();
   checkTemplateIdContract();
+  checkFieldReferenceBehavior();
   checkTotpContract();
   checkPersistenceAndSyncSecrecy();
   checkSyncSettingsContract();
   checkThemeResourcesContract();
   checkThemedTextInputContract();
   checkEntryEditorUiContract();
+  checkFieldReferenceEditorProtection();
   checkEntryDetailUiContract();
   checkCategoryManagementContract();
   checkCategoryFocusContract();

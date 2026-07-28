@@ -123,7 +123,7 @@ struct CategoryCreationView: View {
         }
     }
 
-    private func removeCustomField(_ id: UUID) {
+    private func removeCustomField(_ id: String) {
         customFields.removeAll { $0.id == id }
     }
 }

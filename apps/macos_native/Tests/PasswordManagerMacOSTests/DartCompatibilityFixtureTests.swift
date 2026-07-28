@@ -46,7 +46,7 @@ struct DartCompatibilityFixtureTests {
         #expect(snapshot.security.totpSecret == "JBSWY3DPEHPK3PXP")
         #expect(snapshot.syncStatus == "Fixture sync idle")
         #expect(snapshot.lastBackupStatus == "No backup has run")
-        #expect(credentialEntry.id.uuidString.lowercased() == "11111111-2222-3333-4444-555555555555")
+        #expect(credentialEntry.id == "11111111-2222-3333-4444-555555555555")
         #expect(credentialEntry.label == "Dart Fixture Credential")
         #expect(credentialEntry.payload.category == "Compatibility")
         #expect(credentialEntry.payload.tags == ["fixture", "dart"])
@@ -65,7 +65,7 @@ struct DartCompatibilityFixtureTests {
         #expect(credential.secretKey == "fixture-secret-key")
         #expect(credential.notes == "fixture-note")
 
-        #expect(serverEntry.id.uuidString.lowercased() == "22222222-3333-4444-5555-666666666666")
+        #expect(serverEntry.id == "22222222-3333-4444-5555-666666666666")
         #expect(serverEntry.label == "Dart Fixture Server")
         #expect(serverEntry.payload.category == "Infrastructure")
         #expect(serverEntry.payload.tags == ["server", "ops"])
@@ -84,7 +84,7 @@ struct DartCompatibilityFixtureTests {
         #expect(server.notes == "server-note")
         #expect(server.accountId == "11111111-2222-3333-4444-555555555555")
 
-        #expect(serviceEntry.id.uuidString.lowercased() == "33333333-4444-5555-6666-777777777777")
+        #expect(serviceEntry.id == "33333333-4444-5555-6666-777777777777")
         #expect(serviceEntry.label == "Dart Fixture Service")
         #expect(serviceEntry.payload.category == "Services")
         #expect(serviceEntry.payload.tags == ["service", "prod"])
@@ -103,7 +103,7 @@ struct DartCompatibilityFixtureTests {
         #expect(service.accounts.first?.note == "primary service account")
         #expect(service.notes == "service-note")
 
-        #expect(tombstoneEntry.id.uuidString.lowercased() == "44444444-5555-6666-7777-888888888888")
+        #expect(tombstoneEntry.id == "44444444-5555-6666-7777-888888888888")
         #expect(tombstoneEntry.label == "Dart Fixture Tombstone")
         #expect(tombstoneEntry.isDeleted)
         #expect(tombstoneEntry.deletedAt != nil)

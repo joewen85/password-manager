@@ -5,6 +5,9 @@ import life.devops.passwordmanager.model.CategoryTemplate
 import life.devops.passwordmanager.model.CategoryTypePreset
 import life.devops.passwordmanager.model.CustomField
 import life.devops.passwordmanager.model.EncryptedPayloadRecord
+import life.devops.passwordmanager.model.FieldTemplate
+import life.devops.passwordmanager.model.ScopedExportScope
+import life.devops.passwordmanager.model.ScopedVaultExport
 import life.devops.passwordmanager.model.SecuritySettings
 import life.devops.passwordmanager.model.ServerPayload
 import life.devops.passwordmanager.model.ServiceAccount
@@ -14,6 +17,7 @@ import life.devops.passwordmanager.model.VaultEntryType
 import life.devops.passwordmanager.model.VaultPayload
 import life.devops.passwordmanager.model.VaultSnapshot
 import org.json.JSONObject
+import java.io.File
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -22,6 +26,54 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class VaultJsonTest {
+    @Test
+    fun sharedFieldReferenceFixturesRemainLossless() {
+        val reference = VaultJson.decodeSnapshot(contractFixture("snapshot-entry-reference.json"))
+        val referenceRoundTrip = VaultJson.decodeSnapshot(VaultJson.encodeSnapshot(reference))
+        val source = referenceRoundTrip.entries.single { it.label == "Production Server" }
+        val owner = referenceRoundTrip.categoryTemplates
+            .single { it.category == "Servers" }
+            .fields.single { it.name == "Owner" }
+
+        assertEquals("harmony_target_01", referenceRoundTrip.entries.single { it.label == "Production Account" }.id)
+        assertEquals("harmony_field_01", source.customFields.first().id)
+        assertEquals(owner.id, source.customFields.first().templateFieldId)
+        assertEquals("harmony_target_01", source.customFields.first().value)
+        assertEquals("entryReference", owner.valueType)
+        assertEquals("Accounts", owner.targetCategory)
+
+        val legacy = VaultJson.decodeSnapshot(contractFixture("snapshot-legacy-text.json"))
+        assertEquals("template_owner_team", legacy.categoryTemplates.single().fields.single().id)
+        assertEquals("text", legacy.categoryTemplates.single().fields.single().valueType)
+        assertEquals("", legacy.entries.single().customFields.single().templateFieldId)
+
+        val emptySlug = VaultJson.decodeSnapshot(contractFixture("snapshot-legacy-empty-slug.json"))
+        assertEquals(
+            listOf("template_u_f09f9880", "template_u_212121"),
+            emptySlug.categoryTemplates.single().fields.map { it.id },
+        )
+        assertEquals(
+            emptySlug,
+            VaultJson.decodeSnapshot(VaultJson.encodeSnapshot(emptySlug)),
+        )
+
+        val unknown = VaultJson.decodeSnapshot(contractFixture("snapshot-unknown-value-type.json"))
+        val unknownRoundTrip = VaultJson.decodeSnapshot(VaultJson.encodeSnapshot(unknown))
+        assertEquals("futureLink", unknownRoundTrip.categoryTemplates.single().fields.single().valueType)
+
+        listOf(
+            "scoped-item-entry-reference.json",
+            "scoped-category-entry-reference.json",
+        ).forEach { name ->
+            val scoped = VaultJson.decodeScopedExport(contractFixture(name))
+            val includedEntries = listOfNotNull(scoped.item) + scoped.items.orEmpty()
+            assertEquals(2, scoped.version)
+            assertEquals(listOf("Servers"), scoped.categoryTemplates.map { it.category })
+            assertTrue(includedEntries.flatMap { it.customFields }.any { it.value == "harmony_target_01" })
+            assertTrue(includedEntries.none { it.id == "harmony_target_01" })
+        }
+    }
+
     @Test
     fun snapshotRoundTripsCredentialServerServiceAndTombstone() {
         val snapshot = VaultSnapshot(
@@ -185,8 +237,38 @@ class VaultJsonTest {
     }
 
     @Test
-    fun categoryTemplatesDecodeBlankFieldIdsWithoutHyphen() {
+    fun legacyFieldContractDefaultsAreDeterministic() {
         val raw = JSONObject()
+            .put(
+                "entries",
+                org.json.JSONArray(
+                    listOf(
+                        JSONObject()
+                            .put("id", "Legacy-Entry")
+                            .put("label", "Legacy")
+                            .put("type", "credential")
+                            .put(
+                                "payload",
+                                JSONObject()
+                                    .put(
+                                        "credential",
+                                        JSONObject().put("category", "Infra")
+                                    )
+                            )
+                            .put(
+                                "customFields",
+                                org.json.JSONArray(
+                                    listOf(
+                                        JSONObject()
+                                            .put("id", "Legacy-Custom-Field")
+                                            .put("name", "Owner")
+                                            .put("value", "legacy-value")
+                                    )
+                                )
+                            )
+                    )
+                )
+            )
             .put(
                 "categoryTemplates",
                 org.json.JSONArray(
@@ -199,6 +281,7 @@ class VaultJsonTest {
                                     listOf(
                                         JSONObject().put("id", "").put("name", "名称"),
                                         JSONObject().put("name", "备注"),
+                                        JSONObject().put("name", "Owner"),
                                     )
                                 )
                             ),
@@ -209,9 +292,98 @@ class VaultJsonTest {
 
         val decoded = VaultJson.decodeSnapshot(raw)
         val fields = decoded.categoryTemplates.single().fields
+        val customField = decoded.entries.single().customFields.single()
 
-        assertEquals(listOf("名称", "备注"), fields.map { it.name })
-        assertTrue(fields.none { it.id.contains('-') })
+        assertEquals(listOf("名称", "备注", "Owner"), fields.map { it.name })
+        assertEquals(listOf("template_名称", "template_备注", "template_owner"), fields.map { it.id })
+        assertTrue(fields.all { it.valueType == "text" })
+        assertTrue(fields.all { it.targetCategory.isEmpty() })
+        assertEquals("", customField.templateFieldId)
+        assertEquals("Legacy-Entry", decoded.entries.single().id)
+        assertEquals("Legacy-Custom-Field", customField.id)
+    }
+
+    @Test
+    fun referenceFieldContractRoundTripsWithoutChangingOpaqueIds() {
+        val snapshot = VaultSnapshot(
+            entries = listOf(
+                VaultEntry(
+                    id = "Entry-MixedCase-ID",
+                    label = "Server",
+                    type = VaultEntryType.CREDENTIAL,
+                    payload = VaultPayload.Credential(CredentialPayload(category = "Servers")),
+                    customFields = listOf(
+                        CustomField(
+                            id = "Custom-MixedCase-ID",
+                            templateFieldId = "Template-Owner-ID",
+                            name = "Owner",
+                            value = "Account-MixedCase-ID",
+                        )
+                    ),
+                )
+            ),
+            categoryTemplates = listOf(
+                CategoryTemplate(
+                    category = "Servers",
+                    fields = listOf(
+                        FieldTemplate(
+                            id = "Template-Owner-ID",
+                            name = "Owner",
+                            valueType = "entryReference",
+                            targetCategory = "Accounts",
+                        )
+                    ),
+                )
+            ),
+        )
+
+        val encoded = VaultJson.encodeSnapshot(snapshot)
+        val decoded = VaultJson.decodeSnapshot(encoded)
+        val decodedEntry = decoded.entries.single()
+        val decodedField = decodedEntry.customFields.single()
+        val decodedTemplateField = decoded.categoryTemplates.single().fields.single()
+
+        assertEquals("Entry-MixedCase-ID", decodedEntry.id)
+        assertEquals("Custom-MixedCase-ID", decodedField.id)
+        assertEquals("Template-Owner-ID", decodedField.templateFieldId)
+        assertEquals("Account-MixedCase-ID", decodedField.value)
+        assertEquals("Template-Owner-ID", decodedTemplateField.id)
+        assertEquals("entryReference", decodedTemplateField.valueType)
+        assertEquals("Accounts", decodedTemplateField.targetCategory)
+        assertEquals(
+            "Template-Owner-ID",
+            JSONObject(encoded)
+                .getJSONArray("entries")
+                .getJSONObject(0)
+                .getJSONArray("customFields")
+                .getJSONObject(0)
+                .getString("templateFieldId"),
+        )
+    }
+
+    @Test
+    fun unknownFieldValueTypeIsPreservedAcrossRoundTrip() {
+        val snapshot = VaultSnapshot(
+            categoryTemplates = listOf(
+                CategoryTemplate(
+                    category = "Future",
+                    fields = listOf(
+                        FieldTemplate(
+                            id = "future-template-id",
+                            name = "Future Field",
+                            valueType = "futureRelationV3",
+                            targetCategory = "Targets",
+                        )
+                    ),
+                )
+            ),
+        )
+
+        val decoded = VaultJson.decodeSnapshot(VaultJson.encodeSnapshot(snapshot))
+            .categoryTemplates.single().fields.single()
+
+        assertEquals("futureRelationV3", decoded.valueType)
+        assertEquals("Targets", decoded.targetCategory)
     }
 
     @Test
@@ -288,6 +460,36 @@ class VaultJsonTest {
         assertEquals(listOf("mobile"), credential.tags)
         assertEquals("flutter-user", credential.username)
         assertEquals("flutter-password", credential.password)
+        assertEquals(1, decoded.version)
+        assertEquals(emptyList(), decoded.categoryTemplates)
+    }
+
+    @Test
+    fun scopedVersionTwoRoundTripsCategoryTemplates() {
+        val template = CategoryTemplate(
+            category = "Servers",
+            fields = listOf(
+                FieldTemplate(
+                    id = "template-owner",
+                    name = "Owner",
+                    valueType = "entryReference",
+                    targetCategory = "Accounts",
+                )
+            ),
+        )
+        val export = ScopedVaultExport(
+            scope = ScopedExportScope.CATEGORY,
+            category = "Servers",
+            items = emptyList(),
+            categoryTemplates = listOf(template),
+        )
+
+        val encoded = VaultJson.encodeScopedExport(export)
+        val decoded = VaultJson.decodeScopedExport(encoded)
+
+        assertEquals(2, JSONObject(encoded).getInt("version"))
+        assertEquals(2, decoded.version)
+        assertEquals(listOf(template), decoded.categoryTemplates)
     }
 
     @Test
@@ -415,4 +617,15 @@ class VaultJsonTest {
             .put("nonce", nonce)
             .put("mac", mac)
             .put("version", version)
+
+    private fun contractFixture(name: String): String {
+        val fixture = generateSequence(File(System.getProperty("user.dir").orEmpty())) { current ->
+            current.parentFile
+        }
+            .take(8)
+            .map { root -> File(root, "fixtures/vault-contract/v1/$name") }
+            .firstOrNull(File::isFile)
+        return fixture?.readText()
+            ?: error("Unable to locate vault contract fixture: $name")
+    }
 }

@@ -1,0 +1,62 @@
+{
+  "version": 2,
+  "scope": "category",
+  "exportedAt": "2026-07-28T04:00:00Z",
+  "item": null,
+  "category": "Servers",
+  "items": [
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "label": "Production Server",
+      "type": "server",
+      "payload": {
+        "server": {
+          "name": "prod-01",
+          "ipAddress": "192.0.2.10",
+          "port": "22",
+          "username": "root",
+          "password": "fixture-server-password",
+          "accounts": [],
+          "basicConfig": "",
+          "operatingSystem": "Linux",
+          "location": "",
+          "notes": "",
+          "tags": [
+            "production"
+          ],
+          "accountId": null,
+          "category": "Servers"
+        }
+      },
+      "customFields": [
+        {
+          "id": "harmony_field_01",
+          "templateFieldId": "44444444-4444-4444-8444-444444444444",
+          "name": "Owner",
+          "value": "harmony_target_01"
+        }
+      ],
+      "createdAt": "2026-07-28T00:02:00Z",
+      "updatedAt": "2026-07-28T00:03:00Z",
+      "version": {
+        "fixture": 2
+      },
+      "updatedBy": "fixture",
+      "isDeleted": false,
+      "deletedAt": null
+    }
+  ],
+  "categoryTemplates": [
+    {
+      "category": "Servers",
+      "fields": [
+        {
+          "id": "44444444-4444-4444-8444-444444444444",
+          "name": "Owner",
+          "valueType": "entryReference",
+          "targetCategory": "Accounts"
+        }
+      ]
+    }
+  ]
+}

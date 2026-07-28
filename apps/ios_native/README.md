@@ -10,6 +10,7 @@
 - 当前切片复用并迁移 macOS 原生端已验证的 Swift 核心：数据模型、本地加密持久化、TOTP、导入导出、备份、同步设置、远端同步 transport、同步合并和同步引擎。
 - SwiftUI 视图已放入 `PasswordManageriOSCore`，并提供 `PasswordManageriOSAppRoot` 作为 Xcode iOS app target 的根视图。
 - 当前包含 SwiftPM 可测试核心模块和 `PasswordManageriOS.xcodeproj` 原生 app target。
+- 字段关联 P1 数据契约已接入 Codable 模型、加密快照、同步和条目/分类导入导出，能够无损保留模板类型、目标分类、模板字段 ID 及非 UUID 稳定 ID；标签职责不变。当前不提供关联编辑 UI，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
 - 已配置 Debug/Release build configuration、bundle identifier、生成式 launch screen、asset catalog、空 entitlements、包含 UserDefaults required-reason 声明的 privacy manifest，以及本机可运行的 Release simulator build/install/launch smoke + generic iOS archive contract gate。生产发布前仍需配置 Apple Developer Team/signing、真机验证和 App Store Connect 验证。
 - 本目录不依赖已移除的 Flutter iOS 工程。
 
@@ -198,6 +199,7 @@ This directory contains the native iOS application target, used to build iOS-nat
 - The current slice migrates the already-verified Swift core from the native macOS target: data models, local encrypted persistence, TOTP, import/export, backup, sync settings, remote sync transport, sync merge, and sync engine.
 - SwiftUI views are included in `PasswordManageriOSCore`, and `PasswordManageriOSAppRoot` is used as the root view for the Xcode iOS app target.
 - The current form includes a SwiftPM-tested core module and a `PasswordManageriOS.xcodeproj` native app target.
+- The P1 entry-reference data contract is preserved by Codable models, encrypted snapshots, sync, and item/category import/export, including template type, target category, template-field ID, and non-UUID stable IDs. Tags remain unchanged. Reference editing UI is not exposed yet; see `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
 - Debug/Release build configurations, bundle identifier, generated launch screen, asset catalog, empty entitlements, a privacy manifest with the UserDefaults required-reason disclosure, and a locally runnable Release simulator build/install/launch smoke + generic iOS archive contract gate are configured. Production release still needs Apple Developer Team/signing, device validation, and App Store Connect validation.
 - This directory does not depend on the removed Flutter iOS project.
 

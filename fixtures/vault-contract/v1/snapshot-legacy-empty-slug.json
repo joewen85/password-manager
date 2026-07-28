@@ -1,0 +1,66 @@
+{
+  "entries": [
+    {
+      "id": "99999999-9999-4999-8999-999999999999",
+      "label": "Legacy Symbol Fields",
+      "type": "credential",
+      "payload": {
+        "credential": {
+          "username": "legacy-symbol-user",
+          "password": "",
+          "accounts": [],
+          "token": "",
+          "appId": "",
+          "accessKey": "",
+          "secretKey": "",
+          "notes": "",
+          "tags": [],
+          "category": "Legacy Symbols"
+        }
+      },
+      "customFields": [
+        {
+          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "name": "😀",
+          "value": "emoji"
+        },
+        {
+          "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "name": "!!!",
+          "value": "punctuation"
+        }
+      ],
+      "createdAt": "2026-07-28T01:10:00Z",
+      "updatedAt": "2026-07-28T01:11:00Z",
+      "version": {},
+      "updatedBy": "fixture",
+      "isDeleted": false,
+      "deletedAt": null
+    }
+  ],
+  "categories": [
+    "Legacy Symbols"
+  ],
+  "categoryTemplates": [
+    {
+      "category": "Legacy Symbols",
+      "fields": [
+        {
+          "name": "😀"
+        },
+        {
+          "name": "!!!"
+        }
+      ]
+    }
+  ],
+  "tags": [],
+  "security": {
+    "requireTotp": false,
+    "totpSecret": ""
+  },
+  "syncStatus": "Fixture",
+  "backupStatus": "Fixture",
+  "lastBackupStatus": "Fixture",
+  "updatedAt": "2026-07-28T01:12:00Z"
+}

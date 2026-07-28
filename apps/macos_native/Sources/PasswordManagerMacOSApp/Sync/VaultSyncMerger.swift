@@ -25,7 +25,7 @@ struct SyncMergeResult: Equatable, Sendable {
 }
 
 struct VaultSyncMerger {
-    var idGenerator: () -> UUID = UUID.init
+    var idGenerator: () -> String = { UUID().uuidString.lowercased() }
     var conflictLabelBuilder: (VaultEntry, Bool) -> String = { _, _ in "(conflict)" }
     var conflictStrategy: SyncConflictStrategy = .keepBoth
     var now: () -> Date = Date.init
@@ -42,7 +42,7 @@ struct VaultSyncMerger {
             }
         }
 
-        var versionCache: [UUID: [String: Int]] = [:]
+        var versionCache: [String: [String: Int]] = [:]
         func effectiveVersion(_ entry: VaultEntry) -> [String: Int] {
             if !entry.version.isEmpty {
                 return entry.version
@@ -129,6 +129,7 @@ struct VaultSyncMerger {
     private func samePayload(local: VaultEntry, remote: VaultEntry) -> Bool {
         local.label == remote.label &&
             local.payload == remote.payload &&
+            local.customFields == remote.customFields &&
             local.isDeleted == remote.isDeleted
     }
 
@@ -146,8 +147,8 @@ struct VaultSyncMerger {
     private func entriesById(
         _ entries: [VaultEntry],
         effectiveVersion: (VaultEntry) -> [String: Int]
-    ) -> [UUID: VaultEntry] {
-        var entriesById: [UUID: VaultEntry] = [:]
+    ) -> [String: VaultEntry] {
+        var entriesById: [String: VaultEntry] = [:]
         for entry in entries {
             guard let existing = entriesById[entry.id] else {
                 entriesById[entry.id] = entry
@@ -187,6 +188,7 @@ struct VaultSyncMerger {
             label: "\(source.label) \(conflictLabelBuilder(source, isRemote))",
             type: source.type,
             payload: source.payload,
+            customFields: source.customFields,
             createdAt: now(),
             updatedAt: source.updatedAt,
             isDeleted: source.isDeleted,
