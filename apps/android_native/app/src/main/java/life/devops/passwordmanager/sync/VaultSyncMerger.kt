@@ -106,6 +106,7 @@ class VaultSyncMerger(
         local.label == remote.label &&
             local.type == remote.type &&
             local.payload == remote.payload &&
+            local.customFields == remote.customFields &&
             local.isDeleted == remote.isDeleted
 
     private fun choosePrimary(local: VaultEntry, remote: VaultEntry): VaultEntry =

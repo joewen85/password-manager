@@ -1741,6 +1741,20 @@ std::vector<CategoryTemplate> propagateEntryReferenceCategoryRename(
     return updatedTemplates;
 }
 
+std::vector<CustomField> remapEntryReferenceIds(
+    const std::vector<CustomField>& fields,
+    const std::vector<FieldTemplate>& templateFields,
+    const std::map<std::string, std::string>& idMap
+) {
+    auto remapped = fields;
+    for (auto& field : remapped) {
+        if (!resolveEntryReference(field, templateFields, {}).has_value()) continue;
+        const auto destination = idMap.find(field.value);
+        if (destination != idMap.end()) field.value = destination->second;
+    }
+    return remapped;
+}
+
 std::vector<FieldTemplate> defaultCategoryFields() {
     return fieldsFromNames({"名称", "备注"});
 }
@@ -1791,14 +1805,40 @@ bool addCategory(VaultSnapshot& snapshot, const std::string& category, CategoryT
 }
 
 std::vector<VaultEntry> filterEntries(const std::vector<VaultEntry>& entries, const std::string& query, const std::string& type) {
+    return filterEntries(entries, {}, query, type);
+}
+
+std::vector<VaultEntry> filterEntries(
+    const std::vector<VaultEntry>& entries,
+    const std::vector<CategoryTemplate>& categoryTemplates,
+    const std::string& query,
+    const std::string& type
+) {
     const auto terms = parseSearchTerms(query);
     std::vector<VaultEntry> result;
     for (const auto& entry : entries) {
         if (entry.isDeleted) continue;
         if (type != "all" && entry.type != type) continue;
+        VaultEntry searchProjection = entry;
+        const auto templateEntry = std::find_if(
+            categoryTemplates.begin(),
+            categoryTemplates.end(),
+            [&](const CategoryTemplate& candidate) {
+                return lowerCopy(trimCopy(candidate.category)) == lowerCopy(trimCopy(entry.category));
+            }
+        );
+        if (templateEntry != categoryTemplates.end()) {
+            for (auto& field : searchProjection.customFields) {
+                const auto resolution = resolveEntryReference(field, templateEntry->fields, entries);
+                if (!resolution.has_value()) continue;
+                field.value = resolution->status == EntryReferenceStatus::Resolved && resolution->target.has_value()
+                    ? resolution->target->label + " " + resolution->target->category
+                    : "";
+            }
+        }
         bool matches = true;
         for (const auto& term : terms) {
-            if (!matchesSearchTerm(entry, term)) {
+            if (!matchesSearchTerm(searchProjection, term)) {
                 matches = false;
                 break;
             }

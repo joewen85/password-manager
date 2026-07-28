@@ -12,7 +12,7 @@
 - 可移植 core 复用 `apps/native_core` 的 C++17 + OpenSSL 路径，当前可在本机用 clang 构建和测试。
 - 已实现可测试核心：PBKDF2-SHA256、AES-256-GCM encrypted vault envelope、TOTP、entry model、搜索/过滤、分类/标签集合、JSON snapshot 序列化/反序列化、encrypted vault 文件读写、version-vector merge。
 - CLI 入口支持初始化、`--password-stdin` 主密码输入、TOTP vault 解锁强制校验、解锁状态检查、分类模板持久化、credential/server/service 条目新增、搜索列表、单条查看、软删除、本地 encrypted envelope 备份/恢复、明文 snapshot 导出/导入、TOTP、WebDAV / S3 presigned URL / 腾讯云 COS / 阿里云 OSS 远端对象同步和 self-test，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
-- 共享 C++ core 已无损保留字段关联数据契约，并提供五态纯领域解析和仅含目标 ID、名称、分类的安全投影；标签职责不变。CLI 暂不提供关联编辑/展示、搜索接入、生命周期传播或导入重映射，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
+- 共享 C++ core 已无损保留字段关联契约，并提供五态解析、生命周期传播、安全搜索投影、纯 copy-import ID 重映射 helper 和同步冲突保真测试；CLI 搜索只使用成功解析目标的名称/分类，不索引原始 ID 或目标秘密。标签职责不变，CLI 暂不提供关联编辑/详情或 scoped-copy 导入流程，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
 - 当前尚未实现完整 Win32/WinUI 3/WPF 图形界面，也尚未实现 Windows Credential Manager / DPAPI 集成、GUI 同步入口、Windows 实机 MSBuild 构建验证和干净 Windows VM 运行时依赖验证。
 
 ### 目录说明
@@ -300,7 +300,7 @@ This directory contains the native Windows application target, used to build Win
 - The portable core uses the shared `apps/native_core` C++17 + OpenSSL path and can currently be built and tested locally with clang.
 - Testable core is implemented: PBKDF2-SHA256, AES-256-GCM encrypted vault envelope, TOTP, entry model, search/filtering, category/tag collection rebuilding, JSON snapshot serialization/deserialization, encrypted vault file read/write, and version-vector merge.
 - The CLI supports initialization, `--password-stdin` master password input, TOTP-protected vault enforcement, unlock status checks, persisted category templates, credential/server/service entry add, search/list, single-entry view, soft delete, local encrypted envelope backup/restore, plaintext snapshot export/import, TOTP, WebDAV / S3 presigned URL / Tencent COS / Aliyun OSS remote object sync, and self-test through shared `apps/native_core/src/vault_cli.cpp`.
-- The shared C++ core losslessly preserves the entry-reference data contract and provides five-state pure resolution with a safe target ID, label, and category projection. Tags remain unchanged. The CLI does not yet expose reference editing/display, search integration, lifecycle propagation, or import remapping; see `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
+- The shared C++ core losslessly preserves entry references and provides five-state resolution, lifecycle propagation, safe search projection, a pure copy-import ID remapping helper, and sync conflict-preservation coverage. CLI search uses only successfully resolved target labels/categories and never raw IDs or target secrets. Tags remain unchanged; reference editing/detail and a scoped-copy CLI flow are still outside this slice. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
 - Full Win32/WinUI 3/WPF GUI, Windows Credential Manager / DPAPI integration, GUI sync entry points, Windows-host MSBuild validation, and clean Windows VM runtime dependency validation are not implemented yet.
 
 ### Directory Layout

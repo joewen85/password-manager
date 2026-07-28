@@ -1,6 +1,7 @@
 package life.devops.passwordmanager.sync
 
 import life.devops.passwordmanager.model.CredentialPayload
+import life.devops.passwordmanager.model.CustomField
 import life.devops.passwordmanager.model.VaultEntry
 import life.devops.passwordmanager.model.VaultEntryType
 import life.devops.passwordmanager.model.VaultPayload
@@ -153,6 +154,41 @@ class VaultSyncMergerTest {
         assertEquals(0, result.stats.conflicts)
         assertEquals(1, result.entries.size)
         assertTrue(result.entries.single().isDeleted)
+    }
+
+    @Test
+    fun concurrentReferenceFieldChangesCreateLosslessConflictCopies() {
+        val merger = VaultSyncMerger(
+            idGenerator = { "conflict-copy" },
+            conflictLabelBuilder = { _, _ -> "(conflict)" },
+            conflictStrategy = SyncConflictStrategy.KEEP_BOTH,
+        )
+        val local = buildEntry(
+            id = "reference-source",
+            label = "Server",
+            updatedBy = "A",
+            version = mapOf("A" to 2, "B" to 1),
+        ).copy(
+            customFields = listOf(
+                CustomField(
+                    id = "owner-field",
+                    templateFieldId = "template_owner",
+                    name = "Owner",
+                    value = "account-a",
+                )
+            )
+        )
+        val remote = local.copy(
+            customFields = listOf(local.customFields.single().copy(value = "account-b")),
+            version = mapOf("A" to 1, "B" to 2),
+            updatedBy = "B",
+        )
+
+        val result = merger.merge(localEntries = listOf(local), remoteEntries = listOf(remote))
+
+        assertEquals(1, result.stats.conflicts)
+        assertEquals(setOf("account-a", "account-b"), result.entries.map { it.customFields.single().value }.toSet())
+        assertTrue(result.entries.all { it.customFields.single().templateFieldId == "template_owner" })
     }
 
     @Test

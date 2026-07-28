@@ -16,7 +16,7 @@
 - 已接入生物识别解锁：主密码凭据使用 HUKS AES-GCM 硬件密钥加密，解密需要 Face/Fingerprint 认证 token，新增生物特征后密钥失效。
 - 已支持单条、分类、全库 JSON 导出到用户选择位置并落盘为本地文件。
 - 已支持通过系统文件选择器导入单条/分类 JSON，并提供导入预览与冲突处理策略：保留副本、覆盖现有、跳过冲突。
-- 字段关联已支持 ArkTS 类型、持久化、同步和条目/分类导入导出的无损数据契约，并提供 `empty/resolved/missing/deleted/categoryMismatch` 纯领域解析及安全目标投影；分类改名会传播匹配的目标分类配置，分类删除及条目删除/恢复/移动会保留引用值。标签职责不变。当前不提供关联编辑 UI，尚未接入搜索或导入重映射，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
+- 字段关联已支持无损数据契约、五态解析和生命周期传播；搜索仅加入成功解析目标的名称与分类，不索引原始引用 ID 或目标秘密。同批复制导入会在完整 ID 映射建立后重写内部引用，未包含目标时保留原 ID；同步比较和冲突副本保留完整引用字段。标签职责不变，当前仍不提供关联编辑或详情 UI，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
 - 已完成权限最小化声明：`ohos.permission.INTERNET`、`ohos.permission.ACCESS_BIOMETRIC`。
 - 已提供权限/隐私清单、签名指南、DevEco 编译与真机验证手册，以及 Flutter 旧数据到 Harmony 端的加密兼容回归清单。
 - 当前命令行预检与 `assembleHap` 已验证通过，产物为 `entry-default-unsigned.hap`。
@@ -240,7 +240,7 @@ This directory contains the native HarmonyOS 6 application target, used to build
 - Biometric unlock is implemented: the master-password credential is encrypted by a HUKS AES-GCM hardware key and decryption requires a Face/Fingerprint authentication token. The key is invalidated when new biometric credentials are enrolled.
 - Item, category, and full-vault JSON export to a user-selected local location is implemented.
 - Item/category JSON import through the system picker is implemented with import preview and conflict strategies: keep copy, overwrite existing, and skip conflicts.
-- The entry-reference data contract is preserved by ArkTS types, persistence, sync, and item/category import/export. A pure resolver returns `empty`, `resolved`, `missing`, `deleted`, or `categoryMismatch` with a safe target projection. Category renames propagate matching target-category configuration, while category deletion and target delete/restore/move operations retain stored reference values. Tags remain unchanged. Reference editing UI, search integration, and import remapping are not exposed yet; see `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
+- Entry references now cover lossless persistence, five-state resolution, and lifecycle propagation. Search adds only a successfully resolved target label and category, never the raw reference ID or target secrets. Batch copy import rewrites internal references after the complete ID map is available and keeps IDs for targets not included; sync comparison and conflict copies retain complete reference fields. Tags remain unchanged; reference editing and detail UI are still not exposed. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
 - Permission declaration is minimized to `ohos.permission.INTERNET` and `ohos.permission.ACCESS_BIOMETRIC`.
 - Documentation exists for permissions/privacy review, signing, DevEco build and device validation, and Flutter-to-Harmony crypto compatibility regression.
 - Command-line preflight and `assembleHap` have passed and produced `entry-default-unsigned.hap`.

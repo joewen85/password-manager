@@ -5,7 +5,12 @@ import life.devops.passwordmanager.model.CategoryTypePreset
 import life.devops.passwordmanager.model.CustomField
 import life.devops.passwordmanager.model.EntryDraft
 import life.devops.passwordmanager.model.FieldTemplate
+import life.devops.passwordmanager.model.ImportConflictStrategy
+import life.devops.passwordmanager.model.ScopedExportScope
+import life.devops.passwordmanager.model.ScopedVaultExport
+import life.devops.passwordmanager.model.VaultEntry
 import life.devops.passwordmanager.model.VaultEntryType
+import life.devops.passwordmanager.model.VaultPayload
 import java.io.File
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
@@ -205,6 +210,86 @@ class VaultStoreTaxonomyTemplateTest {
                 assertTrue(importStore.listEntries().none { it.id == target.id })
             } finally {
                 importDirectory.deleteRecursively()
+            }
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun scopedCopyImportRemapsReferencesToTargetsCopiedInTheSameBatch() {
+        val directory = createTempDirectory("PasswordManagerAndroidReferenceRemapTests").toFile()
+        try {
+            val store = VaultStore(repository = FileVaultRepository(directory))
+            assertTrue(store.setupMasterPassword("test-password", "test-password"))
+            val ownerTemplate = FieldTemplate(
+                id = "template_owner",
+                name = "Owner",
+                valueType = "entryReference",
+                targetCategory = "Servers",
+            )
+            val target = VaultEntry(
+                id = "source-target-id",
+                label = "Imported Target",
+                type = VaultEntryType.CREDENTIAL,
+                payload = VaultPayload.Credential(
+                    life.devops.passwordmanager.model.CredentialPayload(category = "Servers")
+                ),
+            )
+            val source = VaultEntry(
+                id = "source-entry-id",
+                label = "Imported Source",
+                type = VaultEntryType.CREDENTIAL,
+                payload = VaultPayload.Credential(
+                    life.devops.passwordmanager.model.CredentialPayload(category = "Servers")
+                ),
+                customFields = listOf(
+                    CustomField(
+                        id = "source-owner-field",
+                        templateFieldId = ownerTemplate.id,
+                        name = ownerTemplate.name,
+                        value = target.id,
+                    )
+                ),
+            )
+            val export = ScopedVaultExport(
+                scope = ScopedExportScope.CATEGORY,
+                category = "Servers",
+                items = listOf(source, target),
+                categoryTemplates = listOf(CategoryTemplate("Servers", listOf(ownerTemplate))),
+            )
+
+            assertTrue(
+                store.importScopedExportJson(
+                    VaultJson.encodeScopedExport(export),
+                    ImportConflictStrategy.KEEP_COPY,
+                )
+            )
+
+            val importedTarget = store.listEntries().single { it.label == target.label }
+            val importedSource = store.listEntries().single { it.label == source.label }
+            assertTrue(importedTarget.id != target.id)
+            assertTrue(importedSource.id != source.id)
+            assertEquals(importedTarget.id, importedSource.customFields.single().value)
+            assertEquals(ownerTemplate.id, importedSource.customFields.single().templateFieldId)
+
+            val isolatedStoreDirectory = createTempDirectory("PasswordManagerAndroidUnresolvedRemapTests").toFile()
+            try {
+                val isolatedStore = VaultStore(repository = FileVaultRepository(isolatedStoreDirectory))
+                assertTrue(isolatedStore.setupMasterPassword("test-password", "test-password"))
+                val sourceOnlyExport = export.copy(items = listOf(source))
+                assertTrue(
+                    isolatedStore.importScopedExportJson(
+                        VaultJson.encodeScopedExport(sourceOnlyExport),
+                        ImportConflictStrategy.KEEP_COPY,
+                    )
+                )
+                assertEquals(
+                    target.id,
+                    isolatedStore.listEntries().single().customFields.single().value,
+                )
+            } finally {
+                isolatedStoreDirectory.deleteRecursively()
             }
         } finally {
             directory.deleteRecursively()

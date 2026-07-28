@@ -88,6 +88,8 @@ int main() {
     pm::VaultEntry remote = entry;
     remote.id = "shared";
     remote.label = "Remote";
+    local.customFields = {pm::CustomField{"owner-local", "Owner", "account-a", "template_owner"}};
+    remote.customFields = {pm::CustomField{"owner-remote", "Owner", "account-b", "template_owner"}};
     remote.version = {{"linux", 1}, {"remote", 2}};
     remote.updatedBy = "remote";
     assert(pm::compareVersion(local.version, remote.version) == "concurrent");
@@ -95,6 +97,10 @@ int main() {
     assert(merged.stats.conflicts == 1);
     assert(merged.entries.size() == 2);
     assert(merged.entries[1].label.find("Remote") != std::string::npos);
+    assert(merged.entries[0].customFields[0].value == "account-a");
+    assert(merged.entries[1].customFields[0].value == "account-b");
+    assert(merged.entries[0].customFields[0].templateFieldId == "template_owner");
+    assert(merged.entries[1].customFields[0].templateFieldId == "template_owner");
 
     pm::VaultEntry androidEntry = entry;
     androidEntry.id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -206,6 +212,66 @@ int main() {
     assert(referenceRoundTrip.entries[0].id == "harmony_target_01");
     assert(referenceRoundTrip.entries[1].customFields[0].templateFieldId == "44444444-4444-4444-8444-444444444444");
     assert(referenceRoundTrip.categoryTemplates[1].fields[0].valueType == "entryReference");
+
+    const auto referenceSearchByLabel = pm::filterEntries(
+        referenceFixture.entries,
+        referenceFixture.categoryTemplates,
+        "Production Account",
+        "all"
+    );
+    assert(std::any_of(referenceSearchByLabel.begin(), referenceSearchByLabel.end(), [](const pm::VaultEntry& candidate) {
+        return candidate.id == "22222222-2222-4222-8222-222222222222";
+    }));
+    const auto referenceSearchByCategory = pm::filterEntries(
+        referenceFixture.entries,
+        referenceFixture.categoryTemplates,
+        "owner:Accounts",
+        "all"
+    );
+    assert(std::any_of(referenceSearchByCategory.begin(), referenceSearchByCategory.end(), [](const pm::VaultEntry& candidate) {
+        return candidate.id == "22222222-2222-4222-8222-222222222222";
+    }));
+    assert(pm::filterEntries(
+        referenceFixture.entries,
+        referenceFixture.categoryTemplates,
+        "harmony_target_01",
+        "all"
+    ).empty());
+    const auto targetSecretSearch = pm::filterEntries(
+        referenceFixture.entries,
+        referenceFixture.categoryTemplates,
+        "secret:fixture-password",
+        "all"
+    );
+    assert(std::none_of(targetSecretSearch.begin(), targetSecretSearch.end(), [](const pm::VaultEntry& candidate) {
+        return candidate.id == "22222222-2222-4222-8222-222222222222";
+    }));
+    auto mismatchedSearchEntries = referenceFixture.entries;
+    mismatchedSearchEntries[0].category = "Archive";
+    const auto mismatchedTargetSearch = pm::filterEntries(
+        mismatchedSearchEntries,
+        referenceFixture.categoryTemplates,
+        "Production Account",
+        "all"
+    );
+    assert(std::none_of(mismatchedTargetSearch.begin(), mismatchedTargetSearch.end(), [](const pm::VaultEntry& candidate) {
+        return candidate.id == "22222222-2222-4222-8222-222222222222";
+    }));
+
+    const auto remappedReferenceFields = pm::remapEntryReferenceIds(
+        referenceFixture.entries[1].customFields,
+        referenceFixture.categoryTemplates[1].fields,
+        {{"harmony_target_01", "copied-target-id"}}
+    );
+    assert(remappedReferenceFields[0].value == "copied-target-id");
+    assert(remappedReferenceFields[0].templateFieldId == referenceFixture.entries[1].customFields[0].templateFieldId);
+    assert(remappedReferenceFields[1].value.empty());
+    const auto unresolvedReferenceFields = pm::remapEntryReferenceIds(
+        referenceFixture.entries[1].customFields,
+        referenceFixture.categoryTemplates[1].fields,
+        {}
+    );
+    assert(unresolvedReferenceFields[0].value == "harmony_target_01");
 
     const auto& referenceTarget = referenceFixture.entries[0];
     auto referenceField = referenceFixture.entries[1].customFields[0];

@@ -64,6 +64,13 @@ else
   status=1
 fi
 
+if node "$ROOT_DIR/scripts/harmony_reference_operations_tests.mjs"; then
+  ok "Harmony entry-reference operation tests passed"
+else
+  fail "Harmony entry-reference operation tests failed"
+  status=1
+fi
+
 crypto_file="$APP_DIR/entry/src/main/ets/src/security/VaultCryptoService.ets"
 if grep -Eq "DEFAULT_ITERATIONS:[[:space:]]*number[[:space:]]*=[[:space:]]*600000;" "$crypto_file"; then
   ok "Harmony PBKDF2 default matches Dart/Android/macOS/iOS contract: 600000 iterations"

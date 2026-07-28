@@ -1,6 +1,7 @@
 package life.devops.passwordmanager.store
 
 import life.devops.passwordmanager.model.CustomField
+import life.devops.passwordmanager.model.FieldTemplate
 import life.devops.passwordmanager.model.EntryDraft
 import life.devops.passwordmanager.model.ServerPayload
 import life.devops.passwordmanager.model.ServicePayload
@@ -54,6 +55,72 @@ class VaultStoreSearchTest {
             assertEquals(listOf(service.id), store.listEntries(query = "region:ap-south").map { it.id })
             assertEquals(listOf(server.id), store.listEntries(query = "tag:prod ip:1.2.3.4").map { it.id })
             assertEquals(emptyList(), store.listEntries(query = "ip:9.9.9.9"))
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun referenceSearchUsesOnlyResolvedTargetLabelAndCategory() {
+        val directory = createTempDirectory("PasswordManagerAndroidReferenceSearchTests").toFile()
+        try {
+            val store = VaultStore(repository = FileVaultRepository(directory))
+            assertTrue(store.setupMasterPassword("test-password", "test-password"))
+            val ownerTemplate = FieldTemplate(
+                id = "template_owner",
+                name = "Owner",
+                valueType = "entryReference",
+                targetCategory = "Accounts",
+            )
+            assertTrue(store.addCategory("Servers", listOf(ownerTemplate)))
+            val target = store.upsert(
+                EntryDraft(
+                    label = "Payroll Account",
+                    type = VaultEntryType.CREDENTIAL,
+                    category = "Accounts",
+                    tags = emptyList(),
+                    credential = life.devops.passwordmanager.model.CredentialPayload(
+                        password = "target-password-secret",
+                        token = "target-token-secret",
+                    ),
+                )
+            )
+            val source = store.upsert(
+                EntryDraft(
+                    label = "Payroll Server",
+                    type = VaultEntryType.SERVER,
+                    category = "Servers",
+                    tags = emptyList(),
+                    customFields = listOf(
+                        CustomField(
+                            templateFieldId = ownerTemplate.id,
+                            name = ownerTemplate.name,
+                            value = target.id,
+                        )
+                    ),
+                )
+            )
+
+            assertTrue(store.listEntries(query = "Payroll Account").any { it.id == source.id })
+            assertTrue(store.listEntries(query = "owner:Accounts").any { it.id == source.id })
+            assertEquals(emptyList(), store.listEntries(query = target.id))
+            assertEquals(emptyList(), store.listEntries(query = "target-password-secret"))
+            assertEquals(emptyList(), store.listEntries(query = "target-token-secret"))
+
+            store.upsert(
+                EntryDraft(
+                    label = target.label,
+                    type = target.type,
+                    category = "Archive",
+                    tags = emptyList(),
+                    credential = life.devops.passwordmanager.model.CredentialPayload(
+                        password = "target-password-secret",
+                        token = "target-token-secret",
+                    ),
+                ),
+                editingId = target.id,
+            )
+            assertTrue(store.listEntries(query = "Payroll Account").none { it.id == source.id })
         } finally {
             directory.deleteRecursively()
         }

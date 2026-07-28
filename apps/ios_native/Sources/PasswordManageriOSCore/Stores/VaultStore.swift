@@ -1,6 +1,18 @@
 import Foundation
 import Observation
 
+private enum ImportedEntryAction {
+    case create
+    case overwrite
+    case skip
+}
+
+private struct PlannedImportedEntry {
+    var imported: VaultEntry
+    var destinationID: String
+    var action: ImportedEntryAction
+}
+
 @Observable
 @MainActor
 final class VaultStore {
@@ -491,7 +503,15 @@ final class VaultStore {
                 }
             }
             .filter { entry in
-                query.isEmpty || entry.matchesSearchQuery(query)
+                query.isEmpty || entry.withEntryReferenceSearchProjection(
+                    template: categoryTemplates.first {
+                        $0.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                            .caseInsensitiveCompare(
+                                entry.payload.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                            ) == .orderedSame
+                    },
+                    entries: entries
+                ).matchesSearchQuery(query)
             }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
@@ -627,27 +647,73 @@ final class VaultStore {
         _ importedEntries: [VaultEntry],
         strategy: ImportConflictStrategy
     ) -> (created: Int, updated: Int, skipped: Int) {
+        var destinationIDsByMatchKey: [String: String] = [:]
+        for existing in entries where !existing.isDeleted && destinationIDsByMatchKey[existing.importMatchKey] == nil {
+            destinationIDsByMatchKey[existing.importMatchKey] = existing.id
+        }
+
+        var plannedImports: [PlannedImportedEntry] = []
+        for imported in importedEntries where !imported.isDeleted {
+            if let existingID = destinationIDsByMatchKey[imported.importMatchKey] {
+                let action: ImportedEntryAction
+                switch strategy {
+                case .skip:
+                    action = .skip
+                case .overwrite:
+                    action = .overwrite
+                case .keepCopy:
+                    action = .create
+                }
+                plannedImports.append(PlannedImportedEntry(
+                    imported: imported,
+                    destinationID: action == .create ? UUID().uuidString.lowercased() : existingID,
+                    action: action
+                ))
+            } else {
+                let destinationID = UUID().uuidString.lowercased()
+                destinationIDsByMatchKey[imported.importMatchKey] = destinationID
+                plannedImports.append(PlannedImportedEntry(
+                    imported: imported,
+                    destinationID: destinationID,
+                    action: .create
+                ))
+            }
+        }
+
+        var destinationIDsBySourceID: [String: String] = [:]
+        for plan in plannedImports where !plan.imported.id.isEmpty {
+            destinationIDsBySourceID[plan.imported.id] = plan.destinationID
+        }
+
         var created = 0
         var updated = 0
         var skipped = 0
-        for imported in importedEntries where !imported.isDeleted {
-            if let existingIndex = entries.firstIndex(where: { $0.importMatchKey == imported.importMatchKey && !$0.isDeleted }) {
-                switch strategy {
-                case .skip:
-                    skipped += 1
-                case .overwrite:
-                    entries[existingIndex] = imported.copyForImport(
-                        id: entries[existingIndex].id,
-                        updatedAt: Date()
-                    )
-                    updated += 1
-                case .keepCopy:
-                    entries.append(imported.copyForImport(id: UUID().uuidString.lowercased(), updatedAt: Date()))
-                    created += 1
-                }
-            } else {
-                entries.append(imported.copyForImport(id: UUID().uuidString.lowercased(), updatedAt: Date()))
+        for plan in plannedImports {
+            let template = categoryTemplates.first {
+                $0.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .caseInsensitiveCompare(
+                        plan.imported.payload.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                    ) == .orderedSame
+            }
+            let imported = plan.imported.remappingEntryReferenceIDs(
+                using: destinationIDsBySourceID,
+                template: template
+            )
+            switch plan.action {
+            case .skip:
+                skipped += 1
+            case .create:
+                entries.append(imported.copyForImport(id: plan.destinationID, updatedAt: Date()))
                 created += 1
+            case .overwrite:
+                guard let existingIndex = entries.firstIndex(where: { $0.id == plan.destinationID }) else {
+                    preconditionFailure("Planned import target is missing.")
+                }
+                entries[existingIndex] = imported.copyForImport(
+                    id: plan.destinationID,
+                    updatedAt: Date()
+                )
+                updated += 1
             }
         }
         return (created, updated, skipped)

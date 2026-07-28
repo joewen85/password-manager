@@ -16,7 +16,7 @@ Multiple references, cascading deletion, automatic dependency export, and catego
 
 ## Rollout Status
 
-P1 implements lossless reading, writing, synchronization, and import/export of the additive fields on every maintained client. P2a adds the same pure reference resolver and safe display projection to Android, HarmonyOS, iOS, macOS, and the shared native core. The resolver is not yet connected to reference creation, editing, UI display, search, lifecycle propagation, or copy-import ID remapping. Those integrations remain staged for P2b/P2c and the platform UI phases; the corresponding sections below define their required end state rather than current behavior.
+P1 implements lossless reading, writing, synchronization, and import/export of the additive fields on every maintained client. P2a adds the same pure reference resolver and safe display projection to Android, HarmonyOS, iOS, macOS, and the shared native core. P2b connects category-rename propagation and verifies that delete, restore, and category-move lifecycles retain stored references. P2c adds safe resolved-target search projection, copy-import ID remapping, and conflict-preservation coverage. Reference creation, editing, and detail display remain staged for the platform UI phases.
 
 ## JSON Shape
 
@@ -144,7 +144,7 @@ All maintained clients must preserve the three additive properties before any cl
 
 The current version-1 sync envelope has no peer-capability negotiation, and already-deployed clients cannot be made to reject a future payload retroactively. Therefore deployment uses an explicit minimum-client gate: P1 adds lossless readers/writers on every maintained client without exposing reference editing; reference UI can ship only after those compatible builds are available for every synchronized platform. Rollback to an earlier client after reference fields are created is unsupported and must be called out in release notes.
 
-Concurrent edits continue to use the repository's existing snapshot, category-template, and entry version-vector rules. This contract does not introduce a second conflict system.
+Concurrent edits continue to use the repository's existing snapshot, category-template, and entry version-vector rules. Entry content comparison includes `customFields`; keep-both conflict copies retain reference values and `templateFieldId`. This contract does not introduce a second conflict system.
 
 ## Import And Export
 
@@ -153,12 +153,12 @@ Concurrent edits continue to use the repository's existing snapshot, category-te
 - Single-entry and category exports may contain reference IDs but do not automatically include referenced entries from other categories.
 - Import keeps unresolved reference IDs rather than clearing them.
 - Import merges included templates by their category and stable field IDs before applying imported entries.
-- In P1, copy imports preserve the stored reference ID unchanged. P2 must remap references whose targets are included and copied in the same import to those targets' new IDs.
+- Copy imports determine destination IDs for the whole batch before writing entries. A recognized `entryReference` whose target is applied in that batch is rewritten to the target's destination ID; a target not included or not mapped keeps the original stored ID.
 - A scoped export must not disclose a referenced entry's label, username, password, token, secret, or other field unless that entry was explicitly included in the export scope.
 
 ## Search And Display
 
-Clients display the referenced entry label and category after resolving the stored ID. Raw IDs are not the primary user-facing value. Search may index the resolved label and category, but must not index or log secret values from the target entry.
+Clients display the referenced entry label and category after resolving the stored ID. Raw IDs are not the primary user-facing value. Search replaces recognized reference-field values with the target label and trimmed category only when resolution is `resolved`; empty, missing, deleted, and category-mismatched references contribute no target value. Search never indexes the stored reference ID or any target payload, username, password, token, secret, notes, tags, or custom fields.
 
 ## Permissions And Privacy
 

@@ -82,6 +82,51 @@ func resolveEntryReference(
     return EntryReferenceResolution(status: .resolved, target: target)
 }
 
+extension VaultEntry {
+    func withEntryReferenceSearchProjection(
+        template: CategoryTemplate?,
+        entries: [VaultEntry]
+    ) -> VaultEntry {
+        var projectedEntry = self
+        projectedEntry.customFields = customFields.map { field in
+            guard let resolution = resolveEntryReference(
+                field: field,
+                template: template,
+                entries: entries
+            ) else {
+                return field
+            }
+            var projectedField = field
+            if resolution.status == .resolved, let target = resolution.target {
+                projectedField.value = [target.label, target.category]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " ")
+            } else {
+                projectedField.value = ""
+            }
+            return projectedField
+        }
+        return projectedEntry
+    }
+
+    func remappingEntryReferenceIDs(
+        using destinationIDsBySourceID: [String: String],
+        template: CategoryTemplate?
+    ) -> VaultEntry {
+        var remappedEntry = self
+        remappedEntry.customFields = customFields.map { field in
+            guard resolveEntryReference(field: field, template: template, entries: []) != nil,
+                  let destinationID = destinationIDsBySourceID[field.value] else {
+                return field
+            }
+            var remappedField = field
+            remappedField.value = destinationID
+            return remappedField
+        }
+        return remappedEntry
+    }
+}
+
 private func matchingReferenceTemplateField(
     field: CustomField,
     template: CategoryTemplate?

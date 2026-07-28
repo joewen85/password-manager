@@ -110,7 +110,7 @@ export function resolveEntryReference(
   };
 }
 
-function matchingEntryReferenceTemplate(
+export function matchingEntryReferenceTemplate(
   field: CustomField,
   categoryTemplate: CategoryTemplate | null,
 ): FieldTemplate | null {

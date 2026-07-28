@@ -1152,7 +1152,12 @@ void addEntryToVault(const CommandAuth& auth, int argc, char** argv, const char*
 void listEntries(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
     const auto args = parseListArgs(argc, argv, 3, defaultVaultPath);
     const auto snapshot = loadUnlockedSnapshot(auth, args.vaultPath);
-    const auto entries = filterEntries(snapshot.entries, args.query, args.type);
+    const auto entries = filterEntries(
+        snapshot.entries,
+        snapshot.categoryTemplates,
+        args.query,
+        args.type
+    );
     std::cout << "matches=" << entries.size() << "\n";
     for (const auto& entry : entries) printEntryLine(entry, args.showSecret);
 }

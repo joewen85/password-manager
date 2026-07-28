@@ -287,6 +287,142 @@ struct FieldReferenceContractTests {
         #expect(store.entries.count == 1)
     }
 
+    @MainActor
+    @Test("Scoped copy import remaps references to targets copied in the same batch")
+    func scopedCopyImportRemapsReferencesToCopiedTargets() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManageriOSReferenceRemapTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(repository: repository, syncSettingsRepository: nil)
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+
+        let ownerTemplate = FieldTemplate(
+            id: "template_owner",
+            name: "Owner",
+            valueType: "entryReference",
+            targetCategory: "Accounts"
+        )
+        let target = VaultEntry(
+            id: "source-target-id",
+            label: "Imported Target",
+            type: .credential,
+            payload: .credential(CredentialPayload(category: "Accounts"))
+        )
+        let source = VaultEntry(
+            id: "source-entry-id",
+            label: "Imported Source",
+            type: .server,
+            payload: .server(ServerPayload(category: "Servers")),
+            customFields: [
+                CustomField(
+                    id: "source-owner-field",
+                    templateFieldId: ownerTemplate.id,
+                    name: ownerTemplate.name,
+                    value: target.id
+                )
+            ]
+        )
+        let scopedExport = ScopedVaultExport(
+            scope: .category,
+            exportedAt: Date(timeIntervalSince1970: 1_700_000_001),
+            item: nil,
+            category: "Servers",
+            items: [source, target],
+            categoryTemplates: [CategoryTemplate(category: "Servers", fields: [ownerTemplate])]
+        )
+        try writeScopedExport(scopedExport, fileName: "reference-remap.json", repository: repository)
+
+        store.importScopedExport(fileName: "reference-remap.json", strategy: .keepCopy)
+
+        let importedTarget = try #require(store.entries.first { $0.label == target.label })
+        let importedSource = try #require(store.entries.first { $0.label == source.label })
+        #expect(importedTarget.id != target.id)
+        #expect(importedSource.id != source.id)
+        #expect(importedSource.customFields.first?.value == importedTarget.id)
+        #expect(importedSource.customFields.first?.templateFieldId == ownerTemplate.id)
+
+        let isolatedDirectory = directory.appendingPathComponent("isolated", isDirectory: true)
+        let isolatedRepository = FileVaultRepository(baseDirectory: isolatedDirectory)
+        let isolatedStore = VaultStore(repository: isolatedRepository, syncSettingsRepository: nil)
+        #expect(isolatedStore.setupMasterPassword("test-password", confirmation: "test-password"))
+        var sourceOnlyExport = scopedExport
+        sourceOnlyExport.items = [source]
+        try writeScopedExport(sourceOnlyExport, fileName: "source-only.json", repository: isolatedRepository)
+
+        isolatedStore.importScopedExport(fileName: "source-only.json", strategy: .keepCopy)
+
+        let isolatedSource = try #require(isolatedStore.entries.first)
+        #expect(isolatedSource.customFields.first?.value == target.id)
+        #expect(isolatedSource.customFields.first?.templateFieldId == ownerTemplate.id)
+    }
+
+    @MainActor
+    @Test("Scoped overwrite import remaps references to an existing destination ID")
+    func scopedOverwriteImportRemapsReferencesToExistingDestinationID() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManageriOSExistingReferenceRemapTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(repository: repository, syncSettingsRepository: nil)
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+
+        let target = VaultEntry(
+            id: "source-existing-target-id",
+            label: "Existing Target",
+            type: .credential,
+            payload: .credential(CredentialPayload(category: "Accounts"))
+        )
+        let initialTargetExport = ScopedVaultExport(
+            scope: .item,
+            exportedAt: Date(timeIntervalSince1970: 1_700_000_002),
+            item: target,
+            category: nil,
+            items: nil
+        )
+        try writeScopedExport(initialTargetExport, fileName: "initial-target.json", repository: repository)
+        store.importScopedExport(fileName: "initial-target.json", strategy: .keepCopy)
+        let existingDestination = try #require(store.entries.first { $0.label == target.label })
+
+        let ownerTemplate = FieldTemplate(
+            id: "template_owner",
+            name: "Owner",
+            valueType: "entryReference",
+            targetCategory: "Accounts"
+        )
+        let source = VaultEntry(
+            id: "source-for-existing-target",
+            label: "Source For Existing Target",
+            type: .server,
+            payload: .server(ServerPayload(category: "Servers")),
+            customFields: [
+                CustomField(
+                    id: "existing-owner-field",
+                    templateFieldId: ownerTemplate.id,
+                    name: ownerTemplate.name,
+                    value: target.id
+                )
+            ]
+        )
+        let batchExport = ScopedVaultExport(
+            scope: .category,
+            exportedAt: Date(timeIntervalSince1970: 1_700_000_003),
+            item: nil,
+            category: "Servers",
+            items: [source, target],
+            categoryTemplates: [CategoryTemplate(category: "Servers", fields: [ownerTemplate])]
+        )
+        try writeScopedExport(batchExport, fileName: "existing-target-batch.json", repository: repository)
+
+        store.importScopedExport(fileName: "existing-target-batch.json", strategy: .overwrite)
+
+        let importedSource = try #require(store.entries.first { $0.label == source.label })
+        let retainedDestination = try #require(store.entries.first { $0.label == target.label })
+        #expect(retainedDestination.id == existingDestination.id)
+        #expect(importedSource.customFields.first?.value == existingDestination.id)
+        #expect(importedSource.customFields.first?.templateFieldId == ownerTemplate.id)
+    }
+
     @Test("Template application protects values matched by template id before legacy name")
     func templateApplicationBindsByTemplateIdBeforeName() {
         let template = FieldTemplate(
@@ -385,5 +521,17 @@ struct FieldReferenceContractTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         return try Data(contentsOf: repositoryRoot.appendingPathComponent("fixtures/vault-contract/v1/\(name)"))
+    }
+
+    private func writeScopedExport(
+        _ scopedExport: ScopedVaultExport,
+        fileName: String,
+        repository: FileVaultRepository
+    ) throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(scopedExport).write(
+            to: try repository.importsDirectoryURL.appendingPathComponent(fileName)
+        )
     }
 }

@@ -21,8 +21,11 @@ link these sources instead of copying them into each app directory.
   `empty`, `resolved`, `missing`, `deleted`, or category-mismatch states while
   exposing only the target ID, label, and category. Its domain helper propagates
   matching category-renamed target configuration, while category deletion and
-  target delete/restore/move scenarios retain stored reference values.
-  Reference editing/display remains outside this CLI slice; see
+  target delete/restore/move scenarios retain stored reference values. Search
+  projects only resolved target labels/categories and suppresses stored IDs and
+  target secrets. A pure import helper remaps references through a complete copy
+  ID map, and conflict-copy tests verify reference values plus template field IDs.
+  Reference editing/display and a scoped-copy CLI flow remain outside this slice; see
   `../../docs/FIELD_REFERENCE_CONTRACT.md`.
 
 ## Verify

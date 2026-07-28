@@ -205,12 +205,23 @@ std::vector<CategoryTemplate> propagateEntryReferenceCategoryRename(
     const std::string& oldCategory,
     const std::string& newCategory
 );
+std::vector<CustomField> remapEntryReferenceIds(
+    const std::vector<CustomField>& fields,
+    const std::vector<FieldTemplate>& templateFields,
+    const std::map<std::string, std::string>& idMap
+);
 std::vector<FieldTemplate> defaultCategoryFields();
 std::vector<FieldTemplate> categoryFieldsForPreset(CategoryTypePreset preset, const std::vector<std::string>& customFieldNames = {});
 std::vector<FieldTemplate> categoryFieldsWithCustom(const std::vector<std::string>& customFieldNames);
 bool addCategory(VaultSnapshot& snapshot, const std::string& category, const std::vector<FieldTemplate>& fields = defaultCategoryFields());
 bool addCategory(VaultSnapshot& snapshot, const std::string& category, CategoryTypePreset preset, const std::vector<std::string>& customFieldNames = {});
 std::vector<VaultEntry> filterEntries(const std::vector<VaultEntry>& entries, const std::string& query, const std::string& type = "all");
+std::vector<VaultEntry> filterEntries(
+    const std::vector<VaultEntry>& entries,
+    const std::vector<CategoryTemplate>& categoryTemplates,
+    const std::string& query,
+    const std::string& type = "all"
+);
 std::vector<std::string> rebuildCategories(const std::vector<VaultEntry>& entries);
 std::vector<std::string> rebuildCategories(const std::vector<VaultEntry>& entries, const std::vector<CategoryTemplate>& categoryTemplates);
 std::vector<std::string> rebuildTags(const std::vector<VaultEntry>& entries);

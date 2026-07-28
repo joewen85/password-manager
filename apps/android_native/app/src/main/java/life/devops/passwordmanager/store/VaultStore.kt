@@ -19,6 +19,8 @@ import life.devops.passwordmanager.model.VaultSnapshot
 import life.devops.passwordmanager.model.copyForImport
 import life.devops.passwordmanager.model.importMatchKey
 import life.devops.passwordmanager.model.mergeCustomFieldsForLegacyEditorSave
+import life.devops.passwordmanager.model.remapEntryReferenceIds
+import life.devops.passwordmanager.model.withEntryReferenceSearchProjection
 import life.devops.passwordmanager.sync.EncryptedRemoteSyncClient
 import life.devops.passwordmanager.sync.RemoteSyncClient
 import life.devops.passwordmanager.sync.SyncClientFactory
@@ -32,6 +34,7 @@ import life.devops.passwordmanager.sync.VaultSyncEngineException
 import life.devops.passwordmanager.sync.VaultSyncEngineResult
 import life.devops.passwordmanager.sync.VaultSyncPayload
 import java.time.Instant
+import java.util.UUID
 
 data class BackupInfo(
     val fileName: String,
@@ -45,6 +48,18 @@ private data class SyncLoopInput(
     val vaultKey: ByteArray,
     val masterKeyRecord: MasterKeyRecord?,
     val masterPassword: String,
+)
+
+private enum class ImportAction {
+    CREATE,
+    OVERWRITE,
+    SKIP,
+}
+
+private data class PlannedImport(
+    val imported: VaultEntry,
+    val destinationId: String,
+    val action: ImportAction,
 )
 
 class VaultStore(
@@ -184,6 +199,7 @@ class VaultStore(
         tag: String? = null,
     ): List<VaultEntry> {
         val searchTerms = parseVaultSearchTerms(query)
+        val entriesById = if (searchTerms.isEmpty()) emptyMap() else entries.associateBy { it.id }
         return entries
             .asSequence()
             .filter { !it.isDeleted }
@@ -191,7 +207,10 @@ class VaultStore(
             .filter { category == null || it.payload.category == category }
             .filter { tag == null || it.payload.tags.contains(tag) }
             .filter {
-                searchTerms.isEmpty() || it.matchesSearchTerms(searchTerms)
+                searchTerms.isEmpty() || it.withEntryReferenceSearchProjection(
+                    template = categoryTemplate(it.payload.category),
+                    entriesById = entriesById,
+                ).matchesSearchTerms(searchTerms)
             }
             .sortedByDescending { it.updatedAt }
             .toList()
@@ -1016,31 +1035,56 @@ class VaultStore(
         importedEntries: List<VaultEntry>,
         strategy: ImportConflictStrategy,
     ): ImportResult {
+        val activeDestinationIds = linkedMapOf<String, String>()
+        entries.filter { !it.isDeleted }.forEach { entry ->
+            activeDestinationIds.putIfAbsent(entry.importMatchKey, entry.id)
+        }
+        val plannedImports = importedEntries.filter { !it.isDeleted }.map { imported ->
+            val existingId = activeDestinationIds[imported.importMatchKey]
+            if (existingId == null) {
+                val destinationId = UUID.randomUUID().toString()
+                activeDestinationIds[imported.importMatchKey] = destinationId
+                PlannedImport(imported, destinationId, ImportAction.CREATE)
+            } else {
+                when (strategy) {
+                    ImportConflictStrategy.SKIP ->
+                        PlannedImport(imported, existingId, ImportAction.SKIP)
+                    ImportConflictStrategy.OVERWRITE ->
+                        PlannedImport(imported, existingId, ImportAction.OVERWRITE)
+                    ImportConflictStrategy.KEEP_COPY ->
+                        PlannedImport(imported, UUID.randomUUID().toString(), ImportAction.CREATE)
+                }
+            }
+        }
+        val idMap = plannedImports
+            .filter { it.imported.id.isNotEmpty() }
+            .associate { it.imported.id to it.destinationId }
         var created = 0
         var updated = 0
         var skipped = 0
-        importedEntries.filter { !it.isDeleted }.forEach { imported ->
-            val existingIndex = entries.indexOfFirst {
-                !it.isDeleted && it.importMatchKey == imported.importMatchKey
-            }
-            if (existingIndex >= 0) {
-                when (strategy) {
-                    ImportConflictStrategy.SKIP -> skipped += 1
-                    ImportConflictStrategy.OVERWRITE -> {
-                        entries[existingIndex] = imported.copyForImport(
-                            id = entries[existingIndex].id,
-                            updatedAt = Instant.now(),
-                        )
-                        updated += 1
-                    }
-                    ImportConflictStrategy.KEEP_COPY -> {
-                        entries += imported.copyForImport(updatedAt = Instant.now())
-                        created += 1
-                    }
+        plannedImports.forEach { plan ->
+            val imported = plan.imported.remapEntryReferenceIds(
+                idMap = idMap,
+                template = categoryTemplate(plan.imported.payload.category),
+            )
+            when (plan.action) {
+                ImportAction.SKIP -> skipped += 1
+                ImportAction.CREATE -> {
+                    entries += imported.copyForImport(
+                        id = plan.destinationId,
+                        updatedAt = Instant.now(),
+                    )
+                    created += 1
                 }
-            } else {
-                entries += imported.copyForImport(updatedAt = Instant.now())
-                created += 1
+                ImportAction.OVERWRITE -> {
+                    val existingIndex = entries.indexOfFirst { it.id == plan.destinationId }
+                    check(existingIndex >= 0) { "Planned import target is missing." }
+                    entries[existingIndex] = imported.copyForImport(
+                        id = plan.destinationId,
+                        updatedAt = Instant.now(),
+                    )
+                    updated += 1
+                }
             }
         }
         return ImportResult(created = created, updated = updated, skipped = skipped)

@@ -36,6 +36,10 @@ import {
 } from '../sync/RemoteSyncClient';
 import { VaultStore } from '../storage/VaultStore';
 import { propagateEntryReferenceCategoryRename } from '../domain/FieldReferenceResolver';
+import {
+  remapEntryReferenceCustomFields,
+  resolvedEntryReferenceSearchValues,
+} from '../domain/EntryReferenceOperations';
 
 interface VaultRuntimePayload extends VaultPayloadRecord {
   categoryTemplates: CategoryTemplate[];
@@ -342,9 +346,16 @@ export class VaultController {
       if (entry.label.toLowerCase().includes(q)) {
         return true;
       }
-      return entry.tags.some((entryTag: string) =>
+      if (entry.tags.some((entryTag: string) =>
         entryTag.toLowerCase().includes(q)
-      );
+      )) {
+        return true;
+      }
+      return resolvedEntryReferenceSearchValues(
+        entry,
+        this.snapshot.categoryTemplates,
+        this.snapshot.entries,
+      ).some((value: string) => value.toLowerCase().includes(q));
     });
   }
 
@@ -856,13 +867,13 @@ export class VaultController {
     return true;
   }
 
-  async addCredential(input: CreateCredentialInput): Promise<void> {
+  async addCredential(input: CreateCredentialInput, entryId: string = nextId()): Promise<void> {
     this.ensureUnlocked();
     const now = Date.now();
     const tags = normalizeTags(input.tags);
     const customFields = normalizeCustomFields(input.customFields);
     this.snapshot.entries.push({
-      id: nextId(),
+      id: entryId,
       label: input.label.trim(),
       type: VaultEntryType.CREDENTIAL,
       payload: {
@@ -888,13 +899,13 @@ export class VaultController {
     await this.persist();
   }
 
-  async addServer(input: CreateServerInput): Promise<void> {
+  async addServer(input: CreateServerInput, entryId: string = nextId()): Promise<void> {
     this.ensureUnlocked();
     const now = Date.now();
     const tags = normalizeTags(input.tags);
     const customFields = normalizeCustomFields(input.customFields);
     this.snapshot.entries.push({
-      id: nextId(),
+      id: entryId,
       label: input.label.trim(),
       type: VaultEntryType.SERVER,
       payload: {
@@ -922,13 +933,13 @@ export class VaultController {
     await this.persist();
   }
 
-  async addService(input: CreateServiceInput): Promise<void> {
+  async addService(input: CreateServiceInput, entryId: string = nextId()): Promise<void> {
     this.ensureUnlocked();
     const now = Date.now();
     const tags = normalizeTags(input.tags);
     const customFields = normalizeCustomFields(input.customFields);
     this.snapshot.entries.push({
-      id: nextId(),
+      id: entryId,
       label: input.label.trim(),
       type: VaultEntryType.SERVICE,
       payload: {
@@ -1550,43 +1561,40 @@ export class VaultController {
     let updatedCount = 0;
     let skippedCount = 0;
     const idMap = new Map<string, string>();
+    const destinationIds = items.map((current: ImportPlanItem) => {
+      const createsCopy = current.disposition === 'create' ||
+        (current.disposition === 'conflict' && strategy === ImportConflictStrategy.KEEP_COPY);
+      const destinationId = createsCopy
+        ? nextId()
+        : canonicalIdString(current.existing?.id);
+      if (current.item.id.length > 0 && destinationId.length > 0) {
+        idMap.set(canonicalIdString(current.item.id), destinationId);
+      }
+      return destinationId;
+    });
     for (let index = 0; index < items.length; index++) {
       const current = items[index];
+      const destinationId = destinationIds[index];
       if (current.disposition === 'create') {
-        const createdId = await this.createImportedItem(current.item, idMap);
+        await this.createImportedItem(current.item, idMap, destinationId);
         createdCount += 1;
-        if (current.item.id.length > 0) {
-          idMap.set(canonicalIdString(current.item.id), canonicalIdString(createdId));
-        }
         continue;
       }
       if (current.disposition === 'exactDuplicate') {
         skippedCount += 1;
-        if (current.existing !== undefined && current.item.id.length > 0) {
-          idMap.set(canonicalIdString(current.item.id), canonicalIdString(current.existing.id));
-        }
         continue;
       }
       if (strategy === ImportConflictStrategy.SKIP) {
         skippedCount += 1;
-        if (current.existing !== undefined && current.item.id.length > 0) {
-          idMap.set(canonicalIdString(current.item.id), canonicalIdString(current.existing.id));
-        }
         continue;
       }
       if (strategy === ImportConflictStrategy.OVERWRITE && current.existing !== undefined) {
         await this.updateImportedItem(current.existing, current.item, idMap);
         updatedCount += 1;
-        if (current.item.id.length > 0) {
-          idMap.set(canonicalIdString(current.item.id), canonicalIdString(current.existing.id));
-        }
         continue;
       }
-      const createdId = await this.createImportedItem(current.item, idMap);
+      await this.createImportedItem(current.item, idMap, destinationId);
       createdCount += 1;
-      if (current.item.id.length > 0) {
-        idMap.set(canonicalIdString(current.item.id), canonicalIdString(createdId));
-      }
     }
     return {
       totalCount: items.length,
@@ -1651,7 +1659,14 @@ export class VaultController {
   private async createImportedItem(
     item: ExportItemRecord,
     idMap: Map<string, string> = new Map<string, string>(),
+    destinationId: string = nextId(),
   ): Promise<string> {
+    const customFields = remapEntryReferenceCustomFields(
+      item.customFields,
+      item.category,
+      this.snapshot.categoryTemplates,
+      idMap,
+    );
     if (item.type === VaultEntryType.CREDENTIAL) {
       const payload = item.payload as CreateCredentialInput;
       await this.addCredential({
@@ -1666,9 +1681,9 @@ export class VaultController {
         notes: payload.notes ?? '',
         tags: payload.tags ?? [],
         category: payload.category ?? item.category ?? '',
-        customFields: item.customFields ?? payload.customFields ?? [],
-      });
-      return this.snapshot.entries[this.snapshot.entries.length - 1].id;
+        customFields,
+      }, destinationId);
+      return destinationId;
     }
     if (item.type === VaultEntryType.SERVER) {
       const payload = item.payload as CreateServerInput;
@@ -1686,9 +1701,9 @@ export class VaultController {
         notes: payload.notes ?? '',
         tags: payload.tags ?? [],
         category: payload.category ?? item.category ?? '',
-        customFields: item.customFields ?? payload.customFields ?? [],
-      });
-      return this.snapshot.entries[this.snapshot.entries.length - 1].id;
+        customFields,
+      }, destinationId);
+      return destinationId;
     }
     if (item.type === VaultEntryType.SERVICE) {
       const payload = item.payload as CreateServiceInput;
@@ -1705,9 +1720,9 @@ export class VaultController {
         notes: payload.notes ?? '',
         tags: payload.tags ?? [],
         category: payload.category ?? item.category ?? '',
-        customFields: item.customFields ?? payload.customFields ?? [],
-      });
-      return this.snapshot.entries[this.snapshot.entries.length - 1].id;
+        customFields,
+      }, destinationId);
+      return destinationId;
     }
     throw new Error(`不支持的条目类型: ${item.type}`);
   }
@@ -1718,6 +1733,12 @@ export class VaultController {
     idMap: Map<string, string>,
   ): Promise<void> {
     const resolved = this.resolveImportedPayload(item, idMap);
+    const customFields = remapEntryReferenceCustomFields(
+      item.customFields,
+      item.category,
+      this.snapshot.categoryTemplates,
+      idMap,
+    );
     if (existing.type === VaultEntryType.CREDENTIAL) {
       const payload = resolved as CreateCredentialInput;
       await this.updateCredentialEntry(existing.id, {
@@ -1732,7 +1753,7 @@ export class VaultController {
         notes: payload.notes ?? '',
         tags: payload.tags ?? [],
         category: payload.category ?? item.category ?? '',
-        customFields: item.customFields ?? payload.customFields ?? [],
+        customFields,
       });
       return;
     }
@@ -1752,7 +1773,7 @@ export class VaultController {
         notes: payload.notes ?? '',
         tags: payload.tags ?? [],
         category: payload.category ?? item.category ?? '',
-        customFields: item.customFields ?? payload.customFields ?? [],
+        customFields,
       });
       return;
     }
@@ -1768,7 +1789,7 @@ export class VaultController {
       notes: payload.notes ?? '',
       tags: payload.tags ?? [],
       category: payload.category ?? item.category ?? '',
-      customFields: item.customFields ?? payload.customFields ?? [],
+      customFields,
     });
   }
 

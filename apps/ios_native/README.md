@@ -10,7 +10,7 @@
 - 当前切片复用并迁移 macOS 原生端已验证的 Swift 核心：数据模型、本地加密持久化、TOTP、导入导出、备份、同步设置、远端同步 transport、同步合并和同步引擎。
 - SwiftUI 视图已放入 `PasswordManageriOSCore`，并提供 `PasswordManageriOSAppRoot` 作为 Xcode iOS app target 的根视图。
 - 当前包含 SwiftPM 可测试核心模块和 `PasswordManageriOS.xcodeproj` 原生 app target。
-- 字段关联已支持 Codable 模型、加密快照、同步和条目/分类导入导出的无损数据契约，并提供 `empty/resolved/missing/deleted/categoryMismatch` 纯领域解析及安全目标投影；领域层支持分类改名目标配置传播，分类删除及条目删除/恢复/移动会保留引用值。标签职责不变。当前不提供关联编辑 UI，尚未接入搜索或导入重映射，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
+- 字段关联已支持无损数据契约、五态解析和生命周期传播；搜索仅加入成功解析目标的名称与分类，不索引原始引用 ID 或目标秘密。同批复制导入会先分配目标 ID 再重写内部引用，未包含目标时保留原 ID；同步比较和冲突副本保留引用字段及 `templateFieldId`。标签职责不变，当前仍不提供关联编辑或详情 UI，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
 - 已配置 Debug/Release build configuration、bundle identifier、生成式 launch screen、asset catalog、空 entitlements、包含 UserDefaults required-reason 声明的 privacy manifest，以及本机可运行的 Release simulator build/install/launch smoke + generic iOS archive contract gate。生产发布前仍需配置 Apple Developer Team/signing、真机验证和 App Store Connect 验证。
 - 本目录不依赖已移除的 Flutter iOS 工程。
 
@@ -199,7 +199,7 @@ This directory contains the native iOS application target, used to build iOS-nat
 - The current slice migrates the already-verified Swift core from the native macOS target: data models, local encrypted persistence, TOTP, import/export, backup, sync settings, remote sync transport, sync merge, and sync engine.
 - SwiftUI views are included in `PasswordManageriOSCore`, and `PasswordManageriOSAppRoot` is used as the root view for the Xcode iOS app target.
 - The current form includes a SwiftPM-tested core module and a `PasswordManageriOS.xcodeproj` native app target.
-- The entry-reference data contract is preserved by Codable models, encrypted snapshots, sync, and item/category import/export. A pure resolver returns `empty`, `resolved`, `missing`, `deleted`, or `categoryMismatch` with a safe target projection. The domain layer propagates category-renamed target configuration, while category deletion and target delete/restore/move operations retain stored reference values. Tags remain unchanged. Reference editing UI, search integration, and import remapping are not exposed yet; see `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
+- Entry references now cover lossless persistence, five-state resolution, and lifecycle propagation. Search adds only a successfully resolved target label and category, never the raw reference ID or target secrets. Batch copy import assigns destination IDs before rewriting internal references and keeps IDs for targets not included; sync comparison and conflict copies retain reference fields and `templateFieldId`. Tags remain unchanged; reference editing and detail UI are still not exposed. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
 - Debug/Release build configurations, bundle identifier, generated launch screen, asset catalog, empty entitlements, a privacy manifest with the UserDefaults required-reason disclosure, and a locally runnable Release simulator build/install/launch smoke + generic iOS archive contract gate are configured. Production release still needs Apple Developer Team/signing, device validation, and App Store Connect validation.
 - This directory does not depend on the removed Flutter iOS project.
 
