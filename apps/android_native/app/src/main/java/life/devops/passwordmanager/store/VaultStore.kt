@@ -9,6 +9,7 @@ import life.devops.passwordmanager.model.EntryDraft
 import life.devops.passwordmanager.model.EntryReferenceCandidate
 import life.devops.passwordmanager.model.EntryReferenceResolution
 import life.devops.passwordmanager.model.FieldTemplate
+import life.devops.passwordmanager.model.FieldReferenceResolution
 import life.devops.passwordmanager.model.ImportConflictStrategy
 import life.devops.passwordmanager.model.MasterKeyRecord
 import life.devops.passwordmanager.model.ScopedExportScope
@@ -24,11 +25,13 @@ import life.devops.passwordmanager.model.categoryTemplateFieldsForUserSave
 import life.devops.passwordmanager.model.copyForImport
 import life.devops.passwordmanager.model.entryReferenceCandidates as safeEntryReferenceCandidates
 import life.devops.passwordmanager.model.fieldReferenceTargetFieldIds
+import life.devops.passwordmanager.model.isFieldReference
 import life.devops.passwordmanager.model.importMatchKey
 import life.devops.passwordmanager.model.mergeCustomFieldsForEditorSave
 import life.devops.passwordmanager.model.newCategoryTemplateField
 import life.devops.passwordmanager.model.remapEntryReferenceIds
 import life.devops.passwordmanager.model.resolveEntryReference as resolveModelEntryReference
+import life.devops.passwordmanager.model.resolveFieldReference as resolveModelFieldReference
 import life.devops.passwordmanager.model.withEntryReferenceSearchProjection
 import life.devops.passwordmanager.sync.EncryptedRemoteSyncClient
 import life.devops.passwordmanager.sync.RemoteSyncClient
@@ -325,26 +328,48 @@ class VaultStore(
             entries = entries,
         )
 
+    internal fun resolveFieldReference(
+        field: CustomField,
+        sourceCategory: String,
+    ): FieldReferenceResolution? =
+        resolveModelFieldReference(
+            field = field,
+            sourceTemplate = categoryTemplate(sourceCategory),
+            categoryTemplates = categoryTemplates.values,
+            entries = entries,
+        )
+
     fun liveEntry(id: String): VaultEntry? =
         entries.firstOrNull { entry -> entry.id == id && !entry.isDeleted }
 
     @Synchronized
-    fun clearEntryReference(entryId: String, fieldId: String): Boolean {
+    fun clearEntryReference(entryId: String, fieldId: String): Boolean =
+        clearReferenceValue(entryId, fieldId) { entry, field ->
+            resolveModelEntryReference(
+                field = field,
+                template = categoryTemplate(entry.payload.category),
+                entries = entries,
+            ) != null
+        }
+
+    @Synchronized
+    fun clearFieldReference(entryId: String, fieldId: String): Boolean =
+        clearReferenceValue(entryId, fieldId) { entry, field ->
+            isFieldReference(field, categoryTemplate(entry.payload.category))
+        }
+
+    private inline fun clearReferenceValue(
+        entryId: String,
+        fieldId: String,
+        isReference: (VaultEntry, CustomField) -> Boolean,
+    ): Boolean {
         val entryIndex = entries.indexOfFirst { entry -> entry.id == entryId && !entry.isDeleted }
         if (entryIndex < 0) return false
         val entry = entries[entryIndex]
         val fieldIndex = entry.customFields.indexOfFirst { field -> field.id == fieldId }
         if (fieldIndex < 0) return false
         val field = entry.customFields[fieldIndex]
-        if (
-            resolveModelEntryReference(
-                field = field,
-                template = categoryTemplate(entry.payload.category),
-                entries = entries,
-            ) == null
-        ) {
-            return false
-        }
+        if (!isReference(entry, field)) return false
         if (field.value.isEmpty()) return true
 
         val updatedFields = entry.customFields.toMutableList().apply {
@@ -538,6 +563,12 @@ class VaultStore(
             }
         }
     }
+
+    fun categoryTemplateReferencedTargetFieldIds(category: String): Set<String> =
+        fieldReferenceTargetFieldIds(
+            targetCategory = category,
+            templates = categoryTemplates.values,
+        )
 
     @Synchronized
     fun addTag(tag: String): Boolean =

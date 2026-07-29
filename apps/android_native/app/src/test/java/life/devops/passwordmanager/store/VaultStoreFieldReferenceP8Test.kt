@@ -131,10 +131,9 @@ class VaultStoreFieldReferenceP8Test {
             assertTrue(store.categoryTemplate("Accounts")?.fields?.any { it.id == targetField.id } == true)
 
             assertTrue(store.updateCategoryTemplate("Servers", emptyList()))
-            assertEquals(
-                fieldReference,
+            assertTrue(
                 store.categoryTemplate("Servers")?.fields
-                    ?.single { field -> field.id == fieldReference.id },
+                    ?.none { field -> field.id == fieldReference.id } == true,
             )
         }
     }
@@ -170,6 +169,35 @@ class VaultStoreFieldReferenceP8Test {
                 entries = synced.entries,
             )?.status,
         )
+    }
+
+    @Test
+    fun clearFieldReferencePersistsAnEmptyBindingWithoutChangingItsTemplate() {
+        withStore("PasswordManagerAndroidFieldReferenceClearTests") { store ->
+            val contract = contract()
+            assertTrue(
+                store.importScopedExportJson(
+                    VaultJson.encodeScopedExport(contract.export),
+                    ImportConflictStrategy.KEEP_COPY,
+                ),
+            )
+            val source = store.listEntries().single { it.label == contract.source.label }
+            val field = source.customFields.single()
+
+            assertTrue(store.clearFieldReference(source.id, field.id))
+
+            val cleared = store.liveEntry(source.id)?.customFields?.single()
+            assertEquals("", cleared?.value)
+            assertEquals(
+                FieldReferenceStatus.EMPTY,
+                store.resolveFieldReference(cleared!!, source.payload.category)?.status,
+            )
+            assertEquals(
+                contract.sourceField.targetFieldId,
+                store.categoryTemplate(source.payload.category)
+                    ?.fields?.single { it.id == contract.sourceField.id }?.targetFieldId,
+            )
+        }
     }
 
     private fun contract(

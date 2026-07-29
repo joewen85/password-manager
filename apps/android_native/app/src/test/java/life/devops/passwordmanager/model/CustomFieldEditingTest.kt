@@ -112,4 +112,46 @@ class CustomFieldEditingTest {
 
         assertEquals(listOf(owner, future, notes.copy(value = "new text")), merged)
     }
+
+    @Test
+    fun categoryTemplateDraftIncludesLegacyAndFieldReferencesWithoutExposingThemAsText() {
+        val template = CategoryTemplate(
+            category = "Servers",
+            fields = listOf(
+                FieldTemplate(id = "template-notes", name = "Notes"),
+                FieldTemplate(
+                    id = "template-owner",
+                    name = "Legacy owner",
+                    valueType = "entryReference",
+                    targetCategory = "Accounts",
+                ),
+                FieldTemplate(
+                    id = "template-owner-email",
+                    name = "Owner email",
+                    valueType = "fieldReference",
+                    targetCategory = "Accounts",
+                    targetFieldId = "account-email",
+                ),
+            ),
+        )
+
+        val states = applyCategoryTemplateToDraft(
+            states = emptyList(),
+            targetCategory = "Servers",
+            template = template,
+        )
+
+        assertEquals(
+            listOf("template-notes", "template-owner", "template-owner-email"),
+            states.map { state -> state.field.templateFieldId },
+        )
+        assertEquals(
+            listOf(
+                CustomFieldSemantic.TEXT,
+                CustomFieldSemantic.ENTRY_REFERENCE,
+                CustomFieldSemantic.FIELD_REFERENCE,
+            ),
+            states.map { state -> customFieldSemantics(state.field, template).semantic },
+        )
+    }
 }

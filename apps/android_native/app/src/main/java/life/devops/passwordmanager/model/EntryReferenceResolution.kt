@@ -103,6 +103,7 @@ internal fun VaultEntry.withEntryReferenceSearchProjection(
         when (customFieldSemantics(field, template).semantic) {
             CustomFieldSemantic.TEXT -> field
             CustomFieldSemantic.UNSUPPORTED -> field.copy(value = "")
+            CustomFieldSemantic.FIELD_REFERENCE -> field.copy(value = "")
             CustomFieldSemantic.ENTRY_REFERENCE -> {
                 val resolution = resolveEntryReference(field, template) { targetId ->
                     entriesById[targetId]

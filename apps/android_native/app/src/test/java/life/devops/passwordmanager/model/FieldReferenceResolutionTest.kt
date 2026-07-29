@@ -2,8 +2,8 @@ package life.devops.passwordmanager.model
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class FieldReferenceResolutionTest {
     @Test
@@ -175,15 +175,15 @@ class FieldReferenceResolutionTest {
     }
 
     @Test
-    fun onlyExactFieldReferenceTypeIsRecognizedAndUiSemanticsStayUnsupported() {
+    fun onlyExactFieldReferenceTypeIsRecognizedAndUiSemanticsAreSupported() {
         val wrongCaseTemplate = sourceTemplate.copy(
             fields = listOf(sourceField.copy(valueType = "FieldReference")),
         )
 
         assertNull(resolve(sourceTemplate = wrongCaseTemplate))
-        assertFalse(isEditableCategoryFieldType("fieldReference"))
+        assertTrue(isEditableCategoryFieldType("fieldReference"))
         assertEquals(
-            CustomFieldSemantic.UNSUPPORTED,
+            CustomFieldSemantic.FIELD_REFERENCE,
             customFieldSemantics(sourceValue, sourceTemplate).semantic,
         )
     }

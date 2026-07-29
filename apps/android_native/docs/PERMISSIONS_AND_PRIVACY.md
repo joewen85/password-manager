@@ -49,7 +49,7 @@
 - 字段关联继续存储在 app-private 加密 JSON 中；P4 不新增数据库或数据库字段，因此没有数据库迁移文件。旧快照依赖加法式 JSON 默认值兼容读取。
 - P7 新增的 `targetFieldId` 是加密 vault JSON 内不透明的目标模板字段 ID。完整快照、范围导入导出和同步 payload 只保留这项元数据，不会据此隐式导出或采集目标字段值。
 - P7 仅增加模型与 JSON 兼容能力，不提供 `fieldReference` UI 或解析行为，也不改变现有 `entryReference`。它不新增 Android 权限、网络端点、SDK、数据采集、数据库或数据库迁移；详细格式见 `FIELD_REFERENCE_API.md`。
-- P8 领域 resolver 只在 vault 已解锁的数据边界内执行单跳解析，并只返回目标条目和目标文本字段的最小投影，绝不返回完整目标 entry/payload。目标字段值属于敏感 vault 内容，不进入搜索索引、日志、复制或 UI；搜索只在解析成功时使用目标名称、分类和目标字段名称。
+- P8 领域 resolver 只在 vault 已解锁的数据边界内执行单跳解析，并只返回目标条目和目标文本字段的最小投影，绝不返回完整目标 entry/payload。P10 仅在已解锁的显式详情中展示解析值；候选列表、摘要、搜索、日志和隐式导出均不包含目标字段值或原始 ID，搜索只在解析成功时使用目标名称、分类和目标字段名称。
 - P8 的复制导入重映射、分类改名传播和目标模板字段保护均为现有本地加密快照上的数据完整性处理，不新增权限、端点、SDK、采集、数据库或迁移，也不会因为字段关联隐式导出目标条目。
 
 ### 发布验证
@@ -116,7 +116,7 @@ The current manifest does not declare:
 - Entry references remain in app-private encrypted JSON. P4 adds no database or database column, so there is no database migration file; additive JSON defaults keep older snapshots readable.
 - The P7 `targetFieldId` is an opaque target template-field ID inside the encrypted vault JSON. Full snapshots, scoped import/export, and sync payloads preserve only this metadata; it does not implicitly export or collect a target field value.
 - P7 adds model and JSON compatibility only. It provides no `fieldReference` UI or resolution behavior and does not change existing `entryReference` semantics. It adds no Android permission, network endpoint, SDK, data collection, database, or database migration. See `FIELD_REFERENCE_API.md` for the detailed format.
-- The P8 domain resolver performs one-hop resolution only inside the unlocked-vault boundary and returns no more than minimal target-entry and target-text-field projections, never a complete target entry or payload. A target field value remains sensitive vault content and is excluded from search, logs, copy actions, and UI; successful search projection uses only the target label, category, and target field name.
+- The P8 domain resolver performs one-hop resolution only inside the unlocked-vault boundary and returns no more than minimal target-entry and target-text-field projections, never a complete target entry or payload. P10 displays a resolved value only in the unlocked explicit detail view; candidates, summaries, search, logs, and implicit exports exclude the value and raw IDs. Successful search projection uses only the target label, category, and target field name.
 - P8 copy-import remapping, category-rename propagation, and target-template protection are data-integrity operations on the existing locally encrypted snapshot. They add no permission, endpoint, SDK, collection, database, or migration, and a field reference never causes an implicit target-entry export.
 
 ### Google Play Data Safety Guidance

@@ -7,7 +7,7 @@ private const val ENTRY_REFERENCE_VALUE_TYPE = "entryReference"
 
 internal fun isEditableCategoryFieldType(valueType: String?): Boolean =
     when (normalizedCategoryFieldValueType(valueType)) {
-        TEXT_VALUE_TYPE, ENTRY_REFERENCE_VALUE_TYPE -> true
+        TEXT_VALUE_TYPE, FIELD_REFERENCE_VALUE_TYPE -> true
         else -> false
     }
 
@@ -85,6 +85,7 @@ internal fun newCategoryTemplateField(
     name: String = "",
     valueType: String = TEXT_VALUE_TYPE,
     targetCategory: String = "",
+    targetFieldId: String = "",
 ): FieldTemplate =
     normalizedCategoryTemplateField(
         FieldTemplate(
@@ -92,6 +93,7 @@ internal fun newCategoryTemplateField(
             name = name,
             valueType = valueType,
             targetCategory = targetCategory,
+            targetFieldId = targetFieldId,
         )
     )
 
@@ -125,13 +127,18 @@ private fun normalizedCategoryTemplateField(field: FieldTemplate): FieldTemplate
     val valueType = normalizedCategoryFieldValueType(field.valueType)
     val targetCategory = when (valueType) {
         TEXT_VALUE_TYPE -> ""
-        ENTRY_REFERENCE_VALUE_TYPE -> field.targetCategory.trim()
+        ENTRY_REFERENCE_VALUE_TYPE, FIELD_REFERENCE_VALUE_TYPE -> field.targetCategory.trim()
         else -> field.targetCategory
+    }
+    val targetFieldId = when (valueType) {
+        FIELD_REFERENCE_VALUE_TYPE -> field.targetFieldId
+        else -> ""
     }
     return field.copy(
         name = field.name.trim(),
         valueType = valueType,
         targetCategory = targetCategory,
+        targetFieldId = targetFieldId,
     )
 }
 

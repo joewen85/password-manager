@@ -50,6 +50,7 @@ import life.devops.passwordmanager.model.CredentialPayload
 import life.devops.passwordmanager.model.CategoryTemplate
 import life.devops.passwordmanager.model.CategoryTypePreset
 import life.devops.passwordmanager.model.CUSTOM_FIELD_ENTRY_REFERENCE_VALUE_TYPE
+import life.devops.passwordmanager.model.CUSTOM_FIELD_REFERENCE_VALUE_TYPE
 import life.devops.passwordmanager.model.CUSTOM_FIELD_TEXT_VALUE_TYPE
 import life.devops.passwordmanager.model.CustomField
 import life.devops.passwordmanager.model.CustomFieldSemantic
@@ -59,6 +60,8 @@ import life.devops.passwordmanager.model.EntryReferenceCandidate
 import life.devops.passwordmanager.model.EntryReferenceResolution
 import life.devops.passwordmanager.model.EntryReferenceStatus
 import life.devops.passwordmanager.model.FieldTemplate
+import life.devops.passwordmanager.model.FieldReferenceResolution
+import life.devops.passwordmanager.model.FieldReferenceStatus
 import life.devops.passwordmanager.model.ImportConflictStrategy
 import life.devops.passwordmanager.model.ServerPayload
 import life.devops.passwordmanager.model.ServiceAccount
@@ -935,7 +938,7 @@ class MainActivity : FragmentActivity() {
             }, matchWrap(top = dp(10)))
         }
 
-    private fun showCategoryTemplateEditor(category: String) {
+    private fun showCategoryTemplateEditor(category: String, onSaved: (() -> Unit)? = null) {
         val template = store.categoryTemplate(category) ?: CategoryTemplate(category = category)
         val baseFieldNames = CategoryTemplate.defaultCategoryFields()
             .mapTo(mutableSetOf()) { field -> field.name.trim().lowercase() }
@@ -943,8 +946,31 @@ class MainActivity : FragmentActivity() {
             .filterNot { field -> field.name.trim().lowercase() in baseFieldNames }
             .toMutableList()
         val storedValueFieldIds = store.categoryTemplateStoredValueFieldIds(category)
+        val referencedTargetFieldIds = store.categoryTemplateReferencedTargetFieldIds(category)
         val fieldsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         lateinit var renderFields: () -> Unit
+
+        fun sameCategory(left: String, right: String): Boolean =
+            left.trim().equals(right.trim(), ignoreCase = true)
+
+        fun targetTextFields(field: FieldTemplate): List<FieldTemplate> {
+            val targetCategory = field.targetCategory.trim()
+            if (targetCategory.isEmpty()) return emptyList()
+            val fields = if (sameCategory(targetCategory, category)) {
+                CategoryTemplate.defaultCategoryFields() + customFields
+            } else {
+                store.categoryTemplate(targetCategory)?.fields.orEmpty()
+            }
+            return fields.asSequence()
+                .filter { candidate ->
+                    candidate.normalizedValueType() == CUSTOM_FIELD_TEXT_VALUE_TYPE &&
+                        candidate.name.trim() != "名称" &&
+                        candidate.id.isNotBlank() &&
+                        !(sameCategory(targetCategory, category) && candidate.id == field.id)
+                }
+                .distinctBy { candidate -> candidate.id }
+                .toList()
+        }
 
         fun updateField(index: Int, update: (FieldTemplate) -> FieldTemplate) {
             val current = customFields.getOrNull(index) ?: return
@@ -962,14 +988,22 @@ class MainActivity : FragmentActivity() {
             customFields.forEachIndexed { index, field ->
                 val valueType = field.normalizedValueType()
                 val editableType = isEditableCategoryFieldType(field.valueType)
-                val typeLocked = field.id in storedValueFieldIds
+                val hasStoredValue = field.id in storedValueFieldIds
+                val isReferencedTarget = field.id in referencedTargetFieldIds
+                val typeLocked = hasStoredValue || isReferencedTarget
                 fieldsContainer.addView(LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     background = rounded(uiColor(R.color.ui_surface_alt), dp(12), uiColor(R.color.ui_stroke))
                     setPadding(dp(12), dp(12), dp(12), dp(12))
                     if (!editableType) {
                         addView(label(
-                            field.name.ifBlank { text(R.string.unsupported_field) },
+                            field.name.ifBlank {
+                                if (valueType == CUSTOM_FIELD_ENTRY_REFERENCE_VALUE_TYPE) {
+                                    text(R.string.field_type_entry_reference)
+                                } else {
+                                    text(R.string.unsupported_field)
+                                }
+                            },
                             14f,
                             uiColor(R.color.ui_text),
                             Typeface.BOLD,
@@ -980,70 +1014,115 @@ class MainActivity : FragmentActivity() {
                             uiColor(R.color.ui_muted),
                         ), matchWrap(top = dp(6)))
                         addView(label(
-                            text(R.string.unsupported_field_value_preserved),
+                            if (valueType == CUSTOM_FIELD_ENTRY_REFERENCE_VALUE_TYPE) {
+                                text(R.string.legacy_entry_reference_read_only)
+                            } else {
+                                text(R.string.unsupported_field_value_preserved)
+                            },
                             12f,
                             uiColor(R.color.ui_error),
                         ), matchWrap(top = dp(6)))
                     } else {
                         val nameInput = input(text(R.string.custom_field_name)).apply {
-                        setText(field.name)
-                        addTextChangedListener(SimpleTextWatcher { value ->
-                            updateField(index) { current -> current.copy(name = value) }
-                        })
+                            setText(field.name)
+                            addTextChangedListener(SimpleTextWatcher { value ->
+                                updateField(index) { current -> current.copy(name = value) }
+                            })
                         }
                         addView(nameInput, matchWrap())
                         addView(label(text(R.string.field_type), 12f, uiColor(R.color.ui_muted), Typeface.BOLD), matchWrap(top = dp(10)))
                         if (typeLocked) {
-                        addView(label(
-                            if (valueType == CUSTOM_FIELD_ENTRY_REFERENCE_VALUE_TYPE) {
-                                text(R.string.field_type_entry_reference)
-                            } else {
-                                text(R.string.field_type_text)
-                            },
-                            13f,
-                            uiColor(R.color.ui_text),
-                            Typeface.BOLD,
-                        ), matchWrap(top = dp(6)))
-                        addView(label(
-                            "${text(R.string.field_in_use_cannot_change_type)} ${text(R.string.field_in_use_cannot_delete)}",
-                            12f,
-                            uiColor(R.color.ui_muted),
-                        ), matchWrap(top = dp(6)))
+                            addView(label(
+                                when (valueType) {
+                                    CUSTOM_FIELD_REFERENCE_VALUE_TYPE -> text(R.string.field_type_field_reference)
+                                    else -> text(R.string.field_type_text)
+                                },
+                                13f,
+                                uiColor(R.color.ui_text),
+                                Typeface.BOLD,
+                            ), matchWrap(top = dp(6)))
+                            addView(label(
+                                if (isReferencedTarget) {
+                                    "${text(R.string.field_is_reference_target_cannot_change_type)} ${text(R.string.field_is_reference_target_cannot_delete)}"
+                                } else {
+                                    "${text(R.string.field_in_use_cannot_change_type)} ${text(R.string.field_in_use_cannot_delete)}"
+                                },
+                                12f,
+                                uiColor(R.color.ui_muted),
+                            ), matchWrap(top = dp(6)))
                         } else {
-                        addView(HorizontalScrollView(this@MainActivity).apply {
-                            isHorizontalScrollBarEnabled = false
-                            addView(LinearLayout(this@MainActivity).apply {
-                                orientation = LinearLayout.HORIZONTAL
-                                addView(filterChip(
-                                    text(R.string.field_type_text),
-                                    valueType == CUSTOM_FIELD_TEXT_VALUE_TYPE,
-                                ) {
-                                    updateField(index) { current ->
-                                        current.copy(valueType = CUSTOM_FIELD_TEXT_VALUE_TYPE, targetCategory = "")
-                                    }
-                                    renderFields()
-                                }, wrapWrap(right = dp(8)))
-                                addView(filterChip(
-                                    text(R.string.field_type_entry_reference),
-                                    valueType == CUSTOM_FIELD_ENTRY_REFERENCE_VALUE_TYPE,
-                                ) {
-                                    updateField(index) { current ->
-                                        current.copy(valueType = CUSTOM_FIELD_ENTRY_REFERENCE_VALUE_TYPE)
-                                    }
-                                    renderFields()
-                                }, wrapWrap())
-                            })
-                        }, matchWrap(top = dp(6)))
+                            addView(HorizontalScrollView(this@MainActivity).apply {
+                                isHorizontalScrollBarEnabled = false
+                                addView(LinearLayout(this@MainActivity).apply {
+                                    orientation = LinearLayout.HORIZONTAL
+                                    addView(filterChip(
+                                        text(R.string.field_type_text),
+                                        valueType == CUSTOM_FIELD_TEXT_VALUE_TYPE,
+                                    ) {
+                                        if (valueType != CUSTOM_FIELD_TEXT_VALUE_TYPE) {
+                                            updateField(index) { current ->
+                                                current.copy(
+                                                    valueType = CUSTOM_FIELD_TEXT_VALUE_TYPE,
+                                                    targetCategory = "",
+                                                    targetFieldId = "",
+                                                )
+                                            }
+                                            renderFields()
+                                        }
+                                    }, wrapWrap(right = dp(8)))
+                                    addView(filterChip(
+                                        text(R.string.field_type_field_reference),
+                                        valueType == CUSTOM_FIELD_REFERENCE_VALUE_TYPE,
+                                    ) {
+                                        if (valueType != CUSTOM_FIELD_REFERENCE_VALUE_TYPE) {
+                                            updateField(index) { current ->
+                                                current.copy(
+                                                    valueType = CUSTOM_FIELD_REFERENCE_VALUE_TYPE,
+                                                    targetCategory = "",
+                                                    targetFieldId = "",
+                                                )
+                                            }
+                                            renderFields()
+                                        }
+                                    }, wrapWrap())
+                                })
+                            }, matchWrap(top = dp(6)))
                         }
 
-                        if (valueType == CUSTOM_FIELD_ENTRY_REFERENCE_VALUE_TYPE) {
+                        if (valueType == CUSTOM_FIELD_REFERENCE_VALUE_TYPE) {
                             val targetCategory = field.targetCategory.trim()
                             addView(label(text(R.string.target_category), 12f, uiColor(R.color.ui_muted), Typeface.BOLD), matchWrap(top = dp(10)))
                             addView(selectBoxText(
-                                targetCategory.ifBlank { text(R.string.any_category) },
+                                targetCategory.ifBlank { text(R.string.select_target_category) },
                             ) {
                                 showCategorySelectionDialog(targetCategory) { selected ->
-                                    updateField(index) { current -> current.copy(targetCategory = selected) }
+                                    updateField(index) { current ->
+                                        current.copy(targetCategory = selected, targetFieldId = "")
+                                    }
+                                    renderFields()
+                                }
+                            }, matchWrap(top = dp(4)))
+
+                            val candidates = targetTextFields(field)
+                            val targetField = candidates.firstOrNull { candidate ->
+                                candidate.id == field.targetFieldId
+                            }
+                            addView(label(text(R.string.target_field), 12f, uiColor(R.color.ui_muted), Typeface.BOLD), matchWrap(top = dp(10)))
+                            addView(selectBoxText(
+                                targetField?.name?.trim().orEmpty().ifBlank {
+                                    if (field.targetFieldId.isNotBlank()) {
+                                        text(R.string.target_field_unavailable)
+                                    } else {
+                                        text(R.string.select_target_field)
+                                    }
+                                },
+                            ) {
+                                showFieldTemplateSelectionDialog(
+                                    title = text(R.string.select_target_field),
+                                    fields = candidates,
+                                    currentFieldId = field.targetFieldId,
+                                ) { selected ->
+                                    updateField(index) { current -> current.copy(targetFieldId = selected.id) }
                                     renderFields()
                                 }
                             }, matchWrap(top = dp(4)))
@@ -1086,12 +1165,27 @@ class MainActivity : FragmentActivity() {
                     toast(text(R.string.value_required))
                     return@setOnClickListener
                 }
+                if (customFields.any { field ->
+                        field.normalizedValueType() == CUSTOM_FIELD_REFERENCE_VALUE_TYPE &&
+                            (
+                                field.targetCategory.isBlank() ||
+                                    field.targetFieldId.isBlank() ||
+                                    targetTextFields(field).none { candidate -> candidate.id == field.targetFieldId }
+                            )
+                    }) {
+                    toast(text(R.string.field_reference_configuration_required))
+                    return@setOnClickListener
+                }
                 if (!store.updateCategoryTemplate(category, customFields)) {
                     toast(store.statusMessage ?: text(R.string.operation_failed))
                     return@setOnClickListener
                 }
                 dialog.dismiss()
-                showTaxonomyListEditor(TaxonomyKind.CATEGORY)
+                if (onSaved == null) {
+                    showTaxonomyListEditor(TaxonomyKind.CATEGORY)
+                } else {
+                    onSaved()
+                }
                 toast(store.statusMessage ?: text(R.string.saved))
             }
         }
@@ -1287,6 +1381,89 @@ class MainActivity : FragmentActivity() {
                                 uiColor(R.color.ui_muted),
                             ))
                         }
+                        CustomFieldSemantic.FIELD_REFERENCE -> {
+                            val resolution = store.resolveFieldReference(field, entry.payload.category)
+                            val configurationNeedsRepair =
+                                !fieldReferenceTemplateConfigurationValid(
+                                    sourceCategory = entry.payload.category,
+                                    templateField = semantics.templateField,
+                                ) || fieldReferenceConfigurationNeedsRepair(resolution)
+                            val targetCategory = semantics.templateField?.targetCategory.orEmpty().trim()
+                            val targetFieldName = store.categoryTemplate(targetCategory)
+                                ?.fields
+                                ?.firstOrNull { candidate ->
+                                    candidate.id == semantics.templateField?.targetFieldId
+                                }
+                                ?.name
+                                ?.trim()
+                                .orEmpty()
+                            addView(label(
+                                fieldReferenceStatusText(resolution),
+                                14f,
+                                fieldReferenceStatusColor(resolution),
+                            ))
+                            addView(label(
+                                text(
+                                    R.string.field_reference_target_path,
+                                    targetCategory.ifBlank { text(R.string.target_category_unavailable) },
+                                    targetFieldName.ifBlank { text(R.string.target_field_unavailable) },
+                                ),
+                                12f,
+                                uiColor(R.color.ui_muted),
+                            ), matchWrap(top = dp(6)))
+                            resolution
+                                ?.takeIf { it.status == FieldReferenceStatus.RESOLVED }
+                                ?.targetField
+                                ?.value
+                                ?.let { resolvedValue ->
+                                    addView(label(resolvedValue, 15f, uiColor(R.color.ui_text)).apply {
+                                        setTextIsSelectable(true)
+                                    }, matchWrap(top = dp(8)))
+                                }
+                            addView(HorizontalScrollView(this@MainActivity).apply {
+                                isHorizontalScrollBarEnabled = false
+                                addView(LinearLayout(this@MainActivity).apply {
+                                    orientation = LinearLayout.HORIZONTAL
+                                    val target = resolution
+                                        ?.targetEntry
+                                        ?.takeIf {
+                                            resolution.status != FieldReferenceStatus.DELETED &&
+                                                resolution.status != FieldReferenceStatus.MISSING
+                                        }
+                                        ?.let { projected -> store.liveEntry(projected.id) }
+                                    if (target != null) {
+                                        addView(actionButton(text(R.string.view_reference), primary = false, compact = true) {
+                                            onOpenTarget(target)
+                                        }, wrapWrap(right = dp(8)))
+                                    }
+                                    addView(actionButton(
+                                        if (configurationNeedsRepair) {
+                                            text(R.string.edit_fields)
+                                        } else {
+                                            fieldReferenceActionText(resolution)
+                                        },
+                                        primary = true,
+                                        compact = true,
+                                    ) {
+                                        if (configurationNeedsRepair) {
+                                            showCategoryTemplateEditor(entry.payload.category, onEntryChanged)
+                                        } else {
+                                            onReferenceEdit(field.id)
+                                        }
+                                    }, wrapWrap(right = if (field.value.isNotEmpty()) dp(8) else 0))
+                                    if (field.value.isNotEmpty()) {
+                                        addView(actionButton(text(R.string.clear_reference), primary = false, compact = true) {
+                                            if (store.clearFieldReference(entry.id, field.id)) {
+                                                toast(store.statusMessage ?: text(R.string.saved))
+                                                onEntryChanged()
+                                            } else {
+                                                toast(store.statusMessage ?: text(R.string.operation_failed))
+                                            }
+                                        }, wrapWrap())
+                                    }
+                                })
+                            }, matchWrap(top = dp(8)))
+                        }
                         CustomFieldSemantic.ENTRY_REFERENCE -> {
                             val resolution = store.resolveEntryReference(field, entry.payload.category)
                             addView(label(
@@ -1331,6 +1508,75 @@ class MainActivity : FragmentActivity() {
                 })
             }
         }
+    }
+
+    private fun fieldReferenceStatusText(resolution: FieldReferenceResolution?): String =
+        when (resolution?.status) {
+            FieldReferenceStatus.EMPTY, null -> text(R.string.reference_not_selected)
+            FieldReferenceStatus.INVALID_CONFIGURATION -> text(R.string.field_reference_invalid_configuration)
+            FieldReferenceStatus.MISSING -> text(R.string.reference_missing)
+            FieldReferenceStatus.DELETED -> text(R.string.reference_deleted)
+            FieldReferenceStatus.CATEGORY_MISMATCH -> text(R.string.reference_category_mismatch)
+            FieldReferenceStatus.TARGET_FIELD_MISSING -> text(R.string.field_reference_target_field_missing)
+            FieldReferenceStatus.TARGET_FIELD_UNSUPPORTED -> text(R.string.field_reference_target_field_unsupported)
+            FieldReferenceStatus.TARGET_FIELD_EMPTY -> text(R.string.field_reference_target_field_empty)
+            FieldReferenceStatus.RESOLVED -> {
+                val target = resolution.targetEntry
+                val targetField = resolution.targetField
+                if (target == null || targetField == null) {
+                    text(R.string.reference_missing)
+                } else {
+                    text(
+                        R.string.field_reference_resolved,
+                        target.label.ifBlank { text(R.string.untitled) },
+                        targetField.name.ifBlank { text(R.string.target_field) },
+                    )
+                }
+            }
+        }
+
+    private fun fieldReferenceStatusColor(resolution: FieldReferenceResolution?): Int =
+        when (resolution?.status) {
+            FieldReferenceStatus.RESOLVED -> uiColor(R.color.ui_text)
+            FieldReferenceStatus.EMPTY, null -> uiColor(R.color.ui_muted)
+            else -> uiColor(R.color.ui_error)
+        }
+
+    private fun fieldReferenceActionText(resolution: FieldReferenceResolution?): String =
+        when (resolution?.status) {
+            FieldReferenceStatus.EMPTY, null -> text(R.string.select_reference)
+            FieldReferenceStatus.RESOLVED -> text(R.string.replace_reference)
+            else -> text(R.string.repair_reference)
+        }
+
+    private fun fieldReferenceConfigurationNeedsRepair(
+        resolution: FieldReferenceResolution?,
+    ): Boolean =
+        when (resolution?.status) {
+            FieldReferenceStatus.INVALID_CONFIGURATION,
+            FieldReferenceStatus.TARGET_FIELD_MISSING,
+            FieldReferenceStatus.TARGET_FIELD_UNSUPPORTED -> true
+            else -> false
+        }
+
+    private fun fieldReferenceTemplateConfigurationValid(
+        sourceCategory: String,
+        templateField: FieldTemplate?,
+    ): Boolean {
+        val definition = templateField ?: return false
+        val targetCategory = definition.targetCategory.trim()
+        val targetFieldId = definition.targetFieldId
+        if (targetCategory.isEmpty() || targetFieldId.isBlank()) return false
+        if (
+            sourceCategory.trim().equals(targetCategory, ignoreCase = true) &&
+            definition.id == targetFieldId
+        ) {
+            return false
+        }
+        return store.categoryTemplate(targetCategory)
+            ?.fields
+            ?.firstOrNull { candidate -> candidate.id == targetFieldId }
+            ?.normalizedValueType() == CUSTOM_FIELD_TEXT_VALUE_TYPE
     }
 
     private fun entryReferenceStatusText(resolution: EntryReferenceResolution?): String =
@@ -1583,16 +1829,52 @@ class MainActivity : FragmentActivity() {
                 state.field,
                 editorCategoryTemplate(selectedCategory),
             )
-            if (semantics.semantic != CustomFieldSemantic.ENTRY_REFERENCE) {
-                return@referencePicker
-            }
-            showEntryReferenceSelectionDialog(
-                fieldName = state.field.name,
-                currentValue = state.field.value,
-                targetCategory = semantics.templateField?.targetCategory.orEmpty(),
-            ) { selectedId ->
-                updateDraftCustomFieldValue(fieldId, selectedId)
-                renderFields()
+            when (semantics.semantic) {
+                CustomFieldSemantic.ENTRY_REFERENCE -> showEntryReferenceSelectionDialog(
+                    fieldName = state.field.name,
+                    currentValue = state.field.value,
+                    targetCategory = semantics.templateField?.targetCategory.orEmpty(),
+                ) { selectedId ->
+                    updateDraftCustomFieldValue(fieldId, selectedId)
+                    renderFields()
+                }
+                CustomFieldSemantic.FIELD_REFERENCE -> {
+                    val resolution = store.resolveFieldReference(state.field, selectedCategory)
+                    if (
+                        !fieldReferenceTemplateConfigurationValid(
+                            sourceCategory = selectedCategory,
+                            templateField = semantics.templateField,
+                        ) || fieldReferenceConfigurationNeedsRepair(resolution)
+                    ) {
+                        showCategoryTemplateEditor(selectedCategory) {
+                            customFieldStates = applyCategoryTemplateToDraft(
+                                states = customFieldStates,
+                                targetCategory = selectedCategory,
+                                template = editorCategoryTemplate(selectedCategory),
+                            ).toMutableList()
+                            renderFields()
+                        }
+                        return@referencePicker
+                    }
+                    val targetCategory = semantics.templateField?.targetCategory.orEmpty()
+                    val targetFieldName = store.categoryTemplate(targetCategory)
+                        ?.fields
+                        ?.firstOrNull { candidate ->
+                            candidate.id == semantics.templateField?.targetFieldId
+                        }
+                        ?.name
+                        .orEmpty()
+                    showEntryReferenceSelectionDialog(
+                        fieldName = state.field.name,
+                        currentValue = state.field.value,
+                        targetCategory = targetCategory,
+                        targetFieldName = targetFieldName,
+                    ) { selectedId ->
+                        updateDraftCustomFieldValue(fieldId, selectedId)
+                        renderFields()
+                    }
+                }
+                else -> Unit
             }
         }
         renderFields = {
@@ -1608,10 +1890,12 @@ class MainActivity : FragmentActivity() {
                 ).semantic == CustomFieldSemantic.TEXT
             }
             val referenceStates = activeStates.filter { state ->
-                customFieldSemantics(
+                val semantic = customFieldSemantics(
                     state.field,
                     editorCategoryTemplate(selectedCategory),
-                ).semantic == CustomFieldSemantic.ENTRY_REFERENCE
+                ).semantic
+                semantic == CustomFieldSemantic.ENTRY_REFERENCE ||
+                    semantic == CustomFieldSemantic.FIELD_REFERENCE
             }
             val protectedCurrentStates = customFieldStates.filter { state ->
                 state.isProtected && sameDraftCategory(state.sourceCategory, selectedCategory)
@@ -1647,7 +1931,24 @@ class MainActivity : FragmentActivity() {
                     field,
                     editorCategoryTemplate(selectedCategory),
                 )
-                val resolution = store.resolveEntryReference(field, selectedCategory)
+                val entryResolution = if (semantics.semantic == CustomFieldSemantic.ENTRY_REFERENCE) {
+                    store.resolveEntryReference(field, selectedCategory)
+                } else {
+                    null
+                }
+                val fieldResolution = if (semantics.semantic == CustomFieldSemantic.FIELD_REFERENCE) {
+                    store.resolveFieldReference(field, selectedCategory)
+                } else {
+                    null
+                }
+                val fieldConfigurationNeedsRepair =
+                    semantics.semantic == CustomFieldSemantic.FIELD_REFERENCE &&
+                        (
+                            !fieldReferenceTemplateConfigurationValid(
+                                sourceCategory = selectedCategory,
+                                templateField = semantics.templateField,
+                            ) || fieldReferenceConfigurationNeedsRepair(fieldResolution)
+                        )
                 fieldsContainer.addView(LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     background = rounded(uiColor(R.color.ui_surface_alt), dp(12), uiColor(R.color.ui_stroke))
@@ -1659,24 +1960,69 @@ class MainActivity : FragmentActivity() {
                         Typeface.BOLD,
                     ))
                     addView(label(
-                        entryReferenceStatusText(resolution),
+                        if (semantics.semantic == CustomFieldSemantic.FIELD_REFERENCE) {
+                            fieldReferenceStatusText(fieldResolution)
+                        } else {
+                            entryReferenceStatusText(entryResolution)
+                        },
                         13f,
-                        entryReferenceStatusColor(resolution),
+                        if (semantics.semantic == CustomFieldSemantic.FIELD_REFERENCE) {
+                            fieldReferenceStatusColor(fieldResolution)
+                        } else {
+                            entryReferenceStatusColor(entryResolution)
+                        },
                     ), matchWrap(top = dp(6)))
                     val targetCategory = semantics.templateField?.targetCategory.orEmpty().trim()
-                    addView(label(
-                        "${text(R.string.target_category)}: ${targetCategory.ifBlank { text(R.string.any_category) }}",
-                        12f,
-                        uiColor(R.color.ui_muted),
-                    ), matchWrap(top = dp(6)))
+                    if (semantics.semantic == CustomFieldSemantic.FIELD_REFERENCE) {
+                        val targetFieldName = store.categoryTemplate(targetCategory)
+                            ?.fields
+                            ?.firstOrNull { candidate ->
+                                candidate.id == semantics.templateField?.targetFieldId
+                            }
+                            ?.name
+                            ?.trim()
+                            .orEmpty()
+                        addView(label(
+                            text(
+                                R.string.field_reference_target_path,
+                                targetCategory.ifBlank { text(R.string.target_category_unavailable) },
+                                targetFieldName.ifBlank { text(R.string.target_field_unavailable) },
+                            ),
+                            12f,
+                            uiColor(R.color.ui_muted),
+                        ), matchWrap(top = dp(6)))
+                    } else {
+                        addView(label(
+                            "${text(R.string.target_category)}: ${targetCategory.ifBlank { text(R.string.any_category) }}",
+                            12f,
+                            uiColor(R.color.ui_muted),
+                        ), matchWrap(top = dp(6)))
+                    }
                     addView(LinearLayout(this@MainActivity).apply {
                         orientation = LinearLayout.HORIZONTAL
                         addView(actionButton(
-                            entryReferenceActionText(resolution),
+                            if (fieldConfigurationNeedsRepair) {
+                                text(R.string.edit_fields)
+                            } else if (semantics.semantic == CustomFieldSemantic.FIELD_REFERENCE) {
+                                fieldReferenceActionText(fieldResolution)
+                            } else {
+                                entryReferenceActionText(entryResolution)
+                            },
                             primary = true,
                             compact = true,
                         ) {
-                            openReferencePicker(field.id)
+                            if (fieldConfigurationNeedsRepair) {
+                                showCategoryTemplateEditor(selectedCategory) {
+                                    customFieldStates = applyCategoryTemplateToDraft(
+                                        states = customFieldStates,
+                                        targetCategory = selectedCategory,
+                                        template = editorCategoryTemplate(selectedCategory),
+                                    ).toMutableList()
+                                    renderFields()
+                                }
+                            } else {
+                                openReferencePicker(field.id)
+                            }
                         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                             rightMargin = if (field.value.isNotEmpty()) dp(8) else 0
                         })
@@ -1771,6 +2117,7 @@ class MainActivity : FragmentActivity() {
         fieldName: String,
         currentValue: String,
         targetCategory: String,
+        targetFieldName: String = "",
         onSelected: (String) -> Unit,
     ) {
         val form = formRoot()
@@ -1807,7 +2154,15 @@ class MainActivity : FragmentActivity() {
                 ?: text(R.string.choose_entry),
         ))
         form.addView(label(
-            "${text(R.string.target_category)}: ${targetCategory.trim().ifBlank { text(R.string.any_category) }}",
+            if (targetFieldName.isNotBlank()) {
+                text(
+                    R.string.field_reference_target_path,
+                    targetCategory.trim().ifBlank { text(R.string.target_category_unavailable) },
+                    targetFieldName.trim(),
+                )
+            } else {
+                "${text(R.string.target_category)}: ${targetCategory.trim().ifBlank { text(R.string.any_category) }}"
+            },
             12f,
             uiColor(R.color.ui_muted),
         ), matchWrap(top = dp(8)))
@@ -2942,6 +3297,40 @@ class MainActivity : FragmentActivity() {
         dialog = AlertDialog.Builder(this)
             .setView(ScrollView(this).apply { addView(form) })
             .setPositiveButton(text(R.string.save)) { _, _ -> onSelected(selected) }
+            .setNegativeButton(text(R.string.cancel), null)
+            .show()
+    }
+
+    private fun showFieldTemplateSelectionDialog(
+        title: String,
+        fields: List<FieldTemplate>,
+        currentFieldId: String,
+        onSelected: (FieldTemplate) -> Unit,
+    ) {
+        val form = formRoot()
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        var dialog: AlertDialog? = null
+        form.addView(formTitle(title))
+        if (fields.isEmpty()) {
+            list.addView(label(
+                text(R.string.no_target_text_fields),
+                13f,
+                uiColor(R.color.ui_muted),
+            ), matchWrap(top = compactGap()))
+        } else {
+            fields.forEach { field ->
+                list.addView(selectBoxText(
+                    field.name.trim().ifBlank { text(R.string.custom_field) },
+                    selected = field.id == currentFieldId,
+                ) {
+                    onSelected(field)
+                    dialog?.dismiss()
+                }, matchWrap(top = compactGap()))
+            }
+        }
+        form.addView(list, matchWrap(top = compactGap()))
+        dialog = AlertDialog.Builder(this)
+            .setView(ScrollView(this).apply { addView(form) })
             .setNegativeButton(text(R.string.cancel), null)
             .show()
     }

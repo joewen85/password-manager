@@ -141,7 +141,8 @@ internal fun applyCategoryTemplateToDraft(
         val semantic = templateField.normalizedValueType()
         if (
             semantic != CUSTOM_FIELD_TEXT_VALUE_TYPE &&
-            semantic != CUSTOM_FIELD_ENTRY_REFERENCE_VALUE_TYPE
+            semantic != CUSTOM_FIELD_ENTRY_REFERENCE_VALUE_TYPE &&
+            semantic != CUSTOM_FIELD_REFERENCE_VALUE_TYPE
         ) {
             return@forEach
         }

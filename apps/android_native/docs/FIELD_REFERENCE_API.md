@@ -2,7 +2,7 @@
 
 ## 中文
 
-本文记录 Android 原生客户端在 P7 中新增的数据契约和 P8 中新增的领域解析行为。P8 仍不提供创建、编辑或展示字段级关联的 UI。
+本文记录 Android 原生客户端在 P7 中新增的数据契约、P8 中新增的领域解析行为，以及 P10 中开放的创建、编辑和九态详情 UI。
 
 ### JSON 形状
 
@@ -63,16 +63,17 @@
 - 被任一精确 `fieldReference` 引用的目标 `text` 模板字段允许改名，但模板保存和 preset 应用不得删除或改型。
 - 同步继续传输包含来源值、`targetCategory` 和 `targetFieldId` 的现有加密快照，不增加 envelope 版本。
 
-### P8 边界
+### P8 领域边界与 P10 UI
 
-- Android 模板编辑 UI 不创建 `fieldReference`。
-- Android 条目编辑和详情 UI 仍把 `fieldReference` 作为不支持类型只读保留；只有领域搜索使用上述安全投影。
-- 本阶段不提供级联修改、递归解析或字段级关联用户交互。
+- P10 的 Android 模板编辑 UI 可创建和编辑 `fieldReference`，必须从目标分类模板中选择一个稳定的目标文本字段 ID；同分类可引用其他文本字段，直接自引用会被拒绝。
+- 条目编辑使用目标分类约束的安全候选列表。配置无效、目标字段缺失或不支持时进入分类字段修复；其他失败状态进入目标条目重选。
+- 解析值只显示在已解锁的显式详情中，不进入候选列表、摘要、搜索或日志。旧 `entryReference` 模板定义只读保留，已有条目值仍可编辑。
+- 不提供级联修改或递归解析。
 - 不新增数据库、数据库迁移、权限、网络端点、SDK 或数据采集。
 
 ## English
 
-This document records the field-level reference data contract added to the native Android client in P7 and the domain resolution behavior added in P8. P8 still adds no UI for creating, editing, or displaying field-level references.
+This document records the field-level reference data contract added in P7, domain resolution added in P8, and Android UI enabled in P10.
 
 ### JSON Shape
 
@@ -133,9 +134,10 @@ Resolution is strictly one hop. A target field that is itself `fieldReference`, 
 - A target `text` template field referenced by any exact `fieldReference` may be renamed, but template save and preset application must not delete or retype it.
 - Sync continues to transport the source value, `targetCategory`, and `targetFieldId` inside the existing encrypted snapshot without an envelope-version change.
 
-### P8 Boundaries
+### P8 Domain Boundaries and P10 UI
 
-- The Android template editor does not create `fieldReference` fields.
-- Android entry editing and detail UI retain `fieldReference` as an unsupported, read-only type; only domain search uses the safe projection above.
-- This phase adds no cascading mutation, recursive resolution, or field-level reference interaction.
+- In P10, the Android template editor creates and edits `fieldReference` fields by selecting a stable target text-field ID from a target category. Same-category references may target another text field; direct self-reference is rejected.
+- Entry editing uses a target-category-constrained safe candidate list. Invalid configuration and missing or unsupported target fields route to category-field repair; other failures route to target-entry reselection.
+- The resolved value appears only in the unlocked explicit detail view and is excluded from candidates, summaries, search, and logs. Legacy `entryReference` template definitions remain read-only while existing entry values remain editable.
+- Cascading mutation and recursive resolution remain unsupported.
 - It adds no database, database migration, permission, network endpoint, SDK, or data collection.

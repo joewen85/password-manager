@@ -78,4 +78,28 @@ class CustomFieldSemanticsTest {
         assertTrue(canExposeRawCustomFieldValue(blank, template))
         assertFalse(canExposeRawCustomFieldValue(unknown, template))
     }
+
+    @Test
+    fun fieldReferencesHaveDedicatedSemanticsAndNeverExposeRawEntryIds() {
+        val template = CategoryTemplate(
+            category = "Servers",
+            fields = listOf(
+                FieldTemplate(
+                    id = "template-owner-email",
+                    name = "Owner email",
+                    valueType = "fieldReference",
+                    targetCategory = "Accounts",
+                    targetFieldId = "account-email",
+                ),
+            ),
+        )
+        val field = CustomField(
+            templateFieldId = "template-owner-email",
+            name = "Owner email",
+            value = "opaque-entry-id",
+        )
+
+        assertEquals(CustomFieldSemantic.FIELD_REFERENCE, customFieldSemantics(field, template).semantic)
+        assertFalse(canExposeRawCustomFieldValue(field, template))
+    }
 }

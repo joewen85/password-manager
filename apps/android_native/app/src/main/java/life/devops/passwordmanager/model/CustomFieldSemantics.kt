@@ -3,6 +3,7 @@ package life.devops.passwordmanager.model
 internal enum class CustomFieldSemantic {
     TEXT,
     ENTRY_REFERENCE,
+    FIELD_REFERENCE,
     UNSUPPORTED,
 }
 
@@ -28,6 +29,7 @@ internal fun customFieldSemantics(
     val semantic = when (templateField.normalizedValueType()) {
         CUSTOM_FIELD_TEXT_VALUE_TYPE -> CustomFieldSemantic.TEXT
         CUSTOM_FIELD_ENTRY_REFERENCE_VALUE_TYPE -> CustomFieldSemantic.ENTRY_REFERENCE
+        CUSTOM_FIELD_REFERENCE_VALUE_TYPE -> CustomFieldSemantic.FIELD_REFERENCE
         else -> CustomFieldSemantic.UNSUPPORTED
     }
     return CustomFieldSemantics(
@@ -64,3 +66,4 @@ internal fun FieldTemplate.normalizedValueType(): String =
 
 internal const val CUSTOM_FIELD_TEXT_VALUE_TYPE = "text"
 internal const val CUSTOM_FIELD_ENTRY_REFERENCE_VALUE_TYPE = "entryReference"
+internal const val CUSTOM_FIELD_REFERENCE_VALUE_TYPE = "fieldReference"
