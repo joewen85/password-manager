@@ -4,6 +4,71 @@ import Testing
 
 @Suite("Field reference contract")
 struct FieldReferenceContractTests {
+    @Test("Field-level reference metadata survives shared fixture and container round trips")
+    func fieldReferenceMetadataRoundTrips() throws {
+        let repository = FileVaultRepository()
+        let snapshot = try repository.decodeSnapshot(fixtureData("snapshot-field-reference.json"))
+        let sourceEntry = try #require(snapshot.entries.first { $0.id == "server_source_01" })
+        let sourceTemplate = try #require(snapshot.categoryTemplates.first { $0.category == "Servers" })
+        let sourceField = try #require(sourceTemplate.fields.first { $0.id == "source_owner_email_field" })
+
+        #expect(sourceField.valueType == "fieldReference")
+        #expect(sourceField.targetCategory == "Accounts")
+        #expect(sourceField.targetFieldId == "target_email_field")
+        #expect(sourceEntry.customFields.first?.templateFieldId == sourceField.id)
+        #expect(sourceEntry.customFields.first?.value == "account_target_01")
+        #expect(try repository.decodeSnapshot(repository.encodeSnapshot(snapshot)) == snapshot)
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let scopedExport = ScopedVaultExport(
+            scope: .item,
+            exportedAt: Date(timeIntervalSince1970: 1_775_000_000),
+            item: sourceEntry,
+            category: nil,
+            items: nil,
+            categoryTemplates: [sourceTemplate]
+        )
+        let syncPayload = VaultSyncPayload(
+            exportedAt: Date(timeIntervalSince1970: 1_775_000_001),
+            deviceId: "ios-contract",
+            revision: 7,
+            snapshot: snapshot
+        )
+
+        let scopedField = try decoder.decode(
+            ScopedVaultExport.self,
+            from: encoder.encode(scopedExport)
+        ).categoryTemplates.first?.fields.first
+        let syncField = try decoder.decode(
+            VaultSyncPayload.self,
+            from: encoder.encode(syncPayload)
+        ).snapshot.categoryTemplates.first { $0.category == "Servers" }?.fields.first
+
+        for decodedField in [scopedField, syncField] {
+            #expect(decodedField?.valueType == "fieldReference")
+            #expect(decodedField?.targetCategory == "Accounts")
+            #expect(decodedField?.targetFieldId == "target_email_field")
+        }
+    }
+
+    @Test("Target field IDs default to empty and unknown field types preserve them")
+    func targetFieldIdCompatibilityDefaults() throws {
+        let fields = try JSONDecoder().decode(
+            [FieldTemplate].self,
+            from: Data(
+                #"[{"id":"legacy","name":"Legacy"},{"id":"future","name":"Future","valueType":"futureFieldReferenceV2","targetCategory":"Accounts","targetFieldId":"opaque-target-field"}]"#.utf8
+            )
+        )
+
+        #expect(FieldTemplate(name: "New").targetFieldId == "")
+        #expect(fields[0].targetFieldId == "")
+        #expect(fields[1].targetFieldId == "opaque-target-field")
+        #expect(try JSONDecoder().decode([FieldTemplate].self, from: JSONEncoder().encode(fields)) == fields)
+    }
+
     @Test("Shared contract fixtures round trip semantically")
     func sharedContractFixturesRoundTripSemantically() throws {
         let repository = FileVaultRepository()

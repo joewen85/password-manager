@@ -47,6 +47,8 @@
 - 单条/分类导出不得因为引用而隐式导出目标条目，也不得泄露目标条目的名称、用户名、密码、Token 或 Secret；只有显式包含在导出范围内的条目才能输出自身数据。
 - 搜索和日志不得索引或记录被引用目标的敏感字段。该能力的数据格式见 `../../../docs/FIELD_REFERENCE_CONTRACT.md`。
 - 字段关联继续存储在 app-private 加密 JSON 中；P4 不新增数据库或数据库字段，因此没有数据库迁移文件。旧快照依赖加法式 JSON 默认值兼容读取。
+- P7 新增的 `targetFieldId` 是加密 vault JSON 内不透明的目标模板字段 ID。完整快照、范围导入导出和同步 payload 只保留这项元数据，不会据此隐式导出或采集目标字段值。
+- P7 仅增加模型与 JSON 兼容能力，不提供 `fieldReference` UI 或解析行为，也不改变现有 `entryReference`。它不新增 Android 权限、网络端点、SDK、数据采集、数据库或数据库迁移；详细格式见 `FIELD_REFERENCE_API.md`。
 
 ### 发布验证
 
@@ -110,6 +112,8 @@ The current manifest does not declare:
 - Item/category export must not include a referenced target implicitly or disclose its label, username, password, token, or secret. Only entries explicitly selected by the export scope may output their own data.
 - Search and logs must not index or record sensitive fields from referenced targets. See `../../../docs/FIELD_REFERENCE_CONTRACT.md` for the data contract.
 - Entry references remain in app-private encrypted JSON. P4 adds no database or database column, so there is no database migration file; additive JSON defaults keep older snapshots readable.
+- The P7 `targetFieldId` is an opaque target template-field ID inside the encrypted vault JSON. Full snapshots, scoped import/export, and sync payloads preserve only this metadata; it does not implicitly export or collect a target field value.
+- P7 adds model and JSON compatibility only. It provides no `fieldReference` UI or resolution behavior and does not change existing `entryReference` semantics. It adds no Android permission, network endpoint, SDK, data collection, database, or database migration. See `FIELD_REFERENCE_API.md` for the detailed format.
 
 ### Google Play Data Safety Guidance
 

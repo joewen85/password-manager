@@ -8,6 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixtureDirectory = path.join(root, 'fixtures', 'vault-contract', 'v1');
 const fixtureNames = [
   'snapshot-entry-reference.json',
+  'snapshot-field-reference.json',
   'snapshot-legacy-text.json',
   'snapshot-legacy-empty-slug.json',
   'snapshot-unknown-value-type.json',
@@ -62,11 +63,22 @@ requireInvariant(source?.customFields[0]?.value === targetId, 'custom field stor
 requireInvariant(source?.customFields[1]?.value === '', 'reference snapshot covers an empty optional reference');
 requireInvariant(!targetId.includes('-'), 'fixture keeps a maintained non-UUID entry ID');
 
+const fieldReferenceSnapshot = fixtures.get('snapshot-field-reference.json');
+const fieldReferenceSource = fieldReferenceSnapshot.entries.find((entry) => entry.label === 'Production Server');
+const ownerEmailField = fieldByName(fieldReferenceSnapshot, 'Servers', 'Owner Email');
+const targetEmailField = fieldByName(fieldReferenceSnapshot, 'Accounts', 'Email');
+requireInvariant(ownerEmailField?.valueType === 'fieldReference', 'Owner Email template is a field reference');
+requireInvariant(ownerEmailField?.targetCategory === 'Accounts', 'Owner Email template targets Accounts');
+requireInvariant(ownerEmailField?.targetFieldId === targetEmailField?.id, 'Owner Email targets the stable Email field ID');
+requireInvariant(fieldReferenceSource?.customFields[0]?.templateFieldId === ownerEmailField?.id, 'field reference value binds to its source template');
+requireInvariant(fieldReferenceSource?.customFields[0]?.value === 'account_target_01', 'field reference value stores the target entry ID');
+
 const legacySnapshot = fixtures.get('snapshot-legacy-text.json');
 const legacyTemplate = legacySnapshot.categoryTemplates[0].fields[0];
 const legacyCustomField = legacySnapshot.entries[0].customFields[0];
 requireInvariant(!Object.hasOwn(legacyTemplate, 'valueType'), 'legacy template omits valueType');
 requireInvariant(!Object.hasOwn(legacyTemplate, 'targetCategory'), 'legacy template omits targetCategory');
+requireInvariant(!Object.hasOwn(legacyTemplate, 'targetFieldId'), 'legacy template omits targetFieldId');
 requireInvariant(!Object.hasOwn(legacyTemplate, 'id'), 'legacy template covers deterministic ID fallback');
 requireInvariant(!Object.hasOwn(legacyCustomField, 'templateFieldId'), 'legacy custom field omits templateFieldId');
 

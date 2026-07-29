@@ -24,7 +24,7 @@ Password Manager 是一款本地加密优先的跨平台密码保险库，用来
 - **备份与迁移**：支持本地加密备份、快照 JSON 导入导出、单条或分类导入导出，以及冲突处理策略。
 - **跨端一致契约**：共享 Dart 包、Swift/Kotlin 原生实现和 C++ portable core 围绕同一数据模型、加密格式和同步语义演进。
 - **分类删除收敛**：分类创建、删除和同名重建使用持久墓碑与版本向量同步；删除状态不再依赖临时 dirty 标记，旧条目中的分类引用也不能反向恢复已删除分类。完整规则见 `docs/CATEGORY_SYNC_CONTRACT.md`。
-- **字段关联契约**：分类模板字段可声明可选的单条记录引用，引用值使用稳定条目 ID；标签继续用于宽松分组、搜索和筛选。当前已完成全端无损读写、五态解析、生命周期传播、安全搜索、同批复制导入 ID 重映射和同步冲突保真；HarmonyOS、Android、iOS 与 macOS 已完成分类配置、条目选择和五态详情 UI，Windows/Linux 共用 CLI 已提供安全搜索与五态详情投影。所有展示路径均隐藏原始引用 ID、目标秘密以及未知类型或孤儿绑定的存储值，完整格式与上线约束见 `docs/FIELD_REFERENCE_CONTRACT.md`。
+- **字段关联契约**：标签继续用于宽松分组、搜索和筛选；确定关系使用稳定 ID。旧 `entryReference` 的全端读写、五态解析、生命周期、UI 和 CLI 安全投影保持不变；P7 新增真正的字段到字段兼容契约，使用 `fieldReference + targetCategory + targetFieldId` 描述目标字段，来源值继续保存具体目标条目 ID。当前 P7 只保证 Android、HarmonyOS、iOS、macOS 与 Windows/Linux core 无损读写和同步该形状，尚不开放新类型的解析或创建 UI。完整格式与上线约束见 `docs/FIELD_REFERENCE_CONTRACT.md`。
 
 ## 当前状态
 

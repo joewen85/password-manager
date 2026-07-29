@@ -65,6 +65,7 @@ export interface FieldTemplate {
   name: string;
   valueType?: string;
   targetCategory?: string;
+  targetFieldId?: string;
 }
 
 export interface CategoryTemplate {

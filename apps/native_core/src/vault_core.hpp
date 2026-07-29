@@ -57,6 +57,7 @@ struct FieldTemplate {
     std::string name;
     std::string valueType = "text";
     std::string targetCategory;
+    std::string targetFieldId;
 };
 
 enum class EntryReferenceStatus {

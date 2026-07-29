@@ -50,12 +50,17 @@ export function categoryTemplateFieldsForUserSave(
       merged.push(cloneField(current));
       return;
     }
-    merged.push({
+    const mergedField: FieldTemplate = {
       id: current.id,
       name: field.name,
       valueType: normalizeValueType(field.valueType),
       targetCategory: normalizeTargetCategory(field),
-    });
+    };
+    const targetFieldId = preservedTargetFieldId(field, current);
+    if (targetFieldId !== undefined) {
+      mergedField.targetFieldId = targetFieldId;
+    }
+    merged.push(mergedField);
   });
 
   existing.forEach((field: FieldTemplate, index: number) => {
@@ -102,16 +107,22 @@ function baseField(id: string, name: string): FieldTemplate {
     name,
     valueType: TEXT_VALUE_TYPE,
     targetCategory: '',
+    targetFieldId: '',
   };
 }
 
 function cloneField(field: FieldTemplate): FieldTemplate {
-  return {
+  const cloned: FieldTemplate = {
     id: field.id,
     name: field.name,
     valueType: normalizeValueType(field.valueType),
     targetCategory: normalizeTargetCategory(field),
   };
+  const targetFieldId = preservedTargetFieldId(field);
+  if (targetFieldId !== undefined) {
+    cloned.targetFieldId = targetFieldId;
+  }
+  return cloned;
 }
 
 function normalizeValueType(valueType: string | undefined): string {
@@ -132,4 +143,16 @@ function normalizeTargetCategory(field: FieldTemplate): string {
   return valueType === ENTRY_REFERENCE_VALUE_TYPE
     ? field.targetCategory.trim()
     : field.targetCategory;
+}
+
+function preservedTargetFieldId(
+  field: FieldTemplate,
+  fallback?: FieldTemplate,
+): string | undefined {
+  if (typeof field.targetFieldId === 'string') {
+    return field.targetFieldId;
+  }
+  return typeof fallback?.targetFieldId === 'string'
+    ? fallback.targetFieldId
+    : undefined;
 }

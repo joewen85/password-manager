@@ -508,24 +508,28 @@ struct FieldTemplate: Codable, Equatable, Identifiable, Sendable {
     var name: String
     var valueType: String
     var targetCategory: String
+    var targetFieldId: String
 
     private enum CodingKeys: String, CodingKey {
         case id
         case name
         case valueType
         case targetCategory
+        case targetFieldId
     }
 
     init(
         id: String = UUID().uuidString.lowercased(),
         name: String,
         valueType: String = "text",
-        targetCategory: String = ""
+        targetCategory: String = "",
+        targetFieldId: String = ""
     ) {
         self.id = id
         self.name = name
         self.valueType = valueType
         self.targetCategory = targetCategory
+        self.targetFieldId = targetFieldId
     }
 
     init(from decoder: Decoder) throws {
@@ -536,6 +540,7 @@ struct FieldTemplate: Codable, Equatable, Identifiable, Sendable {
         let decodedValueType = try container.decodeIfPresent(String.self, forKey: .valueType) ?? ""
         valueType = decodedValueType.isEmpty ? "text" : decodedValueType
         targetCategory = try container.decodeIfPresent(String.self, forKey: .targetCategory) ?? ""
+        targetFieldId = try container.decodeIfPresent(String.self, forKey: .targetFieldId) ?? ""
     }
 }
 

@@ -17,6 +17,7 @@ import life.devops.passwordmanager.model.VaultEntry
 import life.devops.passwordmanager.model.VaultEntryType
 import life.devops.passwordmanager.model.VaultPayload
 import life.devops.passwordmanager.model.VaultSnapshot
+import life.devops.passwordmanager.sync.VaultSyncPayload
 import org.json.JSONObject
 import java.io.File
 import java.time.Instant
@@ -42,10 +43,27 @@ class VaultJsonTest {
         assertEquals("harmony_target_01", source.customFields.first().value)
         assertEquals("entryReference", owner.valueType)
         assertEquals("Accounts", owner.targetCategory)
+        assertEquals("", owner.targetFieldId)
+
+        val fieldReference = VaultJson.decodeSnapshot(contractFixture("snapshot-field-reference.json"))
+        val fieldReferenceRoundTrip = VaultJson.decodeSnapshot(VaultJson.encodeSnapshot(fieldReference))
+        val ownerEmail = fieldReferenceRoundTrip.categoryTemplates
+            .single { it.category == "Servers" }
+            .fields.single { it.name == "Owner Email" }
+        assertEquals("fieldReference", ownerEmail.valueType)
+        assertEquals("Accounts", ownerEmail.targetCategory)
+        assertEquals("target_email_field", ownerEmail.targetFieldId)
+        assertEquals(
+            "account_target_01",
+            fieldReferenceRoundTrip.entries
+                .single { it.label == "Production Server" }
+                .customFields.single().value,
+        )
 
         val legacy = VaultJson.decodeSnapshot(contractFixture("snapshot-legacy-text.json"))
         assertEquals("template_owner_team", legacy.categoryTemplates.single().fields.single().id)
         assertEquals("text", legacy.categoryTemplates.single().fields.single().valueType)
+        assertEquals("", legacy.categoryTemplates.single().fields.single().targetFieldId)
         assertEquals("", legacy.entries.single().customFields.single().templateFieldId)
 
         val emptySlug = VaultJson.decodeSnapshot(contractFixture("snapshot-legacy-empty-slug.json"))
@@ -395,6 +413,108 @@ class VaultJsonTest {
 
         assertEquals("futureRelationV3", decoded.valueType)
         assertEquals("Targets", decoded.targetCategory)
+    }
+
+    @Test
+    fun fieldReferenceTargetFieldIdRoundTripsThroughSnapshotScopedExportAndSync() {
+        val targetField = FieldTemplate(
+            id = "target-account-username",
+            name = "Username",
+        )
+        val sourceField = FieldTemplate(
+            id = "source-account-link",
+            name = "Account username",
+            valueType = "fieldReference",
+            targetCategory = "Accounts",
+            targetFieldId = targetField.id,
+        )
+        val sourceTemplate = CategoryTemplate(
+            category = "Servers",
+            fields = listOf(sourceField),
+        )
+        val sourceEntry = VaultEntry(
+            id = "source-entry",
+            label = "Production server",
+            type = VaultEntryType.SERVER,
+            payload = VaultPayload.Server(ServerPayload(category = "Servers")),
+        )
+        val snapshot = VaultSnapshot(
+            entries = listOf(sourceEntry),
+            categories = listOf("Accounts", "Servers"),
+            categoryTemplates = listOf(
+                CategoryTemplate(category = "Accounts", fields = listOf(targetField)),
+                sourceTemplate,
+            ),
+        )
+
+        val snapshotField = VaultJson.decodeSnapshot(VaultJson.encodeSnapshot(snapshot))
+            .categoryTemplates.single { it.category == "Servers" }.fields.single()
+        val scopedField = VaultJson.decodeScopedExport(
+            VaultJson.encodeScopedExport(
+                ScopedVaultExport(
+                    scope = ScopedExportScope.ITEM,
+                    item = sourceEntry,
+                    categoryTemplates = listOf(sourceTemplate),
+                )
+            )
+        ).categoryTemplates.single().fields.single()
+        val syncField = VaultSyncPayload.fromJson(
+            VaultSyncPayload(
+                exportedAt = Instant.parse("2026-07-29T00:00:00Z"),
+                deviceId = "android-test",
+                revision = 7,
+                snapshot = snapshot,
+            ).toJson().toString()
+        ).snapshot.categoryTemplates.single { it.category == "Servers" }.fields.single()
+
+        listOf(snapshotField, scopedField, syncField).forEach { decoded ->
+            assertEquals("fieldReference", decoded.valueType)
+            assertEquals("Accounts", decoded.targetCategory)
+            assertEquals("target-account-username", decoded.targetFieldId)
+        }
+    }
+
+    @Test
+    fun missingTargetFieldIdDefaultsToEmptyForLegacyFieldTemplates() {
+        val raw = JSONObject()
+            .put("entries", org.json.JSONArray())
+            .put("categoryTemplates", org.json.JSONArray(listOf(
+                JSONObject()
+                    .put("category", "Servers")
+                    .put("fields", org.json.JSONArray(listOf(
+                        JSONObject()
+                            .put("id", "legacy-field-reference")
+                            .put("name", "Account username")
+                            .put("valueType", "fieldReference")
+                            .put("targetCategory", "Accounts")
+                    )))
+            )))
+            .toString()
+
+        val decoded = VaultJson.decodeSnapshot(raw).categoryTemplates.single().fields.single()
+
+        assertEquals("", FieldTemplate(name = "Legacy").targetFieldId)
+        assertEquals("", decoded.targetFieldId)
+    }
+
+    @Test
+    fun unknownFieldTypePreservesTargetFieldIdAcrossRoundTrip() {
+        val unknown = FieldTemplate(
+            id = "future-field",
+            name = "Future relation",
+            valueType = "futureFieldReferenceV2",
+            targetCategory = "Accounts",
+            targetFieldId = "opaque-target-field",
+        )
+        val decoded = VaultJson.decodeSnapshot(
+            VaultJson.encodeSnapshot(
+                VaultSnapshot(
+                    categoryTemplates = listOf(CategoryTemplate("Servers", listOf(unknown))),
+                )
+            )
+        ).categoryTemplates.single().fields.single()
+
+        assertEquals(unknown, decoded)
     }
 
     @Test

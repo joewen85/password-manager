@@ -361,6 +361,7 @@ object VaultJson {
             .put("name", name)
             .put("valueType", valueType)
             .put("targetCategory", targetCategory)
+            .put("targetFieldId", targetFieldId)
 
     private fun JSONObject.toFieldTemplate(): FieldTemplate {
         val name = optString("name")
@@ -369,6 +370,7 @@ object VaultJson {
             name = name,
             valueType = optString("valueType", "text").ifBlank { "text" },
             targetCategory = optString("targetCategory"),
+            targetFieldId = optString("targetFieldId"),
         )
     }
 

@@ -214,6 +214,7 @@ function checkFieldReferenceBehavior() {
         name: 'Owner',
         valueType: 'text',
         targetCategory: '',
+        targetFieldId: '',
       },
     ]),
     'Harmony legacy template fields receive text defaults without changing opaque IDs',

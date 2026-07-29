@@ -228,10 +228,27 @@ int main() {
     assert(referenceFixture.entries[1].customFields[0].value == "harmony_target_01");
     assert(referenceFixture.categoryTemplates[1].fields[0].valueType == "entryReference");
     assert(referenceFixture.categoryTemplates[1].fields[0].targetCategory == "Accounts");
+    assert(referenceFixture.categoryTemplates[1].fields[0].targetFieldId.empty());
     const auto referenceRoundTrip = pm::parseSnapshotJson(pm::serializeSnapshotJson(referenceFixture));
     assert(referenceRoundTrip.entries[0].id == "harmony_target_01");
     assert(referenceRoundTrip.entries[1].customFields[0].templateFieldId == "44444444-4444-4444-8444-444444444444");
     assert(referenceRoundTrip.categoryTemplates[1].fields[0].valueType == "entryReference");
+
+    const auto fieldReferenceFixture = pm::parseSnapshotJson(
+        readContractFixture("snapshot-field-reference.json")
+    );
+    assert(fieldReferenceFixture.entries.size() == 2);
+    assert(fieldReferenceFixture.categoryTemplates.size() == 2);
+    const auto& sourceFieldTemplate = fieldReferenceFixture.categoryTemplates[1].fields[0];
+    assert(sourceFieldTemplate.valueType == "fieldReference");
+    assert(sourceFieldTemplate.targetCategory == "Accounts");
+    assert(sourceFieldTemplate.targetFieldId == "target_email_field");
+    assert(fieldReferenceFixture.entries[1].customFields[0].value == "account_target_01");
+    const auto fieldReferenceRoundTrip = pm::parseSnapshotJson(
+        pm::serializeSnapshotJson(fieldReferenceFixture)
+    );
+    assert(fieldReferenceRoundTrip.categoryTemplates[1].fields[0].valueType == "fieldReference");
+    assert(fieldReferenceRoundTrip.categoryTemplates[1].fields[0].targetFieldId == "target_email_field");
 
     const auto referenceSearchByLabel = pm::filterEntries(
         referenceFixture.entries,
@@ -373,13 +390,13 @@ int main() {
     displaySource.id = "display-source-id";
     displaySource.category = "Servers";
     const std::vector<pm::FieldTemplate> displayTemplates = {
-        {"template_text", "Notes", "text", ""},
-        {"template_resolved", "Resolved Owner", "entryReference", "Accounts"},
-        {"template_empty", "Empty Owner", "entryReference", "Accounts"},
-        {"template_missing", "Missing Owner", "entryReference", "Accounts"},
-        {"template_deleted", "Deleted Owner", "entryReference", "Accounts"},
-        {"template_mismatch", "Mismatched Owner", "entryReference", "Accounts"},
-        {"template_future", "Future Owner", "futureLink", "Accounts"},
+        {"template_text", "Notes", "text", "", ""},
+        {"template_resolved", "Resolved Owner", "entryReference", "Accounts", ""},
+        {"template_empty", "Empty Owner", "entryReference", "Accounts", ""},
+        {"template_missing", "Missing Owner", "entryReference", "Accounts", ""},
+        {"template_deleted", "Deleted Owner", "entryReference", "Accounts", ""},
+        {"template_mismatch", "Mismatched Owner", "entryReference", "Accounts", ""},
+        {"template_future", "Future Owner", "futureLink", "Accounts", ""},
     };
     displaySource.customFields = {
         {"field_text", "Notes", "visible-text", "template_text"},
@@ -464,12 +481,14 @@ int main() {
         "Text",
         "text",
         "Accounts",
+        "",
     });
     lifecycleTemplates[1].fields.push_back(pm::FieldTemplate{
         "template_future",
         "Future",
         "futureReference",
         "ACCOUNTS",
+        "",
     });
     const auto renamedTemplates = pm::propagateEntryReferenceCategoryRename(
         lifecycleTemplates,
@@ -569,6 +588,7 @@ int main() {
     assert(legacyFixture.categoryTemplates[0].fields[0].id == "template_owner_team");
     assert(legacyFixture.categoryTemplates[0].fields[0].valueType == "text");
     assert(legacyFixture.categoryTemplates[0].fields[0].targetCategory.empty());
+    assert(legacyFixture.categoryTemplates[0].fields[0].targetFieldId.empty());
     assert(legacyFixture.entries[0].customFields[0].templateFieldId.empty());
 
     const auto emptySlugFixture = pm::parseSnapshotJson(
@@ -588,6 +608,7 @@ int main() {
     const auto unknownTypeRoundTrip = pm::parseSnapshotJson(pm::serializeSnapshotJson(unknownTypeFixture));
     assert(unknownTypeRoundTrip.categoryTemplates[0].fields[0].valueType == "futureLink");
     assert(unknownTypeRoundTrip.categoryTemplates[0].fields[0].targetCategory == "Accounts");
+    assert(unknownTypeRoundTrip.categoryTemplates[0].fields[0].targetFieldId.empty());
 
     const auto referenceSyncJson = pm::serializeSyncPayloadJson(
         pm::VaultSyncPayload{1, "2026-07-28T05:00:00Z", "fixture", 1, referenceFixture}
@@ -595,6 +616,11 @@ int main() {
     const auto referenceSync = pm::parseSyncPayloadJson(referenceSyncJson);
     assert(referenceSync.snapshot.entries[1].customFields[0].templateFieldId == "44444444-4444-4444-8444-444444444444");
     assert(referenceSync.snapshot.categoryTemplates[1].fields[0].valueType == "entryReference");
+
+    const auto fieldReferenceSync = pm::parseSyncPayloadJson(pm::serializeSyncPayloadJson(
+        pm::VaultSyncPayload{1, "2026-07-29T05:00:00Z", "fixture", 1, fieldReferenceFixture}
+    ));
+    assert(fieldReferenceSync.snapshot.categoryTemplates[1].fields[0].targetFieldId == "target_email_field");
 
     const auto envelopeText = pm::serializeEnvelopeText(envelope);
     const auto parsedEnvelope = pm::parseEnvelopeText(envelopeText);

@@ -93,6 +93,7 @@ data class FieldTemplate(
     val name: String,
     val valueType: String = "text",
     val targetCategory: String = "",
+    val targetFieldId: String = "",
 )
 
 data class CategoryTemplate(

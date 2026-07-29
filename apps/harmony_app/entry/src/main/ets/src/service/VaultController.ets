@@ -1521,6 +1521,7 @@ export class VaultController {
           name: field.name,
           valueType: normalizeFieldValueType(field.valueType),
           targetCategory: readPreservedString(field.targetCategory),
+          targetFieldId: readPreservedString(field.targetFieldId),
         };
         return templateField;
       }),
@@ -2819,6 +2820,7 @@ function createFieldTemplate(name: string): FieldTemplate {
     name,
     valueType: 'text',
     targetCategory: '',
+    targetFieldId: '',
   };
 }
 
@@ -3142,6 +3144,7 @@ function normalizeFieldTemplates(fields: FieldTemplate[] | undefined): FieldTemp
       name,
       valueType: normalizeFieldValueType(field.valueType),
       targetCategory: readPreservedString(field.targetCategory),
+      targetFieldId: readPreservedString(field.targetFieldId),
     });
   });
   return output.length > 0 ? output : defaultCategoryFields();
@@ -3179,6 +3182,7 @@ function mergeEditableTemplateFields(
       name: requestedField.name,
       valueType: normalizeFieldValueType(existingField.valueType),
       targetCategory: readPreservedString(existingField.targetCategory),
+      targetFieldId: readPreservedString(existingField.targetFieldId),
     });
   });
 
@@ -3274,6 +3278,7 @@ function cloneFieldTemplate(field: FieldTemplate): FieldTemplate {
     name: field.name,
     valueType: normalizeFieldValueType(field.valueType),
     targetCategory: readPreservedString(field.targetCategory),
+    targetFieldId: readPreservedString(field.targetFieldId),
   };
 }
 

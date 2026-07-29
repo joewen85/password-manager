@@ -483,7 +483,7 @@ std::string stableFieldId(const std::string& name) {
 
 FieldTemplate makeFieldTemplate(const std::string& name) {
     const auto clean = trimCopy(name);
-    return FieldTemplate{stableFieldId(clean), clean, "text", ""};
+    return FieldTemplate{stableFieldId(clean), clean, "text", "", ""};
 }
 
 std::vector<FieldTemplate> normalizeFieldTemplates(const std::vector<FieldTemplate>& fields) {
@@ -499,6 +499,7 @@ std::vector<FieldTemplate> normalizeFieldTemplates(const std::vector<FieldTempla
             cleanName,
             field.valueType.empty() ? "text" : field.valueType,
             field.targetCategory,
+            field.targetFieldId,
         });
     }
     return normalized;
@@ -1106,6 +1107,8 @@ FieldTemplate readFieldTemplate(JsonReader& reader) {
                 field.valueType = reader.string();
             } else if (key == "targetCategory") {
                 field.targetCategory = reader.string();
+            } else if (key == "targetFieldId") {
+                field.targetFieldId = reader.string();
             } else {
                 reader.skipValue();
             }
@@ -1772,7 +1775,8 @@ std::string serializeSnapshotJson(const VaultSnapshot& snapshot) {
             out << "{\"id\":" << jsonString(field.id)
                 << ",\"name\":" << jsonString(field.name)
                 << ",\"valueType\":" << jsonString(field.valueType.empty() ? "text" : field.valueType)
-                << ",\"targetCategory\":" << jsonString(field.targetCategory) << "}";
+                << ",\"targetCategory\":" << jsonString(field.targetCategory)
+                << ",\"targetFieldId\":" << jsonString(field.targetFieldId) << "}";
         }
         out << "]}";
     }

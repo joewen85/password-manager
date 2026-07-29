@@ -34,9 +34,9 @@ The project is structured as native platform apps plus modular shared packages. 
 
 ## Vault Data Contract
 - Vault state is stored as encrypted JSON snapshots; there is no database schema or database migration in the current architecture.
-- Category-template fields may declare `valueType=entryReference` and a `targetCategory`. The matching entry custom field stores the target entry's stable opaque ID and the defining `templateFieldId`.
+- Category-template fields may declare legacy `valueType=entryReference` with a `targetCategory`, or the additive `valueType=fieldReference` shape with a stable `targetFieldId`. In both cases the matching source custom field stores the selected target entry's stable opaque ID and its own defining `templateFieldId`; `targetFieldId` identifies the field to project and never materializes the target value into the source entry.
 - Tags remain a separate loose taxonomy for grouping, search, and filtering; they are never interpreted as entry references.
-- Missing additive properties decode to legacy text-field defaults, while unknown non-empty field types and non-UUID IDs are preserved losslessly.
+- Missing additive properties decode to legacy defaults (`valueType=text`, empty `targetCategory`, empty `targetFieldId`, and empty `templateFieldId`), while unknown non-empty field types and non-UUID IDs are preserved losslessly.
 - Scoped item/category exports carry the source category template but never expand referenced entries implicitly. See `docs/FIELD_REFERENCE_CONTRACT.md` for the complete compatibility, lifecycle, import/export, and rollout contract.
 
 ## Extensibility

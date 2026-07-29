@@ -284,24 +284,28 @@ struct FieldTemplate: Identifiable, Codable, Equatable, Hashable, Sendable {
     var name: String
     var valueType: String
     var targetCategory: String
+    var targetFieldId: String
 
     private enum CodingKeys: String, CodingKey {
         case id
         case name
         case valueType
         case targetCategory
+        case targetFieldId
     }
 
     init(
         id: String? = nil,
         name: String,
         valueType: String = "text",
-        targetCategory: String = ""
+        targetCategory: String = "",
+        targetFieldId: String = ""
     ) {
         self.name = name
         self.id = id.flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString.lowercased()
         self.valueType = valueType
         self.targetCategory = targetCategory
+        self.targetFieldId = targetFieldId
     }
 
     init(from decoder: Decoder) throws {
@@ -312,6 +316,7 @@ struct FieldTemplate: Identifiable, Codable, Equatable, Hashable, Sendable {
         let decodedValueType = try container.decodeIfPresent(String.self, forKey: .valueType) ?? ""
         valueType = decodedValueType.isEmpty ? "text" : decodedValueType
         targetCategory = try container.decodeIfPresent(String.self, forKey: .targetCategory) ?? ""
+        targetFieldId = try container.decodeIfPresent(String.self, forKey: .targetFieldId) ?? ""
     }
 
     static func stableFieldId(_ name: String) -> String {
