@@ -352,12 +352,13 @@ final class VaultStore {
                 id: existingField?.id ?? customField.templateFieldId,
                 name: name,
                 valueType: existingField?.valueType ?? "text",
-                targetCategory: existingField?.targetCategory ?? ""
+                targetCategory: existingField?.targetCategory ?? "",
+                targetFieldId: existingField?.targetFieldId ?? ""
             )
         }
         let requestedIDs = Set(requestedFields.map(\.id))
         requestedFields.append(contentsOf: existingFields.filter {
-            $0.normalizedValueType != "text" && !requestedIDs.contains($0.id)
+            !isEditableCategoryFieldType($0.valueType) && !requestedIDs.contains($0.id)
         })
         return updateCategoryTemplate(category, fields: requestedFields)
     }
@@ -397,13 +398,12 @@ final class VaultStore {
         }
         let mandatoryFields = existingFields.filter {
             storedValueFieldIDs.contains($0.id)
-                || ($0.normalizedValueType != "text" && $0.normalizedValueType != "entryReference")
+                || !isEditableCategoryFieldType($0.valueType)
         }
         var claimedMandatoryNames = Set([nameField.name.lowercased()])
         var mandatoryFinalFields: [FieldTemplate] = []
         for existing in mandatoryFields {
-            let isUnknown = existing.normalizedValueType != "text"
-                && existing.normalizedValueType != "entryReference"
+            let isUnknown = !isEditableCategoryFieldType(existing.valueType)
             if isUnknown {
                 claimedMandatoryNames.insert(
                     existing.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -428,9 +428,12 @@ final class VaultStore {
                 id: existing.id,
                 name: name,
                 valueType: existing.normalizedValueType,
-                targetCategory: existing.normalizedValueType == "entryReference"
+                targetCategory: existing.normalizedValueType == "fieldReference"
                     ? (requested?.targetCategory ?? existing.targetCategory)
                         .trimmingCharacters(in: .whitespacesAndNewlines)
+                    : "",
+                targetFieldId: existing.normalizedValueType == "fieldReference"
+                    ? requested?.targetFieldId ?? existing.targetFieldId
                     : ""
             ))
         }
@@ -457,16 +460,17 @@ final class VaultStore {
             guard !name.isEmpty, !name.caseInsensitiveEquals("名称") else { continue }
             guard !reservedMandatoryNames.contains(name.lowercased()) else { continue }
             let requestedType = requested.normalizedValueType
-            guard requestedType == "text" || requestedType == "entryReference" else { continue }
+            guard isEditableCategoryFieldType(requestedType) else { continue }
 
-            let targetCategory = requestedType == "entryReference"
+            let targetCategory = requestedType == "fieldReference"
                 ? requested.targetCategory.trimmingCharacters(in: .whitespacesAndNewlines)
                 : ""
             let field = FieldTemplate(
                 id: existing?.id ?? requested.id,
                 name: name,
                 valueType: requestedType,
-                targetCategory: targetCategory
+                targetCategory: targetCategory,
+                targetFieldId: requestedType == "fieldReference" ? requested.targetFieldId : ""
             )
             appendTemplateField(
                 field,
@@ -483,6 +487,22 @@ final class VaultStore {
                 includedIDs: &includedIDs,
                 includedNames: &includedNames
             )
+        }
+
+        let updated = CategoryTemplate(category: canonicalCategory, fields: updatedFields)
+        let prospectiveTemplates = categoryTemplates.filter {
+            !$0.category.caseInsensitiveEquals(canonicalCategory)
+        } + [updated]
+        guard !updatedFields.contains(where: {
+            $0.normalizedValueType == "fieldReference"
+                && !fieldReferenceTemplateConfigurationIsValid(
+                    sourceCategory: canonicalCategory,
+                    sourceField: $0,
+                    templates: prospectiveTemplates
+                )
+        }) else {
+            statusMessage = "Field reference requires a target category and target text field."
+            return false
         }
 
         upsertCategoryTemplate(category: canonicalCategory, fields: updatedFields)
@@ -541,8 +561,18 @@ final class VaultStore {
             return false
         }
         let semantics = customFieldSemantics(field: entry.customFields[fieldIndex], template: template)
-        guard semantics.semantic == .entryReference, let templateField = semantics.templateField else {
+        guard semantics.semantic == .entryReference || semantics.semantic == .fieldReference,
+              let templateField = semantics.templateField else {
             statusMessage = "Entry reference field not found."
+            return false
+        }
+        if semantics.semantic == .fieldReference,
+           !fieldReferenceTemplateConfigurationIsValid(
+               sourceCategory: entry.payload.category,
+               sourceField: templateField,
+               templates: categoryTemplates
+           ) {
+            statusMessage = "Field reference configuration needs repair."
             return false
         }
         if !targetID.isEmpty {
@@ -1821,7 +1851,8 @@ struct EntryDraft: Equatable {
 
         for templateField in fields {
             guard templateField.normalizedValueType == "text"
-                    || templateField.normalizedValueType == "entryReference" else {
+                    || templateField.normalizedValueType == "entryReference"
+                    || templateField.normalizedValueType == "fieldReference" else {
                 continue
             }
             let name = templateField.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1862,7 +1893,7 @@ struct EntryDraft: Equatable {
             switch customFieldSemantics(field: state.field, template: template).semantic {
             case .text:
                 state.isProtected = false
-            case .entryReference, .unsupported:
+            case .entryReference, .fieldReference, .unsupported:
                 state.isProtected = true
                 state.mustPreserveOriginal = true
             }

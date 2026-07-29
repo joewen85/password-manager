@@ -9,6 +9,7 @@ struct CategoryTemplateEditorView: View {
     @State private var errorMessage: String?
 
     private let storedValueFieldIDs: Set<String>
+    private let referencedTargetFieldIDs: Set<String>
 
     init(store: VaultStore, category: String) {
         self.store = store
@@ -21,6 +22,7 @@ struct CategoryTemplateEditorView: View {
             !baseNames.contains($0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
         })
         storedValueFieldIDs = store.categoryTemplateStoredValueFieldIds(category)
+        referencedTargetFieldIDs = store.categoryTemplateReferencedTargetFieldIDs(category)
     }
 
     var body: some View {
@@ -43,8 +45,11 @@ struct CategoryTemplateEditorView: View {
                     ForEach($fields) { $field in
                         CategoryTemplateFieldEditor(
                             field: $field,
+                            sourceCategory: category,
                             categories: store.categories,
-                            isStored: storedValueFieldIDs.contains(field.id),
+                            templates: prospectiveTemplates,
+                            isLocked: storedValueFieldIDs.contains(field.id)
+                                || referencedTargetFieldIDs.contains(field.id),
                             remove: { remove(field.id) }
                         )
                     }
@@ -78,8 +83,18 @@ struct CategoryTemplateEditorView: View {
     }
 
     private func remove(_ id: String) {
-        guard !storedValueFieldIDs.contains(id) else { return }
+        guard !storedValueFieldIDs.contains(id), !referencedTargetFieldIDs.contains(id) else { return }
         fields.removeAll { $0.id == id }
+    }
+
+    private var prospectiveTemplates: [CategoryTemplate] {
+        let updated = CategoryTemplate(category: category, fields: CategoryTemplate.defaultFields + fields)
+        var templates = store.categoryTemplates.filter {
+            $0.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(category.trimmingCharacters(in: .whitespacesAndNewlines)) != .orderedSame
+        }
+        templates.append(updated)
+        return templates
     }
 
     private func save() {
@@ -93,8 +108,10 @@ struct CategoryTemplateEditorView: View {
 
 private struct CategoryTemplateFieldEditor: View {
     @Binding var field: FieldTemplate
+    var sourceCategory: String
     var categories: [String]
-    var isStored: Bool
+    var templates: [CategoryTemplate]
+    var isLocked: Bool
     var remove: () -> Void
 
     var body: some View {
@@ -102,7 +119,7 @@ private struct CategoryTemplateFieldEditor: View {
             if isEditableCategoryFieldType(field.valueType) {
                 HStack(spacing: 8) {
                     TextField("Field Name", text: $field.name)
-                    if !isStored {
+                    if !isLocked {
                         Button(role: .destructive, action: remove) {
                             Label("Remove Field", systemImage: "trash")
                         }
@@ -110,26 +127,38 @@ private struct CategoryTemplateFieldEditor: View {
                     }
                 }
 
-                if isStored {
+                if isLocked {
                     LabeledContent("Field Type", value: fieldTypeTitle)
-                    Text("This field has saved values. Its type and presence are locked.")
+                    Text("This field is in use. Its type and presence are locked.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
                     Picker("Field Type", selection: valueTypeBinding) {
                         Text("Text").tag(customFieldTextValueType)
-                        Text("Entry").tag(customFieldEntryReferenceValueType)
+                        Text("Field Reference").tag(customFieldFieldReferenceValueType)
                     }
                     .pickerStyle(.segmented)
                 }
 
-                if field.normalizedValueType == customFieldEntryReferenceValueType {
-                    Picker("Target Category", selection: $field.targetCategory) {
-                        Text("Any Category").tag("")
+                if field.normalizedValueType == customFieldFieldReferenceValueType {
+                    Picker("Target Category", selection: targetCategoryBinding) {
+                        Text("Select Target Category").tag("")
                         ForEach(categories, id: \.self) { category in
                             Text(category).tag(category)
                         }
                     }
+
+                    Picker("Target Field", selection: $field.targetFieldId) {
+                        Text("Select Target Field").tag("")
+                        if !field.targetFieldId.isEmpty,
+                           !targetFieldCandidates.contains(where: { $0.id == field.targetFieldId }) {
+                            Text("Unavailable Target Field").tag(field.targetFieldId)
+                        }
+                        ForEach(targetFieldCandidates) { candidate in
+                            Text(candidate.name).tag(candidate.id)
+                        }
+                    }
+                    .disabled(field.targetCategory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             } else {
                 Text(field.name.isEmpty ? "Unsupported Field" : field.name)
@@ -144,7 +173,30 @@ private struct CategoryTemplateFieldEditor: View {
     }
 
     private var fieldTypeTitle: String {
-        field.normalizedValueType == customFieldEntryReferenceValueType ? "Entry Reference" : "Text"
+        switch field.normalizedValueType {
+        case customFieldEntryReferenceValueType: "Entry Reference (Legacy)"
+        case customFieldFieldReferenceValueType: "Field Reference"
+        case customFieldTextValueType: "Text"
+        default: field.valueType
+        }
+    }
+
+    private var targetFieldCandidates: [FieldTemplate] {
+        fieldReferenceTargetFieldCandidates(
+            sourceCategory: sourceCategory,
+            sourceField: field,
+            templates: templates
+        )
+    }
+
+    private var targetCategoryBinding: Binding<String> {
+        Binding(
+            get: { field.targetCategory },
+            set: { value in
+                field.targetCategory = value
+                field.targetFieldId = ""
+            }
+        )
     }
 
     private var valueTypeBinding: Binding<String> {
@@ -152,9 +204,8 @@ private struct CategoryTemplateFieldEditor: View {
             get: { field.normalizedValueType },
             set: { value in
                 field.valueType = value
-                if value == customFieldTextValueType {
-                    field.targetCategory = ""
-                }
+                field.targetCategory = ""
+                field.targetFieldId = ""
             }
         )
     }

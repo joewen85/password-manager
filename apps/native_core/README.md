@@ -43,7 +43,11 @@ link these sources instead of copying them into each app directory.
   propagation, safe search projection, copy-import entry-ID remapping, and
   sync-conflict preservation. Search includes only a resolved target's label,
   category, and target field name; the target field value and raw IDs are never
-  indexed. CLI field-level presentation remains gated on P12.
+  indexed. P12 `show-entry` maps every field-reference state to a stable status;
+  the resolved state includes only the configured target field value at this
+  explicit unlocked detail boundary. Raw IDs, target secrets, unrelated fields,
+  and non-resolved target values remain suppressed with or without
+  `--show-secret`.
 
 `export-snapshot` is a lossless plaintext data export, not a display projection.
 It intentionally retains stored reference IDs and unknown/orphan values so a

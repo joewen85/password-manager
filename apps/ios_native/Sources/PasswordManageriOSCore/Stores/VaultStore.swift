@@ -373,13 +373,29 @@ final class VaultStore {
         let updatedFields = categoryTemplateFieldsForUserSave(
             existing: existing.fields,
             requestedCustomFields: requestedCustomFields,
-            storedValueFieldIds: categoryTemplateStoredValueFieldIds(normalized)
+            storedValueFieldIds: categoryTemplateStoredValueFieldIds(normalized),
+            referencedTargetFieldIds: referencedTargetFieldIDs
         )
         if let duplicateName = duplicateEditableCategoryTemplateFieldName(updatedFields) {
             statusMessage = "Field name already exists: \(duplicateName)."
             return false
         }
         let updated = CategoryTemplate(category: normalized, fields: updatedFields)
+        let prospectiveTemplates = categoryTemplates.filter {
+            $0.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(normalized) != .orderedSame
+        } + [updated]
+        guard !updatedFields.contains(where: {
+            $0.normalizedValueType == customFieldFieldReferenceValueType
+                && !fieldReferenceTemplateConfigurationIsValid(
+                    sourceCategory: normalized,
+                    sourceField: $0,
+                    templates: prospectiveTemplates
+                )
+        }) else {
+            statusMessage = "Field reference requires a target category and target text field."
+            return false
+        }
         if let index = categoryTemplates.firstIndex(where: {
             $0.category.trimmingCharacters(in: .whitespacesAndNewlines)
                 .caseInsensitiveCompare(normalized) == .orderedSame
@@ -433,8 +449,18 @@ final class VaultStore {
             field: field,
             template: categoryTemplate(for: entries[entryIndex].payload.category)
         )
-        guard semantics.semantic == .entryReference, let templateField = semantics.templateField else {
+        guard semantics.semantic == .entryReference || semantics.semantic == .fieldReference,
+              let templateField = semantics.templateField else {
             statusMessage = "Reference field is no longer available."
+            return false
+        }
+        if semantics.semantic == .fieldReference,
+           !fieldReferenceTemplateConfigurationIsValid(
+               sourceCategory: entries[entryIndex].payload.category,
+               sourceField: templateField,
+               templates: categoryTemplates
+           ) {
+            statusMessage = "Field reference configuration needs repair."
             return false
         }
         if !targetID.isEmpty {
@@ -1158,7 +1184,8 @@ struct EntryDraft: Equatable {
         let currentCategory = category.trimmingCharacters(in: .whitespacesAndNewlines)
         for templateField in template?.fields ?? []
         where templateField.normalizedValueType == customFieldTextValueType
-            || templateField.normalizedValueType == customFieldEntryReferenceValueType {
+            || templateField.normalizedValueType == customFieldEntryReferenceValueType
+            || templateField.normalizedValueType == customFieldFieldReferenceValueType {
             let activeBindingCount = customFields.lazy.filter { field in
                 guard field.matchesTemplateField(templateField) else { return false }
                 guard let sourceCategory = customFieldSourceCategories[field.id] else { return true }
@@ -1183,7 +1210,8 @@ struct EntryDraft: Equatable {
 
         for templateField in fields {
             guard templateField.normalizedValueType == customFieldTextValueType
-                    || templateField.normalizedValueType == customFieldEntryReferenceValueType else {
+                    || templateField.normalizedValueType == customFieldEntryReferenceValueType
+                    || templateField.normalizedValueType == customFieldFieldReferenceValueType else {
                 continue
             }
             let name = templateField.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1214,7 +1242,7 @@ struct EntryDraft: Equatable {
             let existing = existingIndex.map { customFields[$0] }
             if let existingIndex { usedIndices.insert(existingIndex) }
             let configured: CustomField
-            if templateField.normalizedValueType == customFieldEntryReferenceValueType,
+            if templateField.normalizedValueType != customFieldTextValueType,
                var existing {
                 if existing.templateFieldId.isEmpty {
                     existing.templateFieldId = templateField.id
@@ -1230,7 +1258,8 @@ struct EntryDraft: Equatable {
             }
             configuredFields.append(configured)
             nextSources[configured.id] = targetCategory
-            if templateField.normalizedValueType == customFieldEntryReferenceValueType {
+            if templateField.normalizedValueType == customFieldEntryReferenceValueType
+                || templateField.normalizedValueType == customFieldFieldReferenceValueType {
                 nextProtectedIds.insert(configured.id)
             }
         }
@@ -1244,7 +1273,8 @@ struct EntryDraft: Equatable {
             }
             let duplicatesActiveBinding = fields.contains { templateField in
                 (templateField.normalizedValueType == customFieldTextValueType
-                    || templateField.normalizedValueType == customFieldEntryReferenceValueType)
+                    || templateField.normalizedValueType == customFieldEntryReferenceValueType
+                    || templateField.normalizedValueType == customFieldFieldReferenceValueType)
                     && field.matchesTemplateField(templateField)
             }
             let isHidden = sourceCategory.map { !sameCategory($0, targetCategory) } ?? false

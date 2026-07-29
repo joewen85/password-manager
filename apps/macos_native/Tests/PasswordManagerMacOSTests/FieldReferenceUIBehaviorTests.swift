@@ -212,7 +212,7 @@ struct FieldReferenceUIBehaviorTests {
     }
 
     @MainActor
-    @Test("Stored values lock deletion and type while allowing rename and target-category changes")
+    @Test("Legacy reference templates stay read-only with or without stored values")
     func storedValueTemplateSafetyIsCategoryScoped() throws {
         let directory = temporaryDirectory("TemplateSafety")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -248,9 +248,9 @@ struct FieldReferenceUIBehaviorTests {
         ]))
         var aTemplate = try #require(store.categoryTemplates.first { $0.category == "A" })
         var savedLocked = try #require(aTemplate.fields.first { $0.id == locked.id })
-        #expect(savedLocked.name == "Primary Owner")
+        #expect(savedLocked.name == "Owner")
         #expect(savedLocked.valueType == "entryReference")
-        #expect(savedLocked.targetCategory == "People")
+        #expect(savedLocked.targetCategory == "Accounts")
         #expect(aTemplate.fields.contains(unknown))
 
         #expect(store.updateCategoryTemplate("A", fields: []))
@@ -263,7 +263,7 @@ struct FieldReferenceUIBehaviorTests {
             FieldTemplate(id: locked.id, name: "Owner Text", valueType: "text")
         ]))
         let bField = try #require(store.categoryTemplates.first { $0.category == "B" }?.fields.first { $0.id == locked.id })
-        #expect(bField.valueType == "text")
+        #expect(bField == locked)
     }
 
     private func activeFields(_ draft: EntryDraft) -> [CustomField] {

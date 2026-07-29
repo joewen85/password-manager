@@ -3,6 +3,7 @@ import Foundation
 enum CustomFieldSemantic: Equatable, Sendable {
     case text
     case entryReference
+    case fieldReference
     case unsupported
 }
 
@@ -13,6 +14,7 @@ struct CustomFieldSemantics: Equatable, Sendable {
 
 let customFieldTextValueType = "text"
 let customFieldEntryReferenceValueType = "entryReference"
+let customFieldFieldReferenceValueType = "fieldReference"
 
 func customFieldSemantics(
     field: CustomField,
@@ -31,6 +33,8 @@ func customFieldSemantics(
         semantic = .text
     case customFieldEntryReferenceValueType:
         semantic = .entryReference
+    case customFieldFieldReferenceValueType:
+        semantic = .fieldReference
     default:
         semantic = .unsupported
     }
@@ -56,7 +60,7 @@ func matchingCustomFieldTemplate(
 
 func isEditableCategoryFieldType(_ valueType: String) -> Bool {
     switch normalizedCategoryFieldValueType(valueType) {
-    case customFieldTextValueType, customFieldEntryReferenceValueType:
+    case customFieldTextValueType, customFieldFieldReferenceValueType:
         true
     default:
         false
@@ -66,7 +70,8 @@ func isEditableCategoryFieldType(_ valueType: String) -> Bool {
 func categoryTemplateFieldsForUserSave(
     existing: [FieldTemplate],
     requestedCustomFields: [FieldTemplate],
-    storedValueFieldIds: Set<String> = []
+    storedValueFieldIds: Set<String> = [],
+    referencedTargetFieldIds: Set<String> = []
 ) -> [FieldTemplate] {
     let requested = CategoryTemplate.defaultFields + requestedCustomFields
     var usedExistingIndices = Set<Int>()
@@ -84,9 +89,11 @@ func categoryTemplateFieldsForUserSave(
 
         usedExistingIndices.insert(existingIndex)
         let current = existing[existingIndex]
+        let isReferencedTextTarget = current.normalizedValueType == customFieldTextValueType
+            && referencedTargetFieldIds.contains(current.id)
         if !isEditableCategoryFieldType(current.valueType) {
             merged.append(current)
-        } else if storedValueFieldIds.contains(current.id),
+        } else if (storedValueFieldIds.contains(current.id) || isReferencedTextTarget),
                   current.normalizedValueType != field.normalizedValueType {
             merged.append(current)
         } else {
@@ -98,7 +105,14 @@ func categoryTemplateFieldsForUserSave(
 
     for (index, field) in existing.enumerated()
     where !usedExistingIndices.contains(index)
-        && (!isEditableCategoryFieldType(field.valueType) || storedValueFieldIds.contains(field.id)) {
+        && (
+            !isEditableCategoryFieldType(field.valueType)
+                || storedValueFieldIds.contains(field.id)
+                || (
+                    field.normalizedValueType == customFieldTextValueType
+                        && referencedTargetFieldIds.contains(field.id)
+                )
+        ) {
         merged.append(field)
     }
     return merged
@@ -120,13 +134,15 @@ func duplicateEditableCategoryTemplateFieldName(_ fields: [FieldTemplate]) -> St
 func newCategoryTemplateField(
     name: String = "",
     valueType: String = customFieldTextValueType,
-    targetCategory: String = ""
+    targetCategory: String = "",
+    targetFieldId: String = ""
 ) -> FieldTemplate {
     normalizedCategoryTemplateField(FieldTemplate(
         id: UUID().uuidString.lowercased(),
         name: name,
         valueType: valueType,
-        targetCategory: targetCategory
+        targetCategory: targetCategory,
+        targetFieldId: targetFieldId
     ))
 }
 
@@ -164,7 +180,11 @@ private func normalizedCategoryTemplateField(_ field: FieldTemplate) -> FieldTem
     switch normalized.valueType {
     case customFieldTextValueType:
         normalized.targetCategory = ""
+        normalized.targetFieldId = ""
     case customFieldEntryReferenceValueType:
+        normalized.targetCategory = field.targetCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+        normalized.targetFieldId = ""
+    case customFieldFieldReferenceValueType:
         normalized.targetCategory = field.targetCategory.trimmingCharacters(in: .whitespacesAndNewlines)
     default:
         break

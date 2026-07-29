@@ -37,6 +37,7 @@ struct ContentView: View {
     @State private var clearDataPassword = ""
     @State private var clearDataError: String?
     @State private var editorSession: EntryEditorSession?
+    @State private var taxonomyFieldRepairCategory: String?
 
     private let biometricCredentialStore = MacBiometricCredentialStore()
 
@@ -70,7 +71,8 @@ struct ContentView: View {
                     deleteEntry: deleteSelectedEntry,
                     exportEntry: exportEntry,
                     openEntryReference: openEntryReference,
-                    updateEntryReference: updateEntryReference
+                    updateEntryReference: updateEntryReference,
+                    repairCategoryFields: beginEditingCategoryFields
                 )
             }
             .toolbar {
@@ -128,6 +130,7 @@ struct ContentView: View {
                         store.addCategory(category, preset: preset, customFieldNames: customFieldNames)
                     },
                     onCreateTag: { store.addTag($0) },
+                    onEditCategoryFields: beginEditingCategoryFields,
                     onSave: { draft in
                         store.upsert(draft, editing: session.entry)
                         selection = store.entries.sorted { $0.updatedAt > $1.updatedAt }.first?.id
@@ -148,8 +151,14 @@ struct ContentView: View {
                 SyncCenterView(store: store)
                     .frame(minWidth: 560, minHeight: 460)
             }
-            .sheet(isPresented: $isPresentingTaxonomyManager) {
-                TaxonomyManagementView(store: store, onChange: validateCurrentFilter)
+            .sheet(isPresented: $isPresentingTaxonomyManager, onDismiss: {
+                taxonomyFieldRepairCategory = nil
+            }) {
+                TaxonomyManagementView(
+                    store: store,
+                    onChange: validateCurrentFilter,
+                    initialFieldEditCategory: taxonomyFieldRepairCategory
+                )
                     .frame(minWidth: 540, minHeight: 460)
             }
             .sheet(isPresented: $isPresentingExportCenter) {
@@ -598,6 +607,16 @@ struct ContentView: View {
 
     private func beginEditing(_ entry: VaultEntry) {
         editorSession = EntryEditorSession(entry: entry)
+    }
+
+    private func beginEditingCategoryFields(_ category: String) {
+        let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+        editorSession = nil
+        taxonomyFieldRepairCategory = normalized
+        DispatchQueue.main.async {
+            isPresentingTaxonomyManager = true
+        }
     }
 
     private func openEntryReference(_ entry: VaultEntry) {

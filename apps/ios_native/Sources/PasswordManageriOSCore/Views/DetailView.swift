@@ -9,6 +9,7 @@ struct DetailView: View {
     var exportEntry: (VaultEntry) -> Void
     var openReference: (VaultEntry) -> Void = { _ in }
     var updateReference: (VaultEntry, String, String) -> Void = { _, _, _ in }
+    var repairCategoryFields: (String) -> Void = { _ in }
 
     var body: some View {
         Group {
@@ -42,8 +43,10 @@ struct DetailView: View {
                                     entry: entry,
                                     entries: entries,
                                     template: categoryTemplate(for: entry.payload.category),
+                                    categoryTemplates: categoryTemplates,
                                     openReference: openReference,
-                                    updateReference: updateReference
+                                    updateReference: updateReference,
+                                    repairCategoryFields: repairCategoryFields
                                 )
                             }
                         }
@@ -169,8 +172,10 @@ private struct CustomFieldsView: View {
     var entry: VaultEntry
     var entries: [VaultEntry]
     var template: CategoryTemplate?
+    var categoryTemplates: [CategoryTemplate]
     var openReference: (VaultEntry) -> Void
     var updateReference: (VaultEntry, String, String) -> Void
+    var repairCategoryFields: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -195,9 +200,173 @@ private struct CustomFieldsView: View {
                             updateReference: updateReference
                         )
                     }
+                case .fieldReference:
+                    if let templateField = semantics.templateField {
+                        FieldReferenceDetailRow(
+                            entry: entry,
+                            field: field,
+                            templateField: templateField,
+                            categoryTemplates: categoryTemplates,
+                            entries: entries,
+                            openReference: openReference,
+                            updateReference: updateReference,
+                            repairCategoryFields: repairCategoryFields
+                        )
+                    }
                 }
             }
         }
+    }
+}
+
+private struct FieldReferenceDetailRow: View {
+    var entry: VaultEntry
+    var field: CustomField
+    var templateField: FieldTemplate
+    var categoryTemplates: [CategoryTemplate]
+    var entries: [VaultEntry]
+    var openReference: (VaultEntry) -> Void
+    var updateReference: (VaultEntry, String, String) -> Void
+    var repairCategoryFields: (String) -> Void
+
+    @State private var isPresentingSelection = false
+    @State private var searchText = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(templateField.name.isEmpty ? "Field Reference" : templateField.name)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Label("Field Reference", systemImage: "link")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text(presentation.text)
+                .foregroundStyle(presentation.isError ? .red : .primary)
+            Text("Target: \(targetCategory.isEmpty ? "Unavailable Category" : targetCategory) / \(targetFieldName)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if let resolvedValue = fieldReferenceResolvedValue(resolution) {
+                Text(resolvedValue)
+                    .textSelection(.enabled)
+            }
+
+            HStack(spacing: 8) {
+                if let targetEntry {
+                    Button("View") { openReference(targetEntry) }
+                        .buttonStyle(.bordered)
+                }
+                Button(presentation.actionTitle, action: performPrimaryAction)
+                    .buttonStyle(.borderedProminent)
+                    .popover(isPresented: $isPresentingSelection, arrowEdge: .bottom) {
+                        selectionContent
+                    }
+                if !field.value.isEmpty {
+                    Button("Clear", role: .destructive) {
+                        updateReference(entry, field.id, "")
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+    }
+
+    private var resolution: FieldReferenceResolution? {
+        resolveFieldReference(
+            sourceEntry: entry,
+            field: field,
+            categoryTemplates: categoryTemplates,
+            entries: entries
+        )
+    }
+
+    private var presentation: FieldReferencePresentation {
+        guard fieldReferenceTemplateConfigurationIsValid(
+            sourceCategory: entry.payload.category,
+            sourceField: templateField,
+            templates: categoryTemplates
+        ) else {
+            return fieldReferencePresentation(FieldReferenceResolution(status: .invalidConfiguration))
+        }
+        return fieldReferencePresentation(resolution)
+    }
+
+    private var targetCategory: String {
+        templateField.targetCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var targetFieldName: String {
+        fieldReferenceTargetFieldCandidates(
+            sourceCategory: entry.payload.category,
+            sourceField: templateField,
+            templates: categoryTemplates
+        ).first { $0.id == templateField.targetFieldId }?.name ?? "Unavailable Field"
+    }
+
+    private var targetEntry: VaultEntry? {
+        guard presentation.canOpenTarget, let targetID = resolution?.target?.entryID else { return nil }
+        return entries.first { $0.id == targetID && !$0.isDeleted }
+    }
+
+    private var candidates: [EntryReferenceCandidate] {
+        entryReferenceCandidates(entries: entries, targetCategory: targetCategory, query: searchText)
+    }
+
+    private func performPrimaryAction() {
+        switch presentation.actionDestination {
+        case .categoryFields:
+            repairCategoryFields(entry.payload.category)
+        case .entrySelection:
+            isPresentingSelection = true
+        }
+    }
+
+    private var selectionContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TextField("Search entries", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    if candidates.isEmpty {
+                        Text("No matching entries")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 8)
+                    } else {
+                        ForEach(candidates) { candidate in
+                            Button {
+                                updateReference(entry, field.id, candidate.id)
+                                searchText = ""
+                                isPresentingSelection = false
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(candidate.label.isEmpty ? "Untitled" : candidate.label)
+                                        Text(candidate.category.isEmpty ? "Uncategorized" : candidate.category)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    if field.value == candidate.id {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 260)
+        }
+        .padding(12)
+        .frame(width: 340)
     }
 }
 

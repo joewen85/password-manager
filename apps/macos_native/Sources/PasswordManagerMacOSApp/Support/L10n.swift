@@ -75,6 +75,19 @@ enum L10n {
             .deletingLastPathComponent() // macos_native
         let buildRoot = packageRoot.appendingPathComponent(".build")
 
+        if let executableURL = Bundle.main.executableURL {
+            var directory = executableURL.deletingLastPathComponent()
+            while directory.path.hasPrefix(buildRoot.path) {
+                let candidate = directory.appendingPathComponent(resourceBundleName)
+                if let bundle = Bundle(url: candidate) {
+                    return bundle
+                }
+                let parent = directory.deletingLastPathComponent()
+                guard parent != directory else { break }
+                directory = parent
+            }
+        }
+
         guard let enumerator = FileManager.default.enumerator(
             at: buildRoot,
             includingPropertiesForKeys: [.isDirectoryKey],
@@ -83,13 +96,23 @@ enum L10n {
             return nil
         }
 
+        var candidates: [URL] = []
         for case let url as URL in enumerator {
             if url.lastPathComponent == resourceBundleName {
-                return Bundle(url: url)
+                candidates.append(url)
             }
         }
 
-        return nil
+#if DEBUG
+        let configurationPath = "/debug/"
+#else
+        let configurationPath = "/release/"
+#endif
+        let preferred = candidates.first {
+            !$0.path.contains("/index-build/") && $0.path.contains(configurationPath)
+        }
+        return preferred.flatMap(Bundle.init(url:))
+            ?? candidates.first.flatMap(Bundle.init(url:))
     }
 
     private static func localizedProjectPath(for lprojName: String, in bundle: Bundle) -> String? {
@@ -157,6 +180,8 @@ enum L10n {
              "Tag updated.",
              "Tag not found.",
              "Tag deleted.",
+             "Field reference requires a target category and target text field.",
+             "Field reference configuration needs repair.",
              "Value is required.",
              "Unlock the vault before clearing data.",
              "Vault data cleared.",

@@ -257,6 +257,11 @@ std::vector<CustomField> projectCustomFieldsForDisplay(
     const std::vector<FieldTemplate>& templateFields,
     const std::vector<VaultEntry>& entries
 );
+std::vector<CustomField> projectCustomFieldsForDisplay(
+    const VaultEntry& sourceEntry,
+    const std::vector<CategoryTemplate>& categoryTemplates,
+    const std::vector<VaultEntry>& entries
+);
 std::vector<CategoryTemplate> propagateEntryReferenceCategoryRename(
     const std::vector<CategoryTemplate>& templates,
     const std::string& oldCategory,

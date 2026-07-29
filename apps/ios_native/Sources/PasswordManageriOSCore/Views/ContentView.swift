@@ -63,7 +63,8 @@ struct ContentView: View {
                             fieldID: fieldID,
                             targetID: targetID
                         )
-                    }
+                    },
+                    repairCategoryFields: beginEditingCategoryFields
                 )
             }
             .sheet(isPresented: $isPresentingEditor) {
@@ -78,6 +79,7 @@ struct ContentView: View {
                         store.addCategory(category, preset: preset, customFieldNames: customFieldNames)
                     },
                     onCreateTag: store.addTag,
+                    onEditCategoryFields: beginEditingCategoryFields,
                     onSave: { draft in
                         guard store.upsert(draft, editing: editingEntry) else {
                             return store.statusMessage ?? "Entry could not be saved."
@@ -202,6 +204,16 @@ struct ContentView: View {
     private func beginEditing(_ entry: VaultEntry) {
         editingEntry = entry
         isPresentingEditor = true
+    }
+
+    private func beginEditingCategoryFields(_ category: String) {
+        let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+        isPresentingEditor = false
+        editingCategoryTemplate = normalized
+        DispatchQueue.main.async {
+            isPresentingCategoryTemplateEditor = true
+        }
     }
 
     private func deleteSelectedEntry(_ entry: VaultEntry) {

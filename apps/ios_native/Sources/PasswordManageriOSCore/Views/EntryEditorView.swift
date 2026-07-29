@@ -9,6 +9,7 @@ struct EntryEditorView: View {
     var tags: [String]
     var onCreateCategory: (String, CategoryTypePreset?, [String]) -> Bool
     var onCreateTag: (String) -> Bool
+    var onEditCategoryFields: (String) -> Void
     var onSave: (EntryDraft) -> String?
     var onCancel: () -> Void
 
@@ -27,6 +28,7 @@ struct EntryEditorView: View {
         tags: [String],
         onCreateCategory: @escaping (String, CategoryTypePreset?, [String]) -> Bool = { _, _, _ in false },
         onCreateTag: @escaping (String) -> Bool = { _ in false },
+        onEditCategoryFields: @escaping (String) -> Void = { _ in },
         onSave: @escaping (EntryDraft) -> String?,
         onCancel: @escaping () -> Void
     ) {
@@ -38,6 +40,7 @@ struct EntryEditorView: View {
         self.tags = tags
         self.onCreateCategory = onCreateCategory
         self.onCreateTag = onCreateTag
+        self.onEditCategoryFields = onEditCategoryFields
         self.onSave = onSave
         self.onCancel = onCancel
         let initialDraft: EntryDraft
@@ -72,8 +75,11 @@ struct EntryEditorView: View {
                     TemplateFieldsEditor(
                         fields: $draft.customFields,
                         hiddenFieldIDs: draft.hiddenCustomFieldIds,
+                        sourceCategory: draft.category,
                         template: currentCategoryTemplate,
+                        categoryTemplates: categoryTemplates,
                         entries: entries,
+                        onEditCategoryFields: onEditCategoryFields,
                         addField: { draft.addCustomField() }
                     )
                 } else {
@@ -89,8 +95,11 @@ struct EntryEditorView: View {
                     CustomFieldsEditor(
                         fields: $draft.customFields,
                         hiddenFieldIDs: draft.hiddenCustomFieldIds,
+                        sourceCategory: draft.category,
                         template: currentCategoryTemplate,
+                        categoryTemplates: categoryTemplates,
                         entries: entries,
+                        onEditCategoryFields: onEditCategoryFields,
                         addField: { draft.addCustomField() }
                     )
                 }
@@ -410,8 +419,11 @@ private struct CategorySelectField: View {
 private struct TemplateFieldsEditor: View {
     @Binding var fields: [CustomField]
     var hiddenFieldIDs: Set<String>
+    var sourceCategory: String
     var template: CategoryTemplate?
+    var categoryTemplates: [CategoryTemplate]
     var entries: [VaultEntry]
+    var onEditCategoryFields: (String) -> Void
     var addField: () -> Void
 
     private var visibleIndices: [Int] {
@@ -443,6 +455,15 @@ private struct TemplateFieldsEditor: View {
                 field: $fields[index],
                 templateField: templateField,
                 entries: entries
+            )
+        } else if semantics.semantic == .fieldReference, let templateField = semantics.templateField {
+            FieldReferenceFieldEditor(
+                field: $fields[index],
+                sourceCategory: sourceCategory,
+                templateField: templateField,
+                categoryTemplates: categoryTemplates,
+                entries: entries,
+                onEditCategoryFields: onEditCategoryFields
             )
         } else if semantics.semantic == .text {
             CustomFieldRow(
@@ -536,8 +557,11 @@ private struct CustomFieldRow: View {
 private struct CustomFieldsEditor: View {
     @Binding var fields: [CustomField]
     var hiddenFieldIDs: Set<String>
+    var sourceCategory: String
     var template: CategoryTemplate?
+    var categoryTemplates: [CategoryTemplate]
     var entries: [VaultEntry]
+    var onEditCategoryFields: (String) -> Void
     var addField: () -> Void
 
     private var visibleIndices: [Int] {
@@ -570,6 +594,15 @@ private struct CustomFieldsEditor: View {
                 templateField: templateField,
                 entries: entries
             )
+        } else if semantics.semantic == .fieldReference, let templateField = semantics.templateField {
+            FieldReferenceFieldEditor(
+                field: $fields[index],
+                sourceCategory: sourceCategory,
+                templateField: templateField,
+                categoryTemplates: categoryTemplates,
+                entries: entries,
+                onEditCategoryFields: onEditCategoryFields
+            )
         } else if semantics.semantic == .text {
             CustomFieldRow(
                 field: $fields[index],
@@ -581,6 +614,159 @@ private struct CustomFieldsEditor: View {
 
     private func remove(_ id: String) {
         fields.removeAll { $0.id == id }
+    }
+}
+
+private struct FieldReferenceFieldEditor: View {
+    @Binding var field: CustomField
+    var sourceCategory: String
+    var templateField: FieldTemplate
+    var categoryTemplates: [CategoryTemplate]
+    var entries: [VaultEntry]
+    var onEditCategoryFields: (String) -> Void
+
+    @State private var isPresented = false
+    @State private var searchText = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(templateField.name.isEmpty ? "Field Reference" : templateField.name)
+                    .font(.callout)
+                Spacer()
+                Label("Field Reference", systemImage: "link")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(presentation.text)
+                .foregroundStyle(presentation.isError ? .red : .secondary)
+
+            Text("Target: \(targetCategory.isEmpty ? "Unavailable Category" : targetCategory) / \(targetFieldName)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Button(action: performPrimaryAction) {
+                    Label(
+                        presentation.actionTitle,
+                        systemImage: presentation.actionDestination == .categoryFields
+                            ? "square.and.pencil"
+                            : "link.badge.plus"
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+
+                if !field.value.isEmpty {
+                    Button("Clear", role: .destructive) {
+                        field.value = ""
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.secondary.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+        )
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            selectionContent
+        }
+    }
+
+    private var resolution: FieldReferenceResolution? {
+        resolveFieldReferenceForPresentation(
+            sourceCategory: sourceCategory,
+            field: field,
+            categoryTemplates: categoryTemplates,
+            entries: entries
+        )
+    }
+
+    private var presentation: FieldReferencePresentation {
+        guard fieldReferenceTemplateConfigurationIsValid(
+            sourceCategory: sourceCategory,
+            sourceField: templateField,
+            templates: categoryTemplates
+        ) else {
+            return fieldReferencePresentation(FieldReferenceResolution(status: .invalidConfiguration))
+        }
+        return fieldReferencePresentation(resolution)
+    }
+
+    private var targetCategory: String {
+        templateField.targetCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var targetFieldName: String {
+        fieldReferenceTargetFieldCandidates(
+            sourceCategory: sourceCategory,
+            sourceField: templateField,
+            templates: categoryTemplates
+        ).first { $0.id == templateField.targetFieldId }?.name ?? "Unavailable Field"
+    }
+
+    private var candidates: [EntryReferenceCandidate] {
+        entryReferenceCandidates(entries: entries, targetCategory: targetCategory, query: searchText)
+    }
+
+    private func performPrimaryAction() {
+        switch presentation.actionDestination {
+        case .categoryFields:
+            onEditCategoryFields(sourceCategory)
+        case .entrySelection:
+            isPresented = true
+        }
+    }
+
+    private var selectionContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TextField("Search entries", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    if candidates.isEmpty {
+                        Text("No matching entries")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 8)
+                    } else {
+                        ForEach(candidates) { candidate in
+                            Button {
+                                field.value = candidate.id
+                                searchText = ""
+                                isPresented = false
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(candidate.label.isEmpty ? "Untitled" : candidate.label)
+                                        Text(candidate.category.isEmpty ? "Uncategorized" : candidate.category)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    if field.value == candidate.id {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 260)
+        }
+        .padding(12)
+        .frame(width: 340)
     }
 }
 

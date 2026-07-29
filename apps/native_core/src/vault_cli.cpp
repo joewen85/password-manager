@@ -1120,19 +1120,9 @@ std::string entryJsonForDisplay(const VaultEntry& entry, const VaultSnapshot& so
         copy.secret = maskedSecret(copy.secret, false);
         copy.payloadJson.clear();
     }
-    const auto categoryKey = lowerAscii(trimAscii(entry.category));
-    const auto templateEntry = std::find_if(
-        source.categoryTemplates.begin(),
-        source.categoryTemplates.end(),
-        [&](const CategoryTemplate& candidate) {
-            return lowerAscii(trimAscii(candidate.category)) == categoryKey;
-        }
-    );
     copy.customFields = projectCustomFieldsForDisplay(
-        copy.customFields,
-        templateEntry == source.categoryTemplates.end()
-            ? std::vector<FieldTemplate>{}
-            : templateEntry->fields,
+        entry,
+        source.categoryTemplates,
         source.entries
     );
     VaultSnapshot snapshot;

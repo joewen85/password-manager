@@ -9,6 +9,7 @@ struct EntryEditorView: View {
     var tags: [String]
     var onCreateCategory: (String, CategoryTypePreset?, [String]) -> Bool
     var onCreateTag: (String) -> Bool
+    var onEditCategoryFields: (String) -> Void
     var onSave: (EntryDraft) -> Void
     var onCancel: () -> Void
 
@@ -27,6 +28,7 @@ struct EntryEditorView: View {
         tags: [String],
         onCreateCategory: @escaping (String, CategoryTypePreset?, [String]) -> Bool = { _, _, _ in false },
         onCreateTag: @escaping (String) -> Bool = { _ in false },
+        onEditCategoryFields: @escaping (String) -> Void = { _ in },
         onSave: @escaping (EntryDraft) -> Void,
         onCancel: @escaping () -> Void
     ) {
@@ -38,6 +40,7 @@ struct EntryEditorView: View {
         self.tags = tags
         self.onCreateCategory = onCreateCategory
         self.onCreateTag = onCreateTag
+        self.onEditCategoryFields = onEditCategoryFields
         self.onSave = onSave
         self.onCancel = onCancel
         let initialDraft: EntryDraft
@@ -86,8 +89,11 @@ struct EntryEditorView: View {
                     TemplateFieldsEditor(
                         fields: $draft.customFields,
                         protectedFieldIDs: draft.protectedCustomFieldIds,
+                        sourceCategory: draft.category,
                         template: currentCategoryTemplate,
-                        entries: entries
+                        categoryTemplates: categoryTemplates,
+                        entries: entries,
+                        onEditCategoryFields: onEditCategoryFields
                     )
                 } else {
                     switch draft.payload {
@@ -102,8 +108,11 @@ struct EntryEditorView: View {
                     CustomFieldsEditor(
                         fields: $draft.customFields,
                         protectedFieldIDs: draft.protectedCustomFieldIds,
+                        sourceCategory: draft.category,
                         template: currentCategoryTemplate,
-                        entries: entries
+                        categoryTemplates: categoryTemplates,
+                        entries: entries,
+                        onEditCategoryFields: onEditCategoryFields
                     )
                 }
             }
@@ -602,8 +611,11 @@ private struct ServiceAccountsEditor: View {
 private struct CustomFieldsEditor: View {
     @Binding var fields: [CustomField]
     var protectedFieldIDs: Set<String>
+    var sourceCategory: String
     var template: CategoryTemplate?
+    var categoryTemplates: [CategoryTemplate]
     var entries: [VaultEntry]
+    var onEditCategoryFields: (String) -> Void
 
     private var editableIndices: [Int] {
         fields.indices.filter { !protectedFieldIDs.contains(fields[$0].id) }
@@ -650,14 +662,23 @@ private struct CustomFieldsEditor: View {
 
     @ViewBuilder
     private func customFieldEditor(at index: Int) -> some View {
-        if let template,
-           customFieldSemantics(field: fields[index], template: template).semantic == .entryReference {
+        let semantics = customFieldSemantics(field: fields[index], template: template)
+        if let template, semantics.semantic == .entryReference {
             EntryReferenceFieldEditor(
                 field: $fields[index],
                 template: template,
                 entries: entries
             )
-        } else {
+        } else if let templateField = semantics.templateField, semantics.semantic == .fieldReference {
+            FieldReferenceFieldEditor(
+                field: $fields[index],
+                sourceCategory: sourceCategory,
+                templateField: templateField,
+                categoryTemplates: categoryTemplates,
+                entries: entries,
+                onEditCategoryFields: onEditCategoryFields
+            )
+        } else if semantics.semantic == .text {
             CustomFieldRow(field: $fields[index], showsValue: true, remove: { remove(at: index) })
         }
     }
@@ -666,8 +687,11 @@ private struct CustomFieldsEditor: View {
 private struct TemplateFieldsEditor: View {
     @Binding var fields: [CustomField]
     var protectedFieldIDs: Set<String>
+    var sourceCategory: String
     var template: CategoryTemplate?
+    var categoryTemplates: [CategoryTemplate]
     var entries: [VaultEntry]
+    var onEditCategoryFields: (String) -> Void
 
     private var editableIndices: [Int] {
         fields.indices.filter { !protectedFieldIDs.contains(fields[$0].id) }
@@ -714,14 +738,23 @@ private struct TemplateFieldsEditor: View {
 
     @ViewBuilder
     private func customFieldEditor(at index: Int) -> some View {
-        if let template,
-           customFieldSemantics(field: fields[index], template: template).semantic == .entryReference {
+        let semantics = customFieldSemantics(field: fields[index], template: template)
+        if let template, semantics.semantic == .entryReference {
             EntryReferenceFieldEditor(
                 field: $fields[index],
                 template: template,
                 entries: entries
             )
-        } else {
+        } else if let templateField = semantics.templateField, semantics.semantic == .fieldReference {
+            FieldReferenceFieldEditor(
+                field: $fields[index],
+                sourceCategory: sourceCategory,
+                templateField: templateField,
+                categoryTemplates: categoryTemplates,
+                entries: entries,
+                onEditCategoryFields: onEditCategoryFields
+            )
+        } else if semantics.semantic == .text {
             CustomFieldRow(field: $fields[index], showsValue: true, remove: { remove(at: index) })
         }
     }

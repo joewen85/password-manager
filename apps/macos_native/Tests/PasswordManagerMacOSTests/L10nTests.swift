@@ -15,6 +15,20 @@ struct L10nTests {
         #expect(L10n.t("Language") == "语言")
     }
 
+    @Test("Field reference UI and status strings are localized")
+    func fieldReferenceStringsAreLocalized() {
+        UserDefaults.standard.set(AppLanguage.simplifiedChinese.rawValue, forKey: AppPreferences.languageStorageKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: AppPreferences.languageStorageKey)
+        }
+
+        #expect(L10n.t("Field Reference") == "字段关联")
+        #expect(L10n.t("Select Target Field") == "选择目标字段")
+        #expect(L10n.tf("Target: %@ / %@", "账号", "邮箱") == "目标：账号 / 邮箱")
+        #expect(L10n.status("Field reference requires a target category and target text field.") == "字段关联需要选择目标分类和目标文本字段。")
+        #expect(L10n.status("Field reference configuration needs repair.") == "字段关联配置需要修复。")
+    }
+
     @Test("System default follows Simplified Chinese system preference")
     func systemDefaultFollowsSimplifiedChineseSystemPreference() {
         let originalLanguages = UserDefaults.standard.object(forKey: "AppleLanguages")

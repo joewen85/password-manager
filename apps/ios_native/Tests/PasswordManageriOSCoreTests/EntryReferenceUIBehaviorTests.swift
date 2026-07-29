@@ -111,16 +111,18 @@ struct EntryReferenceUIBehaviorTests {
             storedValueFieldIds: [storedText.id, storedReference.id]
         )
         #expect(edited.first { $0.id == storedText.id } == storedText)
-        #expect(edited.first { $0.id == storedReference.id } == storedReference.copy(
-            name: "Primary Owner",
-            valueType: "entryReference",
-            targetCategory: "Identity"
-        ))
+        #expect(edited.first { $0.id == storedReference.id } == storedReference)
         #expect(edited.first { $0.id == unknown.id } == unknown)
 
-        let created = newCategoryTemplateField(name: " Owner ", valueType: "entryReference", targetCategory: " Accounts ")
+        let created = newCategoryTemplateField(
+            name: " Owner ",
+            valueType: "fieldReference",
+            targetCategory: " Accounts ",
+            targetFieldId: "login"
+        )
         #expect(created.name == "Owner")
         #expect(created.targetCategory == "Accounts")
+        #expect(created.targetFieldId == "login")
         #expect(created.id.range(
             of: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
             options: .regularExpression

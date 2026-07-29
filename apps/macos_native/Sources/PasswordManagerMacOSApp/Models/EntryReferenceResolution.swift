@@ -11,6 +11,7 @@ enum EntryReferenceStatus: Equatable, Sendable {
 enum CustomFieldSemantic: Equatable, Sendable {
     case text
     case entryReference
+    case fieldReference
     case unsupported
 }
 
@@ -61,6 +62,8 @@ func customFieldSemantics(
         semantic = .text
     case "entryReference":
         semantic = .entryReference
+    case "fieldReference":
+        semantic = .fieldReference
     default:
         semantic = .unsupported
     }
@@ -74,6 +77,31 @@ func exposedCustomFieldValue(
     customFieldSemantics(field: field, template: template).semantic == .text
         ? field.value
         : nil
+}
+
+func isEditableCategoryFieldType(_ valueType: String) -> Bool {
+    let normalized = valueType.trimmingCharacters(in: .whitespacesAndNewlines)
+    return normalized.isEmpty || normalized == "text" || normalized == "fieldReference"
+}
+
+func newCategoryTemplateField(
+    name: String = "",
+    valueType: String = "text",
+    targetCategory: String = "",
+    targetFieldId: String = ""
+) -> FieldTemplate {
+    let normalizedType = valueType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        ? "text"
+        : valueType
+    return FieldTemplate(
+        id: UUID().uuidString.lowercased(),
+        name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+        valueType: normalizedType,
+        targetCategory: normalizedType == "text"
+            ? ""
+            : targetCategory.trimmingCharacters(in: .whitespacesAndNewlines),
+        targetFieldId: normalizedType == "fieldReference" ? targetFieldId : ""
+    )
 }
 
 func entryReferenceCandidates(
@@ -178,7 +206,7 @@ extension VaultEntry {
             switch customFieldSemantics(field: field, template: template).semantic {
             case .text:
                 return field
-            case .unsupported:
+            case .fieldReference, .unsupported:
                 var projectedField = field
                 projectedField.value = ""
                 return projectedField

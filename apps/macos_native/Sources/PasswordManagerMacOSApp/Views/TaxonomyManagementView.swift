@@ -3,6 +3,7 @@ import SwiftUI
 struct TaxonomyManagementView: View {
     @Bindable var store: VaultStore
     var onChange: () -> Void = {}
+    var initialFieldEditCategory: String?
 
     @Environment(\.dismiss) private var dismiss
     @State private var selectedKind: TaxonomyKind = .category
@@ -11,6 +12,17 @@ struct TaxonomyManagementView: View {
     @State private var renameRequest: TaxonomyEditRequest?
     @State private var fieldEditRequest: CategoryFieldsEditRequest?
     @State private var deleteRequest: TaxonomyEditRequest?
+    @State private var didPresentInitialFieldEditor = false
+
+    init(
+        store: VaultStore,
+        onChange: @escaping () -> Void = {},
+        initialFieldEditCategory: String? = nil
+    ) {
+        self.store = store
+        self.onChange = onChange
+        self.initialFieldEditCategory = initialFieldEditCategory
+    }
 
     private var values: [String] {
         switch selectedKind {
@@ -70,7 +82,8 @@ struct TaxonomyManagementView: View {
                                         fieldEditRequest = CategoryFieldsEditRequest(
                                             category: value,
                                             fields: editableFields(for: value),
-                                            storedValueFieldIDs: store.categoryTemplateStoredValueFieldIDs(value)
+                                            storedValueFieldIDs: store.categoryTemplateStoredValueFieldIDs(value),
+                                            referencedTargetFieldIDs: store.categoryTemplateReferencedTargetFieldIDs(value)
                                         )
                                     } label: {
                                         Label(L10n.t("Fields"), systemImage: "square.and.pencil")
@@ -103,7 +116,8 @@ struct TaxonomyManagementView: View {
                                         fieldEditRequest = CategoryFieldsEditRequest(
                                             category: value,
                                             fields: editableFields(for: value),
-                                            storedValueFieldIDs: store.categoryTemplateStoredValueFieldIDs(value)
+                                            storedValueFieldIDs: store.categoryTemplateStoredValueFieldIDs(value),
+                                            referencedTargetFieldIDs: store.categoryTemplateReferencedTargetFieldIDs(value)
                                         )
                                     } label: {
                                         Label(L10n.t("Fields"), systemImage: "square.and.pencil")
@@ -140,6 +154,20 @@ struct TaxonomyManagementView: View {
             }
         }
         .frame(minWidth: 520, minHeight: 460)
+        .onAppear {
+            guard !didPresentInitialFieldEditor,
+                  let initialFieldEditCategory,
+                  store.categories.contains(where: { $0.caseInsensitiveCompare(initialFieldEditCategory) == .orderedSame }) else {
+                return
+            }
+            didPresentInitialFieldEditor = true
+            fieldEditRequest = CategoryFieldsEditRequest(
+                category: initialFieldEditCategory,
+                fields: editableFields(for: initialFieldEditCategory),
+                storedValueFieldIDs: store.categoryTemplateStoredValueFieldIDs(initialFieldEditCategory),
+                referencedTargetFieldIDs: store.categoryTemplateReferencedTargetFieldIDs(initialFieldEditCategory)
+            )
+        }
         .onChange(of: selectedKind) { _, nextKind in
             if nextKind == .tag {
                 categoryCustomFields = []
@@ -185,6 +213,11 @@ struct TaxonomyManagementView: View {
                 } else if field.normalizedValueType == "entryReference" {
                     editable.valueType = "entryReference"
                     editable.targetCategory = field.targetCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+                    editable.targetFieldId = ""
+                } else if field.normalizedValueType == "fieldReference" {
+                    editable.valueType = "fieldReference"
+                    editable.targetCategory = field.targetCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+                    editable.targetFieldId = field.targetFieldId
                 }
                 return editable
             }
@@ -294,6 +327,7 @@ private struct CategoryFieldsEditRequest: Identifiable {
     let category: String
     let fields: [FieldTemplate]
     let storedValueFieldIDs: Set<String>
+    let referencedTargetFieldIDs: Set<String>
 
     var id: String { category }
 }
@@ -302,6 +336,7 @@ private struct CategoryFieldsEditView: View {
     @Bindable var store: VaultStore
     let category: String
     let storedValueFieldIDs: Set<String>
+    let referencedTargetFieldIDs: Set<String>
     var onSaved: () -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -311,6 +346,7 @@ private struct CategoryFieldsEditView: View {
         self.store = store
         self.category = request.category
         self.storedValueFieldIDs = request.storedValueFieldIDs
+        self.referencedTargetFieldIDs = request.referencedTargetFieldIDs
         self.onSaved = onSaved
         _fields = State(initialValue: request.fields)
     }
@@ -321,8 +357,11 @@ private struct CategoryFieldsEditView: View {
                 Section(category) {
                     CategoryTemplateFieldEditor(
                         fields: $fields,
+                        sourceCategory: category,
                         categories: store.categories,
-                        storedValueFieldIDs: storedValueFieldIDs
+                        templates: prospectiveTemplates,
+                        storedValueFieldIDs: storedValueFieldIDs,
+                        referencedTargetFieldIDs: referencedTargetFieldIDs
                     )
                 }
             }
@@ -347,19 +386,32 @@ private struct CategoryFieldsEditView: View {
         onSaved()
         dismiss()
     }
+
+    private var prospectiveTemplates: [CategoryTemplate] {
+        let updated = CategoryTemplate(
+            category: category,
+            fields: CategoryTemplate.defaultCategoryFields() + fields
+        )
+        return store.categoryTemplates.filter {
+            $0.category.caseInsensitiveCompare(category) != .orderedSame
+        } + [updated]
+    }
 }
 
 private struct CategoryTemplateFieldEditor: View {
     @Binding var fields: [FieldTemplate]
+    let sourceCategory: String
     let categories: [String]
+    let templates: [CategoryTemplate]
     let storedValueFieldIDs: Set<String>
+    let referencedTargetFieldIDs: Set<String>
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(fields.indices, id: \.self) { index in
-                let isKnown = fields[index].normalizedValueType == "text"
-                    || fields[index].normalizedValueType == "entryReference"
+                let isKnown = isEditableCategoryFieldType(fields[index].valueType)
                 let isLocked = storedValueFieldIDs.contains(fields[index].id)
+                    || referencedTargetFieldIDs.contains(fields[index].id)
                 VStack(alignment: .leading, spacing: 8) {
                     if isKnown {
                         TextField(L10n.t("Field Name"), text: $fields[index].name)
@@ -367,14 +419,14 @@ private struct CategoryTemplateFieldEditor: View {
 
                         Picker(L10n.t("Field Type"), selection: $fields[index].valueType) {
                             Text(L10n.t("Text")).tag("text")
-                            Text(L10n.t("Entry Reference")).tag("entryReference")
+                            Text(L10n.t("Field Reference")).tag("fieldReference")
                         }
                         .pickerStyle(.segmented)
                         .disabled(isLocked)
 
-                        if fields[index].normalizedValueType == "entryReference" {
-                            Picker(L10n.t("Target Category"), selection: $fields[index].targetCategory) {
-                                Text(L10n.t("Any Category")).tag("")
+                        if fields[index].normalizedValueType == "fieldReference" {
+                            Picker(L10n.t("Target Category"), selection: targetCategoryBinding(index)) {
+                                Text(L10n.t("Select Target Category")).tag("")
                                 if !fields[index].targetCategory.isEmpty,
                                    !categories.contains(where: {
                                        $0.caseInsensitiveCompare(fields[index].targetCategory) == .orderedSame
@@ -385,6 +437,21 @@ private struct CategoryTemplateFieldEditor: View {
                                     Text(category).tag(category)
                                 }
                             }
+
+                            Picker(L10n.t("Target Field"), selection: $fields[index].targetFieldId) {
+                                Text(L10n.t("Select Target Field")).tag("")
+                                if !fields[index].targetFieldId.isEmpty,
+                                   !targetFieldCandidates(index).contains(where: {
+                                       $0.id == fields[index].targetFieldId
+                                   }) {
+                                    Text(L10n.t("Target field is no longer available."))
+                                        .tag(fields[index].targetFieldId)
+                                }
+                                ForEach(targetFieldCandidates(index)) { candidate in
+                                    Text(candidate.name).tag(candidate.id)
+                                }
+                            }
+                            .disabled(fields[index].targetCategory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
 
                         if isLocked {
@@ -428,17 +495,41 @@ private struct CategoryTemplateFieldEditor: View {
                 .onChange(of: fields[index].valueType) { _, valueType in
                     if valueType == "text" {
                         fields[index].targetCategory = ""
+                        fields[index].targetFieldId = ""
+                    } else if valueType == "fieldReference" {
+                        fields[index].targetCategory = ""
+                        fields[index].targetFieldId = ""
                     }
                 }
             }
 
             Button {
-                fields.append(FieldTemplate(name: ""))
+                fields.append(newCategoryTemplateField())
             } label: {
                 Label(L10n.t("Add Field"), systemImage: "plus")
             }
             .controlSize(.small)
         }
+    }
+
+    private func targetFieldCandidates(_ index: Int) -> [FieldTemplate] {
+        guard fields.indices.contains(index) else { return [] }
+        return fieldReferenceTargetFieldCandidates(
+            sourceCategory: sourceCategory,
+            sourceField: fields[index],
+            templates: templates
+        )
+    }
+
+    private func targetCategoryBinding(_ index: Int) -> Binding<String> {
+        Binding(
+            get: { fields.indices.contains(index) ? fields[index].targetCategory : "" },
+            set: { value in
+                guard fields.indices.contains(index) else { return }
+                fields[index].targetCategory = value
+                fields[index].targetFieldId = ""
+            }
+        )
     }
 }
 

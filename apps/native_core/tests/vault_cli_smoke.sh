@@ -137,6 +137,15 @@ snapshot["entries"] = [
             {"id": "field-missing", "templateFieldId": "template_missing", "name": "Missing Owner", "value": "raw-missing-target-id"},
             {"id": "field-deleted", "templateFieldId": "template_deleted", "name": "Deleted Owner", "value": "raw-deleted-target-id"},
             {"id": "field-mismatch", "templateFieldId": "template_mismatch", "name": "Mismatched Owner", "value": "raw-mismatched-target-id"},
+            {"id": "field-field-resolved", "templateFieldId": "template_field_resolved", "name": "Resolved Email", "value": "field-target-resolved"},
+            {"id": "field-field-empty", "templateFieldId": "template_field_empty", "name": "Empty Email", "value": ""},
+            {"id": "field-field-invalid", "templateFieldId": "template_field_invalid", "name": "Invalid Email", "value": "field-target-resolved"},
+            {"id": "field-field-missing", "templateFieldId": "template_field_missing", "name": "Missing Email", "value": "raw-field-missing-target-id"},
+            {"id": "field-field-deleted", "templateFieldId": "template_field_deleted", "name": "Deleted Email", "value": "field-target-deleted"},
+            {"id": "field-field-mismatch", "templateFieldId": "template_field_mismatch", "name": "Mismatched Email", "value": "field-target-mismatch"},
+            {"id": "field-field-target-missing", "templateFieldId": "template_field_target_missing", "name": "Unavailable Email", "value": "field-target-resolved"},
+            {"id": "field-field-target-unsupported", "templateFieldId": "template_field_target_unsupported", "name": "Unsupported Email", "value": "field-target-resolved"},
+            {"id": "source-ref-target-empty", "templateFieldId": "template_field_target_empty", "name": "Blank Email", "value": "field-target-empty"},
             {"id": "field-future", "templateFieldId": "template_future", "name": "Future Owner", "value": "raw-unknown-value"},
             {"id": "field-orphan", "templateFieldId": "missing-template", "name": "Orphan Owner", "value": "raw-orphan-value"},
             {"id": "field-ad-hoc", "templateFieldId": "", "name": "Region", "value": "visible-ad-hoc"},
@@ -166,20 +175,81 @@ snapshot["entries"] = [
         "secret": "mismatched-target-secret",
         "category": "Archive",
     },
+    {
+        "id": "field-target-resolved",
+        "label": "Field Resolved Account",
+        "type": "credential",
+        "username": "field-target-user",
+        "secret": "field-target-secret",
+        "category": "Accounts",
+        "customFields": [
+            {"id": "target-email-value", "templateFieldId": "target_email", "name": "Email", "value": "resolved@example.com"},
+            {"id": "target-unrelated-value", "name": "Private", "value": "field-target-unrelated-secret"},
+        ],
+    },
+    {
+        "id": "field-target-deleted",
+        "label": "Field Deleted Account",
+        "type": "credential",
+        "secret": "field-deleted-target-secret",
+        "category": "Accounts",
+        "isDeleted": True,
+        "customFields": [
+            {"id": "deleted-email-value", "templateFieldId": "target_email", "name": "Email", "value": "deleted@example.com"},
+        ],
+    },
+    {
+        "id": "field-target-mismatch",
+        "label": "Field Mismatched Account",
+        "type": "credential",
+        "secret": "field-mismatched-target-secret",
+        "category": "Archive",
+        "customFields": [
+            {"id": "mismatched-email-value", "templateFieldId": "target_email", "name": "Email", "value": "mismatched@example.com"},
+        ],
+    },
+    {
+        "id": "field-target-empty",
+        "label": "Field Empty Account",
+        "type": "credential",
+        "secret": "field-empty-target-secret",
+        "category": "Accounts",
+        "customFields": [
+            {"id": "empty-email-value", "templateFieldId": "target_email", "name": "Email", "value": "   "},
+        ],
+    },
 ]
 snapshot["categories"] = ["Accounts", "Archive", "Servers"]
-snapshot["categoryTemplates"] = [{
-    "category": "Servers",
-    "fields": [
-        {"id": "template_text", "name": "Notes", "valueType": "text", "targetCategory": ""},
-        {"id": "template_resolved", "name": "Resolved Owner", "valueType": "entryReference", "targetCategory": "Accounts"},
-        {"id": "template_empty", "name": "Empty Owner", "valueType": "entryReference", "targetCategory": "Accounts"},
-        {"id": "template_missing", "name": "Missing Owner", "valueType": "entryReference", "targetCategory": "Accounts"},
-        {"id": "template_deleted", "name": "Deleted Owner", "valueType": "entryReference", "targetCategory": "Accounts"},
-        {"id": "template_mismatch", "name": "Mismatched Owner", "valueType": "entryReference", "targetCategory": "Accounts"},
-        {"id": "template_future", "name": "Future Owner", "valueType": "futureLink", "targetCategory": "Accounts"},
-    ],
-}]
+snapshot["categoryTemplates"] = [
+    {
+        "category": "Servers",
+        "fields": [
+            {"id": "template_text", "name": "Notes", "valueType": "text", "targetCategory": ""},
+            {"id": "template_resolved", "name": "Resolved Owner", "valueType": "entryReference", "targetCategory": "Accounts"},
+            {"id": "template_empty", "name": "Empty Owner", "valueType": "entryReference", "targetCategory": "Accounts"},
+            {"id": "template_missing", "name": "Missing Owner", "valueType": "entryReference", "targetCategory": "Accounts"},
+            {"id": "template_deleted", "name": "Deleted Owner", "valueType": "entryReference", "targetCategory": "Accounts"},
+            {"id": "template_mismatch", "name": "Mismatched Owner", "valueType": "entryReference", "targetCategory": "Accounts"},
+            {"id": "template_field_resolved", "name": "Resolved Email", "valueType": "fieldReference", "targetCategory": "Accounts", "targetFieldId": "target_email"},
+            {"id": "template_field_empty", "name": "Empty Email", "valueType": "fieldReference", "targetCategory": "Accounts", "targetFieldId": "target_email"},
+            {"id": "template_field_invalid", "name": "Invalid Email", "valueType": "fieldReference", "targetCategory": "Accounts", "targetFieldId": ""},
+            {"id": "template_field_missing", "name": "Missing Email", "valueType": "fieldReference", "targetCategory": "Accounts", "targetFieldId": "target_email"},
+            {"id": "template_field_deleted", "name": "Deleted Email", "valueType": "fieldReference", "targetCategory": "Accounts", "targetFieldId": "target_email"},
+            {"id": "template_field_mismatch", "name": "Mismatched Email", "valueType": "fieldReference", "targetCategory": "Accounts", "targetFieldId": "target_email"},
+            {"id": "template_field_target_missing", "name": "Unavailable Email", "valueType": "fieldReference", "targetCategory": "Accounts", "targetFieldId": "missing_target_field"},
+            {"id": "template_field_target_unsupported", "name": "Unsupported Email", "valueType": "fieldReference", "targetCategory": "Accounts", "targetFieldId": "target_unsupported"},
+            {"id": "template_field_target_empty", "name": "Blank Email", "valueType": "fieldReference", "targetCategory": "Accounts", "targetFieldId": "target_email"},
+            {"id": "template_future", "name": "Future Owner", "valueType": "futureLink", "targetCategory": "Accounts"},
+        ],
+    },
+    {
+        "category": "Accounts",
+        "fields": [
+            {"id": "target_email", "name": "Email", "valueType": "text", "targetCategory": ""},
+            {"id": "target_unsupported", "name": "Unsupported", "valueType": "entryReference", "targetCategory": "Accounts"},
+        ],
+    },
+]
 
 with open(path, "w", encoding="utf-8") as handle:
     json.dump(snapshot, handle, ensure_ascii=False)
@@ -198,6 +268,15 @@ expected = {
     "Missing Owner": "missing",
     "Deleted Owner": "deleted",
     "Mismatched Owner": "categoryMismatch",
+    "Resolved Email": "resolved: Field Resolved Account - Accounts / Email = resolved@example.com",
+    "Empty Email": "empty",
+    "Invalid Email": "invalidConfiguration",
+    "Missing Email": "missing",
+    "Deleted Email": "deleted",
+    "Mismatched Email": "categoryMismatch",
+    "Unavailable Email": "targetFieldMissing",
+    "Unsupported Email": "targetFieldUnsupported",
+    "Blank Email": "targetFieldEmpty",
     "Future Owner": "",
     "Orphan Owner": "",
     "Region": "visible-ad-hoc",
@@ -213,12 +292,24 @@ for path in sys.argv[1:]:
         "raw-missing-target-id",
         "raw-deleted-target-id",
         "raw-mismatched-target-id",
+        "raw-field-missing-target-id",
+        "field-target-resolved",
+        "field-target-deleted",
+        "field-target-mismatch",
+        "field-target-empty",
         "raw-unknown-value",
         "raw-orphan-value",
         "target-secret",
         "target-custom-secret",
         "deleted-target-secret",
         "mismatched-target-secret",
+        "field-target-secret",
+        "field-target-unrelated-secret",
+        "field-deleted-target-secret",
+        "field-mismatched-target-secret",
+        "field-empty-target-secret",
+        "deleted@example.com",
+        "mismatched@example.com",
     ):
         assert forbidden not in raw
 PY
@@ -226,6 +317,8 @@ PY
 "$bin" list "$password" --vault "$second_vault" --query "raw-orphan-value" | grep -q "matches=0"
 "$bin" list "$password" --vault "$second_vault" --query "raw-missing-target-id" | grep -q "matches=0"
 "$bin" list "$password" --vault "$second_vault" --query "Resolved Account" | grep -q "display-source-id"
+"$bin" list "$password" --vault "$second_vault" --query "Field Resolved Account" | grep -q "display-source-id"
+! "$bin" list "$password" --vault "$second_vault" --query "resolved@example.com" | grep -q "display-source-id"
 "$bin" export-snapshot "$password" --vault "$second_vault" --out "$display_export" >/dev/null
 python3 - "$display_export" <<'PY'
 import json
@@ -239,6 +332,15 @@ assert values["Resolved Owner"] == "raw-resolved-target-id"
 assert values["Missing Owner"] == "raw-missing-target-id"
 assert values["Deleted Owner"] == "raw-deleted-target-id"
 assert values["Mismatched Owner"] == "raw-mismatched-target-id"
+assert values["Resolved Email"] == "field-target-resolved"
+assert values["Empty Email"] == ""
+assert values["Invalid Email"] == "field-target-resolved"
+assert values["Missing Email"] == "raw-field-missing-target-id"
+assert values["Deleted Email"] == "field-target-deleted"
+assert values["Mismatched Email"] == "field-target-mismatch"
+assert values["Unavailable Email"] == "field-target-resolved"
+assert values["Unsupported Email"] == "field-target-resolved"
+assert values["Blank Email"] == "field-target-empty"
 assert values["Future Owner"] == "raw-unknown-value"
 assert values["Orphan Owner"] == "raw-orphan-value"
 PY

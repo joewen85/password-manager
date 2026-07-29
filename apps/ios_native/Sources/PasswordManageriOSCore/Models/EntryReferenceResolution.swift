@@ -98,7 +98,7 @@ extension VaultEntry {
             switch customFieldSemantics(field: field, template: template).semantic {
             case .text:
                 return field
-            case .unsupported:
+            case .fieldReference, .unsupported:
                 var projectedField = field
                 projectedField.value = ""
                 return projectedField

@@ -24,7 +24,7 @@ Password Manager 是一款本地加密优先的跨平台密码保险库，用来
 - **备份与迁移**：支持本地加密备份、快照 JSON 导入导出、单条或分类导入导出，以及冲突处理策略。
 - **跨端一致契约**：共享 Dart 包、Swift/Kotlin 原生实现和 C++ portable core 围绕同一数据模型、加密格式和同步语义演进。
 - **分类删除收敛**：分类创建、删除和同名重建使用持久墓碑与版本向量同步；删除状态不再依赖临时 dirty 标记，旧条目中的分类引用也不能反向恢复已删除分类。完整规则见 `docs/CATEGORY_SYNC_CONTRACT.md`。
-- **字段关联契约**：标签继续用于宽松分组、搜索和筛选；确定关系使用稳定 ID。旧 `entryReference` 的全端读写、五态解析、生命周期、UI 和 CLI 安全投影保持不变；新的 `fieldReference + targetCategory + targetFieldId` 描述真正的字段到字段关系，来源值继续保存具体目标条目 ID。Android、HarmonyOS、iOS、macOS 与 Windows/Linux core 已统一九态单跳解析、生命周期保护、安全搜索投影、同步保真和 copy-import ID 重映射；Android 与 HarmonyOS 已开放创建、编辑、九态详情与配置修复 UI，其余平台按后续阶段接入。完整格式与上线约束见 `docs/FIELD_REFERENCE_CONTRACT.md`。
+- **字段关联契约**：标签继续用于宽松分组、搜索和筛选；确定关系使用稳定 ID。旧 `entryReference` 的全端读写、五态解析、生命周期、UI 和 CLI 安全投影保持不变；新的 `fieldReference + targetCategory + targetFieldId` 描述真正的字段到字段关系，来源值继续保存具体目标条目 ID。Android、HarmonyOS、iOS、macOS 与 Windows/Linux core 已统一九态单跳解析、生命周期保护、安全搜索投影、同步保真和 copy-import ID 重映射；四个图形端已开放创建、编辑、九态详情与配置修复 UI，Windows/Linux `show-entry` 已提供九态安全详情。完整格式与上线约束见 `docs/FIELD_REFERENCE_CONTRACT.md`。
 
 ## 当前状态
 
@@ -36,7 +36,7 @@ Password Manager 是一款本地加密优先的跨平台密码保险库，用来
 | HarmonyOS 6 原生 | 已完成 Stage 工程、离线 MVP、CryptoArchitectureKit 加密、TOTP、生物识别、同步状态机、导入导出、字段关联完整 UI 垂直切片和 HAP 校验链路。 |
 | macOS 原生 | 已有 SwiftUI app、Keychain/Touch ID 解锁、同步中心、备份中心、导入导出中心、字段关联完整 UI 和本地打包验证。 |
 | iOS 原生 | 已建立 SwiftPM core 与 Xcode app target，完成字段关联 SwiftUI 垂直切片，并通过单测、Release UI smoke、模拟器构建与 unsigned archive 门禁。 |
-| Windows / Linux | 已有共享 C++17 core 和 terminal-native CLI，覆盖加密 vault、TOTP、CRUD、备份、导入导出、远端对象同步以及字段关联安全搜索/五态详情；图形界面仍在补齐。 |
+| Windows / Linux | 已有共享 C++17 core 和 terminal-native CLI，覆盖加密 vault、TOTP、CRUD、备份、导入导出、远端对象同步、旧条目关联五态详情和字段关联九态安全详情；图形界面仍在补齐。 |
 | 共享 packages | Dart `crypto`、`storage`、`sync`、`auth`、`backup`、`core` 包提供跨端契约和测试基线。 |
 
 ## 项目结构

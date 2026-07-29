@@ -10,6 +10,7 @@ struct DetailView: View {
     var exportEntry: (VaultEntry) -> Void
     var openEntryReference: (VaultEntry) -> Void = { _ in }
     var updateEntryReference: (VaultEntry, String, String) -> Void = { _, _, _ in }
+    var repairCategoryFields: (String) -> Void = { _ in }
 
     var body: some View {
         Group {
@@ -43,9 +44,11 @@ struct DetailView: View {
                                         CustomFieldsView(
                                             entry: entry,
                                             template: categoryTemplate(for: entry),
+                                            categoryTemplates: categoryTemplates,
                                             entries: entries,
                                             openEntryReference: openEntryReference,
-                                            updateEntryReference: updateEntryReference
+                                            updateEntryReference: updateEntryReference,
+                                            repairCategoryFields: repairCategoryFields
                                         )
                                     }
                                 }
@@ -174,9 +177,11 @@ private struct PayloadFieldRow: Identifiable {
 private struct CustomFieldsView: View {
     let entry: VaultEntry
     let template: CategoryTemplate?
+    let categoryTemplates: [CategoryTemplate]
     let entries: [VaultEntry]
     let openEntryReference: (VaultEntry) -> Void
     let updateEntryReference: (VaultEntry, String, String) -> Void
+    let repairCategoryFields: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -197,6 +202,19 @@ private struct CustomFieldsView: View {
                             entries: entries,
                             openEntryReference: openEntryReference,
                             updateEntryReference: updateEntryReference
+                        )
+                    }
+                case .fieldReference:
+                    if let templateField = customFieldSemantics(field: field, template: template).templateField {
+                        FieldReferenceDetailRow(
+                            entry: entry,
+                            field: field,
+                            templateField: templateField,
+                            categoryTemplates: categoryTemplates,
+                            entries: entries,
+                            openEntryReference: openEntryReference,
+                            updateEntryReference: updateEntryReference,
+                            repairCategoryFields: repairCategoryFields
                         )
                     }
                 case .unsupported:

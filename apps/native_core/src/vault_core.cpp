@@ -2231,6 +2231,72 @@ std::vector<CustomField> projectCustomFieldsForDisplay(
     return projected;
 }
 
+std::vector<CustomField> projectCustomFieldsForDisplay(
+    const VaultEntry& sourceEntry,
+    const std::vector<CategoryTemplate>& categoryTemplates,
+    const std::vector<VaultEntry>& entries
+) {
+    const auto sourceTemplate = std::find_if(
+        categoryTemplates.begin(),
+        categoryTemplates.end(),
+        [&](const CategoryTemplate& candidate) {
+            return lowerCopy(trimCopy(candidate.category)) == lowerCopy(trimCopy(sourceEntry.category));
+        }
+    );
+    const std::vector<FieldTemplate> emptyTemplates;
+    const auto& templateFields = sourceTemplate == categoryTemplates.end()
+        ? emptyTemplates
+        : sourceTemplate->fields;
+    auto projected = projectCustomFieldsForDisplay(sourceEntry.customFields, templateFields, entries);
+
+    for (std::size_t index = 0; index < projected.size(); ++index) {
+        const auto& sourceField = sourceEntry.customFields[index];
+        const auto* templateField = matchingFieldTemplate(sourceField, templateFields);
+        if (templateField == nullptr || templateField->valueType != "fieldReference") continue;
+
+        const auto resolution = resolveFieldReference(sourceEntry, sourceField, categoryTemplates, entries);
+        if (!resolution.has_value()) {
+            projected[index].value.clear();
+            continue;
+        }
+        switch (resolution->status) {
+            case FieldReferenceStatus::Empty:
+                projected[index].value = "empty";
+                break;
+            case FieldReferenceStatus::InvalidConfiguration:
+                projected[index].value = "invalidConfiguration";
+                break;
+            case FieldReferenceStatus::Missing:
+                projected[index].value = "missing";
+                break;
+            case FieldReferenceStatus::Deleted:
+                projected[index].value = "deleted";
+                break;
+            case FieldReferenceStatus::CategoryMismatch:
+                projected[index].value = "categoryMismatch";
+                break;
+            case FieldReferenceStatus::TargetFieldMissing:
+                projected[index].value = "targetFieldMissing";
+                break;
+            case FieldReferenceStatus::TargetFieldUnsupported:
+                projected[index].value = "targetFieldUnsupported";
+                break;
+            case FieldReferenceStatus::TargetFieldEmpty:
+                projected[index].value = "targetFieldEmpty";
+                break;
+            case FieldReferenceStatus::Resolved:
+                projected[index].value = resolution->target.has_value()
+                    ? "resolved: " + resolution->target->label
+                        + (resolution->target->category.empty() ? "" : " - " + resolution->target->category)
+                        + (resolution->target->fieldName.empty() ? "" : " / " + resolution->target->fieldName)
+                        + " = " + resolution->target->value
+                    : "resolved";
+                break;
+        }
+    }
+    return projected;
+}
+
 std::vector<CategoryTemplate> propagateEntryReferenceCategoryRename(
     const std::vector<CategoryTemplate>& templates,
     const std::string& oldCategory,

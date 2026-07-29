@@ -76,8 +76,9 @@ struct VaultStoreTaxonomyTests {
         let reference = FieldTemplate(
             id: "stored-reference",
             name: "Account",
-            valueType: "entryReference",
-            targetCategory: "Accounts"
+            valueType: "fieldReference",
+            targetCategory: "Infra",
+            targetFieldId: owner.id
         )
         #expect(store.updateCategoryTemplate(
             category: "Infra",
