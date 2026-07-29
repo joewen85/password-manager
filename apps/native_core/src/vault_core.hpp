@@ -79,6 +79,32 @@ struct EntryReferenceResolution {
     std::optional<EntryReferenceTarget> target;
 };
 
+enum class FieldReferenceStatus {
+    Empty,
+    InvalidConfiguration,
+    Missing,
+    Deleted,
+    CategoryMismatch,
+    TargetFieldMissing,
+    TargetFieldUnsupported,
+    TargetFieldEmpty,
+    Resolved,
+};
+
+struct FieldReferenceTarget {
+    std::string id;
+    std::string label;
+    std::string category;
+    std::string fieldId;
+    std::string fieldName;
+    std::string value;
+};
+
+struct FieldReferenceResolution {
+    FieldReferenceStatus status = FieldReferenceStatus::Empty;
+    std::optional<FieldReferenceTarget> target;
+};
+
 struct CategoryTemplate {
     std::string category;
     std::vector<FieldTemplate> fields;
@@ -210,9 +236,20 @@ std::optional<EntryReferenceResolution> resolveEntryReference(
     const std::vector<FieldTemplate>& templateFields,
     const std::vector<VaultEntry>& entries
 );
+std::optional<FieldReferenceResolution> resolveFieldReference(
+    const VaultEntry& sourceEntry,
+    const CustomField& field,
+    const std::vector<CategoryTemplate>& categoryTemplates,
+    const std::vector<VaultEntry>& entries
+);
 std::vector<CustomField> projectCustomFieldsForSearch(
     const std::vector<CustomField>& fields,
     const std::vector<FieldTemplate>& templateFields,
+    const std::vector<VaultEntry>& entries
+);
+std::vector<CustomField> projectCustomFieldsForSearch(
+    const VaultEntry& sourceEntry,
+    const std::vector<CategoryTemplate>& categoryTemplates,
     const std::vector<VaultEntry>& entries
 );
 std::vector<CustomField> projectCustomFieldsForDisplay(
@@ -224,6 +261,11 @@ std::vector<CategoryTemplate> propagateEntryReferenceCategoryRename(
     const std::vector<CategoryTemplate>& templates,
     const std::string& oldCategory,
     const std::string& newCategory
+);
+bool isTargetFieldReferenced(
+    const std::vector<CategoryTemplate>& templates,
+    const std::string& targetCategory,
+    const std::string& targetFieldId
 );
 std::vector<CustomField> remapEntryReferenceIds(
     const std::vector<CustomField>& fields,

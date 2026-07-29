@@ -39,8 +39,11 @@ import {
 import { VaultStore } from '../storage/VaultStore';
 import {
   EntryReferenceResolution,
+  FieldValueReferenceResolution,
   propagateEntryReferenceCategoryRename,
   resolveEntryReference,
+  resolveFieldValueReference,
+  targetFieldReferenceIdsForCategory,
 } from '../domain/FieldReferenceResolver';
 import { categoryTemplateFieldsForUserSave } from '../domain/CategoryTemplateEditing';
 import {
@@ -315,7 +318,11 @@ export class VaultController {
 
   categoryTemplateFieldHasStoredValue(category: string, templateFieldId: string): boolean {
     this.ensureUnlocked();
-    return this.categoryTemplateFieldIdsWithStoredValues(category).has(templateFieldId);
+    return this.categoryTemplateFieldIdsWithStoredValues(category).has(templateFieldId) ||
+      targetFieldReferenceIdsForCategory(
+        this.snapshot.categoryTemplates,
+        category,
+      ).has(templateFieldId);
   }
 
   getEntries(): VaultEntry[] {
@@ -337,6 +344,19 @@ export class VaultController {
         candidate.category.trim().toLowerCase() === categoryKey,
     ) ?? null;
     return resolveEntryReference(field, template, this.snapshot.entries);
+  }
+
+  resolveFieldValueReferenceField(
+    sourceEntry: VaultEntry,
+    field: CustomField,
+  ): FieldValueReferenceResolution | null {
+    this.ensureUnlocked();
+    return resolveFieldValueReference(
+      sourceEntry,
+      field,
+      this.snapshot.categoryTemplates,
+      this.snapshot.entries,
+    );
   }
 
   getSyncSettings(): SyncSettings {
@@ -1222,6 +1242,10 @@ export class VaultController {
         template.category.trim().toLowerCase() === clean.toLowerCase(),
     );
     const storedValueFieldIds = this.categoryTemplateFieldIdsWithStoredValues(clean);
+    targetFieldReferenceIdsForCategory(
+      this.snapshot.categoryTemplates,
+      clean,
+    ).forEach((fieldId: string) => storedValueFieldIds.add(fieldId));
     this.upsertCategoryTemplate(
       clean,
       categoryTemplateFieldsForUserSave(

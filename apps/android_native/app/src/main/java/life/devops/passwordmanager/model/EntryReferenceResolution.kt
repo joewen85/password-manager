@@ -79,8 +79,27 @@ private inline fun resolveEntryReference(
 internal fun VaultEntry.withEntryReferenceSearchProjection(
     template: CategoryTemplate?,
     entriesById: Map<String, VaultEntry>,
+    categoryTemplatesByName: Map<String, CategoryTemplate> = emptyMap(),
 ): VaultEntry {
     val projectedFields = customFields.map { field ->
+        val fieldReference = resolveFieldReference(
+            field = field,
+            sourceTemplate = template,
+            categoryTemplatesByName = categoryTemplatesByName,
+            entriesById = entriesById,
+        )
+        if (fieldReference != null) {
+            val searchableValue = if (fieldReference.status == FieldReferenceStatus.RESOLVED) {
+                listOfNotNull(
+                    fieldReference.targetEntry?.label,
+                    fieldReference.targetEntry?.category?.takeIf { it.isNotEmpty() },
+                    fieldReference.targetField?.name?.takeIf { it.isNotEmpty() },
+                ).joinToString(" ")
+            } else {
+                ""
+            }
+            return@map field.copy(value = searchableValue)
+        }
         when (customFieldSemantics(field, template).semantic) {
             CustomFieldSemantic.TEXT -> field
             CustomFieldSemantic.UNSUPPORTED -> field.copy(value = "")
@@ -141,7 +160,12 @@ internal fun VaultEntry.remapEntryReferenceIds(
     template: CategoryTemplate?,
 ): VaultEntry {
     val remappedFields = customFields.map { field ->
-        if (resolveEntryReference(field, template, emptyList()) == null) return@map field
+        if (
+            resolveEntryReference(field, template, emptyList()) == null &&
+            !isFieldReference(field, template)
+        ) {
+            return@map field
+        }
         val destinationId = idMap[field.value] ?: return@map field
         field.copy(value = destinationId)
     }

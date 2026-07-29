@@ -17,7 +17,7 @@
 - 已支持单条、分类、全库 JSON 导出到用户选择位置并落盘为本地文件。
 - 已支持通过系统文件选择器导入单条/分类 JSON，并提供导入预览与冲突处理策略：保留副本、覆盖现有、跳过冲突。
 - 字段关联已完成首个完整 UI 垂直切片：分类字段可选择“文本/关联条目”和可选目标分类，条目编辑可按约束选择、更换或清空目标，详情覆盖未选择、正常、缺失、已删除、分类不匹配五态并提供查看或修复入口。已有存值的模板字段禁止静默改型或删除；孤儿绑定和未知类型只读保留。候选、详情、摘要和搜索只使用安全目标投影，不显示、复制或索引原始引用 ID 与目标秘密；标签职责不变。格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
-- 字段到字段关联的兼容层已支持在 `FieldTemplate.targetFieldId` 中无损保留目标字段 ID，覆盖模板创建、规范化、编辑合并、同步和导入导出；旧数据缺失该属性时读取为空字符串，未知 `valueType` 及其元数据保持原值。该阶段不改变现有 `entryReference` UI 和解析语义，数据 API 见 `docs/FIELD_REFERENCE_API.md`。
+- 字段到字段关联已推进到 P8：除在 `FieldTemplate.targetFieldId` 中无损保留目标字段 ID 外，内部 resolver 已实现九态解析、目标文本字段安全投影、legacy 空绑定名称回退、搜索安全投影、复制导入目标条目 ID 重映射、分类改名传播和目标字段删除/改型保护。非空字段 ID 始终按大小写敏感的不透明 ID 精确匹配；`fieldReference` 创建、编辑和详情 UI 仍未开放，数据 API 见 `docs/FIELD_REFERENCE_API.md`。
 - 已完成权限最小化声明：`ohos.permission.INTERNET`、`ohos.permission.ACCESS_BIOMETRIC`。
 - 已提供权限/隐私清单、签名指南、DevEco 编译与真机验证手册，以及 Flutter 旧数据到 Harmony 端的加密兼容回归清单。
 - 当前命令行预检与 `assembleHap` 已验证通过，产物为 `entry-default-unsigned.hap`。
@@ -56,6 +56,7 @@
 
 ```bash
 node scripts/harmony_field_reference_contract_compat_tests.mjs
+node scripts/harmony_reference_resolver_tests.mjs
 ```
 
 推荐的一键发布门禁默认执行 preflight、清理旧产物、unsigned build 和 HAP 校验：
@@ -256,7 +257,7 @@ This directory contains the native HarmonyOS 6 application target, used to build
 - Item, category, and full-vault JSON export to a user-selected local location is implemented.
 - Item/category JSON import through the system picker is implemented with import preview and conflict strategies: keep copy, overwrite existing, and skip conflicts.
 - Entry references now provide the first complete UI vertical slice. Category fields can choose text or entry-reference behavior plus an optional target category; entry editing can select, replace, or clear a matching target; details cover empty, resolved, missing, deleted, and category-mismatch states with open and repair actions. Candidates, details, summaries, and search use only the safe target projection and never display, copy, or index the stored reference ID or target secrets. Tags remain unchanged. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
-- The field-to-field reference compatibility layer now preserves the target field ID losslessly in `FieldTemplate.targetFieldId` across template creation, normalization, editing merges, sync, import, and export. Missing legacy values normalize to an empty string, while unknown `valueType` values and their metadata remain unchanged. This stage does not change existing `entryReference` UI or resolution semantics; see `docs/FIELD_REFERENCE_API.md`.
+- Field-to-field references have reached P8. In addition to losslessly preserving `FieldTemplate.targetFieldId`, the internal resolver now implements nine states, a minimal safe text-field projection, legacy empty-binding name fallback, safe search projection, copied-import target-entry ID remapping, category-rename propagation, and target-field deletion/retyping protection. Non-empty field IDs always use exact case-sensitive opaque-ID matching. Creation, editing, and detail UI for `fieldReference` remain unavailable; see `docs/FIELD_REFERENCE_API.md`.
 - Permission declaration is minimized to `ohos.permission.INTERNET` and `ohos.permission.ACCESS_BIOMETRIC`.
 - Documentation exists for permissions/privacy review, signing, DevEco build and device validation, and historical Flutter-to-Harmony migration compatibility regression.
 - Command-line preflight and `assembleHap` have passed and produced `entry-default-unsigned.hap`.
@@ -295,6 +296,7 @@ Field-to-field reference data contract test:
 
 ```bash
 node scripts/harmony_field_reference_contract_compat_tests.mjs
+node scripts/harmony_reference_resolver_tests.mjs
 ```
 
 The recommended one-command release gate runs preflight, clears stale build outputs, then performs unsigned build and HAP verification by default:

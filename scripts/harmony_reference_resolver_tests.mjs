@@ -26,7 +26,7 @@ function loadResolverRuntime() {
     .replace(/import\s*{[\s\S]*?}\s*from\s*'\.\.\/model\/VaultTypes';\s*/, '')
     .replace(/\bexport\s+/g, '');
   const executable = stripTypeScriptTypes(
-    `${source}\n;({ EntryReferenceStatus, propagateEntryReferenceCategoryRename, resolveEntryReference });`,
+    `${source}\n;({ EntryReferenceStatus, FieldValueReferenceStatus, propagateEntryReferenceCategoryRename, resolveEntryReference, resolveFieldValueReference, targetFieldReferenceIdsForCategory });`,
     { mode: 'transform' },
   );
   return vm.runInNewContext(executable, {});
@@ -54,8 +54,11 @@ function main() {
   assert(fs.existsSync(resolverPath), 'Harmony field reference resolver exists');
   const {
     EntryReferenceStatus,
+    FieldValueReferenceStatus,
     propagateEntryReferenceCategoryRename,
     resolveEntryReference,
+    resolveFieldValueReference,
+    targetFieldReferenceIdsForCategory,
   } = loadResolverRuntime();
   assert(
     JSON.stringify(EntryReferenceStatus) === JSON.stringify({
@@ -296,6 +299,190 @@ function main() {
       resolveEntryReference(lifecycleField, renamedReferenceTemplate, [movedTarget]).status ===
         EntryReferenceStatus.CATEGORY_MISMATCH,
     'Moving a target keeps the reference value and reports CATEGORY_MISMATCH',
+  );
+
+  const targetFieldTemplate = {
+    id: 'Target-Email',
+    name: 'Directory Address',
+    valueType: 'text',
+    targetCategory: '',
+    targetFieldId: '',
+  };
+  const sourceFieldTemplate = {
+    id: 'Source-Owner-Email',
+    name: 'Owner Email',
+    valueType: 'fieldReference',
+    targetCategory: ' Accounts ',
+    targetFieldId: targetFieldTemplate.id,
+  };
+  const fieldTemplates = [
+    { category: 'Accounts', fields: [targetFieldTemplate] },
+    { category: 'Servers', fields: [sourceFieldTemplate] },
+  ];
+  const fieldSource = makeEntry('Source-Server', 'Production Server', 'Servers');
+  fieldSource.customFields = [{
+    id: 'Source-Owner-Email-Value',
+    name: 'Owner Email',
+    templateFieldId: sourceFieldTemplate.id,
+    value: 'Target-Account',
+  }];
+  const fieldTarget = makeEntry('Target-Account', 'Production Account', ' accounts ');
+  fieldTarget.customFields = [{
+    id: 'Target-Email-Value',
+    name: 'Old Email Name',
+    templateFieldId: targetFieldTemplate.id,
+    value: 'ops@example.com',
+  }];
+  const resolveField = (source = fieldSource, target = fieldTarget, templates = fieldTemplates) =>
+    resolveFieldValueReference(source, source.customFields[0], templates, [source, target]);
+
+  const fieldResolved = resolveField();
+  assert(
+    fieldResolved.status === FieldValueReferenceStatus.RESOLVED &&
+      JSON.stringify(fieldResolved.target) === JSON.stringify({
+        id: fieldTarget.id,
+        label: fieldTarget.label,
+        category: 'accounts',
+        fieldId: targetFieldTemplate.id,
+        fieldName: targetFieldTemplate.name,
+        value: 'ops@example.com',
+      }),
+    'Field references resolve one text field through stable template and entry IDs',
+  );
+  assert(
+    Object.keys(fieldResolved.target).sort().join(',') ===
+      'category,fieldId,fieldName,id,label,value' &&
+      fieldResolved.target.payload === undefined,
+    'Field-reference projections exclude the complete target entry and payload',
+  );
+
+  const legacyFieldTarget = JSON.parse(JSON.stringify(fieldTarget));
+  legacyFieldTarget.customFields[0].templateFieldId = '';
+  legacyFieldTarget.customFields[0].name = '  directory address  ';
+  legacyFieldTarget.customFields[0].value = 'legacy@example.com';
+  const legacyFieldResolved = resolveField(fieldSource, legacyFieldTarget);
+  assert(
+    legacyFieldResolved.status === FieldValueReferenceStatus.RESOLVED &&
+      legacyFieldResolved.target.value === 'legacy@example.com',
+    'Legacy target fields with an empty template ID use normalized name fallback',
+  );
+
+  const exactFieldPrecedenceTarget = JSON.parse(JSON.stringify(fieldTarget));
+  exactFieldPrecedenceTarget.customFields = [
+    {
+      id: 'Legacy-Target-Email',
+      name: '  directory address  ',
+      templateFieldId: '',
+      value: 'legacy@example.com',
+    },
+    {
+      id: 'Exact-Target-Email',
+      name: 'Renamed Directory Address',
+      templateFieldId: targetFieldTemplate.id,
+      value: '  ',
+    },
+  ];
+  assert(
+    resolveField(fieldSource, exactFieldPrecedenceTarget).status ===
+      FieldValueReferenceStatus.TARGET_FIELD_EMPTY,
+    'Exact target field IDs win globally over earlier legacy name matches',
+  );
+
+  const wronglyBoundFieldTarget = JSON.parse(JSON.stringify(fieldTarget));
+  wronglyBoundFieldTarget.customFields[0].templateFieldId = 'target-email';
+  wronglyBoundFieldTarget.customFields[0].name = '  directory address  ';
+  const wronglyBoundResolution = resolveField(fieldSource, wronglyBoundFieldTarget);
+  assert(
+    wronglyBoundResolution.status === FieldValueReferenceStatus.TARGET_FIELD_EMPTY,
+    'Non-empty wrong target template IDs remain opaque and never fall back by name',
+  );
+
+  const emptySource = JSON.parse(JSON.stringify(fieldSource));
+  emptySource.customFields[0].value = '  ';
+  assert(
+    resolveField(emptySource).status === FieldValueReferenceStatus.EMPTY,
+    'Field-reference empty values win before configuration and target lookup',
+  );
+  const invalidTemplates = JSON.parse(JSON.stringify(fieldTemplates));
+  invalidTemplates[1].fields[0].targetFieldId = '';
+  assert(
+    resolveField(fieldSource, fieldTarget, invalidTemplates).status ===
+      FieldValueReferenceStatus.INVALID_CONFIGURATION,
+    'Missing target field configuration is explicit',
+  );
+  const selfTemplates = JSON.parse(JSON.stringify(fieldTemplates));
+  selfTemplates[1].fields[0].targetCategory = 'Servers';
+  selfTemplates[1].fields[0].targetFieldId = sourceFieldTemplate.id;
+  assert(
+    resolveField(fieldSource, fieldTarget, selfTemplates).status ===
+      FieldValueReferenceStatus.INVALID_CONFIGURATION,
+    'A field cannot reference itself',
+  );
+  const missingSource = JSON.parse(JSON.stringify(fieldSource));
+  missingSource.customFields[0].value = 'Missing-Target';
+  assert(
+    resolveField(missingSource).status === FieldValueReferenceStatus.MISSING,
+    'Missing field-reference target entries are distinct',
+  );
+  const deletedFieldTarget = JSON.parse(JSON.stringify(fieldTarget));
+  deletedFieldTarget.isDeleted = true;
+  assert(
+    resolveField(fieldSource, deletedFieldTarget).status === FieldValueReferenceStatus.DELETED,
+    'Deleted field-reference targets retain the relationship',
+  );
+  const movedFieldTarget = JSON.parse(JSON.stringify(fieldTarget));
+  movedFieldTarget.payload.category = 'Archive';
+  assert(
+    resolveField(fieldSource, movedFieldTarget).status ===
+      FieldValueReferenceStatus.CATEGORY_MISMATCH,
+    'Moved field-reference targets retain the relationship and report mismatch',
+  );
+  const missingFieldTemplates = JSON.parse(JSON.stringify(fieldTemplates));
+  missingFieldTemplates[0].fields = [];
+  assert(
+    resolveField(fieldSource, fieldTarget, missingFieldTemplates).status ===
+      FieldValueReferenceStatus.TARGET_FIELD_MISSING,
+    'Deleted target template fields are distinct from missing entries',
+  );
+  const unsupportedFieldTemplates = JSON.parse(JSON.stringify(fieldTemplates));
+  unsupportedFieldTemplates[0].fields[0].valueType = 'entryReference';
+  assert(
+    resolveField(fieldSource, fieldTarget, unsupportedFieldTemplates).status ===
+      FieldValueReferenceStatus.TARGET_FIELD_UNSUPPORTED,
+    'Reference chains and non-text target fields are rejected',
+  );
+  const emptyFieldTarget = JSON.parse(JSON.stringify(fieldTarget));
+  emptyFieldTarget.customFields = [];
+  assert(
+    resolveField(fieldSource, emptyFieldTarget).status ===
+      FieldValueReferenceStatus.TARGET_FIELD_EMPTY,
+    'Absent target field instances resolve as an empty target field',
+  );
+  emptyFieldTarget.customFields = [{
+    id: 'Blank-Target-Email',
+    name: 'Email',
+    templateFieldId: targetFieldTemplate.id,
+    value: '\n',
+  }];
+  assert(
+    resolveField(fieldSource, emptyFieldTarget).status ===
+      FieldValueReferenceStatus.TARGET_FIELD_EMPTY,
+    'Blank target text values resolve as an empty target field',
+  );
+  assert(
+    targetFieldReferenceIdsForCategory(fieldTemplates, ' accounts ').has(targetFieldTemplate.id) &&
+      !targetFieldReferenceIdsForCategory(fieldTemplates, 'Accounts').has('TARGET-EMAIL'),
+    'Inbound target-field dependencies use category normalization and exact opaque field IDs',
+  );
+  const renamedFieldTemplates = propagateEntryReferenceCategoryRename(
+    fieldTemplates,
+    'accounts',
+    'Identity',
+  );
+  assert(
+    renamedFieldTemplates[1].fields[0].targetCategory === 'Identity' &&
+      renamedFieldTemplates[1].fields[0].targetFieldId === targetFieldTemplate.id,
+    'Category rename propagates field references without changing targetFieldId',
   );
 
   if (failures > 0) {

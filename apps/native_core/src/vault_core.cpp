@@ -2003,6 +2003,112 @@ std::optional<EntryReferenceResolution> resolveEntryReference(
     return EntryReferenceResolution{EntryReferenceStatus::Resolved, projection};
 }
 
+std::optional<FieldReferenceResolution> resolveFieldReference(
+    const VaultEntry& sourceEntry,
+    const CustomField& field,
+    const std::vector<CategoryTemplate>& categoryTemplates,
+    const std::vector<VaultEntry>& entries
+) {
+    const auto sourceTemplate = std::find_if(
+        categoryTemplates.begin(),
+        categoryTemplates.end(),
+        [&](const CategoryTemplate& candidate) {
+            return lowerCopy(trimCopy(candidate.category)) == lowerCopy(trimCopy(sourceEntry.category));
+        }
+    );
+    if (sourceTemplate == categoryTemplates.end()) return std::nullopt;
+
+    const auto* templateField = matchingFieldTemplate(field, sourceTemplate->fields);
+    if (templateField == nullptr || templateField->valueType != "fieldReference") {
+        return std::nullopt;
+    }
+    if (trimCopy(field.value).empty()) {
+        return FieldReferenceResolution{FieldReferenceStatus::Empty, std::nullopt};
+    }
+
+    const auto targetCategory = trimCopy(templateField->targetCategory);
+    if (targetCategory.empty() || trimCopy(templateField->targetFieldId).empty()) {
+        return FieldReferenceResolution{FieldReferenceStatus::InvalidConfiguration, std::nullopt};
+    }
+    if (lowerCopy(trimCopy(sourceTemplate->category)) == lowerCopy(targetCategory)
+        && templateField->id == templateField->targetFieldId) {
+        return FieldReferenceResolution{FieldReferenceStatus::InvalidConfiguration, std::nullopt};
+    }
+
+    const auto targetEntry = std::find_if(entries.begin(), entries.end(), [&](const VaultEntry& entry) {
+        return entry.id == field.value;
+    });
+    if (targetEntry == entries.end()) {
+        return FieldReferenceResolution{FieldReferenceStatus::Missing, std::nullopt};
+    }
+
+    FieldReferenceTarget projection{
+        targetEntry->id,
+        targetEntry->label,
+        trimCopy(targetEntry->category),
+        templateField->targetFieldId,
+        "",
+        "",
+    };
+    if (targetEntry->isDeleted) {
+        return FieldReferenceResolution{FieldReferenceStatus::Deleted, projection};
+    }
+    if (lowerCopy(projection.category) != lowerCopy(targetCategory)) {
+        return FieldReferenceResolution{FieldReferenceStatus::CategoryMismatch, projection};
+    }
+
+    const auto targetTemplate = std::find_if(
+        categoryTemplates.begin(),
+        categoryTemplates.end(),
+        [&](const CategoryTemplate& candidate) {
+            return lowerCopy(trimCopy(candidate.category)) == lowerCopy(projection.category);
+        }
+    );
+    if (targetTemplate == categoryTemplates.end()) {
+        return FieldReferenceResolution{FieldReferenceStatus::TargetFieldMissing, projection};
+    }
+    const auto targetFieldTemplate = std::find_if(
+        targetTemplate->fields.begin(),
+        targetTemplate->fields.end(),
+        [&](const FieldTemplate& candidate) {
+            return candidate.id == templateField->targetFieldId;
+        }
+    );
+    if (targetFieldTemplate == targetTemplate->fields.end()) {
+        return FieldReferenceResolution{FieldReferenceStatus::TargetFieldMissing, projection};
+    }
+    projection.fieldName = targetFieldTemplate->name;
+    if (targetFieldTemplate->valueType != "text") {
+        return FieldReferenceResolution{FieldReferenceStatus::TargetFieldUnsupported, projection};
+    }
+
+    auto targetFieldValue = std::find_if(
+        targetEntry->customFields.begin(),
+        targetEntry->customFields.end(),
+        [&](const CustomField& candidate) {
+            return !candidate.templateFieldId.empty()
+                && candidate.templateFieldId == targetFieldTemplate->id;
+        }
+    );
+    if (targetFieldValue == targetEntry->customFields.end()) {
+        const auto targetFieldName = lowerCopy(trimCopy(targetFieldTemplate->name));
+        targetFieldValue = std::find_if(
+            targetEntry->customFields.begin(),
+            targetEntry->customFields.end(),
+            [&](const CustomField& candidate) {
+                return candidate.templateFieldId.empty()
+                    && !targetFieldName.empty()
+                    && lowerCopy(trimCopy(candidate.name)) == targetFieldName;
+            }
+        );
+    }
+    if (targetFieldValue == targetEntry->customFields.end() || trimCopy(targetFieldValue->value).empty()) {
+        return FieldReferenceResolution{FieldReferenceStatus::TargetFieldEmpty, projection};
+    }
+    projection.value = targetFieldValue->value;
+    return FieldReferenceResolution{FieldReferenceStatus::Resolved, projection};
+}
+
 std::vector<CustomField> projectCustomFieldsForSearch(
     const std::vector<CustomField>& fields,
     const std::vector<FieldTemplate>& templateFields,
@@ -2026,6 +2132,55 @@ std::vector<CustomField> projectCustomFieldsForSearch(
                 && resolution->target.has_value()
             ? resolution->target->label + " " + resolution->target->category
             : "";
+    }
+    return projected;
+}
+
+std::vector<CustomField> projectCustomFieldsForSearch(
+    const VaultEntry& sourceEntry,
+    const std::vector<CategoryTemplate>& categoryTemplates,
+    const std::vector<VaultEntry>& entries
+) {
+    const auto sourceTemplate = std::find_if(
+        categoryTemplates.begin(),
+        categoryTemplates.end(),
+        [&](const CategoryTemplate& candidate) {
+            return lowerCopy(trimCopy(candidate.category)) == lowerCopy(trimCopy(sourceEntry.category));
+        }
+    );
+    const std::vector<FieldTemplate> emptyTemplates;
+    const auto& templateFields = sourceTemplate == categoryTemplates.end()
+        ? emptyTemplates
+        : sourceTemplate->fields;
+    auto projected = sourceEntry.customFields;
+    for (auto& field : projected) {
+        const auto* templateField = matchingFieldTemplate(field, templateFields);
+        if (templateField == nullptr) {
+            if (!field.templateFieldId.empty()) field.value.clear();
+            continue;
+        }
+        if (templateField->valueType == "text") continue;
+        if (templateField->valueType == "entryReference") {
+            const auto resolution = resolveEntryReference(field, templateFields, entries);
+            field.value = resolution.has_value()
+                    && resolution->status == EntryReferenceStatus::Resolved
+                    && resolution->target.has_value()
+                ? resolution->target->label + " " + resolution->target->category
+                : "";
+            continue;
+        }
+        if (templateField->valueType == "fieldReference") {
+            const auto resolution = resolveFieldReference(sourceEntry, field, categoryTemplates, entries);
+            field.value = resolution.has_value()
+                    && resolution->status == FieldReferenceStatus::Resolved
+                    && resolution->target.has_value()
+                ? resolution->target->label + " "
+                    + resolution->target->category + " "
+                    + resolution->target->fieldName
+                : "";
+            continue;
+        }
+        field.value.clear();
     }
     return projected;
 }
@@ -2089,13 +2244,29 @@ std::vector<CategoryTemplate> propagateEntryReferenceCategoryRename(
     const auto oldKey = lowerCopy(oldNormalized);
     for (auto& categoryTemplate : updatedTemplates) {
         for (auto& field : categoryTemplate.fields) {
-            if (field.valueType == "entryReference" &&
+            if ((field.valueType == "entryReference" || field.valueType == "fieldReference") &&
                 lowerCopy(trimCopy(field.targetCategory)) == oldKey) {
                 field.targetCategory = newNormalized;
             }
         }
     }
     return updatedTemplates;
+}
+
+bool isTargetFieldReferenced(
+    const std::vector<CategoryTemplate>& templates,
+    const std::string& targetCategory,
+    const std::string& targetFieldId
+) {
+    const auto categoryKey = lowerCopy(trimCopy(targetCategory));
+    if (categoryKey.empty() || trimCopy(targetFieldId).empty()) return false;
+    return std::any_of(templates.begin(), templates.end(), [&](const CategoryTemplate& sourceTemplate) {
+        return std::any_of(sourceTemplate.fields.begin(), sourceTemplate.fields.end(), [&](const FieldTemplate& field) {
+            return field.valueType == "fieldReference"
+                && lowerCopy(trimCopy(field.targetCategory)) == categoryKey
+                && field.targetFieldId == targetFieldId;
+        });
+    });
 }
 
 std::vector<CustomField> remapEntryReferenceIds(
@@ -2105,7 +2276,11 @@ std::vector<CustomField> remapEntryReferenceIds(
 ) {
     auto remapped = fields;
     for (auto& field : remapped) {
-        if (!resolveEntryReference(field, templateFields, {}).has_value()) continue;
+        const auto* templateField = matchingFieldTemplate(field, templateFields);
+        if (templateField == nullptr
+            || (templateField->valueType != "entryReference" && templateField->valueType != "fieldReference")) {
+            continue;
+        }
         const auto destination = idMap.find(field.value);
         if (destination != idMap.end()) field.value = destination->second;
     }
@@ -2190,26 +2365,11 @@ std::vector<VaultEntry> filterEntries(
         if (entry.isDeleted) continue;
         if (type != "all" && entry.type != type) continue;
         VaultEntry searchProjection = entry;
-        const auto templateEntry = std::find_if(
-            categoryTemplates.begin(),
-            categoryTemplates.end(),
-            [&](const CategoryTemplate& candidate) {
-                return lowerCopy(trimCopy(candidate.category)) == lowerCopy(trimCopy(entry.category));
-            }
+        searchProjection.customFields = projectCustomFieldsForSearch(
+            entry,
+            categoryTemplates,
+            entries
         );
-        if (templateEntry != categoryTemplates.end()) {
-            searchProjection.customFields = projectCustomFieldsForSearch(
-                searchProjection.customFields,
-                templateEntry->fields,
-                entries
-            );
-        } else {
-            searchProjection.customFields = projectCustomFieldsForSearch(
-                searchProjection.customFields,
-                {},
-                entries
-            );
-        }
         bool matches = true;
         for (const auto& term : terms) {
             if (!matchesSearchTerm(searchProjection, term)) {

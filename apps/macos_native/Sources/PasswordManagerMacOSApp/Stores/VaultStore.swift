@@ -285,6 +285,11 @@ final class VaultStore {
             from: oldNormalized,
             to: newNormalized
         )
+        categoryTemplates = propagateFieldReferenceCategoryRename(
+            templates: categoryTemplates,
+            from: oldNormalized,
+            to: newNormalized
+        )
         for index in entries.indices where entries[index].payload.category.caseInsensitiveEquals(oldNormalized) {
             entries[index].payload = entries[index].payload.replacingCategory(
                 newNormalized,
@@ -378,6 +383,18 @@ final class VaultStore {
             requestedFields.map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
         )
+        let referencedTargetFieldIDs = categoryTemplateReferencedTargetFieldIDs(canonicalCategory)
+        if let protectedField = existingFields.first(where: { existingField in
+            guard existingField.id != nameField.id,
+                  existingField.normalizedValueType == "text",
+                  referencedTargetFieldIDs.contains(existingField.id) else {
+                return false
+            }
+            return requestedByID[existingField.id]?.normalizedValueType != "text"
+        }) {
+            statusMessage = "Referenced field cannot be removed or retyped: \(protectedField.name)."
+            return false
+        }
         let mandatoryFields = existingFields.filter {
             storedValueFieldIDs.contains($0.id)
                 || ($0.normalizedValueType != "text" && $0.normalizedValueType != "entryReference")
@@ -474,6 +491,13 @@ final class VaultStore {
         persistUnlockedSnapshot()
         statusMessage = "Category updated."
         return true
+    }
+
+    func categoryTemplateReferencedTargetFieldIDs(_ category: String) -> Set<String> {
+        fieldReferenceTargetFieldIDs(
+            targetCategory: category,
+            templates: categoryTemplates
+        )
     }
 
     func categoryTemplateStoredValueFieldIDs(_ category: String) -> Set<String> {
@@ -1093,13 +1117,8 @@ final class VaultStore {
                 }
             }
             .filter { entry in
-                query.isEmpty || entry.withEntryReferenceSearchProjection(
-                    template: categoryTemplates.first {
-                        $0.category.trimmingCharacters(in: .whitespacesAndNewlines)
-                            .caseInsensitiveCompare(
-                                entry.payload.category.trimmingCharacters(in: .whitespacesAndNewlines)
-                            ) == .orderedSame
-                    },
+                query.isEmpty || entry.withFieldReferenceSearchProjection(
+                    categoryTemplates: categoryTemplates,
                     entries: entries
                 ).matchesSearchQuery(query)
             }
@@ -1393,10 +1412,15 @@ final class VaultStore {
                         plan.imported.payload.category.trimmingCharacters(in: .whitespacesAndNewlines)
                     ) == .orderedSame
             }
-            let imported = plan.imported.remappingEntryReferenceIDs(
-                using: destinationIDsBySourceID,
-                template: template
-            )
+            let imported = plan.imported
+                .remappingEntryReferenceIDs(
+                    using: destinationIDsBySourceID,
+                    template: template
+                )
+                .remappingFieldReferenceIDs(
+                    using: destinationIDsBySourceID,
+                    template: template
+                )
             switch plan.action {
             case .skip:
                 skipped += 1

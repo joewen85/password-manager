@@ -298,6 +298,44 @@ function main() {
       JSON.stringify(stableText),
     'Saving a category cannot silently reinterpret stored text as reference IDs',
   );
+  const referencedTargetText = {
+    id: 'Target-Email',
+    name: 'Email',
+    valueType: 'text',
+    targetCategory: '',
+    targetFieldId: '',
+  };
+  const protectedTargetIds = new Set([referencedTargetText.id]);
+  const deletedTargetFieldSave = runtime.categoryTemplateFieldsForUserSave(
+    [...baseFields, referencedTargetText],
+    [],
+    protectedTargetIds,
+  );
+  assert(
+    JSON.stringify(deletedTargetFieldSave.find((field) => field.id === referencedTargetText.id)) ===
+      JSON.stringify(referencedTargetText),
+    'A target text field cannot be deleted while a fieldReference points to it',
+  );
+  const retypedTargetFieldSave = runtime.categoryTemplateFieldsForUserSave(
+    [...baseFields, referencedTargetText],
+    [{ ...referencedTargetText, valueType: 'entryReference', targetCategory: 'Accounts' }],
+    protectedTargetIds,
+  );
+  assert(
+    JSON.stringify(retypedTargetFieldSave.find((field) => field.id === referencedTargetText.id)) ===
+      JSON.stringify(referencedTargetText),
+    'A target text field cannot be retyped while a fieldReference points to it',
+  );
+  const renamedTargetFieldSave = runtime.categoryTemplateFieldsForUserSave(
+    [...baseFields, referencedTargetText],
+    [{ ...referencedTargetText, name: 'Directory Address' }],
+    protectedTargetIds,
+  );
+  assert(
+    renamedTargetFieldSave.find((field) => field.id === referencedTargetText.id)?.name ===
+      'Directory Address',
+    'A referenced target text field can be renamed because its stable ID is unchanged',
+  );
   const categoryTemplateFieldIdsWithStoredValues = loadIndexMethod(
     controllerSource,
     '  private categoryTemplateFieldIdsWithStoredValues(',

@@ -23,6 +23,7 @@ import life.devops.passwordmanager.model.canExposeRawCustomFieldValue
 import life.devops.passwordmanager.model.categoryTemplateFieldsForUserSave
 import life.devops.passwordmanager.model.copyForImport
 import life.devops.passwordmanager.model.entryReferenceCandidates as safeEntryReferenceCandidates
+import life.devops.passwordmanager.model.fieldReferenceTargetFieldIds
 import life.devops.passwordmanager.model.importMatchKey
 import life.devops.passwordmanager.model.mergeCustomFieldsForEditorSave
 import life.devops.passwordmanager.model.newCategoryTemplateField
@@ -211,6 +212,11 @@ class VaultStore(
     ): List<VaultEntry> {
         val searchTerms = parseVaultSearchTerms(query)
         val entriesById = if (searchTerms.isEmpty()) emptyMap() else entries.associateBy { it.id }
+        val templatesByCategory = if (searchTerms.isEmpty()) {
+            emptyMap()
+        } else {
+            categoryTemplates.values.associateBy { template -> template.category.trim().lowercase() }
+        }
         return entries
             .asSequence()
             .filter { !it.isDeleted }
@@ -221,6 +227,7 @@ class VaultStore(
                 searchTerms.isEmpty() || it.withEntryReferenceSearchProjection(
                     template = categoryTemplate(it.payload.category),
                     entriesById = entriesById,
+                    categoryTemplatesByName = templatesByCategory,
                 ).matchesSearchTerms(searchTerms)
             }
             .sortedByDescending { it.updatedAt }
@@ -451,9 +458,20 @@ class VaultStore(
             manualCategories += normalized
         }
         ensureCategoryIsActive(normalized, Instant.now())
+        val existing = editorCategoryTemplate(normalized)
+        val defaultFieldIds = CategoryTemplate.defaultCategoryFields().mapTo(mutableSetOf()) { it.id }
         categoryTemplates[normalized] = CategoryTemplate(
             category = normalized,
-            fields = CategoryTemplate.fieldsForPreset(preset),
+            fields = categoryTemplateFieldsForUserSave(
+                existing = existing.fields,
+                requestedCustomFields = CategoryTemplate.fieldsForPreset(preset)
+                    .filterNot { field -> field.id in defaultFieldIds },
+                storedValueFieldIds = categoryTemplateStoredValueFieldIds(normalized),
+                referencedTargetFieldIds = fieldReferenceTargetFieldIds(
+                    targetCategory = normalized,
+                    templates = categoryTemplates.values,
+                ),
+            ),
         )
         persistUnlockedSnapshot()
         statusMessage = "Category template updated."
@@ -481,6 +499,10 @@ class VaultStore(
                 existing = existing.fields,
                 requestedCustomFields = requestedCustomFields,
                 storedValueFieldIds = storedValueFieldIds,
+                referencedTargetFieldIds = fieldReferenceTargetFieldIds(
+                    targetCategory = normalized,
+                    templates = categoryTemplates.values,
+                ),
             ),
         )
         existingEntry?.let { entry ->
@@ -546,7 +568,7 @@ class VaultStore(
         categoryTemplates.replaceAll { _, template ->
             val updatedFields = template.fields.map { field ->
                 if (
-                    field.valueType == "entryReference" &&
+                    (field.valueType == "entryReference" || field.valueType == "fieldReference") &&
                     field.targetCategory.trim().equals(oldNormalized, ignoreCase = true)
                 ) {
                     field.copy(targetCategory = newNormalized)

@@ -15,6 +15,7 @@ internal fun categoryTemplateFieldsForUserSave(
     existing: List<FieldTemplate>,
     requestedCustomFields: List<FieldTemplate>,
     storedValueFieldIds: Set<String> = emptySet(),
+    referencedTargetFieldIds: Set<String> = emptySet(),
 ): List<FieldTemplate> {
     val requested = CategoryTemplate.defaultCategoryFields() + requestedCustomFields
     val usedExistingIndexes = mutableSetOf<Int>()
@@ -29,9 +30,12 @@ internal fun categoryTemplateFieldsForUserSave(
 
         usedExistingIndexes += existingIndex
         val current = existing[existingIndex]
+        val isReferencedTextTarget =
+            current.id in referencedTargetFieldIds &&
+                normalizedCategoryFieldValueType(current.valueType) == TEXT_VALUE_TYPE
         when {
             !isEditableCategoryFieldType(current.valueType) -> merged += current
-            current.id in storedValueFieldIds &&
+            (current.id in storedValueFieldIds || isReferencedTextTarget) &&
                 normalizedCategoryFieldValueType(current.valueType) !=
                 normalizedCategoryFieldValueType(field.valueType) -> merged += current
             else -> merged += normalizedCategoryTemplateField(field).copy(id = current.id)
@@ -41,12 +45,40 @@ internal fun categoryTemplateFieldsForUserSave(
     existing.forEachIndexed { index, field ->
         if (
             index !in usedExistingIndexes &&
-            (!isEditableCategoryFieldType(field.valueType) || field.id in storedValueFieldIds)
+            (
+                !isEditableCategoryFieldType(field.valueType) ||
+                    field.id in storedValueFieldIds ||
+                    (
+                        field.id in referencedTargetFieldIds &&
+                            normalizedCategoryFieldValueType(field.valueType) == TEXT_VALUE_TYPE
+                    )
+            )
         ) {
             merged += field
         }
     }
     return merged
+}
+
+internal fun fieldReferenceTargetFieldIds(
+    targetCategory: String,
+    templates: Collection<CategoryTemplate>,
+): Set<String> {
+    val normalizedTargetCategory = targetCategory.trim()
+    if (normalizedTargetCategory.isEmpty()) return emptySet()
+    return buildSet {
+        templates.forEach { template ->
+            template.fields.forEach { field ->
+                if (
+                    field.valueType == FIELD_REFERENCE_VALUE_TYPE &&
+                    field.targetCategory.trim().equals(normalizedTargetCategory, ignoreCase = true) &&
+                    field.targetFieldId.isNotBlank()
+                ) {
+                    add(field.targetFieldId)
+                }
+            }
+        }
+    }
 }
 
 internal fun newCategoryTemplateField(

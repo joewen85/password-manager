@@ -250,6 +250,273 @@ int main() {
     assert(fieldReferenceRoundTrip.categoryTemplates[1].fields[0].valueType == "fieldReference");
     assert(fieldReferenceRoundTrip.categoryTemplates[1].fields[0].targetFieldId == "target_email_field");
 
+    const auto& fieldReferenceTarget = fieldReferenceFixture.entries[0];
+    const auto& fieldReferenceSource = fieldReferenceFixture.entries[1];
+    const auto& fieldReferenceValue = fieldReferenceSource.customFields[0];
+    const auto resolvedFieldReference = pm::resolveFieldReference(
+        fieldReferenceSource,
+        fieldReferenceValue,
+        fieldReferenceFixture.categoryTemplates,
+        fieldReferenceFixture.entries
+    );
+    assert(resolvedFieldReference.has_value());
+    assert(resolvedFieldReference->status == pm::FieldReferenceStatus::Resolved);
+    assert(resolvedFieldReference->target.has_value());
+    assert(resolvedFieldReference->target->id == fieldReferenceTarget.id);
+    assert(resolvedFieldReference->target->label == fieldReferenceTarget.label);
+    assert(resolvedFieldReference->target->category == "Accounts");
+    assert(resolvedFieldReference->target->fieldId == "target_email_field");
+    assert(resolvedFieldReference->target->fieldName == "Email");
+    assert(resolvedFieldReference->target->value == "ops@example.com");
+
+    auto emptyFieldReferenceValue = fieldReferenceValue;
+    emptyFieldReferenceValue.value = " \t\n";
+    const auto emptyFieldReference = pm::resolveFieldReference(
+        fieldReferenceSource,
+        emptyFieldReferenceValue,
+        fieldReferenceFixture.categoryTemplates,
+        fieldReferenceFixture.entries
+    );
+    assert(emptyFieldReference.has_value());
+    assert(emptyFieldReference->status == pm::FieldReferenceStatus::Empty);
+    assert(!emptyFieldReference->target.has_value());
+
+    auto invalidFieldReferenceTemplates = fieldReferenceFixture.categoryTemplates;
+    invalidFieldReferenceTemplates[1].fields[0].targetFieldId.clear();
+    const auto invalidFieldReference = pm::resolveFieldReference(
+        fieldReferenceSource,
+        fieldReferenceValue,
+        invalidFieldReferenceTemplates,
+        fieldReferenceFixture.entries
+    );
+    assert(invalidFieldReference.has_value());
+    assert(invalidFieldReference->status == pm::FieldReferenceStatus::InvalidConfiguration);
+
+    auto selfReferenceTemplates = fieldReferenceFixture.categoryTemplates;
+    selfReferenceTemplates[1].fields[0].targetCategory = " Servers ";
+    selfReferenceTemplates[1].fields[0].targetFieldId = selfReferenceTemplates[1].fields[0].id;
+    const auto selfReference = pm::resolveFieldReference(
+        fieldReferenceSource,
+        fieldReferenceValue,
+        selfReferenceTemplates,
+        fieldReferenceFixture.entries
+    );
+    assert(selfReference.has_value());
+    assert(selfReference->status == pm::FieldReferenceStatus::InvalidConfiguration);
+
+    auto missingFieldReferenceValue = fieldReferenceValue;
+    missingFieldReferenceValue.value = "missing_target_entry";
+    const auto missingFieldReference = pm::resolveFieldReference(
+        fieldReferenceSource,
+        missingFieldReferenceValue,
+        fieldReferenceFixture.categoryTemplates,
+        fieldReferenceFixture.entries
+    );
+    assert(missingFieldReference.has_value());
+    assert(missingFieldReference->status == pm::FieldReferenceStatus::Missing);
+
+    auto deletedFieldReferenceEntries = fieldReferenceFixture.entries;
+    deletedFieldReferenceEntries[0].isDeleted = true;
+    const auto deletedFieldReference = pm::resolveFieldReference(
+        deletedFieldReferenceEntries[1],
+        deletedFieldReferenceEntries[1].customFields[0],
+        fieldReferenceFixture.categoryTemplates,
+        deletedFieldReferenceEntries
+    );
+    assert(deletedFieldReference.has_value());
+    assert(deletedFieldReference->status == pm::FieldReferenceStatus::Deleted);
+    assert(deletedFieldReference->target.has_value());
+    assert(deletedFieldReference->target->value.empty());
+
+    auto mismatchedFieldReferenceEntries = fieldReferenceFixture.entries;
+    mismatchedFieldReferenceEntries[0].category = "Archive";
+    const auto mismatchedFieldReference = pm::resolveFieldReference(
+        mismatchedFieldReferenceEntries[1],
+        mismatchedFieldReferenceEntries[1].customFields[0],
+        fieldReferenceFixture.categoryTemplates,
+        mismatchedFieldReferenceEntries
+    );
+    assert(mismatchedFieldReference.has_value());
+    assert(mismatchedFieldReference->status == pm::FieldReferenceStatus::CategoryMismatch);
+
+    auto missingTargetFieldTemplates = fieldReferenceFixture.categoryTemplates;
+    missingTargetFieldTemplates[0].fields.clear();
+    const auto missingTargetField = pm::resolveFieldReference(
+        fieldReferenceSource,
+        fieldReferenceValue,
+        missingTargetFieldTemplates,
+        fieldReferenceFixture.entries
+    );
+    assert(missingTargetField.has_value());
+    assert(missingTargetField->status == pm::FieldReferenceStatus::TargetFieldMissing);
+
+    auto unsupportedTargetFieldTemplates = fieldReferenceFixture.categoryTemplates;
+    unsupportedTargetFieldTemplates[0].fields[0].valueType = "entryReference";
+    const auto unsupportedTargetField = pm::resolveFieldReference(
+        fieldReferenceSource,
+        fieldReferenceValue,
+        unsupportedTargetFieldTemplates,
+        fieldReferenceFixture.entries
+    );
+    assert(unsupportedTargetField.has_value());
+    assert(unsupportedTargetField->status == pm::FieldReferenceStatus::TargetFieldUnsupported);
+    assert(unsupportedTargetField->target.has_value());
+    assert(unsupportedTargetField->target->value.empty());
+
+    auto emptyTargetFieldEntries = fieldReferenceFixture.entries;
+    emptyTargetFieldEntries[0].customFields.clear();
+    const auto absentTargetFieldValue = pm::resolveFieldReference(
+        emptyTargetFieldEntries[1],
+        emptyTargetFieldEntries[1].customFields[0],
+        fieldReferenceFixture.categoryTemplates,
+        emptyTargetFieldEntries
+    );
+    assert(absentTargetFieldValue.has_value());
+    assert(absentTargetFieldValue->status == pm::FieldReferenceStatus::TargetFieldEmpty);
+    emptyTargetFieldEntries[0].customFields.push_back(pm::CustomField{
+        "blank_email_value",
+        "Email",
+        " \n",
+        "target_email_field",
+    });
+    const auto blankTargetFieldValue = pm::resolveFieldReference(
+        emptyTargetFieldEntries[1],
+        emptyTargetFieldEntries[1].customFields[0],
+        fieldReferenceFixture.categoryTemplates,
+        emptyTargetFieldEntries
+    );
+    assert(blankTargetFieldValue.has_value());
+    assert(blankTargetFieldValue->status == pm::FieldReferenceStatus::TargetFieldEmpty);
+
+    auto legacyTargetFieldEntries = fieldReferenceFixture.entries;
+    legacyTargetFieldEntries[0].customFields[0].templateFieldId.clear();
+    const auto legacyTargetFieldValue = pm::resolveFieldReference(
+        legacyTargetFieldEntries[1],
+        legacyTargetFieldEntries[1].customFields[0],
+        fieldReferenceFixture.categoryTemplates,
+        legacyTargetFieldEntries
+    );
+    assert(legacyTargetFieldValue.has_value());
+    assert(legacyTargetFieldValue->status == pm::FieldReferenceStatus::Resolved);
+    assert(legacyTargetFieldValue->target.has_value());
+    assert(legacyTargetFieldValue->target->value == "ops@example.com");
+
+    auto exactTargetFieldPriorityEntries = fieldReferenceFixture.entries;
+    auto legacyDuplicateTargetField = exactTargetFieldPriorityEntries[0].customFields[0];
+    legacyDuplicateTargetField.id = "legacy_duplicate_email";
+    legacyDuplicateTargetField.templateFieldId.clear();
+    legacyDuplicateTargetField.name = " email ";
+    legacyDuplicateTargetField.value = "legacy@example.com";
+    exactTargetFieldPriorityEntries[0].customFields.insert(
+        exactTargetFieldPriorityEntries[0].customFields.begin(),
+        legacyDuplicateTargetField
+    );
+    const auto exactTargetFieldPriority = pm::resolveFieldReference(
+        exactTargetFieldPriorityEntries[1],
+        exactTargetFieldPriorityEntries[1].customFields[0],
+        fieldReferenceFixture.categoryTemplates,
+        exactTargetFieldPriorityEntries
+    );
+    assert(exactTargetFieldPriority.has_value());
+    assert(exactTargetFieldPriority->status == pm::FieldReferenceStatus::Resolved);
+    assert(exactTargetFieldPriority->target.has_value());
+    assert(exactTargetFieldPriority->target->value == "ops@example.com");
+
+    auto mismatchedTargetValueIdEntries = fieldReferenceFixture.entries;
+    mismatchedTargetValueIdEntries[0].customFields[0].templateFieldId = "TARGET_EMAIL_FIELD";
+    const auto mismatchedTargetValueId = pm::resolveFieldReference(
+        mismatchedTargetValueIdEntries[1],
+        mismatchedTargetValueIdEntries[1].customFields[0],
+        fieldReferenceFixture.categoryTemplates,
+        mismatchedTargetValueIdEntries
+    );
+    assert(mismatchedTargetValueId.has_value());
+    assert(mismatchedTargetValueId->status == pm::FieldReferenceStatus::TargetFieldEmpty);
+
+    auto renamedTargetFieldTemplates = fieldReferenceFixture.categoryTemplates;
+    renamedTargetFieldTemplates[0].fields[0].name = "Directory Address";
+    renamedTargetFieldTemplates[1].fields[0].name = "Linked Account";
+    const auto renamedTargetField = pm::resolveFieldReference(
+        fieldReferenceSource,
+        fieldReferenceValue,
+        renamedTargetFieldTemplates,
+        fieldReferenceFixture.entries
+    );
+    assert(renamedTargetField.has_value());
+    assert(renamedTargetField->status == pm::FieldReferenceStatus::Resolved);
+    assert(renamedTargetField->target->fieldName == "Directory Address");
+    assert(renamedTargetField->target->value == "ops@example.com");
+
+    auto wrongTargetFieldIdTemplates = renamedTargetFieldTemplates;
+    wrongTargetFieldIdTemplates[1].fields[0].targetFieldId = "TARGET_EMAIL_FIELD";
+    const auto wrongTargetFieldId = pm::resolveFieldReference(
+        fieldReferenceSource,
+        fieldReferenceValue,
+        wrongTargetFieldIdTemplates,
+        fieldReferenceFixture.entries
+    );
+    assert(wrongTargetFieldId.has_value());
+    assert(wrongTargetFieldId->status == pm::FieldReferenceStatus::TargetFieldMissing);
+
+    assert(pm::isTargetFieldReferenced(
+        fieldReferenceFixture.categoryTemplates,
+        " accounts ",
+        "target_email_field"
+    ));
+    assert(!pm::isTargetFieldReferenced(
+        fieldReferenceFixture.categoryTemplates,
+        "Accounts",
+        "TARGET_EMAIL_FIELD"
+    ));
+
+    const auto renamedFieldReferenceTemplates = pm::propagateEntryReferenceCategoryRename(
+        fieldReferenceFixture.categoryTemplates,
+        " accounts ",
+        "Identity"
+    );
+    assert(renamedFieldReferenceTemplates[1].fields[0].targetCategory == "Identity");
+    assert(renamedFieldReferenceTemplates[1].fields[0].targetFieldId == "target_email_field");
+
+    const auto remappedFieldReferenceValues = pm::remapEntryReferenceIds(
+        fieldReferenceSource.customFields,
+        fieldReferenceFixture.categoryTemplates[1].fields,
+        {{"account_target_01", "copied_account_target"}}
+    );
+    assert(remappedFieldReferenceValues[0].value == "copied_account_target");
+    assert(remappedFieldReferenceValues[0].templateFieldId == "source_owner_email_field");
+
+    const auto fieldReferenceSearchProjection = pm::projectCustomFieldsForSearch(
+        fieldReferenceSource,
+        renamedTargetFieldTemplates,
+        fieldReferenceFixture.entries
+    );
+    assert(fieldReferenceSearchProjection[0].value == "Production Account Accounts Directory Address");
+    for (const auto& forbidden : {
+        std::string("ops@example.com"),
+        std::string("account_target_01"),
+        std::string("fixture-password"),
+    }) {
+        assert(fieldReferenceSearchProjection[0].value.find(forbidden) == std::string::npos);
+        const auto matches = pm::filterEntries(
+            fieldReferenceFixture.entries,
+            renamedTargetFieldTemplates,
+            forbidden,
+            "all"
+        );
+        assert(std::none_of(matches.begin(), matches.end(), [&](const pm::VaultEntry& candidate) {
+            return candidate.id == fieldReferenceSource.id;
+        }));
+    }
+    const auto targetFieldNameMatches = pm::filterEntries(
+        fieldReferenceFixture.entries,
+        renamedTargetFieldTemplates,
+        "Directory Address",
+        "all"
+    );
+    assert(std::any_of(targetFieldNameMatches.begin(), targetFieldNameMatches.end(), [&](const pm::VaultEntry& candidate) {
+        return candidate.id == fieldReferenceSource.id;
+    }));
+
     const auto referenceSearchByLabel = pm::filterEntries(
         referenceFixture.entries,
         referenceFixture.categoryTemplates,

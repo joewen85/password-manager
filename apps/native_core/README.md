@@ -35,11 +35,15 @@ link these sources instead of copying them into each app directory.
   references through a complete copy ID map, and conflict-copy tests verify
   reference values plus template field IDs. Reference editing and a scoped-copy
   CLI flow remain outside this slice; see `../../docs/FIELD_REFERENCE_CONTRACT.md`.
-- P7 also preserves the additive `fieldReference` type and opaque
-  `targetFieldId` through snapshot and sync JSON. Missing metadata defaults to
-  an empty string and unknown field types round-trip without loss. This phase
-  does not resolve or display field-level references in the CLI; that behavior
-  remains gated on the cross-platform P8 domain contract.
+- The additive `fieldReference` type and opaque `targetFieldId` survive snapshot
+  and sync JSON, with legacy defaults and unknown types preserved. The P8 core
+  resolver now implements the shared nine-state, one-hop contract, including
+  exact stable IDs, the legacy empty-ID field-name fallback, target-field rename
+  stability, referenced-target delete/retype detection, category rename
+  propagation, safe search projection, copy-import entry-ID remapping, and
+  sync-conflict preservation. Search includes only a resolved target's label,
+  category, and target field name; the target field value and raw IDs are never
+  indexed. CLI field-level presentation remains gated on P12.
 
 `export-snapshot` is a lossless plaintext data export, not a display projection.
 It intentionally retains stored reference IDs and unknown/orphan values so a

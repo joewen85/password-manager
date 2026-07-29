@@ -6,8 +6,11 @@ import {
 } from '../model/VaultTypes';
 import {
   EntryReferenceStatus,
+  FieldValueReferenceStatus,
   matchingEntryReferenceTemplate,
+  matchingFieldValueReferenceTemplate,
   resolveEntryReference,
+  resolveFieldValueReference,
 } from './FieldReferenceResolver';
 
 export interface EntryReferenceCandidate {
@@ -30,14 +33,23 @@ export function resolvedEntryReferenceSearchValues(
   entry.customFields.forEach((field: CustomField) => {
     const resolution = resolveEntryReference(field, template, entries);
     if (
-      resolution === null ||
-      resolution.status !== EntryReferenceStatus.RESOLVED ||
-      resolution.target === undefined
+      resolution !== null &&
+      resolution.status === EntryReferenceStatus.RESOLVED &&
+      resolution.target !== undefined
     ) {
-      return;
+      appendSearchValue(values, seen, resolution.target.label);
+      appendSearchValue(values, seen, resolution.target.category);
     }
-    appendSearchValue(values, seen, resolution.target.label);
-    appendSearchValue(values, seen, resolution.target.category);
+    const fieldResolution = resolveFieldValueReference(entry, field, templates, entries);
+    if (
+      fieldResolution !== null &&
+      fieldResolution.status === FieldValueReferenceStatus.RESOLVED &&
+      fieldResolution.target !== undefined
+    ) {
+      appendSearchValue(values, seen, fieldResolution.target.label);
+      appendSearchValue(values, seen, fieldResolution.target.category);
+      appendSearchValue(values, seen, fieldResolution.target.fieldName);
+    }
   });
   return values;
 }
@@ -50,7 +62,10 @@ export function remapEntryReferenceCustomFields(
 ): CustomField[] {
   const template = categoryTemplateFor(templates, category);
   return fields.map((field: CustomField) => {
-    if (matchingEntryReferenceTemplate(field, template) === null) {
+    if (
+      matchingEntryReferenceTemplate(field, template) === null &&
+      matchingFieldValueReferenceTemplate(field, template) === null
+    ) {
       return field;
     }
     const mappedId = idMap.get(field.value);

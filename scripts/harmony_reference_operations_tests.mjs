@@ -173,6 +173,71 @@ function main() {
     'Reference remapping does not mutate imported source fields',
   );
 
+  const fieldReferenceTemplates = [
+    {
+      category: 'Servers',
+      fields: [
+        ...templates[0].fields,
+        {
+          id: 'Template-Owner-Email',
+          name: 'Owner Email',
+          valueType: 'fieldReference',
+          targetCategory: 'Accounts',
+          targetFieldId: 'Template-Email',
+        },
+      ],
+    },
+    {
+      category: 'Accounts',
+      fields: [{
+        id: 'Template-Email',
+        name: 'Directory Address',
+        valueType: 'text',
+        targetCategory: '',
+        targetFieldId: '',
+      }],
+    },
+  ];
+  const fieldReferenceSource = makeEntry('Field-Source', 'Field Source', 'Servers', [{
+    id: 'Field-Owner-Email',
+    templateFieldId: 'Template-Owner-Email',
+    name: 'Owner Email',
+    value: 'Field-Target',
+  }]);
+  const fieldReferenceTarget = makeEntry('Field-Target', 'Target Account', 'Accounts', [{
+    id: 'Field-Email',
+    templateFieldId: 'Template-Email',
+    name: 'Old Email Name',
+    value: 'private@example.com',
+  }]);
+  const fieldReferenceSearchValues = resolvedEntryReferenceSearchValues(
+    fieldReferenceSource,
+    fieldReferenceTemplates,
+    [fieldReferenceSource, fieldReferenceTarget],
+  );
+  assert(
+    JSON.stringify(fieldReferenceSearchValues) ===
+      JSON.stringify(['Target Account', 'Accounts', 'Directory Address']),
+    'Field-reference search indexes only target label, category, and field name',
+  );
+  assert(
+    !fieldReferenceSearchValues.includes('private@example.com') &&
+      !fieldReferenceSearchValues.includes('Field-Target') &&
+      !fieldReferenceSearchValues.includes(fieldReferenceTarget.payload.password),
+    'Field-reference search excludes target values, raw IDs, and secrets',
+  );
+  const remappedFieldReference = remapEntryReferenceCustomFields(
+    fieldReferenceSource.customFields,
+    'Servers',
+    fieldReferenceTemplates,
+    new Map([['Field-Target', 'Copied-Field-Target']]),
+  );
+  assert(
+    remappedFieldReference[0].value === 'Copied-Field-Target' &&
+      remappedFieldReference[0].templateFieldId === 'Template-Owner-Email',
+    'Copy import remaps the selected target entry but preserves target-field metadata',
+  );
+
   const searchMethod = controllerSource.slice(
     controllerSource.indexOf('  searchEntries('),
     controllerSource.indexOf('  async setupMasterPassword('),
@@ -196,6 +261,11 @@ function main() {
     controllerSource.includes('remapEntryReferenceCustomFields(') &&
       controllerSource.includes('this.createImportedItem(current.item, idMap, destinationId)'),
     'Scoped import applies the complete ID map to copied custom fields',
+  );
+  assert(
+    controllerSource.includes('targetFieldReferenceIdsForCategory(') &&
+      controllerSource.includes('.forEach((fieldId: string) => storedValueFieldIds.add(fieldId));'),
+    'Category saves protect target text fields referenced by fieldReference definitions',
   );
 
   const syncRuntime = loadSyncRuntime(controllerSource);
@@ -222,6 +292,19 @@ function main() {
         conflictCopy.customFields !== left.customFields &&
         controllerSource.includes('const duplicate = deepCopyEntry(loser);'),
       'KEEP_BOTH conflict copies preserve entry-reference fields through deep copy',
+    );
+    const fieldReferenceConflict = makeEntry('Field-Sync', 'Field Sync', 'Servers', [{
+      id: 'Field-Sync-Value',
+      templateFieldId: 'Template-Owner-Email',
+      name: 'Owner Email',
+      value: 'Field-Target',
+    }]);
+    const fieldReferenceCopy = syncRuntime.deepCopyEntry(fieldReferenceConflict);
+    assert(
+      fieldReferenceCopy.customFields[0].value === 'Field-Target' &&
+        fieldReferenceCopy.customFields[0].templateFieldId === 'Template-Owner-Email' &&
+        fieldReferenceCopy.customFields !== fieldReferenceConflict.customFields,
+      'Sync conflict copies preserve fieldReference target entry selections',
     );
   }
 

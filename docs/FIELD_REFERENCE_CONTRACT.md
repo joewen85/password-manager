@@ -17,7 +17,7 @@ Multiple references, recursive reference chains, cascading deletion, automatic d
 
 ## Rollout Status
 
-P1-P6 implement the legacy `entryReference` contract, resolver, lifecycle, safe projections, UI slices, and native CLI display. P7 adds the cross-platform compatibility layer for the new `fieldReference` shape: every maintained client can losslessly read, write, synchronize, import, and export `targetFieldId`, but no P7 UI or resolver creates or executes the new type. P8 will add field-level resolution and lifecycle behavior before P9-P11 expose creation and editing UI on HarmonyOS, Android, iOS, and macOS. Existing `entryReference` behavior remains unchanged throughout this rollout. Unknown field types and orphaned bindings remain preserved, but their stored values stay hidden from display, copy, and search.
+P1-P6 implement the legacy `entryReference` contract, resolver, lifecycle, safe projections, UI slices, and native CLI display. P7 adds the cross-platform compatibility layer for the new `fieldReference` shape: every maintained client can losslessly read, write, synchronize, import, and export `targetFieldId`. P8 adds the common one-hop resolver, lifecycle guards, safe search projection, copy-import remapping, and sync behavior on Android, HarmonyOS, iOS, macOS, and the Windows/Linux native core. P9-P11 expose creation and editing UI on HarmonyOS, Android, iOS, and macOS; P12 adds native CLI presentation. Existing `entryReference` behavior remains unchanged throughout this rollout. Unknown field types and orphaned bindings remain preserved, but their stored values stay hidden from display, copy, and search.
 
 ## JSON Shape
 
@@ -127,7 +127,8 @@ There is no database schema in this repository. Vault data is stored as encrypte
 - Moving a referenced entry to another category does not silently clear the stored reference.
 - Soft-deleting a referenced entry does not cascade to the source entry.
 - An unresolved, deleted, or category-mismatched reference remains stored and is presented as unavailable until the user clears or replaces it.
-- Once a template field has a non-empty stored value, clients must not silently delete the field definition or change its `valueType` between `text` and `entryReference`. Renaming the field or changing an `entryReference` target-category constraint keeps the same stored-value semantics and stable field ID.
+- Once a source template field has a non-empty stored value, clients must not silently delete the field definition or change its `valueType` among `text`, `entryReference`, and `fieldReference`. Renaming the field or changing a compatible reference constraint keeps the same stored-value semantics and stable field ID.
+- A text template field targeted by any `fieldReference` may be renamed without breaking the relationship, but it cannot be deleted or changed to another type while that reference definition exists.
 - A source entry cannot expose secret fields from the referenced entry without the normal vault-unlocked access path.
 
 ## Resolution Semantics
@@ -145,11 +146,25 @@ The currently released resolver applies only when the source custom field matche
 
 The effective precedence is `empty` -> `missing` -> `deleted` -> `categoryMismatch` -> `resolved`. `empty` and `missing` have no target projection. Every found-target state (`deleted`, `categoryMismatch`, and `resolved`) may expose only a projection containing the target `id`, `label`, and trimmed `category`; it must never return the target entry, payload, username, password, token, secret, notes, tags, or custom fields.
 
-P7 deliberately does not route `fieldReference` through this legacy resolver. P8 will add a one-hop resolver that first applies the target-entry and category checks, then looks up the exact `targetFieldId` in the target category template and the matching custom-field value on the selected entry. It must distinguish missing configuration, missing target field, empty target field value, and a resolved text value without returning the full target entry or any unrelated secret.
+The P8 `fieldReference` resolver applies only when the source custom field matches a source template field whose `valueType` is exactly `fieldReference`. It is strictly one hop and uses this precedence:
+
+1. A whitespace-only source value resolves to `empty`.
+2. An empty `targetCategory`, empty `targetFieldId`, or same-category `sourceField.id == targetFieldId` self-reference resolves to `invalidConfiguration`.
+3. A source value with no exact, case-sensitive target-entry ID match resolves to `missing`.
+4. A found soft-deleted target resolves to `deleted` before category or field checks.
+5. A live target whose trimmed category does not equal trimmed `targetCategory` without case sensitivity resolves to `categoryMismatch`.
+6. A missing target category template or missing exact, case-sensitive `targetFieldId` resolves to `targetFieldMissing`.
+7. A target template field whose normalized type is not `text` resolves to `targetFieldUnsupported`; reference types are not recursively evaluated.
+8. A missing or whitespace-only target field value resolves to `targetFieldEmpty`.
+9. Otherwise the reference resolves to `resolved`.
+
+The target custom-field instance first matches by a non-empty, exact, case-sensitive `templateFieldId`. Only a truly empty instance `templateFieldId` enables the legacy fallback by trimmed field name without case sensitivity; a wrong non-empty ID never falls back by name. This compatibility fallback cannot guarantee rename stability for unmigrated legacy instances, while ID-backed instances remain stable across field renames.
+
+`empty`, `invalidConfiguration`, and `missing` have no target projection. Once the target entry is found, the resolver may return only its opaque ID, label, trimmed category, and configured target field ID; once the target template field is found, it may also return that field's name. The target field value is populated only for `resolved`. The resolver never returns the full target entry, payload, username, password, token, secret, notes, tags, or unrelated custom fields.
 
 ## Category Lifecycle
 
-When a category is renamed, every template field whose `valueType` is exactly `entryReference` and whose trimmed `targetCategory` matches the trimmed old category name without case sensitivity is updated to the trimmed new canonical name. Field IDs, names, source values, template ownership, and all other metadata remain unchanged. Text fields and unknown future field types are never rewritten by this propagation rule.
+When a category is renamed, every template field whose `valueType` is exactly `entryReference` or `fieldReference` and whose trimmed `targetCategory` matches the trimmed old category name without case sensitivity is updated to the trimmed new canonical name. Field IDs, names, source values, `targetFieldId`, template ownership, and all other metadata remain unchanged. Text fields and unknown future field types are never rewritten by this propagation rule.
 
 When a category is deleted:
 
@@ -180,15 +195,16 @@ Concurrent edits continue to use the repository's existing snapshot, category-te
 - Single-entry and category exports may contain reference IDs but do not automatically include referenced entries from other categories.
 - Import keeps unresolved reference IDs rather than clearing them.
 - Import merges included templates by their category and stable field IDs before applying imported entries.
-- Copy imports determine destination IDs for the whole batch before writing entries. A recognized `entryReference` whose target is applied in that batch is rewritten to the target's destination ID; a target not included or not mapped keeps the original stored ID.
-- P7 preserves `fieldReference` values and metadata during import/export but does not yet apply field-level copy-remapping behavior; P8 adds that recognized behavior before UI creation is enabled.
+- Copy imports determine destination IDs for the whole batch before writing entries. A recognized `entryReference` or `fieldReference` whose target is applied in that batch is rewritten to the target entry's destination ID; a target not included or not mapped keeps the original stored ID. `targetFieldId` is never remapped because it identifies a template field, not the copied entry.
 - A scoped export must not disclose a referenced entry's label, username, password, token, secret, or other field unless that entry was explicitly included in the export scope.
 - The native CLI `export-snapshot` command is a lossless plaintext export rather than a display projection. It intentionally preserves stored reference IDs and unknown/orphan values for later import and must be handled as sensitive vault data.
 
 ## Search And Display
 
-Clients display the referenced entry label and category after resolving the stored ID. Raw IDs are not a user-facing value and must not appear in detail text, editable text controls, copy actions, search indexes, or logs. HarmonyOS, Android, iOS, and macOS entry editors allow users to select, replace, or clear only live candidates satisfying the target-category constraint. Their details render `empty`, `resolved`, `missing`, `deleted`, and `categoryMismatch`; a resolved target may be opened through the normal unlocked-vault detail path, while unavailable states may offer repair or clear actions without exposing the stored ID. The Windows/Linux shared CLI renders the same states through `show-entry`; `--show-secret` may reveal only the selected source entry's own secret and never restores a reference ID, target secret, unknown value, or orphaned binding value. Unknown field types and custom fields with orphaned non-empty `templateFieldId` values remain preserved, but their stored values are not displayed, copied, edited, or indexed. Search replaces recognized reference-field values with the target label and trimmed category only when resolution is `resolved`; empty, missing, deleted, and category-mismatched references contribute no target value. Search never indexes the stored reference ID or any target payload, username, password, token, secret, notes, tags, or custom fields.
+Legacy `entryReference` UI displays the referenced entry label and category after resolving the stored ID. Raw IDs are not a user-facing value and must not appear in detail text, editable text controls, copy actions, search indexes, or logs. HarmonyOS, Android, iOS, and macOS entry editors allow users to select, replace, or clear only live `entryReference` candidates satisfying the target-category constraint. Their details render `empty`, `resolved`, `missing`, `deleted`, and `categoryMismatch`; a resolved target may be opened through the normal unlocked-vault detail path, while unavailable states may offer repair or clear actions without exposing the stored ID. The Windows/Linux shared CLI renders the same legacy states through `show-entry`; `--show-secret` may reveal only the selected source entry's own secret and never restores a reference ID, target secret, unknown value, or orphaned binding value.
+
+P8 does not yet expose `fieldReference` creation, editing, detail, or copy UI. Its search projection contributes the resolved target entry label, trimmed category, and target field name only. It never contributes the target field value, source or target raw IDs, target payload, username, password, token, secret, notes, tags, or unrelated custom fields. Every non-resolved field-reference state contributes an empty search value. A later explicit detail or copy action may use the resolved target field value only after the normal vault-unlocked boundary and must never index or log it. Unknown field types and custom fields with orphaned non-empty `templateFieldId` values remain preserved, but their stored values are not displayed, copied, edited, or indexed.
 
 ## Permissions And Privacy
 
-Reference fields operate entirely inside the existing encrypted vault JSON. They require no new Android, HarmonyOS, iOS, macOS, Windows, or Linux permissions, entitlements, network endpoints, SDKs, database schema, or data collection and do not change the current privacy declarations. There is therefore no database migration for P3-P7; additive JSON decoder defaults remain the compatibility path. `targetFieldId` is reference metadata, not a materialized target value, and does not expand export or collection scope. Platform permission documentation records this conclusion when each feature is released.
+Reference fields operate entirely inside the existing encrypted vault JSON. They require no new Android, HarmonyOS, iOS, macOS, Windows, or Linux permissions, entitlements, network endpoints, SDKs, database schema, or data collection and do not change the current privacy declarations. There is therefore no database migration for P3-P8; additive JSON decoder defaults remain the compatibility path. `targetFieldId` is reference metadata, not a materialized target value, and does not expand export or collection scope. Platform permission documentation records this conclusion when each feature is released.
