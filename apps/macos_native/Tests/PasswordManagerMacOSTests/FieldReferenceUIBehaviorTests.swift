@@ -227,9 +227,22 @@ struct FieldReferenceUIBehaviorTests {
             category: "A",
             customFields: [CustomField(id: "owner", templateFieldId: locked.id, name: locked.name, value: "target")]
         )
+        let deletedSource = entry(
+            id: "deleted-source",
+            label: "Deleted Source",
+            category: "A",
+            customFields: [CustomField(id: "deleted-owner", templateFieldId: locked.id, name: locked.name, value: "target")],
+            isDeleted: true
+        )
+        let movedSource = entry(
+            id: "moved-source",
+            label: "Moved Source",
+            category: "B",
+            customFields: [CustomField(id: "moved-owner", templateFieldId: locked.id, name: locked.name, value: "target")]
+        )
         try importSnapshot(
             VaultSnapshot(
-                entries: [source],
+                entries: [source, deletedSource, movedSource],
                 categories: ["A", "B", "Accounts", "People"],
                 categoryTemplates: [
                     CategoryTemplate(category: "A", fields: [locked, unknown]),
@@ -242,7 +255,9 @@ struct FieldReferenceUIBehaviorTests {
         )
 
         #expect(store.categoryTemplateStoredValueFieldIDs(" a ") == [locked.id])
-        #expect(store.categoryTemplateStoredValueFieldIDs("B").isEmpty)
+        #expect(store.categoryTemplateStoredValueFieldIDs("B") == [locked.id])
+        store.delete(source)
+        #expect(store.categoryTemplateStoredValueFieldIDs("A").isEmpty)
         #expect(store.updateCategoryTemplate("A", fields: [
             FieldTemplate(id: locked.id, name: "Primary Owner", valueType: "text", targetCategory: "People")
         ]))

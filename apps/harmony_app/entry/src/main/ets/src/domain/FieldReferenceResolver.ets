@@ -148,6 +148,13 @@ export function resolveFieldValueReference(
   if (normalizedValueType(targetFieldTemplate.valueType) !== 'text') {
     return { status: FieldValueReferenceStatus.TARGET_FIELD_UNSUPPORTED, target };
   }
+  if (isBuiltInEntryNameField(targetFieldTemplate)) {
+    if (targetEntry.label.trim().length === 0) {
+      return { status: FieldValueReferenceStatus.TARGET_FIELD_EMPTY, target };
+    }
+    target.value = targetEntry.label;
+    return { status: FieldValueReferenceStatus.RESOLVED, target };
+  }
   const targetValue = matchingTargetCustomField(
     targetEntry.customFields,
     targetFieldTemplate,
@@ -296,6 +303,10 @@ function matchingTargetCustomField(
       candidate.templateFieldId.length === 0) &&
       candidate.name.trim().toLowerCase() === targetName
   );
+}
+
+function isBuiltInEntryNameField(field: FieldTemplate): boolean {
+  return field.id === 'template_名称' || field.name.trim() === '名称';
 }
 
 function categoryTemplateFor(

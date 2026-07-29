@@ -321,88 +321,70 @@ class VaultStoreFieldReferenceEditingTest {
     }
 
     @Test
-    fun deletedAndMovedEntriesStillGateTemplateFieldDeletionAndTypeChanges() {
+    fun onlyLiveValuesInTheSourceCategoryGateTemplateFieldDeletionAndTypeChanges() {
         withStore("PasswordManagerAndroidStoredTemplateValueGateTests") { store ->
-            val deletedValueField = FieldTemplate(
-                id = "stored-deleted-text",
-                name = "Deleted value",
-            )
-            val movedValueField = FieldTemplate(
-                id = "stored-moved-reference",
-                name = "Moved owner",
-                valueType = "entryReference",
+            val nameField = CategoryTemplate.defaultCategoryFields()
+                .single { field -> field.name == "名称" }
+            val referenceField = FieldTemplate(
+                id = "stored-reference",
+                name = "Owner",
+                valueType = "fieldReference",
                 targetCategory = "Accounts",
+                targetFieldId = nameField.id,
             )
-            assertTrue(store.addCategory("Original", listOf(deletedValueField, movedValueField)))
-            assertTrue(store.addCategory("Moved", listOf(movedValueField)))
+            assertTrue(store.addCategory("Accounts"))
+            assertTrue(store.addCategory("Original", listOf(referenceField)))
+            assertTrue(store.addCategory("Moved", listOf(referenceField)))
             val target = store.upsert(entryDraft(label = "Account", category = "Accounts"))
-            val deletedEntry = store.upsert(
-                entryDraft(
-                    label = "Deleted source",
-                    category = "Original",
-                    customFields = listOf(
-                        CustomField(
-                            id = "deleted-value-instance",
-                            templateFieldId = deletedValueField.id,
-                            name = deletedValueField.name,
-                            value = "stored after deletion",
-                        )
-                    ),
-                )
-            )
-            store.delete(deletedEntry.id)
-            val movedField = CustomField(
-                id = "moved-value-instance",
-                templateFieldId = movedValueField.id,
-                name = movedValueField.name,
+            val sourceField = CustomField(
+                id = "source-value-instance",
+                templateFieldId = referenceField.id,
+                name = referenceField.name,
                 value = target.id,
             )
-            val movedEntry = store.upsert(
+            val source = store.upsert(
                 entryDraft(
-                    label = "Moved source",
+                    label = "Source",
                     category = "Original",
-                    customFields = listOf(movedField),
+                    customFields = listOf(sourceField),
                 )
             )
+
+            assertEquals(setOf(referenceField.id), store.categoryTemplateStoredValueFieldIds(" original "))
+            store.delete(target.id)
+            assertEquals(
+                setOf(referenceField.id),
+                store.categoryTemplateStoredValueFieldIds("Original"),
+                "Deleting only the target keeps the live source relationship stored",
+            )
+
+            assertTrue(store.clearFieldReference(source.id, sourceField.id))
+            assertTrue(store.categoryTemplateStoredValueFieldIds("Original").isEmpty())
+
             store.upsert(
                 draft = entryDraft(
-                    label = movedEntry.label,
-                    category = "Moved",
-                    customFields = listOf(movedField),
+                    label = source.label,
+                    category = "Original",
+                    customFields = listOf(sourceField),
                 ),
-                editingId = movedEntry.id,
+                editingId = source.id,
             )
+            store.delete(source.id)
+            assertTrue(store.categoryTemplateStoredValueFieldIds("Original").isEmpty())
 
-            assertEquals(
-                setOf(deletedValueField.id, movedValueField.id),
-                store.categoryTemplateStoredValueFieldIds(" original "),
-            )
-            assertTrue(store.updateCategoryTemplate("Original", requestedCustomFields = emptyList()))
-            var updatedTemplate = assertNotNull(store.categoryTemplate("Original"))
-            assertTrue(updatedTemplate.fields.any { field -> field.id == deletedValueField.id })
-            assertTrue(updatedTemplate.fields.any { field -> field.id == movedValueField.id })
-
-            assertTrue(
-                store.updateCategoryTemplate(
-                    "Original",
-                    requestedCustomFields = listOf(
-                        deletedValueField.copy(
-                            valueType = "entryReference",
-                            targetCategory = "Accounts",
-                        ),
-                        movedValueField.copy(valueType = "text", targetCategory = ""),
-                    ),
+            val movedSource = store.upsert(
+                entryDraft(
+                    label = "Moved source",
+                    category = "Moved",
+                    customFields = listOf(sourceField.copy(id = "moved-value-instance")),
                 )
             )
-            updatedTemplate = assertNotNull(store.categoryTemplate("Original"))
-            assertEquals(
-                "text",
-                updatedTemplate.fields.single { field -> field.id == deletedValueField.id }.valueType,
-            )
-            assertEquals(
-                "entryReference",
-                updatedTemplate.fields.single { field -> field.id == movedValueField.id }.valueType,
-            )
+            assertNotNull(store.liveEntry(movedSource.id))
+            assertTrue(store.categoryTemplateStoredValueFieldIds("Original").isEmpty())
+
+            assertTrue(store.updateCategoryTemplate("Original", requestedCustomFields = emptyList()))
+            val updatedTemplate = assertNotNull(store.categoryTemplate("Original"))
+            assertTrue(updatedTemplate.fields.none { field -> field.id == referenceField.id })
         }
     }
 

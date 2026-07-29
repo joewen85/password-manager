@@ -356,6 +356,27 @@ function main() {
     'Field-reference projections exclude the complete target entry and payload',
   );
 
+  const nameFieldTemplates = JSON.parse(JSON.stringify(fieldTemplates));
+  const nameFieldTemplate = {
+    id: 'template_名称',
+    name: '名称',
+    valueType: 'text',
+    targetCategory: '',
+    targetFieldId: '',
+  };
+  nameFieldTemplates[0].fields = [nameFieldTemplate];
+  nameFieldTemplates[1].fields[0].targetFieldId = nameFieldTemplate.id;
+  const nameFieldTarget = JSON.parse(JSON.stringify(fieldTarget));
+  nameFieldTarget.customFields = [];
+  const nameFieldResolved = resolveField(fieldSource, nameFieldTarget, nameFieldTemplates);
+  assert(
+    nameFieldResolved.status === FieldValueReferenceStatus.RESOLVED &&
+      nameFieldResolved.target.fieldId === nameFieldTemplate.id &&
+      nameFieldResolved.target.fieldName === '名称' &&
+      nameFieldResolved.target.value === fieldTarget.label,
+    'The built-in entry name target resolves from the target entry label',
+  );
+
   const legacyFieldTarget = JSON.parse(JSON.stringify(fieldTarget));
   legacyFieldTarget.customFields[0].templateFieldId = '';
   legacyFieldTarget.customFields[0].name = '  directory address  ';

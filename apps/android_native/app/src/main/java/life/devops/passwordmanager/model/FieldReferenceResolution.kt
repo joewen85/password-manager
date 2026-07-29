@@ -127,6 +127,20 @@ private inline fun resolveFieldReference(
             targetField = targetField,
         )
     }
+    if (targetTemplateField.isBuiltInEntryNameField()) {
+        if (target.label.isBlank()) {
+            return FieldReferenceResolution(
+                status = FieldReferenceStatus.TARGET_FIELD_EMPTY,
+                targetEntry = targetEntry,
+                targetField = targetField,
+            )
+        }
+        return FieldReferenceResolution(
+            status = FieldReferenceStatus.RESOLVED,
+            targetEntry = targetEntry,
+            targetField = targetField.copy(value = target.label),
+        )
+    }
 
     val targetValue = matchingTargetFieldValue(target, targetTemplateField)
     if (targetValue == null || targetValue.value.isBlank()) {
@@ -160,6 +174,9 @@ private fun matchingTargetFieldValue(
             customField.name.trim().isNotEmpty() &&
             customField.name.trim().equals(targetTemplateField.name.trim(), ignoreCase = true)
     }
+
+private fun FieldTemplate.isBuiltInEntryNameField(): Boolean =
+    id == CategoryTemplate.stableFieldId("名称") || name.trim() == "名称"
 
 private fun fieldReferenceTemplateField(
     field: CustomField,

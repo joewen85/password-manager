@@ -243,6 +243,12 @@ function main() {
     'categoryDraftFieldReferenceError',
     indexGlobals,
   );
+  const categoryDraftTargetFieldTemplates = loadIndexMethod(
+    indexSource,
+    '  private categoryDraftTargetFieldTemplates(',
+    'categoryDraftTargetFieldTemplates',
+    indexGlobals,
+  );
   const protectDraftFieldsBeforeCategorySwitch = loadIndexMethod(
     indexSource,
     '  private protectDraftFieldsBeforeCategorySwitch(',
@@ -266,6 +272,22 @@ function main() {
     { id: 'template_名称', name: '名称', valueType: 'text', targetCategory: '' },
     { id: 'template_备注', name: '备注', valueType: 'text', targetCategory: '' },
   ];
+  const crossCategoryTargets = categoryDraftTargetFieldTemplates.call({
+    categoryDraftIsCurrentCategory() {
+      return false;
+    },
+    categoryTemplate() {
+      return { category: 'Accounts', fields: baseFields };
+    },
+    isTextTemplateField(field) {
+      return field.valueType === 'text';
+    },
+  }, { value: 'Accounts' });
+  assert(
+    JSON.stringify(crossCategoryTargets.map((field) => field.id)) ===
+      JSON.stringify(['template_名称', 'template_备注']),
+    'Field references can target the built-in entry name as well as custom text fields',
+  );
   const stableText = {
     id: 'Text-Stable', name: 'Owner', valueType: 'text', targetCategory: '',
   };
@@ -400,8 +422,7 @@ function main() {
     '  private categoryTemplateFieldIdsWithStoredValues(',
     'categoryTemplateFieldIdsWithStoredValues',
   );
-  const movedEntry = makeEntry('moved-entry', 'Moved Entry', 'Other Category');
-  movedEntry.customFields = [
+  const storedFieldValues = [
     {
       id: 'field-instance',
       name: stableReference.name,
@@ -415,19 +436,45 @@ function main() {
       templateFieldId: 'Other-Template-Field',
     },
   ];
-  const movedEntryStoredValueFieldIds = categoryTemplateFieldIdsWithStoredValues.call({
+  const liveEntry = makeEntry('live-entry', 'Live Entry', 'Original Category');
+  liveEntry.customFields = clone(storedFieldValues);
+  const deletedEntry = makeEntry('deleted-entry', 'Deleted Entry', 'Original Category');
+  deletedEntry.isDeleted = true;
+  deletedEntry.customFields = clone(storedFieldValues);
+  const movedEntry = makeEntry('moved-entry', 'Moved Entry', 'Other Category');
+  movedEntry.customFields = clone(storedFieldValues);
+  const liveEntryStoredValueFieldIds = categoryTemplateFieldIdsWithStoredValues.call({
+    entryCategory(entry) {
+      return entry.payload.category;
+    },
     snapshot: {
       categoryTemplates: [{
         category: 'Original Category',
         fields: [...baseFields, stableReference],
       }],
-      entries: [movedEntry],
+      entries: [liveEntry, deletedEntry, movedEntry],
     },
   }, 'Original Category');
   assert(
-    movedEntryStoredValueFieldIds.has(stableReference.id) &&
-      !movedEntryStoredValueFieldIds.has('Other-Template-Field'),
-    'Stored-value protection survives moving the source entry to another category',
+    liveEntryStoredValueFieldIds.has(stableReference.id) &&
+      !liveEntryStoredValueFieldIds.has('Other-Template-Field'),
+    'A live non-empty source value protects its template field',
+  );
+  const historicalEntryStoredValueFieldIds = categoryTemplateFieldIdsWithStoredValues.call({
+    entryCategory(entry) {
+      return entry.payload.category;
+    },
+    snapshot: {
+      categoryTemplates: [{
+        category: 'Original Category',
+        fields: [...baseFields, stableReference],
+      }],
+      entries: [deletedEntry, movedEntry],
+    },
+  }, 'Original Category');
+  assert(
+    historicalEntryStoredValueFieldIds.size === 0,
+    'Deleted and moved source entries do not keep an unrelated category field locked',
   );
   const normalizeFieldTemplates = loadSourceFunction(
     controllerSource,

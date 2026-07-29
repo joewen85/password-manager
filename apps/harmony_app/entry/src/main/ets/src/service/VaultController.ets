@@ -1633,6 +1633,12 @@ export class VaultController {
       }
     });
     this.snapshot.entries.forEach((entry: VaultEntry) => {
+      if (
+        entry.isDeleted ||
+        this.entryCategory(entry).trim().toLowerCase() !== categoryKey
+      ) {
+        return;
+      }
       entry.customFields.forEach((field: CustomField) => {
         if (
           typeof field.templateFieldId === 'string' &&

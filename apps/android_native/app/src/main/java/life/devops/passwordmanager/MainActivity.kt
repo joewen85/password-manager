@@ -965,7 +965,6 @@ class MainActivity : FragmentActivity() {
             return fields.asSequence()
                 .filter { candidate ->
                     candidate.normalizedValueType() == CUSTOM_FIELD_TEXT_VALUE_TYPE &&
-                        candidate.name.trim() != "名称" &&
                         candidate.id.isNotBlank() &&
                         !(sameCategory(targetCategory, category) && candidate.id == field.id)
                 }
@@ -2349,7 +2348,6 @@ class MainActivity : FragmentActivity() {
             return fields.asSequence()
                 .filter { candidate ->
                     candidate.normalizedValueType() == CUSTOM_FIELD_TEXT_VALUE_TYPE &&
-                        candidate.name.trim() != "名称" &&
                         candidate.id.isNotBlank() &&
                         !(
                             currentCategory.isNotEmpty() &&

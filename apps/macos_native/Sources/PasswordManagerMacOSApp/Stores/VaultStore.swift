@@ -585,7 +585,7 @@ final class VaultStore {
         }
         return Set(entries.lazy
             .filter {
-                $0.payload.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                !$0.isDeleted && $0.payload.category.trimmingCharacters(in: .whitespacesAndNewlines)
                     .caseInsensitiveCompare(normalized) == .orderedSame
             }
             .flatMap { entry in

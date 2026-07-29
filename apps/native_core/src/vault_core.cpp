@@ -2093,6 +2093,13 @@ std::optional<FieldReferenceResolution> resolveFieldReference(
     if (targetFieldTemplate->valueType != "text") {
         return FieldReferenceResolution{FieldReferenceStatus::TargetFieldUnsupported, projection};
     }
+    if (targetFieldTemplate->id == stableFieldId("名称") || trimCopy(targetFieldTemplate->name) == "名称") {
+        if (trimCopy(targetEntry->label).empty()) {
+            return FieldReferenceResolution{FieldReferenceStatus::TargetFieldEmpty, projection};
+        }
+        projection.value = targetEntry->label;
+        return FieldReferenceResolution{FieldReferenceStatus::Resolved, projection};
+    }
 
     auto targetFieldValue = std::find_if(
         targetEntry->customFields.begin(),

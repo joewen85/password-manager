@@ -269,6 +269,26 @@ int main() {
     assert(resolvedFieldReference->target->fieldName == "Email");
     assert(resolvedFieldReference->target->value == "ops@example.com");
 
+    auto nameFieldReferenceTemplates = fieldReferenceFixture.categoryTemplates;
+    nameFieldReferenceTemplates[0].fields = {
+        pm::FieldTemplate{"template_名称", "名称", "text", "", ""},
+    };
+    nameFieldReferenceTemplates[1].fields[0].targetFieldId = "template_名称";
+    auto nameFieldReferenceEntries = fieldReferenceFixture.entries;
+    nameFieldReferenceEntries[0].customFields.clear();
+    const auto nameFieldReference = pm::resolveFieldReference(
+        nameFieldReferenceEntries[1],
+        nameFieldReferenceEntries[1].customFields[0],
+        nameFieldReferenceTemplates,
+        nameFieldReferenceEntries
+    );
+    assert(nameFieldReference.has_value());
+    assert(nameFieldReference->status == pm::FieldReferenceStatus::Resolved);
+    assert(nameFieldReference->target.has_value());
+    assert(nameFieldReference->target->fieldId == "template_名称");
+    assert(nameFieldReference->target->fieldName == "名称");
+    assert(nameFieldReference->target->value == fieldReferenceTarget.label);
+
     auto emptyFieldReferenceValue = fieldReferenceValue;
     emptyFieldReferenceValue.value = " \t\n";
     const auto emptyFieldReference = pm::resolveFieldReference(

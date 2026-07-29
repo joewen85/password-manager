@@ -367,7 +367,7 @@ final class VaultStore {
         return Set(template.fields.compactMap { templateField in
             let hasStoredValue = entries
                 .filter {
-                    $0.payload.category.trimmingCharacters(in: .whitespacesAndNewlines)
+                    !$0.isDeleted && $0.payload.category.trimmingCharacters(in: .whitespacesAndNewlines)
                         .caseInsensitiveCompare(normalizedCategory) == .orderedSame
                 }
                 .flatMap(\.customFields)

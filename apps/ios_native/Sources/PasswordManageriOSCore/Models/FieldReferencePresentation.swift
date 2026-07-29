@@ -95,10 +95,8 @@ func fieldReferenceTargetFieldCandidates(
 
     var seenIDs = Set<String>()
     return targetTemplate.fields.filter { candidate in
-        let candidateName = candidate.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard candidate.normalizedValueType == customFieldTextValueType,
               !candidate.id.isEmpty,
-              candidateName.caseInsensitiveCompare("名称") != .orderedSame,
               seenIDs.insert(candidate.id).inserted else {
             return false
         }

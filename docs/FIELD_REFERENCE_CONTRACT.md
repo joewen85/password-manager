@@ -121,13 +121,13 @@ There is no database schema in this repository. Vault data is stored as encrypte
 - `fieldReference` keeps the same optional source value shape: an empty value selects no target entry.
 - A non-empty reference value is a canonical vault entry ID, never a label, category name, or tag.
 - `targetCategory` limits selection but is not the identity of the referenced entry.
-- A valid `fieldReference` requires a non-empty `targetCategory` and `targetFieldId`; the first behavior release permits only a text target field, one-hop resolution, and no self-reference.
+- A valid `fieldReference` requires a non-empty `targetCategory` and `targetFieldId`; it permits a text target field, including the built-in entry-name field, with one-hop resolution and no self-reference.
 - Renaming a referenced target field does not change the relationship because `targetFieldId`, not its name, is the identity.
 - Renaming a referenced entry does not change the stored reference.
 - Moving a referenced entry to another category does not silently clear the stored reference.
 - Soft-deleting a referenced entry does not cascade to the source entry.
 - An unresolved, deleted, or category-mismatched reference remains stored and is presented as unavailable until the user clears or replaces it.
-- Once a source template field has a non-empty stored value, clients must not silently delete the field definition or change its `valueType` among `text`, `entryReference`, and `fieldReference`. Renaming the field or changing a compatible reference constraint keeps the same stored-value semantics and stable field ID.
+- Once a source template field has a non-empty stored value on a live entry currently assigned to that source category, clients must not silently delete the field definition or change its `valueType` among `text`, `entryReference`, and `fieldReference`. Soft-deleted entries and entries moved to another category do not keep the old category field locked. Renaming the field or changing a compatible reference constraint keeps the same stored-value semantics and stable field ID.
 - A text template field targeted by any `fieldReference` may be renamed without breaking the relationship, but it cannot be deleted or changed to another type while that reference definition exists.
 - A source entry cannot expose secret fields from the referenced entry without the normal vault-unlocked access path.
 
@@ -155,10 +155,10 @@ The P8 `fieldReference` resolver applies only when the source custom field match
 5. A live target whose trimmed category does not equal trimmed `targetCategory` without case sensitivity resolves to `categoryMismatch`.
 6. A missing target category template or missing exact, case-sensitive `targetFieldId` resolves to `targetFieldMissing`.
 7. A target template field whose normalized type is not `text` resolves to `targetFieldUnsupported`; reference types are not recursively evaluated.
-8. A missing or whitespace-only target field value resolves to `targetFieldEmpty`.
+8. When `targetFieldId` identifies the built-in entry-name field, the target value is the target entry's `label`; otherwise the resolver reads the matching custom-field instance. A missing or whitespace-only result resolves to `targetFieldEmpty`.
 9. Otherwise the reference resolves to `resolved`.
 
-The target custom-field instance first matches by a non-empty, exact, case-sensitive `templateFieldId`. Only a truly empty instance `templateFieldId` enables the legacy fallback by trimmed field name without case sensitivity; a wrong non-empty ID never falls back by name. This compatibility fallback cannot guarantee rename stability for unmigrated legacy instances, while ID-backed instances remain stable across field renames.
+For targets other than the built-in entry-name field, the target custom-field instance first matches by a non-empty, exact, case-sensitive `templateFieldId`. Only a truly empty instance `templateFieldId` enables the legacy fallback by trimmed field name without case sensitivity; a wrong non-empty ID never falls back by name. The built-in name field reads `VaultEntry.label` and never requires a duplicate custom-field value. This compatibility fallback cannot guarantee rename stability for unmigrated legacy instances, while ID-backed instances remain stable across field renames.
 
 `empty`, `invalidConfiguration`, and `missing` have no target projection. Once the target entry is found, the resolver may return only its opaque ID, label, trimmed category, and configured target field ID; once the target template field is found, it may also return that field's name. The target field value is populated only for `resolved`. The resolver never returns the full target entry, payload, username, password, token, secret, notes, tags, or unrelated custom fields.
 

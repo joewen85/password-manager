@@ -151,6 +151,25 @@ class FieldReferenceResolutionTest {
     }
 
     @Test
+    fun builtInEntryNameFieldResolvesFromTheTargetLabel() {
+        val nameField = CategoryTemplate.defaultCategoryFields()
+            .single { field -> field.name == "名称" }
+        val nameSourceField = sourceField.copy(targetFieldId = nameField.id)
+        val resolution = resolve(
+            field = sourceValue.copy(templateFieldId = nameSourceField.id),
+            sourceTemplate = sourceTemplate.copy(fields = listOf(nameSourceField)),
+            templates = listOf(targetTemplate.copy(fields = listOf(nameField))),
+            entries = listOf(targetEntry(customFields = emptyList())),
+        )
+
+        assertEquals(FieldReferenceStatus.RESOLVED, resolution?.status)
+        assertEquals("Target account", resolution?.targetEntry?.label)
+        assertEquals(nameField.id, resolution?.targetField?.id)
+        assertEquals("名称", resolution?.targetField?.name)
+        assertEquals("Target account", resolution?.targetField?.value)
+    }
+
+    @Test
     fun legacyEmptyTargetFieldIdFallsBackByNameButNonEmptyIdsNeverDo() {
         val legacyValue = targetValue.copy(
             templateFieldId = "",

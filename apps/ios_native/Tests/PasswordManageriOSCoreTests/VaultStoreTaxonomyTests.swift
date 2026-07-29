@@ -104,4 +104,65 @@ struct VaultStoreTaxonomyTests {
         #expect(store.statusMessage == "Field name already exists: owner.")
         #expect(store.categoryTemplate(for: "Infra") == configured)
     }
+
+    @MainActor
+    @Test("Only live source values keep a category field locked")
+    func deletedSourcesDoNotKeepTemplateFieldsLocked() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManageriOSLiveTemplateValueGate-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = VaultStore(
+            repository: FileVaultRepository(baseDirectory: directory),
+            syncSettingsRepository: nil
+        )
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+        #expect(store.addCategory("Accounts"))
+        #expect(store.addCategory("Original"))
+
+        let nameField = try #require(CategoryTemplate.defaultFields.first { $0.name == "名称" })
+        let reference = FieldTemplate(
+            id: "stored-reference",
+            name: "Owner",
+            valueType: "fieldReference",
+            targetCategory: "Accounts",
+            targetFieldId: nameField.id
+        )
+        #expect(store.updateCategoryTemplate(
+            category: "Original",
+            requestedCustomFields: [reference]
+        ))
+
+        var targetDraft = EntryDraft(
+            category: "Accounts",
+            templateFields: try #require(store.categoryTemplate(for: "Accounts")?.fields)
+        )
+        targetDraft.label = "Account"
+        #expect(store.upsert(targetDraft, editing: nil))
+        let target = try #require(store.entries.first { $0.label == "Account" })
+
+        let configured = try #require(store.categoryTemplate(for: "Original"))
+        var sourceDraft = EntryDraft(category: "Original", templateFields: configured.fields)
+        sourceDraft.label = "Source"
+        let referenceIndex = try #require(sourceDraft.customFields.firstIndex {
+            $0.templateFieldId == reference.id
+        })
+        sourceDraft.customFields[referenceIndex].value = target.id
+        #expect(store.upsert(sourceDraft, editing: nil))
+        let source = try #require(store.entries.first { $0.label == "Source" })
+
+        store.delete(target)
+        #expect(store.categoryTemplateStoredValueFieldIds("Original") == [reference.id])
+        #expect(store.updateEntryReference(entryID: source.id, fieldID: source.customFields[referenceIndex].id, targetID: ""))
+        #expect(store.categoryTemplateStoredValueFieldIds("Original").isEmpty)
+
+        sourceDraft.label = "Deleted Source"
+        sourceDraft.customFields[referenceIndex].value = target.id
+        #expect(store.upsert(sourceDraft, editing: nil))
+        let deletedSource = try #require(store.entries.first { $0.label == "Deleted Source" })
+        store.delete(deletedSource)
+        #expect(store.categoryTemplateStoredValueFieldIds("Original").isEmpty)
+
+        #expect(store.updateCategoryTemplate(category: "Original", requestedCustomFields: []))
+        #expect(store.categoryTemplate(for: "Original")?.fields.contains { $0.id == reference.id } == false)
+    }
 }

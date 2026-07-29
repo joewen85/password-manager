@@ -63,10 +63,18 @@ struct FieldReferenceInteractionTests {
             sourceCategory: "Servers",
             sourceField: source,
             templates: templates
-        ).map(\.id) == [targetLogin.id])
+        ).map(\.id) == ["name", targetLogin.id])
         #expect(fieldReferenceTemplateConfigurationIsValid(
             sourceCategory: "Servers",
             sourceField: source,
+            templates: templates
+        ))
+
+        var nameReference = source
+        nameReference.targetFieldId = "name"
+        #expect(fieldReferenceTemplateConfigurationIsValid(
+            sourceCategory: "Servers",
+            sourceField: nameReference,
             templates: templates
         ))
 

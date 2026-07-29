@@ -106,6 +106,22 @@ func resolveFieldReference(
     guard targetTemplateField.normalizedValueType == "text" else {
         return FieldReferenceResolution(status: .targetFieldUnsupported, target: fieldProjection)
     }
+    if isBuiltInEntryNameField(targetTemplateField) {
+        guard !targetEntry.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return FieldReferenceResolution(status: .targetFieldEmpty, target: fieldProjection)
+        }
+        return FieldReferenceResolution(
+            status: .resolved,
+            target: FieldReferenceTarget(
+                entryID: targetEntry.id,
+                entryLabel: targetEntry.label,
+                entryCategory: targetEntryCategory,
+                fieldID: targetTemplateField.id,
+                fieldName: targetTemplateField.name,
+                fieldValue: targetEntry.label
+            )
+        )
+    }
 
     guard let targetValueField = matchingFieldReferenceTargetValue(
         in: targetEntry.customFields,
@@ -126,6 +142,11 @@ func resolveFieldReference(
             fieldValue: targetValueField.value
         )
     )
+}
+
+private func isBuiltInEntryNameField(_ field: FieldTemplate) -> Bool {
+    field.id == FieldTemplate.stableFieldId("名称")
+        || field.name.trimmingCharacters(in: .whitespacesAndNewlines) == "名称"
 }
 
 func propagateFieldReferenceCategoryRename(

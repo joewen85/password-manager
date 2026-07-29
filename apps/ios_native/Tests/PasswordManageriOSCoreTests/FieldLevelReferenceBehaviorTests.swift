@@ -135,6 +135,21 @@ struct FieldLevelReferenceBehaviorTests {
         #expect(scenario.resolution() == nil)
     }
 
+    @Test("The built-in entry name field resolves from the target label")
+    func builtInEntryNameTarget() throws {
+        var scenario = FieldReferenceScenario()
+        scenario.targetField = try #require(CategoryTemplate.defaultFields.first { $0.name == "名称" })
+        scenario.sourceField.targetFieldId = scenario.targetField.id
+        scenario.targetEntry = makeFieldReferenceTargetEntry(customFields: [])
+
+        let resolution = try #require(scenario.resolution())
+        #expect(resolution.status == .resolved)
+        #expect(resolution.target?.entryLabel == "Payroll Account")
+        #expect(resolution.target?.fieldID == scenario.targetField.id)
+        #expect(resolution.target?.fieldName == "名称")
+        #expect(resolution.target?.fieldValue == "Payroll Account")
+    }
+
     @Test("Search projection exposes only resolved safe terms and preserves entry references")
     func safeSearchProjection() throws {
         let fieldReference = makeFieldReferenceSourceField()

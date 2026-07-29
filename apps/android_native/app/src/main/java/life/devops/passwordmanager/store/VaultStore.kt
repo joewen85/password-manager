@@ -550,17 +550,22 @@ class VaultStore(
             .orEmpty()
         if (templateFieldIds.isEmpty()) return emptySet()
         return buildSet {
-            entries.forEach { entry ->
-                entry.customFields.forEach { field ->
-                    if (
-                        field.templateFieldId.isNotEmpty() &&
-                        field.templateFieldId in templateFieldIds &&
-                        field.value.isNotEmpty()
-                    ) {
-                        add(field.templateFieldId)
+            entries.asSequence()
+                .filter { entry ->
+                    !entry.isDeleted &&
+                        entry.payload.category.trim().equals(category.trim(), ignoreCase = true)
+                }
+                .forEach { entry ->
+                    entry.customFields.forEach { field ->
+                        if (
+                            field.templateFieldId.isNotEmpty() &&
+                            field.templateFieldId in templateFieldIds &&
+                            field.value.isNotEmpty()
+                        ) {
+                            add(field.templateFieldId)
+                        }
                     }
                 }
-            }
         }
     }
 

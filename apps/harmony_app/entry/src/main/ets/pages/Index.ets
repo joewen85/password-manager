@@ -5237,6 +5237,7 @@ struct Index {
   private categoryDraftTargetFieldTemplates(field: CustomField): FieldTemplate[] {
     if (this.categoryDraftIsCurrentCategory(field.value)) {
       const fields: FieldTemplate[] = [
+        { id: 'template_名称', name: '名称', valueType: 'text', targetCategory: '' },
         { id: 'template_备注', name: '备注', valueType: 'text', targetCategory: '' },
       ];
       this.categoryDraftCustomFields.forEach((candidate: CustomField) => {
@@ -5263,7 +5264,7 @@ struct Index {
       return [];
     }
     return template.fields.filter((candidate: FieldTemplate) =>
-      this.isTextTemplateField(candidate) && candidate.name.trim() !== '名称'
+      this.isTextTemplateField(candidate)
     );
   }
 
