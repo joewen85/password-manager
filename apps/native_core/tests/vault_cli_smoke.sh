@@ -72,6 +72,9 @@ PY
   --field Email \
   --field-reference "Owner Email" Servers Email \
   --vault "$field_reference_vault" >/dev/null
+"$bin" add-category "$password" CrossCategoryServers \
+  --field-reference "Account Email" Accounts Email \
+  --vault "$field_reference_vault" >/dev/null
 field_reference_target_id="$("$bin" add-entry "$password" \
   --label "CLI Target" \
   --type credential \
@@ -87,12 +90,27 @@ field_reference_source_id="$("$bin" add-entry "$password" \
   --field-reference "Owner Email" "CLI Target" \
   --vault "$field_reference_vault" | awk '{print $3}')"
 test -n "$field_reference_source_id"
+cross_category_target_id="$("$bin" add-entry "$password" \
+  --label "Cross Category Account" \
+  --type credential \
+  --category Accounts \
+  --field Email=cross-category@example.com \
+  --vault "$field_reference_vault" | awk '{print $3}')"
+test -n "$cross_category_target_id"
+cross_category_source_id="$("$bin" add-entry "$password" \
+  --label "Cross Category Server" \
+  --type server \
+  --category CrossCategoryServers \
+  --field-reference "Account Email" "$cross_category_target_id" \
+  --vault "$field_reference_vault" | awk '{print $3}')"
+test -n "$cross_category_source_id"
 "$bin" export-snapshot "$password" --vault "$field_reference_vault" --out "$field_reference_export" >/dev/null
-python3 - "$field_reference_export" "$field_reference_target_id" "$field_reference_source_id" <<'PY'
+python3 - "$field_reference_export" "$field_reference_target_id" "$field_reference_source_id" \
+  "$cross_category_target_id" "$cross_category_source_id" <<'PY'
 import json
 import sys
 
-path, target_id, source_id = sys.argv[1:]
+path, target_id, source_id, cross_target_id, cross_source_id = sys.argv[1:]
 with open(path, "r", encoding="utf-8") as handle:
     snapshot = json.load(handle)
 
@@ -104,6 +122,18 @@ source_entry = next(entry for entry in snapshot["entries"] if entry["id"] == sou
 target_binding = next(field for field in target_entry["customFields"] if field["name"] == "Email")
 ad_hoc_binding = next(field for field in target_entry["customFields"] if field["name"] == "Region")
 binding = next(field for field in source_entry["customFields"] if field["name"] == "Owner Email")
+cross_target_field = next(field for field in templates["Accounts"] if field["name"] == "Email")
+cross_source_field = next(
+    field for field in templates["CrossCategoryServers"] if field["name"] == "Account Email"
+)
+cross_target_entry = next(entry for entry in snapshot["entries"] if entry["id"] == cross_target_id)
+cross_source_entry = next(entry for entry in snapshot["entries"] if entry["id"] == cross_source_id)
+cross_target_binding = next(
+    field for field in cross_target_entry["customFields"] if field["name"] == "Email"
+)
+cross_binding = next(
+    field for field in cross_source_entry["customFields"] if field["name"] == "Account Email"
+)
 assert target_field["valueType"] == "text"
 assert source_field["valueType"] == "fieldReference"
 assert source_field["targetCategory"] == "Servers"
@@ -112,6 +142,12 @@ assert target_binding["templateFieldId"] == target_field["id"]
 assert ad_hoc_binding["templateFieldId"] == ""
 assert binding["templateFieldId"] == source_field["id"]
 assert binding["value"] == target_id
+assert cross_source_field["valueType"] == "fieldReference"
+assert cross_source_field["targetCategory"] == "Accounts"
+assert cross_source_field["targetFieldId"] == cross_target_field["id"]
+assert cross_target_binding["templateFieldId"] == cross_target_field["id"]
+assert cross_binding["templateFieldId"] == cross_source_field["id"]
+assert cross_binding["value"] == cross_target_id
 PY
 "$bin" show-entry "$password" "$field_reference_source_id" --vault "$field_reference_vault" >"$field_reference_display"
 python3 - "$field_reference_display" <<'PY'

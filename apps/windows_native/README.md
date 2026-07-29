@@ -29,6 +29,8 @@
 - `../native_core/src/vault_cli.cpp`: Windows/Linux 共享 terminal-native CLI。
 - `../native_core/tests/vault_core_tests.cpp`: Windows/Linux 共用 C++ core tests。
 - `../native_core/tests/vault_cli_smoke.sh`: 使用当前平台 CLI 产物验证旧条目关联五态、字段关联九态安全展示、搜索抑制和 `export-snapshot` 无损保真。
+- `../native_core/docs/FIELD_REFERENCE_API.md`: Windows/Linux 共享字段到字段关联 CLI/API 契约。
+- `../native_core/docs/PERMISSIONS_AND_PRIVACY.md`: Windows/Linux 共享权限与隐私边界。
 
 ### 环境要求
 

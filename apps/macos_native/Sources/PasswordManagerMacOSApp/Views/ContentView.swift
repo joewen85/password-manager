@@ -127,7 +127,14 @@ struct ContentView: View {
                     entries: store.entries,
                     tags: store.tags,
                     onCreateCategory: { category, preset, customFields in
-                        store.addCategory(category, preset: preset, customFields: customFields)
+                        if store.addCategory(
+                            category,
+                            preset: preset,
+                            customFields: customFields
+                        ) {
+                            return nil
+                        }
+                        return store.statusMessage ?? L10n.t("Category could not be added.")
                     },
                     onCreateTag: { store.addTag($0) },
                     onEditCategoryFields: beginEditingCategoryFields,

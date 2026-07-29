@@ -172,6 +172,41 @@ struct VaultStoreTaxonomyTests {
     }
 
     @MainActor
+    @Test("Category creation persists complete cross-category field references")
+    func categoryCreationPersistsCompleteCrossCategoryFieldReferences() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManagerMacOSCrossCategoryFieldReferenceCreation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(repository: repository, syncSettingsRepository: nil)
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+
+        let email = newCategoryTemplateField(name: "Email")
+        #expect(store.addCategory("Accounts", preset: nil, customFields: [email]))
+
+        let accountEmail = newCategoryTemplateField(
+            name: "Account email",
+            valueType: "fieldReference",
+            targetCategory: "Accounts",
+            targetFieldId: email.id
+        )
+        #expect(store.addCategory(
+            "Services",
+            preset: nil,
+            customFields: [accountEmail]
+        ))
+
+        let saved = try #require(store.categoryTemplates.first { $0.category == "Services" })
+        #expect(saved.fields.first { $0.id == accountEmail.id } == accountEmail)
+
+        let reloadedStore = VaultStore(repository: repository, syncSettingsRepository: nil)
+        #expect(reloadedStore.unlock(password: "test-password"))
+        let reloaded = try #require(reloadedStore.categoryTemplates.first { $0.category == "Services" })
+        #expect(reloaded.fields.first { $0.id == accountEmail.id } == accountEmail)
+    }
+
+    @MainActor
     @Test("Category creation rejects duplicate editable field names atomically")
     func categoryCreationRejectsDuplicateEditableFieldNamesAtomically() throws {
         let directory = FileManager.default.temporaryDirectory

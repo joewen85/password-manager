@@ -356,6 +356,7 @@ private struct CategoryFieldsEditView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var fields: [FieldTemplate]
+    @State private var errorMessage: String?
 
     init(store: VaultStore, request: CategoryFieldsEditRequest, onSaved: @escaping () -> Void) {
         self.store = store
@@ -378,6 +379,12 @@ private struct CategoryFieldsEditView: View {
                         storedValueFieldIDs: storedValueFieldIDs,
                         referencedTargetFieldIDs: referencedTargetFieldIDs
                     )
+
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.callout)
+                            .foregroundStyle(.red)
+                    }
                 }
             }
             .formStyle(.grouped)
@@ -397,7 +404,11 @@ private struct CategoryFieldsEditView: View {
     }
 
     private func save() {
-        guard store.updateCategoryTemplate(category, fields: fields) else { return }
+        guard store.updateCategoryTemplate(category, fields: fields) else {
+            errorMessage = store.statusMessage ?? L10n.t("Operation failed.")
+            return
+        }
+        errorMessage = nil
         onSaved()
         dismiss()
     }
@@ -422,14 +433,18 @@ struct CategoryTemplateCreationFieldsEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             CategoryPresetShortcutButtons(fields: $fields)
-            CategoryTemplateFieldEditor(
-                fields: $fields,
-                sourceCategory: normalizedSourceCategory,
-                categories: availableCategories,
-                templates: prospectiveTemplates,
-                storedValueFieldIDs: [],
-                referencedTargetFieldIDs: []
-            )
+            ScrollView {
+                CategoryTemplateFieldEditor(
+                    fields: $fields,
+                    sourceCategory: normalizedSourceCategory,
+                    categories: availableCategories,
+                    templates: prospectiveTemplates,
+                    storedValueFieldIDs: [],
+                    referencedTargetFieldIDs: []
+                )
+                .padding(.trailing, 4)
+            }
+            .frame(maxHeight: 260)
         }
     }
 

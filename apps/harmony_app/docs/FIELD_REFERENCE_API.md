@@ -4,9 +4,9 @@
 
 ## 1. 范围
 
-P8 为 HarmonyOS 提供字段到字段关联的数据契约、内部 resolver 和生命周期行为。它在本地加密存储、同步、全量及 scoped 导入导出中无损保留目标字段标识，并支持安全解析、搜索投影、复制导入重映射、分类改名和目标字段保护。
+P8 为 HarmonyOS 提供字段到字段关联的数据契约、内部 resolver 和生命周期行为。P9 已在相同契约上开放创建、编辑、条目选择和九态详情 UI。它在本地加密存储、同步、全量及 scoped 导入导出中无损保留目标字段标识，并支持安全解析、搜索投影、复制导入重映射、分类改名和目标字段保护。
 
-本阶段仍不开放 `fieldReference` 的创建、编辑和详情 UI。现有 `entryReference` UI、五态解析和展示语义保持不变。
+新建模板字段时直接选择 `text` 或 `fieldReference`。选择 `fieldReference` 后必须在首次保存前选定目标分类和稳定目标文本字段；新建流程不再创建旧 `entryReference`。已有 `entryReference` 定义和值继续无损兼容。
 
 ## 2. 数据形状
 
@@ -52,7 +52,7 @@ P8 为 HarmonyOS 提供字段到字段关联的数据契约、内部 resolver �
 - `entryReference` 继续只关联目标条目，不因出现新属性而改变行为。
 - 目标分类模板中的 `targetFieldId` 只做大小写敏感的精确 ID 匹配，不按字段名猜测目标模板字段。
 - 目标条目中的 `CustomField.templateFieldId` 非空时同样必须大小写敏感精确匹配。只有属性缺失或值为真正的空字符串时，才按目标模板字段名称 trim 后忽略大小写回退；空白字符串属于非空不透明 ID，不触发回退。
-- 所有写同步客户端都能无损保留 `targetFieldId`，且各端 resolver 语义一致后，才可以开放创建 `fieldReference` 的 UI。
+- 所有维护端已经能够无损保留 `targetFieldId`，并采用相同 resolver 语义，因此 P9 UI 可以创建和编辑 `fieldReference`；旧客户端不得继续写入已经包含该类型的同步保险库。
 
 ## 4. 九态解析
 
@@ -89,7 +89,7 @@ P8 为 HarmonyOS 提供字段到字段关联的数据契约、内部 resolver �
 
 | 路径 | 保证 |
 |---|---|
-| 模板创建 | 新文本字段初始化 `targetFieldId = ""` |
+| 模板创建 | 文本字段初始化 `targetFieldId = ""`；字段关联在首次保存前选择目标分类和目标文本字段并保存稳定 ID |
 | 模板规范化和 upsert | 缺失值补空，已有值原样保留 |
 | 分类模板编辑 | 未知类型只读保留，编辑合并不丢扩展元数据 |
 | 本地加密存储 | 属性随现有 vault JSON 加密 envelope 保存 |
@@ -105,7 +105,7 @@ P8 为 HarmonyOS 提供字段到字段关联的数据契约、内部 resolver �
 
 该属性不引入新权限、网络端点、SDK、数据库或明文存储。HarmonyOS 权限仍只有 `ohos.permission.INTERNET` 和 `ohos.permission.ACCESS_BIOMETRIC`。
 
-P8 resolver 只读取配置的单个文本字段。安全搜索不会索引该字段值，现有 UI 也不会显示或复制该值。scoped 导出不会因为字段引用自动包含目标条目；目标条目的密码、Token、Secret、备注或其他自定义字段不得进入列表、搜索、日志或剪贴板。
+resolver 只读取配置的单个文本字段。目标字段值仅在 `RESOLVED` 的已解锁显式详情中显示；它不进入候选、摘要、搜索、日志或隐式导出，也不会由该关系 UI 写入剪贴板，非成功态不携带该值。scoped 导出不会因为字段引用自动包含目标条目；目标条目的密码、Token、Secret、备注或其他自定义字段不得进入列表、搜索、日志或剪贴板。
 
 ## 7. 验证
 
@@ -113,6 +113,7 @@ P8 resolver 只读取配置的单个文本字段。安全搜索不会索引该�
 node scripts/harmony_field_reference_contract_compat_tests.mjs
 node scripts/harmony_reference_resolver_tests.mjs
 node scripts/harmony_reference_operations_tests.mjs
+node scripts/harmony_field_reference_ui_tests.mjs
 ./scripts/harmony_preflight.sh
 ./scripts/harmony_build_hap.sh default
 ```

@@ -59,6 +59,46 @@ function extractFunction(source, name) {
   throw new Error(`Cannot find end of Harmony controller function: ${name}`);
 }
 
+function extractPrivateAsyncMethod(source, name) {
+  const signature = `private async ${name}(`;
+  const start = source.indexOf(signature);
+  if (start < 0) {
+    throw new Error(`Cannot find Harmony controller method: ${name}`);
+  }
+  const bodyStart = source.indexOf('{', start);
+  let depth = 0;
+  let quote = '';
+  let escaped = false;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote.length > 0) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === quote) {
+        quote = '';
+      }
+      continue;
+    }
+    if (char === "'" || char === '"' || char === '`') {
+      quote = char;
+      continue;
+    }
+    if (char === '{') {
+      depth += 1;
+    } else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return source
+          .slice(start, index + 1)
+          .replace(signature, `async function ${name}(`);
+      }
+    }
+  }
+  throw new Error(`Cannot find end of Harmony controller method: ${name}`);
+}
+
 function loadCategorySyncRuntime(controller) {
   const functionNames = [
     'readString',
@@ -90,6 +130,28 @@ function loadBusinessEqualityRuntime(controller) {
   const source = `${extractFunction(controller, 'hasSameSyncBusinessContent')}
     ;hasSameSyncBusinessContent;`;
   return vm.runInNewContext(stripTypeScriptTypes(source, { mode: 'transform' }), {});
+}
+
+function loadSyncPathRuntime(controller) {
+  const functionNames = [
+    'deepCopyRuntimePayload',
+    'parseSyncEnvelope',
+    'isSuccessfulRemoteStatus',
+    'cloneSyncSettings',
+    'hasSameSyncBusinessContent',
+  ];
+  const source = `
+    ${functionNames.map((name) => extractFunction(controller, name)).join('\n')}
+    function sanitizeRuntimePayload(payload) {
+      return JSON.parse(JSON.stringify(payload));
+    }
+    ${extractPrivateAsyncMethod(controller, 'performSyncOnce')}
+    ;performSyncOnce;
+  `;
+  return vm.runInNewContext(
+    stripTypeScriptTypes(source, { mode: 'transform' }),
+    { console },
+  );
 }
 
 function payload({
@@ -140,7 +202,179 @@ function assertDeletedState(states, message) {
   );
 }
 
-function main() {
+function syncSettings(strategy, revision) {
+  return {
+    providerType: 'webdav',
+    webdavUrl: 'https://sync.example.test',
+    webdavUsername: '',
+    webdavPassword: '',
+    webdavPath: '/vault.json',
+    presignedDownloadUrl: '',
+    presignedUploadUrl: '',
+    objectStorageAccessKeyId: '',
+    objectStorageSecretAccessKey: '',
+    objectStorageBucket: '',
+    objectStorageEndpoint: '',
+    objectStorageAppId: '',
+    objectStorageCustomUrl: '',
+    objectStorageObjectKey: 'vault.sync.json',
+    autoSyncEnabled: true,
+    autoSyncIntervalMinutes: 30,
+    autoSyncIntervalValue: 30,
+    autoSyncIntervalUnit: 'minutes',
+    autoSyncOnUnlock: true,
+    conflictStrategy: strategy,
+    syncMasterKey: false,
+    deviceId: 'harmony-device',
+    lastSyncRevision: revision,
+    lastSyncAt: 100,
+    lastSyncStatus: 'local-status',
+    lastSyncMessage: 'local-message',
+    lastRemoteFingerprint: 'remote-r11',
+    hasLocalChanges: false,
+    logs: [],
+  };
+}
+
+async function assertRuntimeMetadataSyncPath({
+  performSyncOnce,
+  categoryRuntime,
+  initialTombstone,
+  strategy,
+}) {
+  const localRevision = 11;
+  const remoteRevision = 12;
+  const localSettings = syncSettings(strategy, localRevision);
+  const localPayload = payload({
+    categoryStates: [initialTombstone],
+    updatedAt: 300,
+  });
+  localPayload.syncSettings = localSettings;
+
+  const remotePayload = payload({
+    categoryStates: [initialTombstone],
+    updatedAt: 200,
+    deviceId: 'remote-device',
+  });
+  remotePayload.syncSettings = {
+    ...syncSettings(strategy, remoteRevision),
+    deviceId: 'remote-device',
+    lastSyncAt: 200,
+    lastSyncStatus: 'remote-status',
+    lastSyncMessage: 'remote-message',
+    lastRemoteFingerprint: 'remote-r12',
+  };
+
+  const remoteEnvelope = JSON.stringify({
+    version: 1,
+    exportedAt: '2026-07-29T00:00:00Z',
+    deviceId: 'remote-device',
+    revision: remoteRevision,
+    masterKeyRecord: null,
+    encryptedVault: { ciphertext: 'fixture' },
+  });
+  const uploads = [];
+  const builtPayloads = [];
+  const statuses = [];
+  const persists = [];
+  const client = {
+    async metadata() {
+      return { statusCode: 200, fingerprint: 'remote-r12' };
+    },
+    async download() {
+      return { statusCode: 200, payload: remoteEnvelope };
+    },
+    async upload(value) {
+      uploads.push(value);
+      return { statusCode: 200, payload: '' };
+    },
+  };
+  const harness = {
+    snapshot: localPayload,
+    localChangeRevision: 0,
+    syncRequestedAgain: false,
+    masterKeyRecord: null,
+    sessionKeyToken: 'session-key',
+    crypto: {
+      async decryptString() {
+        return JSON.stringify(remotePayload);
+      },
+    },
+    mergePayloads(local, remote, receivedStrategy) {
+      assert(
+        receivedStrategy === strategy,
+        `${strategy} full sync path forwards the selected conflict strategy`,
+      );
+      const categoryStates = categoryRuntime.mergeCategoryStatesForSync(
+        local,
+        remote,
+        receivedStrategy,
+      );
+      return {
+        entries: JSON.parse(JSON.stringify(remote.entries)),
+        categories: JSON.parse(JSON.stringify(remote.categories)),
+        categoryTemplates: JSON.parse(JSON.stringify(remote.categoryTemplates)),
+        categoryStates,
+        tags: JSON.parse(JSON.stringify(remote.tags)),
+        security: JSON.parse(JSON.stringify(remote.security)),
+        updatedAt: Math.max(local.updatedAt, remote.updatedAt),
+        syncSettings: JSON.parse(JSON.stringify(local.syncSettings)),
+      };
+    },
+    localRevisionChangedSince(revision) {
+      return revision !== this.localChangeRevision;
+    },
+    recordSyncStatus(status, message, revision, fingerprint) {
+      statuses.push({ status, message, revision, fingerprint });
+      this.snapshot.syncSettings = {
+        ...this.snapshot.syncSettings,
+        hasLocalChanges: false,
+        lastSyncRevision: revision,
+        lastSyncStatus: status,
+        lastSyncMessage: message,
+        lastRemoteFingerprint: fingerprint ?? '',
+      };
+    },
+    async persist(markLocalChange) {
+      persists.push(markLocalChange);
+    },
+    async buildSyncPayload(_snapshot, revision) {
+      builtPayloads.push(revision);
+      return `upload-revision-${revision}`;
+    },
+    async safeRemoteFingerprint() {
+      return 'uploaded-r13';
+    },
+  };
+
+  await performSyncOnce.call(harness, client, localSettings);
+
+  assert(
+    builtPayloads.length === 0 && uploads.length === 0,
+    `${strategy} full sync path does not upload a runtime-metadata-only revision`,
+  );
+  assert(
+    statuses.length === 1 &&
+      statuses[0].status === 'success' &&
+      statuses[0].revision === remoteRevision,
+    `${strategy} full sync path accepts the remote revision`,
+  );
+  assertDeletedState(
+    harness.snapshot.categoryStates,
+    `${strategy} full sync path preserves the category tombstone`,
+  );
+  assert(
+    harness.snapshot.syncSettings.lastSyncRevision === remoteRevision &&
+      harness.snapshot.syncSettings.hasLocalChanges === false,
+    `${strategy} full sync path persists clean settings at the remote revision`,
+  );
+  assert(
+    persists.length === 1 && persists[0] === false,
+    `${strategy} full sync path persists without marking a local change`,
+  );
+}
+
+async function main() {
   assert(fs.existsSync(controllerPath), 'Harmony VaultController exists');
   if (!fs.existsSync(controllerPath)) {
     process.exit(1);
@@ -148,6 +382,12 @@ function main() {
 
   const controller = fs.readFileSync(controllerPath, 'utf8');
   const runtime = loadCategorySyncRuntime(controller);
+  let performSyncOnce = null;
+  try {
+    performSyncOnce = loadSyncPathRuntime(controller);
+  } catch (error) {
+    assert(false, `Harmony exposes an executable full sync path: ${error}`);
+  }
   let hasSameSyncBusinessContent = null;
   try {
     hasSameSyncBusinessContent = loadBusinessEqualityRuntime(controller);
@@ -258,6 +498,20 @@ function main() {
     );
   }
 
+  if (performSyncOnce !== null) {
+    for (const strategy of [
+      runtime.ConflictStrategy.REMOTE_WINS,
+      runtime.ConflictStrategy.KEEP_BOTH,
+    ]) {
+      await assertRuntimeMetadataSyncPath({
+        performSyncOnce,
+        categoryRuntime: runtime,
+        initialTombstone,
+        strategy,
+      });
+    }
+  }
+
   assert(
     controller.includes('const categoryStates = mergeCategoryStatesForSync(local, remote, strategy);'),
     'Harmony payload merge consumes persistent category states',
@@ -283,4 +537,4 @@ function main() {
   console.log('[OK] Harmony category sync tests passed');
 }
 
-main();
+await main();

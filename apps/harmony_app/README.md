@@ -16,7 +16,7 @@
 - 已接入生物识别解锁：主密码凭据使用 HUKS AES-GCM 硬件密钥加密，解密需要 Face/Fingerprint 认证 token，新增生物特征后密钥失效。
 - 已支持单条、分类、全库 JSON 导出到用户选择位置并落盘为本地文件。
 - 已支持通过系统文件选择器导入单条/分类 JSON，并提供导入预览与冲突处理策略：保留副本、覆盖现有、跳过冲突。
-- 字段关联已完成首个完整 UI 垂直切片：分类字段可选择“文本/关联条目”和可选目标分类，条目编辑可按约束选择、更换或清空目标，详情覆盖未选择、正常、缺失、已删除、分类不匹配五态并提供查看或修复入口。已有存值的模板字段禁止静默改型或删除；孤儿绑定和未知类型只读保留。候选、详情、摘要和搜索只使用安全目标投影，不显示、复制或索引原始引用 ID 与目标秘密；标签职责不变。格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
+- 字段关联已完成字段到字段 UI 垂直切片：创建分类字段时直接选择“文本/字段关联”；字段关联必须同时选择目标分类和目标文本字段，并保存稳定 `targetFieldId`，不再先创建文本字段后改成旧“关联条目”。条目编辑可按约束选择、更换或清空目标，详情覆盖九态并提供查看、重选、修复配置或清除入口。旧 `entryReference` 仅无损兼容已有定义和值，不再用于新建字段。候选、摘要、搜索和日志不显示、复制或索引原始引用 ID 与目标秘密；标签职责不变。格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
 - 字段到字段关联已推进到 P9：在 P8 九态解析、生命周期保护和安全投影之上，分类管理可创建或编辑 `fieldReference` 并依次选择目标分类和稳定目标文本字段 ID；同分类可关联另一个文本字段，但拒绝直接自引用。条目编辑支持选择、更换和清空目标条目；详情按九态显示关系路径，仅在已解锁的显式详情中展示已解析字段值。条目问题进入重选流程，模板配置问题进入分类字段配置，旧 `entryReference` 继续保留五态选择、修复和清空行为。数据 API 见 `docs/FIELD_REFERENCE_API.md`。
 - 已完成权限最小化声明：`ohos.permission.INTERNET`、`ohos.permission.ACCESS_BIOMETRIC`。
 - 已提供权限/隐私清单、签名指南、DevEco 编译与真机验证手册，以及 Flutter 旧数据到 Harmony 端的加密兼容回归清单。
@@ -111,10 +111,10 @@ apps/harmony_app/entry/build/default/outputs/default/entry-default-unsigned.hap
 11. 新增或删除系统生物特征后，验证旧生物解锁凭据失效并需要主密码重新启用。
 12. 执行单条、分类、全库 JSON 导出，确认文件写入用户选择的位置。
 13. 执行单条/分类 JSON 导入，确认预览、保留副本、覆盖现有、跳过冲突策略符合预期。
-14. 新建未使用的分类模板字段，分别验证“文本/关联条目”切换、“不限分类”和指定目标分类；字段一旦已有存值，删除和类型切换应被阻止，名称及关联范围仍可安全修改；未知字段类型应保持只读且配置不丢失。
+14. 新建分类模板字段时，分别验证“文本/字段关联”切换；字段关联必须在首次保存前选定目标分类和目标文本字段，同分类只能关联另一个文本字段且不能直接自引用。字段一旦已有存值，删除和类型切换应被阻止；未知字段类型应保持只读且配置不丢失。
 15. 新建或编辑条目，验证关联候选只包含未删除且符合目标分类的记录，并验证选择、更换、清空和重启后的数据保真。
-16. 分别制造未选择、正常、缺失、已删除、分类不匹配五态，验证详情文案、查看目标和修复入口。
-17. 用引用 ID、目标密码、Token、Secret 和备注搜索，确认列表、详情、摘要、搜索和剪贴板不泄露这些值。
+16. 分别制造字段关联的九种状态，验证详情文案、查看目标、重选、修复配置和清除入口；仅正常解析态显示配置的目标字段值。
+17. 用引用 ID、目标密码、Token、Secret、备注和目标字段值搜索，确认候选、列表摘要、搜索和日志不泄露这些值；详情只在正常解析态显示配置的目标字段值，任何状态都不得显示或复制原始引用 ID。
 18. 执行 WebDAV 或 S3 同步，确认 revision、冲突策略和同步日志符合当前跨端契约。
 19. 按 `docs/CRYPTO_COMPATIBILITY_REGRESSION_CHECKLIST.md` 验证 Flutter 历史数据可迁移到 Harmony；创建字段关联后不得再使用旧 Flutter 写入同一保险库。
 
@@ -212,7 +212,7 @@ hdc list targets
 - [x] 已实现 WebDAV/S3 同步状态机、revision、冲突策略和同步日志。
 - [x] 已实现单条、分类、全库 JSON 导出。
 - [x] 已实现单条/分类 JSON 导入、预览和冲突策略。
-- [x] 已实现字段关联分类配置、条目选择/清空、五态详情和修复入口。
+- [x] 已保留旧 `entryReference` 的分类配置、条目选择/清空、五态详情和修复入口，仅用于已有定义和值兼容。
 - [x] 已实现 `fieldReference` 目标分类/字段配置、九态详情、条目重选与模板配置修复入口，同时保留旧 `entryReference` 行为。
 - [x] 字段关联专项合同测试、ArkTS 编译与 unsigned HAP 构建已通过。
 - [x] 已配置生产 bundleName/vendor metadata，并与 Android applicationId 对齐为 `life.devops.passwordmanager`。
@@ -257,7 +257,7 @@ This directory contains the native HarmonyOS 6 application target, used to build
 - Biometric unlock is implemented: the master-password credential is encrypted by a HUKS AES-GCM hardware key and decryption requires a Face/Fingerprint authentication token. The key is invalidated when new biometric credentials are enrolled.
 - Item, category, and full-vault JSON export to a user-selected local location is implemented.
 - Item/category JSON import through the system picker is implemented with import preview and conflict strategies: keep copy, overwrite existing, and skip conflicts.
-- Entry references now provide the first complete UI vertical slice. Category fields can choose text or entry-reference behavior plus an optional target category; entry editing can select, replace, or clear a matching target; details cover empty, resolved, missing, deleted, and category-mismatch states with open and repair actions. Candidates, details, summaries, and search use only the safe target projection and never display, copy, or index the stored reference ID or target secrets. Tags remain unchanged. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
+- Legacy entry references retain their complete UI vertical slice for existing definitions and values. New category fields no longer create `entryReference`; entry editing can still select, replace, or clear a matching legacy target, and details retain the five legacy states with open and repair actions. Candidates, details, summaries, and search use only the safe target projection and never display, copy, or index the stored reference ID or target secrets. Tags remain unchanged. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
 - Field-to-field references have reached P9. On top of the P8 nine-state resolver, lifecycle guards, and safe projections, category management can create or edit `fieldReference` definitions by selecting a target category and stable target text-field ID. A same-category reference may target another text field, while direct self-reference is rejected. Entry editing supports target selection, replacement, and clearing; details render all nine states and reveal the resolved field value only in the explicit unlocked detail view. Entry failures route to reselection, template failures route to category-field configuration, and legacy `entryReference` five-state selection, repair, and clearing remain intact. See `docs/FIELD_REFERENCE_API.md`.
 - Permission declaration is minimized to `ohos.permission.INTERNET` and `ohos.permission.ACCESS_BIOMETRIC`.
 - Documentation exists for permissions/privacy review, signing, DevEco build and device validation, and historical Flutter-to-Harmony migration compatibility regression.

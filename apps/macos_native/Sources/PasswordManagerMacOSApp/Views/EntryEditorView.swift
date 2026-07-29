@@ -7,7 +7,7 @@ struct EntryEditorView: View {
     var categoryTemplates: [CategoryTemplate]
     var entries: [VaultEntry]
     var tags: [String]
-    var onCreateCategory: (String, CategoryTypePreset?, [FieldTemplate]) -> Bool
+    var onCreateCategory: (String, CategoryTypePreset?, [FieldTemplate]) -> String?
     var onCreateTag: (String) -> Bool
     var onEditCategoryFields: (String) -> Void
     var onSave: (EntryDraft) -> Void
@@ -26,7 +26,9 @@ struct EntryEditorView: View {
         categoryTemplates: [CategoryTemplate] = [],
         entries: [VaultEntry] = [],
         tags: [String],
-        onCreateCategory: @escaping (String, CategoryTypePreset?, [FieldTemplate]) -> Bool = { _, _, _ in false },
+        onCreateCategory: @escaping (String, CategoryTypePreset?, [FieldTemplate]) -> String? = { _, _, _ in
+            L10n.t("Category could not be added.")
+        },
         onCreateTag: @escaping (String) -> Bool = { _ in false },
         onEditCategoryFields: @escaping (String) -> Void = { _ in },
         onSave: @escaping (EntryDraft) -> Void,
@@ -176,18 +178,21 @@ struct EntryEditorView: View {
         taxonomyMessage = nil
     }
 
-    private func createCategory(_ value: String, preset: CategoryTypePreset?, customFields: [FieldTemplate]) -> Bool {
-        guard !value.isEmpty else { return false }
-        if onCreateCategory(value, preset, customFields) {
-            availableCategories = mergedValues(availableCategories + [value])
-            draft.category = value
-            applyTemplate(for: value, preset: preset, customFields: customFields)
-            taxonomyMessage = L10n.t("Category added.")
-            return true
-        } else {
-            taxonomyMessage = L10n.t("Category could not be added.")
-            return false
+    private func createCategory(
+        _ value: String,
+        preset: CategoryTypePreset?,
+        customFields: [FieldTemplate]
+    ) -> String? {
+        guard !value.isEmpty else { return L10n.t("Value is required.") }
+        if let errorMessage = onCreateCategory(value, preset, customFields) {
+            taxonomyMessage = errorMessage
+            return errorMessage
         }
+        availableCategories = mergedValues(availableCategories + [value])
+        draft.category = value
+        applyTemplate(for: value, preset: preset, customFields: customFields)
+        taxonomyMessage = L10n.t("Category added.")
+        return nil
     }
 
     private func createTag(_ value: String) -> Bool {
@@ -279,11 +284,12 @@ private struct CategorySelectField: View {
     @Binding var selectedCategory: String
     var categories: [String]
     var categoryTemplates: [CategoryTemplate]
-    var onCreateCategory: (String, CategoryTypePreset?, [FieldTemplate]) -> Bool
+    var onCreateCategory: (String, CategoryTypePreset?, [FieldTemplate]) -> String?
 
     @State private var isPresented = false
     @State private var searchText = ""
     @State private var customFields: [FieldTemplate] = []
+    @State private var creationError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -323,6 +329,12 @@ private struct CategorySelectField: View {
                         )
                     }
 
+                    if let creationError {
+                        Text(creationError)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+
                     Divider()
 
                     ScrollView {
@@ -347,6 +359,12 @@ private struct CategorySelectField: View {
                 .padding(12)
                 .frame(width: 320)
             }
+            .onChange(of: searchText) { _, _ in
+                creationError = nil
+            }
+            .onChange(of: customFields) { _, _ in
+                creationError = nil
+            }
         }
     }
 
@@ -365,12 +383,15 @@ private struct CategorySelectField: View {
 
     private func createCategory() {
         guard canCreateCategory else { return }
-        if onCreateCategory(trimmedSearchText, nil, customFields) {
-            selectedCategory = trimmedSearchText
-            searchText = ""
-            customFields = []
-            isPresented = false
+        if let errorMessage = onCreateCategory(trimmedSearchText, nil, customFields) {
+            creationError = errorMessage
+            return
         }
+        creationError = nil
+        selectedCategory = trimmedSearchText
+        searchText = ""
+        customFields = []
+        isPresented = false
     }
 
     private func categoryRow(label: String, value: String) -> some View {

@@ -16,6 +16,10 @@ link these sources instead of copying them into each app directory.
   backup/export/import, and libcurl-backed remote object sync.
 - `tests/vault_core_tests.cpp`: shared regression tests run by both
   `apps/windows_native` and `apps/linux_native`.
+- `docs/FIELD_REFERENCE_API.md`: Windows/Linux CLI field-reference creation,
+  binding, validation, and compatibility contract.
+- `docs/PERMISSIONS_AND_PRIVACY.md`: shared native permission and sensitive-data
+  boundaries for field references.
 - Category create/delete/recreate state is preserved through additive
   `categoryStates` version vectors and remove-wins tombstones. The sync merge
   also clears stale category references from active entries; see
