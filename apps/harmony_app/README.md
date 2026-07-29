@@ -17,7 +17,7 @@
 - 已支持单条、分类、全库 JSON 导出到用户选择位置并落盘为本地文件。
 - 已支持通过系统文件选择器导入单条/分类 JSON，并提供导入预览与冲突处理策略：保留副本、覆盖现有、跳过冲突。
 - 字段关联已完成首个完整 UI 垂直切片：分类字段可选择“文本/关联条目”和可选目标分类，条目编辑可按约束选择、更换或清空目标，详情覆盖未选择、正常、缺失、已删除、分类不匹配五态并提供查看或修复入口。已有存值的模板字段禁止静默改型或删除；孤儿绑定和未知类型只读保留。候选、详情、摘要和搜索只使用安全目标投影，不显示、复制或索引原始引用 ID 与目标秘密；标签职责不变。格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
-- 字段到字段关联已推进到 P8：除在 `FieldTemplate.targetFieldId` 中无损保留目标字段 ID 外，内部 resolver 已实现九态解析、目标文本字段安全投影、legacy 空绑定名称回退、搜索安全投影、复制导入目标条目 ID 重映射、分类改名传播和目标字段删除/改型保护。非空字段 ID 始终按大小写敏感的不透明 ID 精确匹配；`fieldReference` 创建、编辑和详情 UI 仍未开放，数据 API 见 `docs/FIELD_REFERENCE_API.md`。
+- 字段到字段关联已推进到 P9：在 P8 九态解析、生命周期保护和安全投影之上，分类管理可创建或编辑 `fieldReference` 并依次选择目标分类和稳定目标文本字段 ID；同分类可关联另一个文本字段，但拒绝直接自引用。条目编辑支持选择、更换和清空目标条目；详情按九态显示关系路径，仅在已解锁的显式详情中展示已解析字段值。条目问题进入重选流程，模板配置问题进入分类字段配置，旧 `entryReference` 继续保留五态选择、修复和清空行为。数据 API 见 `docs/FIELD_REFERENCE_API.md`。
 - 已完成权限最小化声明：`ohos.permission.INTERNET`、`ohos.permission.ACCESS_BIOMETRIC`。
 - 已提供权限/隐私清单、签名指南、DevEco 编译与真机验证手册，以及 Flutter 旧数据到 Harmony 端的加密兼容回归清单。
 - 当前命令行预检与 `assembleHap` 已验证通过，产物为 `entry-default-unsigned.hap`。
@@ -213,6 +213,7 @@ hdc list targets
 - [x] 已实现单条、分类、全库 JSON 导出。
 - [x] 已实现单条/分类 JSON 导入、预览和冲突策略。
 - [x] 已实现字段关联分类配置、条目选择/清空、五态详情和修复入口。
+- [x] 已实现 `fieldReference` 目标分类/字段配置、九态详情、条目重选与模板配置修复入口，同时保留旧 `entryReference` 行为。
 - [x] 字段关联专项合同测试、ArkTS 编译与 unsigned HAP 构建已通过。
 - [x] 已配置生产 bundleName/vendor metadata，并与 Android applicationId 对齐为 `life.devops.passwordmanager`。
 - [x] `harmony_preflight.sh` 和 HAP 构建脚本会校验生产 metadata 与无横杠 bundleName，防止回退到 example 或非法包名。
@@ -233,7 +234,7 @@ hdc list targets
 ### 当前验证结论
 
 - 命令行预检与 `assembleHap` 已通过，当前产物为 `entry-default-unsigned.hap`；HAP 内 `pack.info` / `module.json` 的生产 metadata、权限和 unsigned 状态已通过脚本校验。
-- 字段关联专项测试已覆盖模板类型/目标分类、已用字段改型/删除门禁、分类往返字段复用、UUID、未知/孤儿类型保真、候选过滤、五态解析，以及详情、摘要、搜索和剪贴板的原始 ID/目标秘密隔离。
+- 字段关联专项测试已覆盖模板类型、目标分类与稳定目标字段 ID、同分类非自引用、直接自引用拒绝、已用字段改型/删除门禁、分类往返字段复用、UUID、未知/孤儿类型保真、候选过滤、旧五态与字段九态解析，以及详情、摘要、搜索和剪贴板的原始 ID/目标秘密隔离。
 - 生物识别解锁代码已通过 ArkTS 编译；真机上的 Face/Fingerprint/HUKS token 流程仍需安装 signed HAP 后验证。
 - 当前环境 `hdc` 曾可用，但设备列表为空，尚不能执行安装与真机回归。
 - 当前签名配置仍缺少 `HARMONY_SIGN_PROFILE` 与 `HARMONY_SIGN_CERTPATH`，无法生成可安装 signed HAP。
@@ -257,7 +258,7 @@ This directory contains the native HarmonyOS 6 application target, used to build
 - Item, category, and full-vault JSON export to a user-selected local location is implemented.
 - Item/category JSON import through the system picker is implemented with import preview and conflict strategies: keep copy, overwrite existing, and skip conflicts.
 - Entry references now provide the first complete UI vertical slice. Category fields can choose text or entry-reference behavior plus an optional target category; entry editing can select, replace, or clear a matching target; details cover empty, resolved, missing, deleted, and category-mismatch states with open and repair actions. Candidates, details, summaries, and search use only the safe target projection and never display, copy, or index the stored reference ID or target secrets. Tags remain unchanged. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
-- Field-to-field references have reached P8. In addition to losslessly preserving `FieldTemplate.targetFieldId`, the internal resolver now implements nine states, a minimal safe text-field projection, legacy empty-binding name fallback, safe search projection, copied-import target-entry ID remapping, category-rename propagation, and target-field deletion/retyping protection. Non-empty field IDs always use exact case-sensitive opaque-ID matching. Creation, editing, and detail UI for `fieldReference` remain unavailable; see `docs/FIELD_REFERENCE_API.md`.
+- Field-to-field references have reached P9. On top of the P8 nine-state resolver, lifecycle guards, and safe projections, category management can create or edit `fieldReference` definitions by selecting a target category and stable target text-field ID. A same-category reference may target another text field, while direct self-reference is rejected. Entry editing supports target selection, replacement, and clearing; details render all nine states and reveal the resolved field value only in the explicit unlocked detail view. Entry failures route to reselection, template failures route to category-field configuration, and legacy `entryReference` five-state selection, repair, and clearing remain intact. See `docs/FIELD_REFERENCE_API.md`.
 - Permission declaration is minimized to `ohos.permission.INTERNET` and `ohos.permission.ACCESS_BIOMETRIC`.
 - Documentation exists for permissions/privacy review, signing, DevEco build and device validation, and historical Flutter-to-Harmony migration compatibility regression.
 - Command-line preflight and `assembleHap` have passed and produced `entry-default-unsigned.hap`.
@@ -447,6 +448,7 @@ Official entry points:
 - [x] Item, category, and full-vault JSON export are implemented.
 - [x] Item/category JSON import, preview, and conflict strategies are implemented.
 - [x] Entry-reference category configuration, target selection/clear, five-state details, and repair actions are implemented.
+- [x] `fieldReference` target-category/field configuration, nine-state details, target reselection, and template-configuration repair are implemented without regressing legacy `entryReference` behavior.
 - [x] Entry-reference UI contract tests, ArkTS compilation, and unsigned HAP build have passed.
 - [x] Production bundleName/vendor metadata is configured and aligned with the Android applicationId as `life.devops.passwordmanager`.
 - [x] `harmony_preflight.sh` and the HAP build script verify production metadata and a hyphen-free bundleName so example or invalid package names cannot regress.
@@ -466,7 +468,7 @@ Official entry points:
 ### Current Verification Status
 
 - Command-line preflight and `assembleHap` have passed, with `entry-default-unsigned.hap` recorded as the current artifact; the HAP `pack.info` / `module.json` production metadata, permissions, and unsigned state are verified by script.
-- Entry-reference tests cover template type/target-category editing, unknown-type preservation, candidate filtering, five-state resolution, and raw-ID/target-secret isolation across details, summaries, search, and clipboard paths.
+- Reference tests cover target-category and stable target-field configuration, valid same-category references, direct self-reference rejection, unknown-type preservation, candidate filtering, legacy five-state and field-reference nine-state resolution, and raw-ID/target-secret isolation across details, summaries, search, and clipboard paths.
 - Biometric unlock code has passed ArkTS compilation; the device Face/Fingerprint/HUKS token flow still requires signed-HAP installation validation.
 - `hdc` was previously available in the local environment, but the device list was empty, so install and device regression could not be run.
 - Signing config is still missing `HARMONY_SIGN_PROFILE` and `HARMONY_SIGN_CERTPATH`, so an installable signed HAP cannot be generated yet.

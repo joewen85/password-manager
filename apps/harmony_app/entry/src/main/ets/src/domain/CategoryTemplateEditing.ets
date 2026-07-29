@@ -2,10 +2,11 @@ import { FieldTemplate } from '../model/VaultTypes';
 
 const TEXT_VALUE_TYPE: string = 'text';
 const ENTRY_REFERENCE_VALUE_TYPE: string = 'entryReference';
+const FIELD_REFERENCE_VALUE_TYPE: string = 'fieldReference';
 
 export function isEditableCategoryFieldType(valueType: string | undefined): boolean {
   const normalized = normalizeValueType(valueType);
-  return normalized === TEXT_VALUE_TYPE || normalized === ENTRY_REFERENCE_VALUE_TYPE;
+  return normalized === TEXT_VALUE_TYPE || normalized === FIELD_REFERENCE_VALUE_TYPE;
 }
 
 export function categoryTemplateFieldChangePreservesStoredValueSemantics(
@@ -140,7 +141,7 @@ function normalizeTargetCategory(field: FieldTemplate): string {
   if (typeof field.targetCategory !== 'string') {
     return '';
   }
-  return valueType === ENTRY_REFERENCE_VALUE_TYPE
+  return valueType === ENTRY_REFERENCE_VALUE_TYPE || valueType === FIELD_REFERENCE_VALUE_TYPE
     ? field.targetCategory.trim()
     : field.targetCategory;
 }

@@ -51,11 +51,13 @@ function loadRuntime() {
   const executable = stripTypeScriptTypes(
     `${resolver}\n${operations}\n${categoryEditing}\n;({
       EntryReferenceStatus,
+      FieldValueReferenceStatus,
       canExposeRawCustomFieldValue,
       categoryTemplateFieldsForUserSave,
       entryReferenceCandidates,
       isEditableCategoryFieldType,
       resolveEntryReference,
+      resolveFieldValueReference,
       safeCustomFieldSearchValues,
     });`,
     { mode: 'transform' },
@@ -168,6 +170,7 @@ function main() {
   const indexSource = fs.readFileSync(indexPath, 'utf8');
   const indexGlobals = {
     EntryReferenceStatus: runtime.EntryReferenceStatus,
+    FieldValueReferenceStatus: runtime.FieldValueReferenceStatus,
     canExposeRawCustomFieldValue: runtime.canExposeRawCustomFieldValue,
     isEditableCategoryFieldType: runtime.isEditableCategoryFieldType,
     util: {
@@ -197,6 +200,33 @@ function main() {
   const entryReferenceDetailText = loadIndexMethod(
     indexSource, '  private entryReferenceDetailText(', 'entryReferenceDetailText', indexGlobals,
   );
+  const fieldReferenceDetailText = loadIndexMethod(
+    indexSource, '  private fieldReferenceDetailText(', 'fieldReferenceDetailText', indexGlobals,
+  );
+  const fieldReferenceConfigurationNeedsRepair = loadIndexMethod(
+    indexSource,
+    '  private fieldReferenceConfigurationNeedsRepair(',
+    'fieldReferenceConfigurationNeedsRepair',
+    indexGlobals,
+  );
+  const fieldReferenceCanSelectEntry = loadIndexMethod(
+    indexSource,
+    '  private fieldReferenceCanSelectEntry(',
+    'fieldReferenceCanSelectEntry',
+    indexGlobals,
+  );
+  const isEditableDraftReferenceField = loadIndexMethod(
+    indexSource,
+    '  private isEditableDraftReferenceField(',
+    'isEditableDraftReferenceField',
+    indexGlobals,
+  );
+  const protectedCustomFieldIdsForCategory = loadIndexMethod(
+    indexSource,
+    '  private protectedCustomFieldIdsForCategory(',
+    'protectedCustomFieldIdsForCategory',
+    indexGlobals,
+  );
   const entrySummaryField = loadIndexMethod(
     indexSource, '  private entrySummaryField(', 'entrySummaryField', indexGlobals,
   );
@@ -205,6 +235,12 @@ function main() {
     indexSource,
     '  private categoryDraftTemplateFieldDefinitions(',
     'categoryDraftTemplateFieldDefinitions',
+    indexGlobals,
+  );
+  const categoryDraftFieldReferenceError = loadIndexMethod(
+    indexSource,
+    '  private categoryDraftFieldReferenceError(',
+    'categoryDraftFieldReferenceError',
     indexGlobals,
   );
   const protectDraftFieldsBeforeCategorySwitch = loadIndexMethod(
@@ -239,15 +275,28 @@ function main() {
     valueType: 'entryReference',
     targetCategory: 'Accounts',
   };
+  const stableFieldReference = {
+    id: 'Field-Reference-Stable',
+    name: 'Account Email',
+    valueType: 'fieldReference',
+    targetCategory: 'Accounts',
+    targetFieldId: 'Target-Email',
+  };
   const futureTemplate = {
     id: 'Future-Stable',
     name: 'Future Field',
     valueType: 'futureRelationV3',
     targetCategory: '  Future Targets  ',
   };
-  const existingFields = [...baseFields, stableText, stableReference, futureTemplate];
+  const existingFields = [
+    ...baseFields,
+    stableText,
+    stableReference,
+    stableFieldReference,
+    futureTemplate,
+  ];
   const unchangedSave = runtime.categoryTemplateFieldsForUserSave(existingFields, [
-    clone(stableText), clone(stableReference),
+    clone(stableText), clone(stableReference), clone(stableFieldReference),
   ]);
   assert(
     JSON.stringify(unchangedSave.find((field) => field.id === stableReference.id)) ===
@@ -266,12 +315,22 @@ function main() {
   );
   assert(
     runtime.isEditableCategoryFieldType('text') &&
-      runtime.isEditableCategoryFieldType('entryReference') &&
+      runtime.isEditableCategoryFieldType('fieldReference') &&
+      !runtime.isEditableCategoryFieldType('entryReference') &&
       !runtime.isEditableCategoryFieldType('futureRelationV3'),
-    'Only text and entry-reference category field types are editable',
+    'Only text and field-reference category field types are editable',
+  );
+  assert(
+    JSON.stringify(unchangedSave.find((field) => field.id === stableFieldReference.id)) ===
+      JSON.stringify(stableFieldReference),
+    'Field-reference category saves retain targetCategory and targetFieldId',
   );
 
-  const storedValueFieldIds = new Set([stableText.id, stableReference.id]);
+  const storedValueFieldIds = new Set([
+    stableText.id,
+    stableReference.id,
+    stableFieldReference.id,
+  ]);
   const deletedReferenceSave = runtime.categoryTemplateFieldsForUserSave(
     existingFields, [clone(stableText)], storedValueFieldIds,
   );
@@ -429,7 +488,10 @@ function main() {
       },
     ],
     categoryDraftFieldValueType(fieldId) {
-      return fieldId === newDraftFieldId ? 'entryReference' : 'text';
+      return fieldId === newDraftFieldId ? 'fieldReference' : 'text';
+    },
+    categoryDraftTargetFieldId(fieldId) {
+      return fieldId === newDraftFieldId ? 'Target-Email' : '';
     },
   });
   const newDraftDefinition = draftTemplateDefinitions.find(
@@ -441,13 +503,55 @@ function main() {
   assert(
     newDraftDefinition?.id === newDraftFieldId &&
       canonicalLowercaseUuid.test(newDraftDefinition.id) &&
-      newDraftDefinition.targetCategory === 'Accounts',
-    'The new template-field writer carries the draft UUID into the saved definition',
+      newDraftDefinition.targetCategory === 'Accounts' &&
+      newDraftDefinition.targetFieldId === 'Target-Email',
+    'The new template-field writer carries stable source and target IDs into the saved definition',
   );
   assert(
     existingDraftDefinition?.id === 'Existing-Template-Field-ID' &&
       existingDraftDefinition.targetCategory === '',
     'The template-field writer preserves an existing opaque templateFieldId verbatim',
+  );
+
+  const sameCategoryReferenceField = {
+    id: 'Draft-Source-Reference',
+    templateFieldId: 'Source-Reference',
+    name: 'Local Email',
+    value: 'Servers',
+  };
+  const sameCategoryValidationState = {
+    categoryDraft: 'Servers',
+    categoryRenameSource: '',
+    categoryDraftFieldValueType() {
+      return 'fieldReference';
+    },
+    categoryDraftHasMissingTargetCategory() {
+      return false;
+    },
+    categoryDraftTargetFieldId() {
+      return 'Target-Text';
+    },
+    categoryDraftIsCurrentCategory() {
+      return true;
+    },
+    categoryDraftHasMissingTargetField() {
+      return false;
+    },
+  };
+  assert(
+    categoryDraftFieldReferenceError.call(
+      sameCategoryValidationState,
+      sameCategoryReferenceField,
+    ) === '',
+    'Same-category references to a different stable text field are valid',
+  );
+  sameCategoryValidationState.categoryDraftTargetFieldId = () => 'Source-Reference';
+  assert(
+    categoryDraftFieldReferenceError.call(
+      sameCategoryValidationState,
+      sameCategoryReferenceField,
+    ).includes('不能直接关联当前字段'),
+    'Same-category direct self-reference is rejected by stable field ID',
   );
 
   const templatesByCategory = {
@@ -505,6 +609,9 @@ function main() {
       },
       isEntryReferenceTemplateField(field) {
         return field.valueType === 'entryReference';
+      },
+      isFieldReferenceTemplateField(field) {
+        return field.valueType === 'fieldReference';
       },
       nextUiId() {
         generatedId += 1;
@@ -770,6 +877,37 @@ function main() {
     'Clearing a reference changes only the target field value and restores the editor once',
   );
 
+  const legacyEntryReferenceState = {
+    draftProtectedCustomFieldIds: [],
+    templateDefinitionForCustomField(field) {
+      return field.id === referenceField.id ? template.fields[0] : futureTemplate;
+    },
+    isEntryReferenceTemplateField(definition) {
+      return definition.valueType === 'entryReference';
+    },
+    isFieldReferenceTemplateField(definition) {
+      return definition.valueType === 'fieldReference';
+    },
+    hasTemplateFieldBinding(field) {
+      return typeof field.templateFieldId === 'string' && field.templateFieldId.length > 0;
+    },
+    templateFieldValueType(definition) {
+      return definition.valueType;
+    },
+  };
+  assert(
+    isEditableDraftReferenceField.call(legacyEntryReferenceState, referenceField),
+    'Legacy entry-reference values remain selectable, replaceable, and clearable',
+  );
+  assert(
+    protectedCustomFieldIdsForCategory.call(
+      legacyEntryReferenceState,
+      [referenceField, unknownField],
+      'Servers',
+    ).join(',') === unknownField.id,
+    'Legacy entry references are not locked with unknown field types in entry editing',
+  );
+
   const copiedUnknownFields = copyCustomFields.call({
     nextUiId() {
       throw new Error('A non-empty unknown field ID must not be regenerated');
@@ -883,12 +1021,182 @@ function main() {
     );
   });
 
+  const fieldReferenceRawId = 'RAW-FIELD-REFERENCE-ID';
+  const resolvedFieldValue = 'resolved-value-must-not-enter-status-or-search';
+  const fieldDetailForbiddenSentinels = [fieldReferenceRawId, resolvedFieldValue];
+  const fieldDetailCases = [
+    {
+      label: 'empty',
+      expected: '未选择目标条目',
+      resolution: { status: runtime.FieldValueReferenceStatus.EMPTY },
+    },
+    {
+      label: 'invalid-configuration',
+      expected: '配置无效',
+      resolution: { status: runtime.FieldValueReferenceStatus.INVALID_CONFIGURATION },
+    },
+    {
+      label: 'missing',
+      expected: '目标条目不存在',
+      resolution: { status: runtime.FieldValueReferenceStatus.MISSING },
+    },
+    {
+      label: 'deleted',
+      expected: '目标条目已删除',
+      resolution: {
+        status: runtime.FieldValueReferenceStatus.DELETED,
+        target: {
+          id: fieldReferenceRawId,
+          label: 'Deleted Account',
+          category: 'Accounts',
+          fieldId: 'Target-Email',
+          fieldName: '',
+          value: '',
+        },
+      },
+    },
+    {
+      label: 'category-mismatch',
+      expected: '当前位于 Archive',
+      resolution: {
+        status: runtime.FieldValueReferenceStatus.CATEGORY_MISMATCH,
+        target: {
+          id: fieldReferenceRawId,
+          label: 'Archive Account',
+          category: 'Archive',
+          fieldId: 'Target-Email',
+          fieldName: '',
+          value: '',
+        },
+      },
+    },
+    {
+      label: 'target-field-missing',
+      expected: '目标字段已删除',
+      resolution: {
+        status: runtime.FieldValueReferenceStatus.TARGET_FIELD_MISSING,
+        target: {
+          id: fieldReferenceRawId,
+          label: 'Primary Account',
+          category: 'Accounts',
+          fieldId: 'Target-Email',
+          fieldName: '',
+          value: '',
+        },
+      },
+    },
+    {
+      label: 'target-field-unsupported',
+      expected: '目标字段不再是文本类型',
+      resolution: {
+        status: runtime.FieldValueReferenceStatus.TARGET_FIELD_UNSUPPORTED,
+        target: {
+          id: fieldReferenceRawId,
+          label: 'Primary Account',
+          category: 'Accounts',
+          fieldId: 'Target-Email',
+          fieldName: 'Email',
+          value: '',
+        },
+      },
+    },
+    {
+      label: 'target-field-empty',
+      expected: '目标字段值为空',
+      resolution: {
+        status: runtime.FieldValueReferenceStatus.TARGET_FIELD_EMPTY,
+        target: {
+          id: fieldReferenceRawId,
+          label: 'Primary Account',
+          category: 'Accounts',
+          fieldId: 'Target-Email',
+          fieldName: 'Email',
+          value: '',
+        },
+      },
+    },
+    {
+      label: 'resolved',
+      expected: '已解析',
+      resolution: {
+        status: runtime.FieldValueReferenceStatus.RESOLVED,
+        target: {
+          id: fieldReferenceRawId,
+          label: 'Primary Account',
+          category: 'Accounts',
+          fieldId: 'Target-Email',
+          fieldName: 'Email',
+          value: resolvedFieldValue,
+        },
+      },
+    },
+  ];
+  const fieldDetailState = {
+    fieldReferenceDetailResolution(_entry, field) {
+      return field.resolution;
+    },
+    fieldReferenceConfiguredPath() {
+      return 'Account Email → Accounts / Email';
+    },
+  };
+  fieldDetailCases.forEach((testCase) => {
+    const text = fieldReferenceDetailText.call(fieldDetailState, source, {
+      id: 'Field-Account-Email',
+      templateFieldId: stableFieldReference.id,
+      name: stableFieldReference.name,
+      value: fieldReferenceRawId,
+      resolution: testCase.resolution,
+    });
+    assert(
+      text.includes(testCase.expected) &&
+        excludesSentinels(text, fieldDetailForbiddenSentinels),
+      `${testCase.label} field-reference detail uses safe nine-state text`,
+    );
+  });
+  const configurationRepairState = {
+    fieldReferenceDetailResolution(_entry, field) {
+      return field.resolution;
+    },
+    fieldReferenceConfigurationNeedsRepair(entry, field) {
+      return fieldReferenceConfigurationNeedsRepair.call(this, entry, field);
+    },
+  };
+  fieldDetailCases.forEach((testCase) => {
+    const testField = { resolution: testCase.resolution };
+    const needsConfigurationRepair = fieldReferenceConfigurationNeedsRepair.call(
+      configurationRepairState,
+      source,
+      testField,
+    );
+    const canSelectEntry = fieldReferenceCanSelectEntry.call(
+      configurationRepairState,
+      source,
+      testField,
+    );
+    const configurationStatus = [
+      'invalid-configuration',
+      'target-field-missing',
+      'target-field-unsupported',
+    ].includes(testCase.label);
+    assert(
+      needsConfigurationRepair === configurationStatus &&
+        canSelectEntry === !configurationStatus,
+      `${testCase.label} offers the repair action that can actually fix its state`,
+    );
+  });
+
   const summaryState = {
     ...unsupportedState,
     isEntryReferenceCustomField(_entry, field) {
       return field.kind === 'reference';
     },
+    isFieldReferenceCustomField(_entry, field) {
+      return field.kind === 'fieldReference';
+    },
     entryReferenceDetailResolution(_entry, field) {
+      return field.resolution;
+    },
+    fieldReferenceDetailResolution(_entry, field) {
       return field.resolution;
     },
     isUnsupportedCustomField(entry, field) {
@@ -910,6 +1218,23 @@ function main() {
       `${testCase.label} reference summary uses safe projected or status text`,
     );
   });
+  fieldDetailCases.forEach((testCase) => {
+    const summary = entrySummaryField.call(summaryState, source, {
+      id: 'Field-Account-Email',
+      templateFieldId: stableFieldReference.id,
+      name: stableFieldReference.name,
+      kind: 'fieldReference',
+      value: fieldReferenceRawId,
+      resolution: testCase.resolution,
+    });
+    assert(
+      excludesSentinels(summary, fieldDetailForbiddenSentinels) &&
+        (testCase.label === 'resolved'
+          ? summary.includes('Primary Account / Email')
+          : summary.includes(testCase.label === 'empty' ? '未关联' : '关联失效')),
+      `${testCase.label} field-reference summary excludes target values and raw IDs`,
+    );
+  });
   const unknownSummary = entrySummaryField.call(summaryState, source, unknownField);
   assert(
     unknownSummary.includes('不支持的字段') && excludesSentinels(unknownSummary, unknownSentinels),
@@ -926,8 +1251,9 @@ function main() {
   );
   assert(
     controllerResolution.includes('this.snapshot.entries') &&
+      controllerResolution.includes('resolveFieldValueReference(') &&
       !controllerResolution.includes('this.getEntries()'),
-    'VaultController resolves five-state details from the complete snapshot including deleted entries',
+    'VaultController resolves five- and nine-state details from the complete snapshot',
   );
 
   const categoryFieldsEditor = extractMethod(
@@ -936,20 +1262,38 @@ function main() {
   const categoryTargetEditor = extractMethod(
     indexSource, '  private CategoryDraftTargetCategoryEditor(',
   );
+  const categoryTargetFieldEditor = extractMethod(
+    indexSource, '  private CategoryDraftTargetFieldEditor(',
+  );
   assert(
     categoryFieldsEditor.includes("this.ChoiceChip('文本'") &&
-      categoryFieldsEditor.includes("'关联条目',") &&
+      categoryFieldsEditor.includes("'关联字段',") &&
       categoryFieldsEditor.includes('当前版本无法编辑该字段，原配置已保留。') &&
-      categoryTargetEditor.includes("this.ChoiceChip('不限分类'"),
-    'Category editing exposes scoped text/reference choices and unknown-type read-only copy',
+      categoryTargetEditor.includes('this.categoryDraftTargetCategories()') &&
+      categoryTargetEditor.includes('this.categoryDraftFieldReferenceError(field)') &&
+      categoryTargetFieldEditor.includes('this.categoryDraftTargetFieldTemplates(field)') &&
+      categoryTargetFieldEditor.includes('this.updateCategoryDraftTargetFieldId(') &&
+      !categoryTargetEditor.includes("this.ChoiceChip('不限分类'"),
+    'Category editing exposes dependent field-reference choices and visible validation',
+  );
+  const choiceChip = extractMethod(indexSource, '  private ChoiceChip(');
+  assert(
+    choiceChip.includes('.height(44)') &&
+      choiceChip.includes('.margin({ right: 8, bottom: 8 })') &&
+      choiceChip.includes("selected ? '已选择' : '未选择'"),
+    'Choice chips keep 44vp touch targets, separation, and explicit selected-state accessibility',
   );
 
   const detailContent = extractMethod(indexSource, '  private EntryDetailContent(');
   const referenceDetail = extractMethod(indexSource, '  private EntryReferenceDetailRow(');
+  const fieldReferenceDetail = extractMethod(indexSource, '  private FieldReferenceDetailRow(');
   const unsupportedDetail = extractMethod(indexSource, '  private UnsupportedDetailFieldRow(');
-  const nonCopyableDetailMethods = [referenceDetail, unsupportedDetail];
+  const nonCopyableDetailMethods = [referenceDetail, fieldReferenceDetail, unsupportedDetail];
   assert(
+    detailContent.includes('this.FieldReferenceDetailRow(entry, field);') &&
     detailContent.includes('this.EntryReferenceDetailRow(entry, field);') &&
+      detailContent.includes('this.fieldReferenceResolvedValue(entry, field)') &&
+      detailContent.includes('this.DetailValueRow(') &&
       detailContent.includes('this.UnsupportedDetailFieldRow(field);') &&
       nonCopyableDetailMethods.every((method) =>
         !method.includes('this.DetailValueRow(') &&
@@ -957,12 +1301,13 @@ function main() {
         !method.includes('pasteboard') &&
         !method.includes('Text(field.value')
       ),
-    'Reference, unknown, and orphan details use dedicated non-copyable rows',
+    'Resolved field values use the explicit detail row while status rows hide raw values',
   );
 
   const selectorPanel = extractMethod(indexSource, '  private EntryReferenceSelectOverlayPanel()');
   const selectorRow = extractMethod(indexSource, '  private EntryReferenceSelectRow(');
-  const fieldEditor = extractMethod(indexSource, '  private EntryReferenceFieldEditor(');
+  const legacyFieldEditor = extractMethod(indexSource, '  private EntryReferenceFieldEditor(');
+  const fieldEditor = extractMethod(indexSource, '  private FieldReferenceFieldEditor(');
   assert(
     selectorPanel.includes('this.FloatingPanelHeader(') &&
       selectorPanel.includes('this.SecondaryTextButton(') &&
@@ -971,11 +1316,18 @@ function main() {
       selectorPanel.includes('.borderRadius(12)') &&
       selectorRow.includes('.backgroundColor(selected ? UI_ACCENT : UI_SURFACE_ALT)') &&
       selectorRow.includes('.borderRadius(12)') &&
+      legacyFieldEditor.includes('this.PrimaryTextButton(') &&
+      legacyFieldEditor.includes('this.SecondaryTextButton(') &&
       fieldEditor.includes('this.PrimaryTextButton(') &&
       fieldEditor.includes('this.SecondaryTextButton(') &&
+      fieldReferenceDetail.includes('this.fieldReferenceConfigurationNeedsRepair(') &&
+      fieldReferenceDetail.includes("this.PrimaryTextButton('编辑字段配置'") &&
+      fieldReferenceDetail.includes('this.fieldReferenceCanSelectEntry(') &&
+      fieldReferenceDetail.includes('this.fieldReferenceRepairLabel(') &&
+      fieldReferenceDetail.includes('this.prepareClearEntryReference(') &&
       referenceDetail.includes('.backgroundColor(UI_SURFACE_ALT)') &&
-      referenceDetail.includes('.borderRadius(12)'),
-    'Reference UI methods reuse the existing floating panel, buttons, colors, borders, and radii',
+      fieldReferenceDetail.includes('.borderRadius(12)'),
+    'Legacy and field-reference UI reuse existing panels, buttons, colors, borders, and radii',
   );
   assert(
     selectorPanel.includes('.fontColor(UI_TEXT)') &&

@@ -38,6 +38,8 @@ import { isEditableCategoryFieldType } from '../src/domain/CategoryTemplateEditi
 import {
   EntryReferenceResolution,
   EntryReferenceStatus,
+  FieldValueReferenceResolution,
+  FieldValueReferenceStatus,
 } from '../src/domain/FieldReferenceResolver';
 import {
   canExposeRawCustomFieldValue,
@@ -110,6 +112,7 @@ interface ExportFieldOption {
 interface CategoryFieldTypeState {
   fieldId: string;
   valueType: string;
+  targetFieldId: string;
   readOnly: boolean;
   typeLocked: boolean;
 }
@@ -1128,13 +1131,14 @@ struct Index {
       .fontSize(13)
       .fontWeight(FontWeight.Bold)
       .fontColor(selected ? '#FFFFFF' : UI_TEXT)
-      .height(38)
+      .height(44)
       .padding({ left: 14, right: 14 })
       .margin({ right: 8, bottom: 8 })
       .textAlign(TextAlign.Center)
       .backgroundColor(selected ? UI_ACCENT : UI_SURFACE_ALT)
       .border({ width: 1, color: selected ? UI_ACCENT : UI_STROKE })
       .borderRadius(12)
+      .accessibilityText(`${label}，${selected ? '已选择' : '未选择'}`)
       .onClick(action);
   }
 
@@ -2193,7 +2197,15 @@ struct Index {
             .fontColor(UI_MUTED)
             .margin({ top: 4 });
           ForEach(entry.customFields, (field: CustomField) => {
-            if (this.isEntryReferenceCustomField(entry, field)) {
+            if (this.isFieldReferenceCustomField(entry, field)) {
+              this.FieldReferenceDetailRow(entry, field);
+              if (this.fieldReferenceResolvedValue(entry, field).length > 0) {
+                this.DetailValueRow(
+                  `${field.name.length > 0 ? field.name : '关联字段'} · 解析值`,
+                  this.fieldReferenceResolvedValue(entry, field),
+                );
+              }
+            } else if (this.isEntryReferenceCustomField(entry, field)) {
               this.EntryReferenceDetailRow(entry, field);
             } else if (this.isUnsupportedCustomField(entry, field)) {
               this.UnsupportedDetailFieldRow(field);
@@ -2255,6 +2267,62 @@ struct Index {
           });
         }
         .layoutWeight(1);
+        if (field.value.length > 0) {
+          Column() {
+            this.SecondaryTextButton('清除关联', () => {
+              this.prepareClearEntryReference(entry, field);
+            });
+          }
+          .layoutWeight(1);
+        }
+      }
+      .width('100%');
+    }
+    .width('100%')
+    .padding(10)
+    .backgroundColor(UI_SURFACE_ALT)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(12);
+  }
+
+  @Builder
+  private FieldReferenceDetailRow(entry: VaultEntry, field: CustomField) {
+    Column({ space: 6 }) {
+      Text(field.name.length > 0 ? field.name : '关联字段')
+        .fontSize(11)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_MUTED)
+        .width('100%');
+      Text(this.fieldReferenceDetailText(entry, field))
+        .fontSize(14)
+        .fontColor(this.fieldReferenceDetailColor(entry, field))
+        .width('100%')
+        .maxLines(4)
+        .textOverflow({ overflow: TextOverflow.Ellipsis });
+      Row({ space: 8 }) {
+        if (this.fieldReferenceTargetCanOpen(entry, field)) {
+          Column() {
+            this.SecondaryTextButton('查看目标', () => {
+              this.openFieldReferenceTarget(entry, field);
+            });
+          }
+          .layoutWeight(1);
+        }
+        if (this.fieldReferenceConfigurationNeedsRepair(entry, field)) {
+          Column() {
+            this.PrimaryTextButton('编辑字段配置', () => {
+              this.openFieldReferenceConfiguration(entry);
+            });
+          }
+          .layoutWeight(1);
+        } else if (this.fieldReferenceCanSelectEntry(entry, field)) {
+          Column() {
+            this.PrimaryTextButton(this.fieldReferenceRepairLabel(entry, field), () => {
+              this.repairEntryReference(entry, field);
+            });
+          }
+          .layoutWeight(1);
+        }
         if (field.value.length > 0) {
           Column() {
             this.SecondaryTextButton('清除关联', () => {
@@ -2747,6 +2815,11 @@ struct Index {
       this.toast('分类已存在');
       return;
     }
+    const configurationError = this.categoryDraftConfigurationError();
+    if (configurationError.length > 0) {
+      this.toast(configurationError);
+      return;
+    }
     await this.controller().addCategoryWithTemplateFields(
       category,
       this.categoryDraftTemplateFieldDefinitions(),
@@ -2796,6 +2869,11 @@ struct Index {
     }
     if (this.categoryNameExistsBesides(source, target)) {
       this.toast('分类已存在');
+      return;
+    }
+    const configurationError = this.categoryDraftConfigurationError();
+    if (configurationError.length > 0) {
+      this.toast(configurationError);
       return;
     }
     if (source !== target) {
@@ -2968,6 +3046,10 @@ struct Index {
     return this.templateFieldValueType(field) === 'entryReference';
   }
 
+  private isFieldReferenceTemplateField(field: FieldTemplate): boolean {
+    return this.templateFieldValueType(field) === 'fieldReference';
+  }
+
   private categoryTemplate(category: string): CategoryTemplate | null {
     const clean = category.trim().toLowerCase();
     if (clean.length === 0) {
@@ -3041,6 +3123,7 @@ struct Index {
       const state: CategoryFieldTypeState = {
         fieldId: field.id,
         valueType,
+        targetFieldId: template?.targetFieldId ?? '',
         readOnly: !isEditableCategoryFieldType(valueType),
         typeLocked: this.categoryTemplateFieldHasStoredValue(category, field.templateFieldId),
       };
@@ -3068,9 +3151,16 @@ struct Index {
       .map((field: FieldTemplate) => {
         const name = field.name.trim();
         const valueType = this.templateFieldValueType(field);
-        if (valueType === 'entryReference') {
+        if (valueType === 'fieldReference') {
           const targetCategory = field.targetCategory?.trim() ?? '';
-          return `${name} → ${targetCategory.length > 0 ? targetCategory : '不限分类'}`;
+          const targetField = this.categoryTemplate(targetCategory)?.fields.find(
+            (candidate: FieldTemplate) => candidate.id === field.targetFieldId,
+          );
+          const targetFieldName = targetField?.name.trim() ?? '';
+          return `${name} → ${targetCategory.length > 0 ? targetCategory : '未配置分类'} / ${targetFieldName.length > 0 ? targetFieldName : '未配置字段'}`;
+        }
+        if (valueType === 'entryReference') {
+          return `${name}（旧关联，只读）`;
         }
         if (!isEditableCategoryFieldType(valueType)) {
           return `${name}（只读）`;
@@ -3501,12 +3591,12 @@ struct Index {
                 this.updateCategoryDraftCustomFieldName(field.id, value);
               });
             if (this.isCategoryDraftFieldTypeLocked(field.id)) {
-              Text(`字段类型: ${this.categoryDraftFieldValueType(field.id) === 'entryReference' ? '关联条目' : '文本'}`)
+              Text(`字段类型: ${this.categoryDraftFieldValueType(field.id) === 'fieldReference' ? '关联字段' : '文本'}`)
                 .fontSize(12)
                 .fontWeight(FontWeight.Bold)
                 .fontColor(UI_MUTED)
                 .width('100%');
-              Text('已有条目保存了该字段值，可修改名称和关联范围，但不能删除或更改字段类型。')
+              Text('已有条目保存了该字段值，可修改名称和目标配置，但不能删除或更改字段类型。')
                 .fontSize(12)
                 .fontColor(UI_MUTED)
                 .width('100%');
@@ -3521,21 +3611,21 @@ struct Index {
                   this.updateCategoryDraftFieldType(field.id, 'text');
                 });
                 this.ChoiceChip(
-                  '关联条目',
-                  this.categoryDraftFieldValueType(field.id) === 'entryReference',
+                  '关联字段',
+                  this.categoryDraftFieldValueType(field.id) === 'fieldReference',
                   () => {
-                    this.updateCategoryDraftFieldType(field.id, 'entryReference');
+                    this.updateCategoryDraftFieldType(field.id, 'fieldReference');
                   },
                 );
               }
             }
-            if (this.categoryDraftFieldValueType(field.id) === 'entryReference') {
+            if (this.categoryDraftFieldValueType(field.id) === 'fieldReference') {
               this.CategoryDraftTargetCategoryEditor(field);
             }
             if (!this.isCategoryDraftFieldTypeLocked(field.id)) {
               Row({ space: 8 }) {
                 Text('删除')
-                  .height(36)
+                  .height(44)
                   .padding({ left: 10, right: 10 })
                   .fontSize(13)
                   .fontWeight(FontWeight.Bold)
@@ -3569,22 +3659,60 @@ struct Index {
         .fontWeight(FontWeight.Bold)
         .fontColor(UI_MUTED)
         .width('100%');
-      Text('关联条目只会从所选分类中选择；不限分类会显示全部可用条目。')
+      Text('先选择目标分类，再选择该分类中的文本字段；不能直接关联当前字段。')
         .fontSize(12)
         .fontColor(UI_MUTED)
         .width('100%');
       Flex({ wrap: FlexWrap.Wrap }) {
-        this.ChoiceChip('不限分类', field.value.trim().length === 0, () => {
-          this.updateCategoryDraftTargetCategory(field.id, '');
-        });
         if (this.categoryDraftHasMissingTargetCategory(field)) {
-          this.ChoiceChip(`已删除: ${field.value.trim()}`, true, () => {});
+          this.ChoiceChip(`不可用: ${field.value.trim()}`, true, () => {});
         }
-        ForEach(this.categories, (category: string) => {
+        ForEach(this.categoryDraftTargetCategories(), (category: string) => {
           this.ChoiceChip(category, this.sameCategoryName(field.value, category), () => {
             this.updateCategoryDraftTargetCategory(field.id, category);
           });
         }, (category: string) => category);
+      }
+      if (field.value.trim().length > 0 && !this.categoryDraftHasMissingTargetCategory(field)) {
+        this.CategoryDraftTargetFieldEditor(field);
+      }
+      if (this.categoryDraftFieldReferenceError(field).length > 0) {
+        Text(this.categoryDraftFieldReferenceError(field))
+          .fontSize(12)
+          .fontColor(UI_DANGER)
+          .width('100%');
+      }
+    }
+    .width('100%');
+  }
+
+  @Builder
+  private CategoryDraftTargetFieldEditor(field: CustomField) {
+    Column({ space: 6 }) {
+      Text('目标字段')
+        .fontSize(12)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_MUTED)
+        .width('100%');
+      Flex({ wrap: FlexWrap.Wrap }) {
+        if (this.categoryDraftHasMissingTargetField(field)) {
+          this.ChoiceChip('目标字段已删除或改型', true, () => {});
+        }
+        ForEach(this.categoryDraftTargetFieldTemplates(field), (template: FieldTemplate) => {
+          this.ChoiceChip(
+            template.name,
+            this.categoryDraftTargetFieldId(field.id) === template.id,
+            () => {
+              this.updateCategoryDraftTargetFieldId(field.id, template.id);
+            },
+          );
+        }, (template: FieldTemplate) => template.id);
+      }
+      if (this.categoryDraftTargetFieldTemplates(field).length === 0) {
+        Text('所选分类没有可关联的文本字段。')
+          .fontSize(12)
+          .fontColor(UI_DANGER)
+          .width('100%');
       }
     }
     .width('100%');
@@ -3693,7 +3821,11 @@ struct Index {
           .fontColor(UI_MUTED)
           .width('100%');
         ForEach(this.editableDraftReferenceFields(), (field: CustomField) => {
-          this.EntryReferenceFieldEditor(field);
+          if (this.isDraftFieldReference(field)) {
+            this.FieldReferenceFieldEditor(field);
+          } else {
+            this.EntryReferenceFieldEditor(field);
+          }
         }, (field: CustomField) => field.id);
       }
       .width('100%');
@@ -3725,6 +3857,56 @@ struct Index {
           });
         }
         .layoutWeight(1);
+        if (field.value.length > 0) {
+          Column() {
+            this.SecondaryTextButton('清除关联', () => {
+              this.updateDraftCustomFieldValue(field.id, '');
+            });
+          }
+          .layoutWeight(1);
+        }
+      }
+      .width('100%');
+    }
+    .width('100%')
+    .padding(10)
+    .backgroundColor(UI_SURFACE_ALT)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(12);
+  }
+
+  @Builder
+  private FieldReferenceFieldEditor(field: CustomField) {
+    Column({ space: 8 }) {
+      Text(field.name.length > 0 ? field.name : '关联字段')
+        .fontSize(14)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_TEXT)
+        .width('100%');
+      Text(this.fieldReferenceDraftDisplayValue(field))
+        .fontSize(13)
+        .fontColor(this.fieldReferenceDraftStatusColor(field))
+        .width('100%')
+        .maxLines(3)
+        .textOverflow({ overflow: TextOverflow.Ellipsis });
+      Text(this.fieldReferenceDraftConstraintText(field))
+        .fontSize(12)
+        .fontColor(UI_MUTED)
+        .width('100%');
+      Row({ space: 8 }) {
+        if (this.fieldReferenceDraftCanSelectEntry(field)) {
+          Column() {
+            this.PrimaryTextButton(this.fieldReferenceDraftActionLabel(field), () => {
+              this.openEntryReferenceSelectOverlay(field.id);
+            });
+          }
+          .layoutWeight(1);
+        } else {
+          Text('请先在分类管理中修复目标字段配置。')
+            .fontSize(12)
+            .fontColor(UI_DANGER)
+            .layoutWeight(1);
+        }
         if (field.value.length > 0) {
           Column() {
             this.SecondaryTextButton('清除关联', () => {
@@ -4081,9 +4263,25 @@ struct Index {
       return null;
     }
     const definition = this.templateDefinitionForCustomField(field, this.draftCategory);
-    return definition !== undefined && this.isEntryReferenceTemplateField(definition)
+    return definition !== undefined &&
+      (
+        this.isEntryReferenceTemplateField(definition) ||
+        this.isFieldReferenceTemplateField(definition)
+      )
       ? definition
       : null;
+  }
+
+  private fieldReferenceTargetTemplate(template: FieldTemplate | null): FieldTemplate | null {
+    const targetCategory = template?.targetCategory?.trim() ?? '';
+    const targetFieldId = template?.targetFieldId ?? '';
+    if (targetCategory.length === 0 || targetFieldId.length === 0) {
+      return null;
+    }
+    const target = this.categoryTemplate(targetCategory)?.fields.find(
+      (candidate: FieldTemplate) => candidate.id === targetFieldId,
+    );
+    return target === undefined ? null : target;
   }
 
   private activeDraftReferenceValue(): string {
@@ -4094,6 +4292,12 @@ struct Index {
     const template = this.activeDraftReferenceTemplate();
     if (template === null) {
       return [];
+    }
+    if (this.isFieldReferenceTemplateField(template)) {
+      const targetField = this.fieldReferenceTargetTemplate(template);
+      if (targetField === null || !this.isTextTemplateField(targetField)) {
+        return [];
+      }
     }
     return entryReferenceCandidates(
       this.entries,
@@ -4112,14 +4316,26 @@ struct Index {
   private entryReferenceSelectorHint(): string {
     const template = this.activeDraftReferenceTemplate();
     const category = template?.targetCategory?.trim() ?? '';
-    return category.length > 0
-      ? `仅显示“${category}”分类中的可用条目。`
-      : '显示全部分类中的可用条目。';
+    if (template !== null && this.isEntryReferenceTemplateField(template)) {
+      return category.length > 0
+        ? `仅显示“${category}”分类中的可用条目。`
+        : '显示全部分类中的可用条目。';
+    }
+    const fieldName = this.fieldReferenceTargetTemplate(template)?.name.trim() ?? '';
+    return category.length > 0 && fieldName.length > 0
+      ? `目标路径: ${category} / ${fieldName}。仅显示该分类中的可用条目。`
+      : '当前字段的目标分类或目标字段配置不完整。';
   }
 
   private entryReferenceSelectorEmptyText(): string {
     const template = this.activeDraftReferenceTemplate();
     const category = template?.targetCategory?.trim() ?? '';
+    if (template !== null && this.isFieldReferenceTemplateField(template)) {
+      const targetField = this.fieldReferenceTargetTemplate(template);
+      if (targetField === null || !this.isTextTemplateField(targetField)) {
+        return '请先修复字段的目标分类和目标字段配置';
+      }
+    }
     return category.length > 0
       ? `“${category}”分类暂无可关联条目`
       : '暂无可关联条目';
@@ -4625,7 +4841,10 @@ struct Index {
     const nextFieldCategories: DraftCustomFieldCategoryState[] = [];
     this.templateFieldsForCategory(category).forEach((templateField: FieldTemplate) => {
       if (!this.isTextTemplateField(templateField)) {
-        if (!this.isEntryReferenceTemplateField(templateField)) {
+        if (
+          !this.isEntryReferenceTemplateField(templateField) &&
+          !this.isFieldReferenceTemplateField(templateField)
+        ) {
           return;
         }
       }
@@ -4819,7 +5038,13 @@ struct Index {
     this.categoryDraftCustomFields = [...this.categoryDraftCustomFields, field];
     this.categoryDraftFieldTypes = [
       ...this.categoryDraftFieldTypes,
-      { fieldId: field.id, valueType: 'text', readOnly: false, typeLocked: false },
+      {
+        fieldId: field.id,
+        valueType: 'text',
+        targetFieldId: '',
+        readOnly: false,
+        typeLocked: false,
+      },
     ];
   }
 
@@ -4845,7 +5070,13 @@ struct Index {
       this.categoryDraftCustomFields = [...this.categoryDraftCustomFields, field];
       this.categoryDraftFieldTypes = [
         ...this.categoryDraftFieldTypes,
-        { fieldId: field.id, valueType: 'text', readOnly: false, typeLocked: false },
+        {
+          fieldId: field.id,
+          valueType: 'text',
+          targetFieldId: '',
+          readOnly: false,
+          typeLocked: false,
+        },
       ];
     });
   }
@@ -4886,7 +5117,10 @@ struct Index {
             : field.id,
           name: field.name.trim(),
           valueType,
-          targetCategory: valueType === 'entryReference' ? field.value.trim() : '',
+          targetCategory: valueType === 'fieldReference' ? field.value.trim() : '',
+          targetFieldId: valueType === 'fieldReference'
+            ? this.categoryDraftTargetFieldId(field.id)
+            : '',
         };
         return definition;
       });
@@ -4915,9 +5149,13 @@ struct Index {
 
   private updateCategoryDraftFieldType(fieldId: string, valueType: string): void {
     if (
+      (valueType !== 'text' && valueType !== 'fieldReference') ||
       this.isCategoryDraftFieldReadOnly(fieldId) ||
       this.isCategoryDraftFieldTypeLocked(fieldId)
     ) {
+      return;
+    }
+    if (this.categoryDraftFieldValueType(fieldId) === valueType) {
       return;
     }
     this.categoryDraftFieldTypes = this.categoryDraftFieldTypes.map(
@@ -4928,14 +5166,13 @@ struct Index {
         return {
           fieldId: field.fieldId,
           valueType,
+          targetFieldId: '',
           readOnly: false,
           typeLocked: field.typeLocked,
         };
       },
     );
-    if (valueType === 'text') {
-      this.updateCategoryDraftTargetCategory(fieldId, '');
-    }
+    this.updateCategoryDraftTargetCategory(fieldId, '');
   }
 
   private updateCategoryDraftTargetCategory(fieldId: string, category: string): void {
@@ -4950,13 +5187,142 @@ struct Index {
         value: category,
       };
     });
+    this.updateCategoryDraftTargetFieldId(fieldId, '');
+  }
+
+  private categoryDraftTargetFieldId(fieldId: string): string {
+    const state = this.categoryDraftFieldTypes.find(
+      (field: CategoryFieldTypeState) => field.fieldId === fieldId,
+    );
+    return state?.targetFieldId ?? '';
+  }
+
+  private updateCategoryDraftTargetFieldId(fieldId: string, targetFieldId: string): void {
+    this.categoryDraftFieldTypes = this.categoryDraftFieldTypes.map(
+      (field: CategoryFieldTypeState) => {
+        if (field.fieldId !== fieldId) {
+          return field;
+        }
+        return {
+          fieldId: field.fieldId,
+          valueType: field.valueType,
+          targetFieldId,
+          readOnly: field.readOnly,
+          typeLocked: field.typeLocked,
+        };
+      },
+    );
+  }
+
+  private categoryDraftTargetCategories(): string[] {
+    const categories = [...this.categories];
+    const current = this.categoryDraft.trim();
+    if (
+      current.length > 0 &&
+      !categories.some((category: string) => this.sameCategoryName(category, current))
+    ) {
+      categories.push(current);
+    }
+    return categories;
+  }
+
+  private categoryDraftIsCurrentCategory(category: string): boolean {
+    return this.sameCategoryName(category, this.categoryDraft) ||
+      (
+        this.categoryRenameSource.trim().length > 0 &&
+        this.sameCategoryName(category, this.categoryRenameSource)
+      );
+  }
+
+  private categoryDraftTargetFieldTemplates(field: CustomField): FieldTemplate[] {
+    if (this.categoryDraftIsCurrentCategory(field.value)) {
+      const fields: FieldTemplate[] = [
+        { id: 'template_备注', name: '备注', valueType: 'text', targetCategory: '' },
+      ];
+      this.categoryDraftCustomFields.forEach((candidate: CustomField) => {
+        if (
+          candidate.name.trim().length === 0 ||
+          this.categoryDraftFieldValueType(candidate.id) !== 'text'
+        ) {
+          return;
+        }
+        fields.push({
+          id: typeof candidate.templateFieldId === 'string' &&
+            candidate.templateFieldId.length > 0
+            ? candidate.templateFieldId
+            : candidate.id,
+          name: candidate.name.trim(),
+          valueType: 'text',
+          targetCategory: '',
+        });
+      });
+      return fields;
+    }
+    const template = this.categoryTemplate(field.value);
+    if (template === null) {
+      return [];
+    }
+    return template.fields.filter((candidate: FieldTemplate) =>
+      this.isTextTemplateField(candidate) && candidate.name.trim() !== '名称'
+    );
   }
 
   private categoryDraftHasMissingTargetCategory(field: CustomField): boolean {
     const target = field.value.trim();
-    return target.length > 0 && !this.categories.some(
+    return target.length > 0 &&
+      !this.categoryDraftIsCurrentCategory(target) &&
+      !this.categories.some(
       (category: string) => this.sameCategoryName(category, target),
     );
+  }
+
+  private categoryDraftHasMissingTargetField(field: CustomField): boolean {
+    const targetFieldId = this.categoryDraftTargetFieldId(field.id);
+    return targetFieldId.length > 0 && !this.categoryDraftTargetFieldTemplates(field).some(
+      (template: FieldTemplate) => template.id === targetFieldId,
+    );
+  }
+
+  private categoryDraftFieldReferenceError(field: CustomField): string {
+    if (this.categoryDraftFieldValueType(field.id) !== 'fieldReference') {
+      return '';
+    }
+    const targetCategory = field.value.trim();
+    if (targetCategory.length === 0) {
+      return '请选择目标分类。';
+    }
+    if (this.categoryDraftHasMissingTargetCategory(field)) {
+      return '目标分类已删除或不可用。';
+    }
+    const targetFieldId = this.categoryDraftTargetFieldId(field.id);
+    if (targetFieldId.length === 0) {
+      return '请选择目标文本字段。';
+    }
+    const sourceFieldId = typeof field.templateFieldId === 'string' &&
+      field.templateFieldId.length > 0
+      ? field.templateFieldId
+      : field.id;
+    if (
+      this.categoryDraftIsCurrentCategory(targetCategory) &&
+      targetFieldId === sourceFieldId
+    ) {
+      return '不能直接关联当前字段。';
+    }
+    if (this.categoryDraftHasMissingTargetField(field)) {
+      return '目标字段已删除或不再是文本类型。';
+    }
+    return '';
+  }
+
+  private categoryDraftConfigurationError(): string {
+    const invalid = this.categoryDraftCustomFields.find(
+      (field: CustomField) => this.categoryDraftFieldReferenceError(field).length > 0,
+    );
+    if (invalid === undefined) {
+      return '';
+    }
+    const label = invalid.name.trim().length > 0 ? invalid.name.trim() : '未命名字段';
+    return `字段“${label}”：${this.categoryDraftFieldReferenceError(invalid)}`;
   }
 
   private normalizedDraftCustomFields(): CustomField[] {
@@ -5006,7 +5372,16 @@ struct Index {
       return false;
     }
     const definition = this.templateDefinitionForCustomField(field, this.draftCategory);
-    return definition !== undefined && this.isEntryReferenceTemplateField(definition);
+    return definition !== undefined &&
+      (
+        this.isEntryReferenceTemplateField(definition) ||
+        this.isFieldReferenceTemplateField(definition)
+      );
+  }
+
+  private isDraftFieldReference(field: CustomField): boolean {
+    const definition = this.templateDefinitionForCustomField(field, this.draftCategory);
+    return definition !== undefined && this.isFieldReferenceTemplateField(definition);
   }
 
   private unsupportedDraftCustomFields(): CustomField[] {
@@ -5017,6 +5392,9 @@ struct Index {
       const definition = this.templateDefinitionForCustomField(field, this.draftCategory);
       if (definition === undefined) {
         return this.hasTemplateFieldBinding(field);
+      }
+      if (this.isEntryReferenceTemplateField(definition)) {
+        return false;
       }
       return !isEditableCategoryFieldType(this.templateFieldValueType(definition));
     });
@@ -5080,6 +5458,116 @@ struct Index {
     return '重新选择';
   }
 
+  private draftFieldReferenceSourceEntry(): VaultEntry {
+    const payload: CredentialPayload = {
+      username: '',
+      password: '',
+      accounts: [],
+      token: '',
+      appId: '',
+      accessKey: '',
+      secretKey: '',
+      notes: '',
+      tags: [...this.draftSelectedTags],
+      category: this.draftCategory,
+    };
+    return {
+      id: this.editingEntryId.length > 0 ? this.editingEntryId : 'draft-entry',
+      label: this.draftLabel,
+      type: VaultEntryType.CREDENTIAL,
+      payload,
+      tags: [...this.draftSelectedTags],
+      customFields: this.draftCustomFields,
+      createdAt: 0,
+      updatedAt: 0,
+      isDeleted: false,
+    };
+  }
+
+  private fieldReferenceDraftResolution(field: CustomField): FieldValueReferenceResolution | null {
+    return this.controller().resolveFieldValueReferenceField(
+      this.draftFieldReferenceSourceEntry(),
+      field,
+    );
+  }
+
+  private fieldReferenceDraftDisplayValue(field: CustomField): string {
+    const resolution = this.fieldReferenceDraftResolution(field);
+    if (resolution === null || resolution.status === FieldValueReferenceStatus.EMPTY) {
+      return '未选择目标条目';
+    }
+    if (resolution.status === FieldValueReferenceStatus.INVALID_CONFIGURATION) {
+      return '字段关联配置不完整或存在直接自引用';
+    }
+    if (resolution.status === FieldValueReferenceStatus.MISSING) {
+      return '目标条目不存在';
+    }
+    if (resolution.status === FieldValueReferenceStatus.DELETED) {
+      return resolution.target === undefined
+        ? '目标条目已删除'
+        : `${resolution.target.label} · 目标条目已删除`;
+    }
+    if (resolution.status === FieldValueReferenceStatus.CATEGORY_MISMATCH) {
+      return resolution.target === undefined
+        ? '目标条目分类不匹配'
+        : `${resolution.target.label} · 当前分类: ${resolution.target.category || '未分类'}`;
+    }
+    if (resolution.status === FieldValueReferenceStatus.TARGET_FIELD_MISSING) {
+      return '目标字段已删除';
+    }
+    if (resolution.status === FieldValueReferenceStatus.TARGET_FIELD_UNSUPPORTED) {
+      return '目标字段不再是文本类型';
+    }
+    if (resolution.status === FieldValueReferenceStatus.TARGET_FIELD_EMPTY) {
+      return resolution.target === undefined
+        ? '目标字段值为空'
+        : `${resolution.target.label} → ${resolution.target.fieldName || '目标字段'} · 值为空`;
+    }
+    return resolution.target === undefined
+      ? '目标条目不存在'
+      : `${resolution.target.label} → ${resolution.target.fieldName}`;
+  }
+
+  private fieldReferenceDraftStatusColor(field: CustomField): Resource {
+    const resolution = this.fieldReferenceDraftResolution(field);
+    if (
+      resolution === null ||
+      resolution.status === FieldValueReferenceStatus.EMPTY
+    ) {
+      return UI_MUTED;
+    }
+    return resolution.status === FieldValueReferenceStatus.RESOLVED ? UI_TEXT : UI_DANGER;
+  }
+
+  private fieldReferenceDraftConstraintText(field: CustomField): string {
+    const definition = this.templateDefinitionForCustomField(field, this.draftCategory);
+    const category = definition?.targetCategory?.trim() ?? '';
+    const targetField = this.fieldReferenceTargetTemplate(definition ?? null);
+    const fieldName = targetField?.name.trim() ?? '';
+    return `目标路径: ${category.length > 0 ? category : '未配置分类'} / ${fieldName.length > 0 ? fieldName : '未配置字段'}`;
+  }
+
+  private fieldReferenceDraftActionLabel(field: CustomField): string {
+    const resolution = this.fieldReferenceDraftResolution(field);
+    if (resolution === null || resolution.status === FieldValueReferenceStatus.EMPTY) {
+      return '选择条目';
+    }
+    if (resolution.status === FieldValueReferenceStatus.RESOLVED) {
+      return '更换条目';
+    }
+    return '修复关联';
+  }
+
+  private fieldReferenceDraftCanSelectEntry(field: CustomField): boolean {
+    const resolution = this.fieldReferenceDraftResolution(field);
+    if (resolution === null) {
+      return false;
+    }
+    return resolution.status !== FieldValueReferenceStatus.INVALID_CONFIGURATION &&
+      resolution.status !== FieldValueReferenceStatus.TARGET_FIELD_MISSING &&
+      resolution.status !== FieldValueReferenceStatus.TARGET_FIELD_UNSUPPORTED;
+  }
+
   private isEditableDraftCustomField(field: CustomField): boolean {
     if (this.draftProtectedCustomFieldIds.includes(field.id)) {
       return false;
@@ -5097,7 +5585,8 @@ struct Index {
         if (definition === undefined) {
           return this.hasTemplateFieldBinding(field);
         }
-        return !isEditableCategoryFieldType(this.templateFieldValueType(definition));
+        return !this.isEntryReferenceTemplateField(definition) &&
+          !isEditableCategoryFieldType(this.templateFieldValueType(definition));
       })
       .map((field: CustomField) => field.id);
   }
@@ -5145,6 +5634,11 @@ struct Index {
   private isEntryReferenceCustomField(entry: VaultEntry, field: CustomField): boolean {
     const definition = this.templateDefinitionForCustomField(field, this.entryCategory(entry));
     return definition !== undefined && this.isEntryReferenceTemplateField(definition);
+  }
+
+  private isFieldReferenceCustomField(entry: VaultEntry, field: CustomField): boolean {
+    const definition = this.templateDefinitionForCustomField(field, this.entryCategory(entry));
+    return definition !== undefined && this.isFieldReferenceTemplateField(definition);
   }
 
   private isUnsupportedCustomField(entry: VaultEntry, field: CustomField): boolean {
@@ -5224,6 +5718,154 @@ struct Index {
     }
     return resolution.status !== EntryReferenceStatus.DELETED &&
       resolution.status !== EntryReferenceStatus.MISSING;
+  }
+
+  private fieldReferenceDetailResolution(
+    entry: VaultEntry,
+    field: CustomField,
+  ): FieldValueReferenceResolution | null {
+    return this.controller().resolveFieldValueReferenceField(entry, field);
+  }
+
+  private fieldReferenceConfiguredPath(entry: VaultEntry, field: CustomField): string {
+    const definition = this.templateDefinitionForCustomField(field, this.entryCategory(entry));
+    const category = definition?.targetCategory?.trim() ?? '';
+    const targetField = this.fieldReferenceTargetTemplate(definition ?? null);
+    const fieldName = targetField?.name.trim() ?? '';
+    return `${field.name.length > 0 ? field.name : '关联字段'} → ${category.length > 0 ? category : '未配置分类'} / ${fieldName.length > 0 ? fieldName : '未配置字段'}`;
+  }
+
+  private fieldReferenceDetailText(entry: VaultEntry, field: CustomField): string {
+    const resolution = this.fieldReferenceDetailResolution(entry, field);
+    const path = this.fieldReferenceConfiguredPath(entry, field);
+    if (resolution === null || resolution.status === FieldValueReferenceStatus.EMPTY) {
+      return `${path} · 未选择目标条目`;
+    }
+    if (resolution.status === FieldValueReferenceStatus.INVALID_CONFIGURATION) {
+      return `${path} · 配置无效或存在直接自引用`;
+    }
+    if (resolution.status === FieldValueReferenceStatus.MISSING) {
+      return `${path} · 目标条目不存在`;
+    }
+    if (resolution.status === FieldValueReferenceStatus.DELETED) {
+      return resolution.target === undefined
+        ? `${path} · 目标条目已删除`
+        : `${path} · ${resolution.target.label} · 目标条目已删除`;
+    }
+    if (resolution.status === FieldValueReferenceStatus.CATEGORY_MISMATCH) {
+      return resolution.target === undefined
+        ? `${path} · 目标条目分类不匹配`
+        : `${path} · ${resolution.target.label} 当前位于 ${resolution.target.category || '未分类'}`;
+    }
+    if (resolution.status === FieldValueReferenceStatus.TARGET_FIELD_MISSING) {
+      return `${path} · 目标字段已删除`;
+    }
+    if (resolution.status === FieldValueReferenceStatus.TARGET_FIELD_UNSUPPORTED) {
+      return `${path} · 目标字段不再是文本类型`;
+    }
+    if (resolution.status === FieldValueReferenceStatus.TARGET_FIELD_EMPTY) {
+      return resolution.target === undefined
+        ? `${path} · 目标字段值为空`
+        : `${path} · ${resolution.target.label} · 目标字段值为空`;
+    }
+    return resolution.target === undefined
+      ? `${path} · 目标条目不存在`
+      : `${path} · ${resolution.target.label} · 已解析`;
+  }
+
+  private fieldReferenceDetailColor(entry: VaultEntry, field: CustomField): Resource {
+    const resolution = this.fieldReferenceDetailResolution(entry, field);
+    if (
+      resolution === null ||
+      resolution.status === FieldValueReferenceStatus.EMPTY
+    ) {
+      return UI_MUTED;
+    }
+    return resolution.status === FieldValueReferenceStatus.RESOLVED ? UI_TEXT : UI_DANGER;
+  }
+
+  private fieldReferenceRepairLabel(entry: VaultEntry, field: CustomField): string {
+    const resolution = this.fieldReferenceDetailResolution(entry, field);
+    if (resolution === null || resolution.status === FieldValueReferenceStatus.EMPTY) {
+      return '选择条目';
+    }
+    if (resolution.status === FieldValueReferenceStatus.RESOLVED) {
+      return '更换条目';
+    }
+    return '修复关联';
+  }
+
+  private fieldReferenceConfigurationNeedsRepair(entry: VaultEntry, field: CustomField): boolean {
+    const resolution = this.fieldReferenceDetailResolution(entry, field);
+    if (resolution === null) {
+      return false;
+    }
+    return resolution.status === FieldValueReferenceStatus.INVALID_CONFIGURATION ||
+      resolution.status === FieldValueReferenceStatus.TARGET_FIELD_MISSING ||
+      resolution.status === FieldValueReferenceStatus.TARGET_FIELD_UNSUPPORTED;
+  }
+
+  private fieldReferenceCanSelectEntry(entry: VaultEntry, field: CustomField): boolean {
+    const resolution = this.fieldReferenceDetailResolution(entry, field);
+    return resolution !== null && !this.fieldReferenceConfigurationNeedsRepair(entry, field);
+  }
+
+  private fieldReferenceTargetCanOpen(entry: VaultEntry, field: CustomField): boolean {
+    const resolution = this.fieldReferenceDetailResolution(entry, field);
+    if (resolution === null || resolution.target === undefined) {
+      return false;
+    }
+    return resolution.status !== FieldValueReferenceStatus.DELETED &&
+      resolution.status !== FieldValueReferenceStatus.MISSING;
+  }
+
+  private fieldReferenceResolvedValue(entry: VaultEntry, field: CustomField): string {
+    const resolution = this.fieldReferenceDetailResolution(entry, field);
+    if (
+      resolution === null ||
+      resolution.status !== FieldValueReferenceStatus.RESOLVED ||
+      resolution.target === undefined
+    ) {
+      return '';
+    }
+    return resolution.target.value;
+  }
+
+  private openFieldReferenceTarget(entry: VaultEntry, field: CustomField): void {
+    const target = this.fieldReferenceDetailResolution(entry, field)?.target;
+    if (target === undefined) {
+      return;
+    }
+    this.searchQuery = '';
+    this.selectedTag = '';
+    this.focusCategory(target.category);
+    this.selectedEntryId = target.id;
+    if (this.topOverlayPanel === 'entryDetail') {
+      this.topOverlayPanel = 'none';
+    }
+    setTimeout(() => {
+      const targetIndex = this.filteredEntries().findIndex(
+        (candidate: VaultEntry) => candidate.id === target.id,
+      );
+      if (targetIndex >= 0) {
+        this.entryListFirstVisibleIndex = targetIndex;
+        this.entryListScroller.scrollToIndex(targetIndex);
+      }
+    }, 0);
+  }
+
+  private openFieldReferenceConfiguration(entry: VaultEntry): void {
+    const category = this.entryCategory(entry);
+    if (category.trim().length === 0) {
+      this.toast('当前条目没有可编辑的分类配置');
+      return;
+    }
+    this.selectedEntryId = '';
+    this.exportEntryId = '';
+    this.entryEditorVisible = false;
+    this.topOverlayPanel = 'none';
+    this.activePanel = 'category';
+    this.beginEditCategory(category);
   }
 
   private openEntryReferenceTarget(entry: VaultEntry, field: CustomField): void {
@@ -5896,6 +6538,19 @@ struct Index {
 
   private entrySummaryField(entry: VaultEntry, field: CustomField): string {
     const name = field.name.trim().length > 0 ? field.name.trim() : '字段';
+    if (this.isFieldReferenceCustomField(entry, field)) {
+      const resolution = this.fieldReferenceDetailResolution(entry, field);
+      if (resolution === null || resolution.status === FieldValueReferenceStatus.EMPTY) {
+        return `${name}: 未关联`;
+      }
+      if (
+        resolution.status === FieldValueReferenceStatus.RESOLVED &&
+        resolution.target !== undefined
+      ) {
+        return `${name}: ${resolution.target.label} / ${resolution.target.fieldName}`;
+      }
+      return `${name}: 关联失效`;
+    }
     if (this.isEntryReferenceCustomField(entry, field)) {
       const resolution = this.entryReferenceDetailResolution(entry, field);
       if (resolution === null || resolution.status === EntryReferenceStatus.EMPTY) {
