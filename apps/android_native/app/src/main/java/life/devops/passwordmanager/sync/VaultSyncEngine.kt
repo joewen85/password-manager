@@ -61,6 +61,7 @@ class VaultSyncEngine(
         client: RemoteSyncClient,
         shouldCancelUpload: () -> Boolean = { false },
     ): VaultSyncEngineResult {
+        val hasSyncBaseline = hasEstablishedSyncBaseline(settings)
         val remoteMetadata = client.metadata()
         val remoteFingerprint = remoteMetadata.fingerprint
         if (
@@ -101,7 +102,11 @@ class VaultSyncEngine(
             )
         }
 
-        if (settings.hasLocalChanges && remotePayload.revision <= settings.lastSyncRevision) {
+        if (
+            hasSyncBaseline &&
+            settings.hasLocalChanges &&
+            remotePayload.revision <= settings.lastSyncRevision
+        ) {
             val nextRevision = settings.lastSyncRevision + 1
             val uploadPayload = localPayload.copy(revision = nextRevision)
             upload(uploadPayload, client, shouldCancelUpload)
@@ -138,6 +143,7 @@ class VaultSyncEngine(
             local = localSnapshot,
             remote = remotePayload.snapshot,
             entries = mergeResult.entries,
+            hasSyncBaseline = hasSyncBaseline,
             localHasChanges = settings.hasLocalChanges,
             conflictStrategy = settings.conflictStrategy,
             localDeviceId = settings.deviceId,
@@ -206,6 +212,7 @@ class VaultSyncEngine(
         local: VaultSnapshot,
         remote: VaultSnapshot,
         entries: List<VaultEntry>,
+        hasSyncBaseline: Boolean,
         localHasChanges: Boolean,
         conflictStrategy: SyncSettingsConflictStrategy,
         localDeviceId: String,
@@ -215,6 +222,7 @@ class VaultSyncEngine(
         val categoryStates = mergeCategoryStates(
             local = local,
             remote = remote,
+            hasSyncBaseline = hasSyncBaseline,
             localHasChanges = localHasChanges,
             conflictStrategy = conflictStrategy,
             localDeviceId = localDeviceId,
@@ -275,6 +283,7 @@ class VaultSyncEngine(
     private fun mergeCategoryStates(
         local: VaultSnapshot,
         remote: VaultSnapshot,
+        hasSyncBaseline: Boolean,
         localHasChanges: Boolean,
         conflictStrategy: SyncSettingsConflictStrategy,
         localDeviceId: String,
@@ -283,7 +292,7 @@ class VaultSyncEngine(
         val localStates = effectiveCategoryStates(local).toMutableMap()
         val remoteStates = effectiveCategoryStates(remote).toMutableMap()
 
-        if (localHasChanges) {
+        if (hasSyncBaseline && localHasChanges) {
             remoteStates.forEach { (key, remoteState) ->
                 if (key !in localStates && !remoteState.isDeleted) {
                     localStates[key] = categoryTombstone(
@@ -293,7 +302,7 @@ class VaultSyncEngine(
                     )
                 }
             }
-        } else if (conflictStrategy == SyncSettingsConflictStrategy.REMOTE_WINS) {
+        } else if (hasSyncBaseline && conflictStrategy == SyncSettingsConflictStrategy.REMOTE_WINS) {
             localStates.forEach { (key, localState) ->
                 if (key !in remoteStates && !localState.isDeleted) {
                     remoteStates[key] = categoryTombstone(
@@ -319,6 +328,11 @@ class VaultSyncEngine(
             }
         }.sortedBy { it.name.lowercase() }
     }
+
+    private fun hasEstablishedSyncBaseline(settings: SyncSettings): Boolean =
+        settings.lastSyncRevision > 0 ||
+            !settings.lastRemoteFingerprint.isNullOrBlank() ||
+            (settings.lastSyncAt != null && settings.lastSyncStatus == "success")
 
     private fun effectiveCategoryStates(snapshot: VaultSnapshot): Map<String, CategorySyncState> {
         val states = linkedMapOf<String, CategorySyncState>()

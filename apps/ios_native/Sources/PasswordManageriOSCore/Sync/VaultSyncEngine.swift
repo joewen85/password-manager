@@ -54,6 +54,7 @@ struct VaultSyncEngine: Sendable {
         client: RemoteSyncClient,
         shouldCancelUpload: @Sendable () async -> Bool = { false }
     ) async throws -> VaultSyncEngineResult {
+        let hasSyncBaseline = hasEstablishedSyncBaseline(settings)
         let remoteMetadata = await client.metadata()
         let remoteFingerprint = remoteMetadata.fingerprint
         if !settings.hasLocalChanges,
@@ -96,7 +97,9 @@ struct VaultSyncEngine: Sendable {
             )
         }
 
-        if settings.hasLocalChanges, remotePayload.revision <= settings.lastSyncRevision {
+        if hasSyncBaseline,
+           settings.hasLocalChanges,
+           remotePayload.revision <= settings.lastSyncRevision {
             let nextRevision = settings.lastSyncRevision + 1
             let uploadPayload = VaultSyncPayload(
                 exportedAt: now(),
@@ -138,6 +141,7 @@ struct VaultSyncEngine: Sendable {
             local: localSnapshot,
             remote: remotePayload.snapshot,
             entries: mergeResult.entries,
+            hasSyncBaseline: hasSyncBaseline,
             localHasChanges: settings.hasLocalChanges,
             conflictStrategy: settings.conflictStrategy,
             localDeviceId: settings.deviceId,
@@ -211,6 +215,7 @@ struct VaultSyncEngine: Sendable {
         local: VaultSnapshot,
         remote: VaultSnapshot,
         entries: [VaultEntry],
+        hasSyncBaseline: Bool,
         localHasChanges: Bool,
         conflictStrategy: SyncSettingsConflictStrategy,
         localDeviceId: String,
@@ -220,6 +225,7 @@ struct VaultSyncEngine: Sendable {
         let categoryStates = mergeCategoryStates(
             local: local,
             remote: remote,
+            hasSyncBaseline: hasSyncBaseline,
             localHasChanges: localHasChanges,
             conflictStrategy: conflictStrategy,
             localDeviceId: localDeviceId,
@@ -271,6 +277,7 @@ struct VaultSyncEngine: Sendable {
     private func mergeCategoryStates(
         local: VaultSnapshot,
         remote: VaultSnapshot,
+        hasSyncBaseline: Bool,
         localHasChanges: Bool,
         conflictStrategy: SyncSettingsConflictStrategy,
         localDeviceId: String,
@@ -279,7 +286,7 @@ struct VaultSyncEngine: Sendable {
         var localStates = effectiveCategoryStates(in: local)
         var remoteStates = effectiveCategoryStates(in: remote)
 
-        if localHasChanges {
+        if hasSyncBaseline, localHasChanges {
             for (key, remoteState) in remoteStates where localStates[key] == nil && !remoteState.isDeleted {
                 localStates[key] = categoryTombstone(
                     replacing: remoteState,
@@ -287,7 +294,7 @@ struct VaultSyncEngine: Sendable {
                     updatedAt: local.updatedAt
                 )
             }
-        } else if conflictStrategy == .remoteWins {
+        } else if hasSyncBaseline, conflictStrategy == .remoteWins {
             for (key, localState) in localStates where remoteStates[key] == nil && !localState.isDeleted {
                 remoteStates[key] = categoryTombstone(
                     replacing: localState,
@@ -317,6 +324,12 @@ struct VaultSyncEngine: Sendable {
         return merged.sorted {
             $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }
+    }
+
+    private func hasEstablishedSyncBaseline(_ settings: SyncSettings) -> Bool {
+        settings.lastSyncRevision > 0
+            || !(settings.lastRemoteFingerprint ?? "").isEmpty
+            || (settings.lastSyncAt != nil && settings.lastSyncStatus == "success")
     }
 
     private func effectiveCategoryStates(in snapshot: VaultSnapshot) -> [String: CategorySyncState] {

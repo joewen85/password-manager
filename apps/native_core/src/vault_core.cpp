@@ -788,6 +788,7 @@ CategorySyncState categoryTombstone(
 std::vector<CategorySyncState> mergeCategoryStatesForSync(
     const VaultSnapshot& local,
     const VaultSnapshot& remote,
+    bool hasSyncBaseline,
     bool localHasChanges,
     const std::string& conflictStrategy,
     const std::string& localDeviceId,
@@ -796,13 +797,13 @@ std::vector<CategorySyncState> mergeCategoryStatesForSync(
     auto localStates = effectiveCategoryStates(local);
     auto remoteStates = effectiveCategoryStates(remote);
 
-    if (localHasChanges) {
+    if (hasSyncBaseline && localHasChanges) {
         for (const auto& [key, remoteState] : remoteStates) {
             if (localStates.count(key) == 0 && !remoteState.isDeleted) {
                 localStates[key] = categoryTombstone(remoteState, localDeviceId, local.updatedAt);
             }
         }
-    } else if (conflictStrategy == "remoteWins") {
+    } else if (hasSyncBaseline && conflictStrategy == "remoteWins") {
         for (const auto& [key, localState] : localStates) {
             if (remoteStates.count(key) == 0 && !localState.isDeleted) {
                 remoteStates[key] = categoryTombstone(localState, remoteDeviceId, remote.updatedAt);
@@ -879,6 +880,7 @@ VaultSnapshot mergeSnapshotsForSync(
     const VaultSnapshot& local,
     const VaultSnapshot& remote,
     const std::vector<VaultEntry>& entries,
+    bool hasSyncBaseline,
     bool localHasChanges,
     const std::string& conflictStrategy,
     const std::string& localDeviceId,
@@ -888,6 +890,7 @@ VaultSnapshot mergeSnapshotsForSync(
     merged.categoryStates = mergeCategoryStatesForSync(
         local,
         remote,
+        hasSyncBaseline,
         localHasChanges,
         conflictStrategy,
         localDeviceId,
@@ -2613,6 +2616,9 @@ SnapshotSyncResult synchronizeSnapshots(
     const std::string& remoteFingerprint
 ) {
     const auto now = isoTimestamp();
+    const bool hasSyncBaseline = settings.lastSyncRevision > 0
+        || !trimCopy(settings.lastRemoteFingerprint).empty()
+        || (!trimCopy(settings.lastSyncAt).empty() && settings.lastSyncStatus == "success");
     auto resultSettings = settings;
     auto finish = [&](SnapshotSyncResult result, int revision) {
         resultSettings.lastSyncRevision = revision;
@@ -2643,7 +2649,11 @@ SnapshotSyncResult synchronizeSnapshots(
     }
 
     const auto remotePayload = parseSyncPayloadJson(remoteRaw);
-    if (resultSettings.hasLocalChanges && remotePayload.revision <= resultSettings.lastSyncRevision) {
+    if (
+        hasSyncBaseline
+        && resultSettings.hasLocalChanges
+        && remotePayload.revision <= resultSettings.lastSyncRevision
+    ) {
         const auto nextRevision = resultSettings.lastSyncRevision + 1;
         auto uploadPayload = localPayload;
         uploadPayload.revision = nextRevision;
@@ -2664,6 +2674,7 @@ SnapshotSyncResult synchronizeSnapshots(
         local,
         remotePayload.snapshot,
         mergeResult.entries,
+        hasSyncBaseline,
         resultSettings.hasLocalChanges,
         resultSettings.conflictStrategy,
         resultSettings.deviceId,

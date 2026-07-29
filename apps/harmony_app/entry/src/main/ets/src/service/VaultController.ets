@@ -705,6 +705,7 @@ export class VaultController {
 
   private async performSyncOnce(client: RemoteSyncClient, localSettings: SyncSettings): Promise<void> {
     const revisionAtStart = this.localChangeRevision;
+    const hasSyncBaseline = hasEstablishedSyncBaseline(localSettings);
     try {
       let mergedPayload = deepCopyRuntimePayload(this.snapshot);
       let remoteBusinessPayload: VaultRuntimePayload | null = null;
@@ -745,7 +746,11 @@ export class VaultController {
           const remoteEnvelope = parseSyncEnvelope(remote.payload);
           remoteRevision = remoteEnvelope.revision;
 
-          if (localSettings.hasLocalChanges && remoteRevision <= localSettings.lastSyncRevision) {
+          if (
+            hasSyncBaseline &&
+            localSettings.hasLocalChanges &&
+            remoteRevision <= localSettings.lastSyncRevision
+          ) {
             const nextRevision = localSettings.lastSyncRevision + 1;
             const uploadPayload = sanitizeRuntimePayload(this.snapshot);
             uploadPayload.syncSettings = cloneSyncSettings(localSettings);
@@ -3125,7 +3130,8 @@ function mergeCategoryStatesForSync(
     remote.updatedAt,
   ).forEach((state: CategorySyncState) => remoteStates.set(state.name.toLowerCase(), state));
 
-  if (local.syncSettings.hasLocalChanges) {
+  const hasSyncBaseline = hasEstablishedSyncBaseline(local.syncSettings);
+  if (hasSyncBaseline && local.syncSettings.hasLocalChanges) {
     remoteStates.forEach((state: CategorySyncState, key: string) => {
       if (!state.isDeleted && !localStates.has(key)) {
         localStates.set(
@@ -3134,7 +3140,7 @@ function mergeCategoryStatesForSync(
         );
       }
     });
-  } else if (strategy === ConflictStrategy.REMOTE_WINS) {
+  } else if (hasSyncBaseline && strategy === ConflictStrategy.REMOTE_WINS) {
     localStates.forEach((state: CategorySyncState, key: string) => {
       if (!state.isDeleted && !remoteStates.has(key)) {
         remoteStates.set(key, categoryTombstone(state, 'legacy-remote', remote.updatedAt));
@@ -3159,6 +3165,12 @@ function mergeCategoryStatesForSync(
   });
   merged.sort((a: CategorySyncState, b: CategorySyncState) => a.name.localeCompare(b.name));
   return merged;
+}
+
+function hasEstablishedSyncBaseline(settings: SyncSettings): boolean {
+  return settings.lastSyncRevision > 0 ||
+    settings.lastRemoteFingerprint.trim().length > 0 ||
+    (settings.lastSyncAt > 0 && settings.lastSyncStatus === 'success');
 }
 
 function normalizeCategoryTemplates(

@@ -233,7 +233,9 @@ class VaultStoreSyncTest {
 
             assertEquals("success", fresh.store.syncSettings.lastSyncStatus, fresh.store.syncSettings.lastSyncMessage)
             val expectedLabels = setOf("Remote Login", "Remote Server")
+            val expectedCategories = setOf("Accounts", "Infrastructure", "Empty Category")
             assertEquals(expectedLabels, fresh.store.listEntries().map { it.label }.toSet())
+            assertEquals(expectedCategories, fresh.store.categories().toSet())
             assertEquals(remote.masterKeyRecord, fresh.repository.loadEnvelope()?.masterKeyRecord)
             val mergedRemotePayload = freshClient.uploadedPayloads.single()
             assertEquals(
@@ -251,6 +253,7 @@ class VaultStoreSyncTest {
             )
             assertTrue(reloadedStore.unlock("test-password"))
             assertEquals(expectedLabels, reloadedStore.listEntries().map { it.label }.toSet())
+            assertEquals(expectedCategories, reloadedStore.categories().toSet())
         } finally {
             directory.deleteRecursively()
         }
@@ -647,11 +650,14 @@ private fun createRemoteSyncFixture(
         password = "test-password",
         deviceId = "remote-device",
     )
+    check(remote.store.addCategory("Accounts"))
+    check(remote.store.addCategory("Infrastructure"))
+    check(remote.store.addCategory("Empty Category"))
     remote.store.upsert(
         EntryDraft(
             label = "Remote Login",
             type = VaultEntryType.CREDENTIAL,
-            category = "",
+            category = "Accounts",
             tags = emptyList(),
             credential = CredentialPayload(
                 username = "remote@example.com",
@@ -668,7 +674,7 @@ private fun createRemoteSyncFixture(
         EntryDraft(
             label = "Remote Server",
             type = VaultEntryType.SERVER,
-            category = "",
+            category = "Infrastructure",
             tags = emptyList(),
         )
     )

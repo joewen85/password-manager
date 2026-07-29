@@ -943,6 +943,44 @@ int main() {
     assert(missingRemotePayload.deviceId == "linux");
     assert(missingRemotePayload.snapshot.entries.size() == 1);
 
+    pm::VaultSnapshot firstSyncRemote;
+    firstSyncRemote.updatedAt = "2026-06-28T00:05:00Z";
+    firstSyncRemote.categories = {"Remote Category"};
+    firstSyncRemote.categoryTemplates = {
+        pm::CategoryTemplate{"Remote Category", pm::defaultCategoryFields()},
+    };
+    for (const auto remoteRevision : {0, 1}) {
+        for (const auto& strategy : {std::string("remoteWins"), std::string("keepBoth")}) {
+            for (const auto hasFailedSyncAttempt : {false, true}) {
+                pm::SyncSettingsState firstSyncSettings;
+                firstSyncSettings.deviceId = "fresh-device";
+                firstSyncSettings.lastSyncRevision = 0;
+                firstSyncSettings.lastSyncAt = hasFailedSyncAttempt ? "2026-06-28T00:04:00Z" : "";
+                firstSyncSettings.lastSyncStatus = hasFailedSyncAttempt ? "error" : "";
+                firstSyncSettings.hasLocalChanges = true;
+                firstSyncSettings.conflictStrategy = strategy;
+                const auto firstSyncPayload = pm::serializeSyncPayloadJson(
+                    pm::VaultSyncPayload{1, "2026-06-28T00:05:00Z", "remote", remoteRevision, firstSyncRemote}
+                );
+
+                const auto firstSync = pm::synchronizeSnapshots(
+                    pm::VaultSnapshot{},
+                    firstSyncSettings,
+                    firstSyncPayload
+                );
+
+                assert(firstSync.snapshot.categories.size() == 1);
+                assert(firstSync.snapshot.categories[0] == "Remote Category");
+                assert(firstSync.snapshot.categoryTemplates.size() == 1);
+                assert(std::none_of(
+                    firstSync.snapshot.categoryStates.begin(),
+                    firstSync.snapshot.categoryStates.end(),
+                    [](const auto& state) { return state.isDeleted; }
+                ));
+            }
+        }
+    }
+
     pm::VaultSnapshot emptyCategoryLocal;
     emptyCategoryLocal.updatedAt = "2026-06-28T00:00:00Z";
     emptyCategoryLocal.categories = {"test"};

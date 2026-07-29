@@ -111,6 +111,7 @@ function loadCategorySyncRuntime(controller) {
     'resolveCategorySyncState',
     'normalizeCategoryStates',
     'categoryTombstone',
+    'hasEstablishedSyncBaseline',
     'mergeCategoryStatesForSync',
   ];
   const conflictStrategy = `
@@ -139,6 +140,7 @@ function loadSyncPathRuntime(controller) {
     'isSuccessfulRemoteStatus',
     'cloneSyncSettings',
     'hasSameSyncBusinessContent',
+    'hasEstablishedSyncBaseline',
   ];
   const source = `
     ${functionNames.map((name) => extractFunction(controller, name)).join('\n')}
@@ -162,6 +164,10 @@ function payload({
   updatedAt = 1,
   hasLocalChanges = false,
   deviceId = 'harmony-device',
+  lastSyncRevision = 0,
+  lastSyncAt = 0,
+  lastSyncStatus = '',
+  lastRemoteFingerprint = '',
 } = {}) {
   return {
     categories,
@@ -174,6 +180,10 @@ function payload({
     syncSettings: {
       hasLocalChanges,
       deviceId,
+      lastSyncRevision,
+      lastSyncAt,
+      lastSyncStatus,
+      lastRemoteFingerprint,
     },
   };
 }
@@ -448,7 +458,12 @@ async function main() {
   }
 
   const inferredDeletion = runtime.mergeCategoryStatesForSync(
-    payload({ updatedAt: 100, hasLocalChanges: true }),
+    payload({
+      updatedAt: 100,
+      hasLocalChanges: true,
+      lastSyncRevision: 1,
+      lastSyncAt: 100,
+    }),
     staleRemote(200),
     runtime.ConflictStrategy.KEEP_BOTH,
   );
@@ -461,6 +476,28 @@ async function main() {
       inferredDeletion[0].version['harmony-device'] === 1,
     'Legacy deletion migration advances the local device version vector',
   );
+
+  for (const strategy of [
+    runtime.ConflictStrategy.REMOTE_WINS,
+    runtime.ConflictStrategy.KEEP_BOTH,
+  ]) {
+    for (const hasFailedSyncAttempt of [false, true]) {
+      const firstSync = runtime.mergeCategoryStatesForSync(
+        payload({
+          updatedAt: 100,
+          hasLocalChanges: true,
+          lastSyncAt: hasFailedSyncAttempt ? 90 : 0,
+          lastSyncStatus: hasFailedSyncAttempt ? 'error' : '',
+        }),
+        staleRemote(200),
+        strategy,
+      );
+      assert(
+        firstSync.length === 1 && firstSync[0].name === 'test' && !firstSync[0].isDeleted,
+        `${strategy} first sync without a successful baseline preserves remote categories`,
+      );
+    }
+  }
 
   const recreated = runtime.resolveCategorySyncState(
     {

@@ -64,6 +64,51 @@ struct VaultSyncEngineTests {
         #expect(client.uploadedPayloads.isEmpty)
     }
 
+    @Test("First sync never infers remote categories were deleted locally")
+    func firstSyncPreservesRemoteCategories() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        let local = makeSnapshot(entries: [])
+        let remote = makeSnapshot(
+            categories: ["Remote Category"],
+            categoryTemplates: [CategoryTemplate(category: "Remote Category")],
+            entries: []
+        )
+
+        for remoteRevision in [0, 1] {
+            for strategy in [SyncSettingsConflictStrategy.remoteWins, .keepBoth] {
+                for hasFailedSyncAttempt in [false, true] {
+                    var settings = SyncSettings.defaults(deviceId: "fresh-device")
+                    settings.hasLocalChanges = true
+                    settings.conflictStrategy = strategy
+                    settings.lastSyncAt = hasFailedSyncAttempt ? now : nil
+                    settings.lastSyncStatus = hasFailedSyncAttempt ? "error" : nil
+                    let remotePayload = try engine.encodePayload(
+                        VaultSyncPayload(
+                            exportedAt: now,
+                            deviceId: "remote-device",
+                            revision: remoteRevision,
+                            snapshot: remote
+                        )
+                    )
+                    let client = FakeSyncClient(
+                        downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)]
+                    )
+
+                    let result = try await engine.synchronize(
+                        localSnapshot: local,
+                        settings: settings,
+                        client: client
+                    )
+
+                    #expect(result.snapshot.categories == ["Remote Category"])
+                    #expect(result.snapshot.categoryTemplates.map(\.category) == ["Remote Category"])
+                    #expect(result.snapshot.categoryStates.allSatisfy { !$0.isDeleted })
+                }
+            }
+        }
+    }
+
     @Test("Runtime metadata differences do not reupload category tombstones")
     func runtimeMetadataDifferencesDoNotReuploadCategoryTombstones() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)

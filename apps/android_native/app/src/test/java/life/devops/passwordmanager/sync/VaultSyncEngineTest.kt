@@ -73,6 +73,51 @@ class VaultSyncEngineTest {
     }
 
     @Test
+    fun firstSyncNeverInfersRemoteCategoriesWereDeletedLocally() {
+        val now = Instant.parse("2027-01-15T08:00:00Z")
+        val engine = VaultSyncEngine(clock = { now })
+        val local = makeSnapshot(entries = emptyList())
+        val remote = makeSnapshot(
+            categories = listOf("Remote Category"),
+            categoryTemplates = listOf(CategoryTemplate(category = "Remote Category")),
+            entries = emptyList(),
+        )
+
+        listOf(0, 1).forEach { remoteRevision ->
+            listOf(
+                SyncSettingsConflictStrategy.REMOTE_WINS,
+                SyncSettingsConflictStrategy.KEEP_BOTH,
+            ).forEach { strategy ->
+                listOf(false, true).forEach { hasFailedSyncAttempt ->
+                    val settings = SyncSettings.defaults(deviceId = "fresh-device").copy(
+                        hasLocalChanges = true,
+                        conflictStrategy = strategy,
+                        lastSyncAt = now.takeIf { hasFailedSyncAttempt },
+                        lastSyncStatus = "error".takeIf { hasFailedSyncAttempt },
+                    )
+                    val remotePayload = engine.encodePayload(
+                        VaultSyncPayload(
+                            exportedAt = now,
+                            deviceId = "remote-device",
+                            revision = remoteRevision,
+                            snapshot = remote,
+                        )
+                    )
+                    val client = FakeSyncClient(
+                        downloads = ArrayDeque(listOf(RemoteSyncResult(payload = remotePayload, statusCode = 200)))
+                    )
+
+                    val result = engine.synchronize(localSnapshot = local, settings = settings, client = client)
+
+                    assertEquals(listOf("Remote Category"), result.snapshot.categories)
+                    assertEquals(listOf("Remote Category"), result.snapshot.categoryTemplates.map { it.category })
+                    assertTrue(result.snapshot.categoryStates.none { it.isDeleted })
+                }
+            }
+        }
+    }
+
+    @Test
     fun runtimeMetadataDifferencesDoNotReuploadCategoryTombstones() {
         val now = Instant.parse("2027-01-15T08:00:00Z")
         val engine = VaultSyncEngine(clock = { now })
