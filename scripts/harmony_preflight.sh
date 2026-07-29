@@ -57,6 +57,13 @@ else
   status=1
 fi
 
+if node "$ROOT_DIR/scripts/harmony_category_sync_tests.mjs"; then
+  ok "Harmony category sync regression tests passed"
+else
+  fail "Harmony category sync regression tests failed"
+  status=1
+fi
+
 if node "$ROOT_DIR/scripts/harmony_reference_resolver_tests.mjs"; then
   ok "Harmony entry-reference resolver tests passed"
 else
