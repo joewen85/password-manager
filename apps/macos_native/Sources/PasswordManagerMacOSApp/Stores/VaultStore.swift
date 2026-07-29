@@ -35,6 +35,7 @@ final class VaultStore {
     private(set) var syncSettings = SyncSettings.defaults()
 
     private var manualCategories: Set<String> = []
+    private var categoryStates: [String: CategorySyncState] = [:]
     private var manualTags: Set<String> = []
     private var isSyncing = false
     private var syncRequestedAgain = false
@@ -182,6 +183,7 @@ final class VaultStore {
             .filter { !$0.isEmpty }
         let normalizedCategory = draft.category.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalPayload = payload.replacingCategory(normalizedCategory, tags: normalizedTags)
+        ensureCategoryIsActive(normalizedCategory, updatedAt: now)
 
         if let entry, let index = entries.firstIndex(where: { $0.id == entry.id }) {
             entries[index].label = draft.label
@@ -232,6 +234,7 @@ final class VaultStore {
             return false
         }
         manualCategories.insert(normalized)
+        recordCategoryMutation(normalized, isDeleted: false, updatedAt: Date())
         upsertCategoryTemplate(
             category: normalized,
             fields: CategoryTemplate.fields(for: preset, customFieldNames: customFieldNames)
@@ -273,6 +276,9 @@ final class VaultStore {
 
         removeTaxonomyValue(oldNormalized, from: &manualCategories)
         manualCategories.insert(newNormalized)
+        let now = Date()
+        recordCategoryMutation(oldNormalized, isDeleted: true, updatedAt: now)
+        recordCategoryMutation(newNormalized, isDeleted: false, updatedAt: now)
         renameCategoryTemplate(oldValue: oldNormalized, to: newNormalized)
         categoryTemplates = propagateEntryReferenceCategoryRename(
             templates: categoryTemplates,
@@ -280,7 +286,6 @@ final class VaultStore {
             to: newNormalized
         )
         for index in entries.indices where entries[index].payload.category.caseInsensitiveEquals(oldNormalized) {
-            let now = Date()
             entries[index].payload = entries[index].payload.replacingCategory(
                 newNormalized,
                 tags: entries[index].payload.tags
@@ -464,6 +469,7 @@ final class VaultStore {
         }
 
         upsertCategoryTemplate(category: canonicalCategory, fields: updatedFields)
+        recordCategoryMutation(canonicalCategory, isDeleted: false, updatedAt: Date())
         rebuildCollections()
         persistUnlockedSnapshot()
         statusMessage = "Category updated."
@@ -583,6 +589,7 @@ final class VaultStore {
             statusMessage = "Category not found."
             return false
         }
+        recordCategoryMutation(normalized, isDeleted: true, updatedAt: Date())
         rebuildCollections()
         persistUnlockedSnapshot()
         statusMessage = "Category deleted."
@@ -665,6 +672,10 @@ final class VaultStore {
             return false
         }
 
+        let now = Date()
+        for category in categories {
+            recordCategoryMutation(category, isDeleted: true, updatedAt: now)
+        }
         entries = []
         manualCategories = []
         categoryTemplates = []
@@ -1112,7 +1123,15 @@ final class VaultStore {
 
     private func rebuildCollections() {
         let activeEntries = entries.filter { !$0.isDeleted }
-        categories = normalizedTaxonomyValues(Array(manualCategories) + activeEntries.map(\.payload.category))
+        let deletedCategoryKeys = Set(categoryStates.values.compactMap { state in
+            state.isDeleted ? state.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() : nil
+        })
+        let activeStateCategories = categoryStates.values.compactMap { state in
+            state.isDeleted ? nil : state.name
+        }
+        categories = normalizedTaxonomyValues(
+            Array(manualCategories) + activeStateCategories + activeEntries.map(\.payload.category)
+        ).filter { !deletedCategoryKeys.contains($0.lowercased()) }
         tags = normalizedTaxonomyValues(Array(manualTags) + activeEntries.flatMap(\.payload.tags))
     }
 
@@ -1133,6 +1152,7 @@ final class VaultStore {
             entries = []
             categories = []
             categoryTemplates = []
+            categoryStates = [:]
             tags = []
             manualCategories = []
             manualTags = []
@@ -1146,6 +1166,7 @@ final class VaultStore {
         let snapshot = try repository.decodeSnapshot(decrypted)
         entries = snapshot.entries
         manualCategories = Set(normalizedTaxonomyValues(snapshot.categories))
+        loadCategoryStates(from: snapshot)
         categoryTemplates = normalizedCategoryTemplates(snapshot.categoryTemplates, categories: snapshot.categories)
         manualTags = Set(normalizedTaxonomyValues(snapshot.tags))
         requireTotp = snapshot.security.requireTotp
@@ -1186,6 +1207,7 @@ final class VaultStore {
         if let snapshot = result.snapshot {
             entries = snapshot.entries
             manualCategories = Set(normalizedTaxonomyValues(snapshot.categories))
+            loadCategoryStates(from: snapshot)
             categoryTemplates = normalizedCategoryTemplates(snapshot.categoryTemplates, categories: snapshot.categories)
             manualTags = Set(normalizedTaxonomyValues(snapshot.tags))
             requireTotp = snapshot.security.requireTotp
@@ -1199,7 +1221,7 @@ final class VaultStore {
             categoryTemplates = []
             tags = []
             manualCategories = []
-            categoryTemplates = []
+            categoryStates = [:]
             manualTags = []
             requireTotp = false
             totpSecret = ""
@@ -1233,6 +1255,9 @@ final class VaultStore {
             entries: entries,
             categories: categories,
             categoryTemplates: categoryTemplates,
+            categoryStates: categoryStates.values.sorted {
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            },
             tags: tags,
             security: SecuritySettings(requireTotp: requireTotp, totpSecret: totpSecret),
             syncStatus: syncStatus,
@@ -1244,6 +1269,7 @@ final class VaultStore {
     private func applySyncResult(_ result: VaultSyncEngineResult) throws {
         entries = result.snapshot.entries
         manualCategories = Set(normalizedTaxonomyValues(result.snapshot.categories))
+        loadCategoryStates(from: result.snapshot)
         categoryTemplates = normalizedCategoryTemplates(
             result.snapshot.categoryTemplates,
             categories: result.snapshot.categories
@@ -1264,6 +1290,7 @@ final class VaultStore {
     private func applyImportedSnapshot(_ snapshot: VaultSnapshot) throws {
         entries = snapshot.entries
         manualCategories = Set(normalizedTaxonomyValues(snapshot.categories))
+        loadCategoryStates(from: snapshot)
         categoryTemplates = normalizedCategoryTemplates(snapshot.categoryTemplates, categories: snapshot.categories)
         manualTags = Set(normalizedTaxonomyValues(snapshot.tags))
         requireTotp = snapshot.security.requireTotp
@@ -1443,6 +1470,7 @@ final class VaultStore {
                 manualCategories.insert(importedCategory)
                 changed = true
             }
+            ensureCategoryIsActive(importedCategory, updatedAt: Date())
             if let templateIndex = categoryTemplates.firstIndex(where: {
                 $0.category.caseInsensitiveEquals(importedCategory)
             }) {
@@ -1492,6 +1520,90 @@ final class VaultStore {
             target.remove(match)
         }
         return !matches.isEmpty
+    }
+
+    private func loadCategoryStates(from snapshot: VaultSnapshot) {
+        var loaded: [String: CategorySyncState] = [:]
+        for state in snapshot.categoryStates {
+            let name = state.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            let normalized = normalizedCategoryState(state, name: name)
+            let key = name.lowercased()
+            if let existing = loaded[key] {
+                loaded[key] = preferredCategoryState(existing, normalized)
+            } else {
+                loaded[key] = normalized
+            }
+        }
+
+        let legacyNames = snapshot.categories
+            + snapshot.categoryTemplates.map(\.category)
+            + snapshot.entries.filter { !$0.isDeleted }.map(\.payload.category)
+        for rawName in legacyNames {
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = name.lowercased()
+            guard !name.isEmpty, loaded[key] == nil else { continue }
+            loaded[key] = CategorySyncState(
+                name: name,
+                updatedAt: snapshot.updatedAt,
+                version: ["legacy": 1],
+                updatedBy: "legacy"
+            )
+        }
+        categoryStates = loaded
+    }
+
+    private func normalizedCategoryState(_ state: CategorySyncState, name: String) -> CategorySyncState {
+        let updater = state.updatedBy.isEmpty ? "legacy" : state.updatedBy
+        return CategorySyncState(
+            name: name,
+            isDeleted: state.isDeleted,
+            updatedAt: state.updatedAt,
+            version: state.version.isEmpty ? [updater: 1] : state.version,
+            updatedBy: updater
+        )
+    }
+
+    private func preferredCategoryState(
+        _ existing: CategorySyncState,
+        _ candidate: CategorySyncState
+    ) -> CategorySyncState {
+        switch VaultSyncMerger.compareVersion(local: existing.version, remote: candidate.version) {
+        case .localDominates:
+            existing
+        case .remoteDominates:
+            candidate
+        case .equal, .concurrent:
+            if existing.isDeleted != candidate.isDeleted {
+                existing.isDeleted ? existing : candidate
+            } else {
+                existing.updatedAt >= candidate.updatedAt ? existing : candidate
+            }
+        }
+    }
+
+    private func ensureCategoryIsActive(_ category: String, updatedAt: Date) {
+        let name = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        let existing = categoryStates[name.lowercased()]
+        guard existing == nil || existing?.isDeleted == true else { return }
+        recordCategoryMutation(name, isDeleted: false, updatedAt: updatedAt)
+    }
+
+    private func recordCategoryMutation(_ category: String, isDeleted: Bool, updatedAt: Date) {
+        let name = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        let key = name.lowercased()
+        let updater = syncSettings.deviceId.isEmpty ? "macos-native" : syncSettings.deviceId
+        var version = categoryStates[key]?.version ?? [:]
+        version[updater] = (version[updater] ?? 0) + 1
+        categoryStates[key] = CategorySyncState(
+            name: name,
+            isDeleted: isDeleted,
+            updatedAt: updatedAt,
+            version: version,
+            updatedBy: updater
+        )
     }
 
     private func persistUnlockedSnapshot(markLocalChange: Bool = true) {
@@ -1762,7 +1874,7 @@ private extension CustomField {
     }
 }
 
-private extension VaultPayload {
+extension VaultPayload {
     var storageKind: VaultEntryType {
         switch self {
         case .credential:

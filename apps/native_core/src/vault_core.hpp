@@ -83,6 +83,14 @@ struct CategoryTemplate {
     std::vector<FieldTemplate> fields;
 };
 
+struct CategorySyncState {
+    std::string name;
+    bool isDeleted = false;
+    std::string updatedAt;
+    std::map<std::string, int> version;
+    std::string updatedBy;
+};
+
 enum class CategoryTypePreset {
     Server,
     Service,
@@ -93,6 +101,7 @@ struct VaultSnapshot {
     std::vector<VaultEntry> entries;
     std::vector<std::string> categories;
     std::vector<CategoryTemplate> categoryTemplates;
+    std::vector<CategorySyncState> categoryStates;
     std::vector<std::string> tags;
     bool requireTotp = false;
     std::string totpSecret;

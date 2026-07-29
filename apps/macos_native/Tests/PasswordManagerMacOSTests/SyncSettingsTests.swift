@@ -785,6 +785,106 @@ struct SyncSettingsTests {
     }
 
     @MainActor
+    @Test("VaultStore category deletion survives later sync and supports explicit recreation")
+    func vaultStoreCategoryDeletionSurvivesLaterSyncAndSupportsExplicitRecreation() async throws {
+        for strategy in [SyncSettingsConflictStrategy.remoteWins, .keepBoth] {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent(
+                    "PasswordManagerMacOSVaultStoreRepeatedDeletedCategoryTests-\(strategy.rawValue)-\(UUID().uuidString)",
+                    isDirectory: true
+                )
+            defer { try? FileManager.default.removeItem(at: directory) }
+
+            let secretStore = InMemorySyncSecretStore()
+            let syncRepository = try SyncSettingsRepository(baseDirectory: directory, secretStore: secretStore)
+            let now = Date(timeIntervalSince1970: 1_800_000_000)
+            let engine = VaultSyncEngine(now: { now })
+            let repository = FileVaultRepository(baseDirectory: directory)
+            let store = VaultStore(
+                repository: repository,
+                syncSettingsRepository: syncRepository,
+                syncEngine: engine
+            )
+            #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+            var settings = SyncSettings.defaults(deviceId: "mac-device")
+            settings.providerType = .webdav
+            settings.webdavUrl = "https://dav.example.com/root"
+            settings.webdavPath = "/vault.json"
+            settings.conflictStrategy = strategy
+            settings.lastSyncRevision = 2
+            store.updateSyncSettings(settings)
+            #expect(store.addCategory("test"))
+            #expect(store.deleteCategory("test"))
+
+            let staleRemote = VaultSnapshot(
+                entries: [],
+                categories: ["test"],
+                categoryTemplates: [CategoryTemplate(category: "test")],
+                tags: [],
+                updatedAt: Date(timeIntervalSince1970: 1_800_000_100)
+            )
+            let firstRemotePayload = try encodeEncryptedSyncPayload(
+                VaultSyncPayload(
+                    exportedAt: now,
+                    deviceId: "remote-device",
+                    revision: 3,
+                    snapshot: staleRemote
+                ),
+                repository: repository
+            )
+            let laterRemotePayload = try encodeEncryptedSyncPayload(
+                VaultSyncPayload(
+                    exportedAt: now,
+                    deviceId: "other-device",
+                    revision: 5,
+                    snapshot: staleRemote
+                ),
+                repository: repository
+            )
+            let client = VaultStoreSyncFakeClient(
+                downloads: [
+                    RemoteSyncResult(payload: firstRemotePayload, statusCode: 200),
+                    RemoteSyncResult(payload: laterRemotePayload, statusCode: 200)
+                ],
+                uploadStatusCodes: [200, 200]
+            )
+
+            await store.syncNow(client: client)
+            #expect(store.categories == [])
+            #expect(!store.syncSettings.hasLocalChanges)
+
+            await store.syncNow(client: client)
+            #expect(store.categories == [])
+            #expect(store.categoryTemplates == [])
+            #expect(client.uploadedPayloads.count == 2)
+            let deletionPayload = try decodeEncryptedSyncPayload(
+                client.uploadedPayloads.last,
+                repository: repository
+            )
+            let tombstone = try #require(deletionPayload.snapshot.categoryStates.first)
+            #expect(tombstone.name == "test")
+            #expect(tombstone.isDeleted)
+
+            #expect(store.addCategory("test"))
+            let recreationClient = VaultStoreSyncFakeClient(
+                downloads: [RemoteSyncResult(payload: client.uploadedPayloads.last, statusCode: 200)],
+                uploadStatusCodes: [200]
+            )
+            await store.syncNow(client: recreationClient)
+
+            #expect(store.categories == ["test"])
+            let recreatedPayload = try decodeEncryptedSyncPayload(
+                recreationClient.uploadedPayloads.first,
+                repository: repository
+            )
+            let activeState = try #require(recreatedPayload.snapshot.categoryStates.first)
+            #expect(activeState.name == "test")
+            #expect(!activeState.isDeleted)
+            #expect(activeState.version["mac-device", default: 0] > tombstone.version["mac-device", default: 0])
+        }
+    }
+
+    @MainActor
     @Test("VaultStore ignores stale sync result when local category changes during sync")
     func vaultStoreIgnoresStaleSyncResultWhenLocalCategoryChangesDuringSync() async throws {
         let directory = FileManager.default.temporaryDirectory

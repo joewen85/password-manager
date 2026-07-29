@@ -2,6 +2,7 @@ import { Context } from '@kit.AbilityKit';
 import { util } from '@kit.ArkTS';
 import fs from '@ohos.file.fs';
 import {
+  CategorySyncState,
   CategoryTemplate,
   CategoryTypePreset,
   CreateCredentialInput,
@@ -49,6 +50,7 @@ import {
 
 interface VaultRuntimePayload extends VaultPayloadRecord {
   categoryTemplates: CategoryTemplate[];
+  categoryStates: CategorySyncState[];
   security: SecuritySettings;
   syncSettings: SyncSettings;
 }
@@ -68,6 +70,7 @@ interface ExportSnapshotRecord {
   tags: string[];
   categories: string[];
   categoryTemplates: CategoryTemplate[];
+  categoryStates: CategorySyncState[];
   entries: VaultEntry[];
   masterKeyRecord: MasterKeyRecord | null;
   security: SecuritySettings;
@@ -1090,11 +1093,24 @@ export class VaultController {
       return false;
     }
     const currentSyncSettings = cloneSyncSettings(this.snapshot.syncSettings);
+    const existingStates = normalizeCategoryStates(
+      this.snapshot.categoryStates,
+      this.snapshot.categories,
+      this.snapshot.categoryTemplates,
+      this.snapshot.entries,
+      this.snapshot.updatedAt,
+    );
+    const activeCategories = this.snapshot.categories.slice();
     this.snapshot = createEmptyPayload();
+    this.snapshot.categoryStates = existingStates;
     const resetSyncSettings = defaultSyncSettings();
     resetSyncSettings.deviceId = currentSyncSettings.deviceId;
     resetSyncSettings.hasLocalChanges = true;
     this.snapshot.syncSettings = resetSyncSettings;
+    const now = Date.now();
+    activeCategories.forEach((category: string) =>
+      this.recordCategoryMutation(category, true, now)
+    );
     await this.persist();
     return true;
   }
@@ -1118,6 +1134,7 @@ export class VaultController {
     }
     this.snapshot.categories.push(clean);
     this.snapshot.categories.sort((a: string, b: string) => a.localeCompare(b));
+    this.recordCategoryMutation(clean, false, Date.now());
     this.upsertCategoryTemplate(clean, fieldsForCategoryPreset('', customFieldNames));
     await this.persist();
   }
@@ -1138,6 +1155,7 @@ export class VaultController {
     }
     this.snapshot.categories.push(clean);
     this.snapshot.categories.sort((a: string, b: string) => a.localeCompare(b));
+    this.recordCategoryMutation(clean, false, Date.now());
     this.upsertCategoryTemplate(
       clean,
       categoryTemplateFieldsForUserSave([], customFields),
@@ -1265,6 +1283,9 @@ export class VaultController {
       entryCategory === from ? to : entryCategory,
     );
     this.snapshot.categories = normalizeTags(this.snapshot.categories);
+    const now = Date.now();
+    this.recordCategoryMutation(from, true, now);
+    this.recordCategoryMutation(to, false, now);
     this.snapshot.categoryTemplates = this.snapshot.categoryTemplates.map((template: CategoryTemplate) => {
       if (template.category !== from) {
         return template;
@@ -1288,7 +1309,7 @@ export class VaultController {
         return;
       }
       this.setEntryCategory(entry, to);
-      entry.updatedAt = Date.now();
+      entry.updatedAt = now;
     });
     await this.persist();
   }
@@ -1296,6 +1317,7 @@ export class VaultController {
   async deleteCategory(category: string): Promise<void> {
     this.ensureUnlocked();
     const clean = category.trim();
+    const now = Date.now();
     this.snapshot.categories = this.snapshot.categories.filter(
       (entryCategory: string) => entryCategory !== clean,
     );
@@ -1310,8 +1332,9 @@ export class VaultController {
         return;
       }
       this.setEntryCategory(entry, '');
-      entry.updatedAt = Date.now();
+      entry.updatedAt = now;
     });
+    this.recordCategoryMutation(clean, true, now);
     await this.persist();
   }
 
@@ -1324,6 +1347,7 @@ export class VaultController {
       tags: snapshot.tags,
       categories: snapshot.categories,
       categoryTemplates: snapshot.categoryTemplates,
+      categoryStates: snapshot.categoryStates,
       entries: snapshot.entries,
       masterKeyRecord: this.masterKeyRecord,
       security: snapshot.security,
@@ -1426,13 +1450,66 @@ export class VaultController {
 
   private mergeCategories(categories: string[]): void {
     const union = new Set<string>(this.snapshot.categories);
-    categories
+    const normalized = categories
       .map((category: string) => category.trim())
-      .filter((category: string) => category.length > 0)
-      .forEach((category: string) => union.add(category));
+      .filter((category: string) => category.length > 0);
+    const now = Date.now();
+    normalized.forEach((category: string) => {
+      union.add(category);
+      this.ensureCategoryIsActive(category, now);
+    });
     const mergedCategories = setToArray(union);
     mergedCategories.sort((a: string, b: string) => a.localeCompare(b));
     this.snapshot.categories = mergedCategories;
+  }
+
+  private ensureCategoryIsActive(category: string, updatedAt: number): void {
+    const clean = category.trim();
+    if (clean.length === 0) {
+      return;
+    }
+    const existing = this.snapshot.categoryStates.find(
+      (state: CategorySyncState) => state.name.trim().toLowerCase() === clean.toLowerCase(),
+    );
+    if (existing === undefined || existing.isDeleted) {
+      this.recordCategoryMutation(clean, false, updatedAt);
+    }
+  }
+
+  private recordCategoryMutation(category: string, isDeleted: boolean, updatedAt: number): void {
+    const clean = category.trim();
+    if (clean.length === 0) {
+      return;
+    }
+    this.snapshot.categoryStates = normalizeCategoryStates(
+      this.snapshot.categoryStates,
+      this.snapshot.categories,
+      this.snapshot.categoryTemplates,
+      this.snapshot.entries,
+      this.snapshot.updatedAt,
+    );
+    const key = clean.toLowerCase();
+    const stateIndex = this.snapshot.categoryStates.findIndex(
+      (state: CategorySyncState) => state.name.trim().toLowerCase() === key,
+    );
+    const existing = stateIndex >= 0 ? this.snapshot.categoryStates[stateIndex] : undefined;
+    const updater = this.snapshot.syncSettings.deviceId.trim().length > 0
+      ? this.snapshot.syncSettings.deviceId
+      : 'harmony-native';
+    const version = cloneCategoryVersion(existing?.version);
+    version[updater] = (version[updater] ?? 0) + 1;
+    const next: CategorySyncState = {
+      name: clean,
+      isDeleted,
+      updatedAt,
+      version,
+      updatedBy: updater,
+    };
+    if (stateIndex >= 0) {
+      this.snapshot.categoryStates[stateIndex] = next;
+    } else {
+      this.snapshot.categoryStates.push(next);
+    }
   }
 
   private upsertCategoryTemplate(category: string, fields: FieldTemplate[]): void {
@@ -2169,6 +2246,20 @@ export class VaultController {
       }
     });
 
+    const categoryStates = mergeCategoryStatesForSync(local, remote, strategy);
+    const deletedCategoryKeys = new Set<string>();
+    categoryStates.forEach((state: CategorySyncState) => {
+      if (state.isDeleted) {
+        deletedCategoryKeys.add(state.name.trim().toLowerCase());
+      }
+    });
+    mergedEntries.forEach((entry: VaultEntry) => {
+      const category = this.entryCategory(entry);
+      if (!entry.isDeleted && deletedCategoryKeys.has(category.toLowerCase())) {
+        this.setEntryCategory(entry, '');
+        entry.updatedAt = Date.now();
+      }
+    });
     const tags = new Set<string>();
     const categories = new Set<string>();
     const localHasChanges = local.syncSettings.hasLocalChanges;
@@ -2177,20 +2268,24 @@ export class VaultController {
     const baseTags = shouldMergeCleanLocalTaxonomy
       ? local.tags.concat(remote.tags)
       : (localHasChanges ? local.tags : remote.tags);
-    const baseCategories = shouldMergeCleanLocalTaxonomy
-      ? local.categories.concat(remote.categories)
-      : (localHasChanges ? local.categories : remote.categories);
     const baseTemplates = shouldMergeCleanLocalTaxonomy
       ? remote.categoryTemplates.concat(local.categoryTemplates)
       : (localHasChanges ? local.categoryTemplates : remote.categoryTemplates);
     baseTags.forEach((tag: string) => tags.add(tag));
-    baseCategories.forEach((category: string) => categories.add(category));
-    baseTemplates.forEach((template: CategoryTemplate) => categories.add(template.category));
+    categoryStates.filter((state: CategorySyncState) => !state.isDeleted)
+      .forEach((state: CategorySyncState) => categories.add(state.name));
+    baseTemplates.forEach((template: CategoryTemplate) => {
+      if (!deletedCategoryKeys.has(template.category.trim().toLowerCase())) {
+        categories.add(template.category);
+      }
+    });
     mergedEntries.filter((entry: VaultEntry) => !entry.isDeleted).forEach((entry: VaultEntry) => {
       entry.tags.forEach((tag: string) => tags.add(tag));
       const category = this.entryCategory(entry);
       if (category.length > 0) {
-        categories.add(category);
+        if (!deletedCategoryKeys.has(category.toLowerCase())) {
+          categories.add(category);
+        }
       }
     });
 
@@ -2203,6 +2298,7 @@ export class VaultController {
         remote.categoryTemplates,
         setToArray(categories),
       ),
+      categoryStates,
       entries: mergedEntries,
       security: pickMergedSecurity(local, remote, strategy),
       updatedAt: Math.max(local.updatedAt, remote.updatedAt, Date.now()),
@@ -2247,6 +2343,7 @@ function createEmptyPayload(): VaultRuntimePayload {
     tags: [],
     categories: [],
     categoryTemplates: [],
+    categoryStates: [],
     entries: [],
     security: defaultSecuritySettings(),
     updatedAt: Date.now(),
@@ -2325,27 +2422,60 @@ function sanitizeRuntimePayload(
   (input.entries ?? []).forEach((entry: VaultEntry) => putCanonicalEntry(normalizedEntryMap, entry));
   const normalizedEntries: VaultEntry[] = [];
   normalizedEntryMap.forEach((entry: VaultEntry) => normalizedEntries.push(entry));
+  const updatedAt = typeof input.updatedAt === 'number' ? input.updatedAt : Date.now();
+  const categoryStates = normalizeCategoryStates(
+    input.categoryStates,
+    input.categories ?? [],
+    input.categoryTemplates ?? [],
+    normalizedEntries,
+    updatedAt,
+  );
+  const deletedCategoryKeys = new Set<string>();
+  categoryStates.forEach((state: CategorySyncState) => {
+    if (state.isDeleted) {
+      deletedCategoryKeys.add(state.name.trim().toLowerCase());
+    }
+  });
+  normalizedEntries.forEach((entry: VaultEntry) => {
+    const category = resolveEntryCategory(entry);
+    if (!entry.isDeleted && deletedCategoryKeys.has(category.toLowerCase())) {
+      const payload = entry.payload as CategoryCarrier;
+      payload.category = '';
+    }
+  });
   const tagUnion = new Set<string>();
   const categoryUnion = new Set<string>();
   normalizeTags(input.tags ?? []).forEach((tag: string) => tagUnion.add(tag));
-  normalizeTags(input.categories ?? []).forEach((category: string) =>
-    categoryUnion.add(category),
-  );
+  normalizeTags(input.categories ?? []).forEach((category: string) => {
+    if (!deletedCategoryKeys.has(category.toLowerCase())) {
+      categoryUnion.add(category);
+    }
+  });
   normalizedEntries.filter((entry: VaultEntry) => !entry.isDeleted).forEach((entry: VaultEntry) => {
     entry.tags.forEach((tag: string) => tagUnion.add(tag));
     const category = resolveEntryCategory(entry);
     if (category.length > 0) {
-      categoryUnion.add(category);
+      if (!deletedCategoryKeys.has(category.toLowerCase())) {
+        categoryUnion.add(category);
+      }
     }
   });
-  const templates = normalizeCategoryTemplates(input.categoryTemplates, setToArray(categoryUnion));
+  categoryStates.filter((state: CategorySyncState) => !state.isDeleted)
+    .forEach((state: CategorySyncState) => categoryUnion.add(state.name));
+  const templates = normalizeCategoryTemplates(
+    input.categoryTemplates,
+    setToArray(categoryUnion),
+  ).filter((template: CategoryTemplate) =>
+    !deletedCategoryKeys.has(template.category.trim().toLowerCase())
+  );
   return {
     tags: normalizeTags(setToArray(tagUnion)),
     categories: normalizeTags(setToArray(categoryUnion)),
     categoryTemplates: templates,
+    categoryStates,
     entries: normalizedEntries,
     security: normalizeSecuritySettings(maybeSecurity),
-    updatedAt: typeof input.updatedAt === 'number' ? input.updatedAt : Date.now(),
+    updatedAt,
     syncSettings: normalizeSyncSettings(
       maybeSettings === undefined ? defaultSyncSettings() : maybeSettings,
     ),
@@ -2727,6 +2857,234 @@ function utf8Hex(value: string): string {
     output += encoded.charCodeAt(index).toString(16).padStart(2, '0');
   }
   return output;
+}
+
+function cloneCategoryVersion(version: Record<string, number> | undefined): Record<string, number> {
+  const output: Record<string, number> = {};
+  if (version === undefined) {
+    return output;
+  }
+  Object.keys(version).forEach((key: string) => {
+    const value = version[key];
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      output[key] = Math.floor(value);
+    }
+  });
+  return output;
+}
+
+function mergedCategoryVersion(
+  local: Record<string, number>,
+  remote: Record<string, number>,
+): Record<string, number> {
+  const output = cloneCategoryVersion(local);
+  Object.keys(remote).forEach((key: string) => {
+    output[key] = Math.max(output[key] ?? 0, remote[key] ?? 0);
+  });
+  return output;
+}
+
+function compareCategoryVersion(
+  local: Record<string, number>,
+  remote: Record<string, number>,
+): string {
+  let localGreater = false;
+  let remoteGreater = false;
+  const keys = new Set<string>();
+  Object.keys(local).forEach((key: string) => keys.add(key));
+  Object.keys(remote).forEach((key: string) => keys.add(key));
+  keys.forEach((key: string) => {
+    const localValue = local[key] ?? 0;
+    const remoteValue = remote[key] ?? 0;
+    if (localValue > remoteValue) {
+      localGreater = true;
+    } else if (remoteValue > localValue) {
+      remoteGreater = true;
+    }
+  });
+  if (localGreater && remoteGreater) {
+    return 'concurrent';
+  }
+  if (localGreater) {
+    return 'local';
+  }
+  if (remoteGreater) {
+    return 'remote';
+  }
+  return 'equal';
+}
+
+function normalizeCategorySyncState(
+  state: CategorySyncState,
+  fallbackUpdatedAt: number,
+): CategorySyncState {
+  const name = readString(state.name);
+  const updater = readString(state.updatedBy).length > 0 ? readString(state.updatedBy) : 'legacy';
+  const version = cloneCategoryVersion(state.version);
+  if (Object.keys(version).length === 0) {
+    version[updater] = 1;
+  }
+  return {
+    name,
+    isDeleted: state.isDeleted === true,
+    updatedAt: typeof state.updatedAt === 'number' ? state.updatedAt : fallbackUpdatedAt,
+    version,
+    updatedBy: updater,
+  };
+}
+
+function resolveCategorySyncState(
+  local: CategorySyncState,
+  remote: CategorySyncState,
+  strategy: ConflictStrategy,
+): CategorySyncState {
+  const comparison = compareCategoryVersion(local.version, remote.version);
+  if (comparison === 'local') {
+    return local;
+  }
+  if (comparison === 'remote') {
+    return remote;
+  }
+  let selected: CategorySyncState;
+  if (local.isDeleted !== remote.isDeleted) {
+    selected = local.isDeleted ? local : remote;
+  } else if (strategy === ConflictStrategy.LOCAL_WINS) {
+    selected = local;
+  } else if (strategy === ConflictStrategy.REMOTE_WINS) {
+    selected = remote;
+  } else {
+    selected = local.updatedAt >= remote.updatedAt ? local : remote;
+  }
+  return {
+    name: selected.name,
+    isDeleted: selected.isDeleted,
+    updatedAt: Math.max(local.updatedAt, remote.updatedAt),
+    version: mergedCategoryVersion(local.version, remote.version),
+    updatedBy: selected.updatedBy,
+  };
+}
+
+function normalizeCategoryStates(
+  states: CategorySyncState[] | undefined,
+  categories: string[],
+  templates: CategoryTemplate[],
+  entries: VaultEntry[],
+  updatedAt: number,
+): CategorySyncState[] {
+  const output = new Map<string, CategorySyncState>();
+  (states ?? []).forEach((rawState: CategorySyncState) => {
+    const state = normalizeCategorySyncState(rawState, updatedAt);
+    const key = state.name.toLowerCase();
+    if (key.length === 0) {
+      return;
+    }
+    const existing = output.get(key);
+    output.set(
+      key,
+      existing === undefined
+        ? state
+        : resolveCategorySyncState(existing, state, ConflictStrategy.KEEP_BOTH),
+    );
+  });
+  const legacyNames = categories
+    .concat(templates.map((template: CategoryTemplate) => template.category))
+    .concat(entries.filter((entry: VaultEntry) => !entry.isDeleted)
+      .map((entry: VaultEntry) => resolveEntryCategory(entry)));
+  legacyNames.forEach((rawName: string) => {
+    const name = rawName.trim();
+    const key = name.toLowerCase();
+    if (name.length === 0 || output.has(key)) {
+      return;
+    }
+    output.set(key, {
+      name,
+      isDeleted: false,
+      updatedAt,
+      version: { 'legacy': 1 },
+      updatedBy: 'legacy',
+    });
+  });
+  const normalized: CategorySyncState[] = [];
+  output.forEach((state: CategorySyncState) => normalized.push(state));
+  normalized.sort((a: CategorySyncState, b: CategorySyncState) =>
+    a.name.localeCompare(b.name)
+  );
+  return normalized;
+}
+
+function categoryTombstone(
+  state: CategorySyncState,
+  deviceId: string,
+  updatedAt: number,
+): CategorySyncState {
+  const updater = deviceId.trim().length > 0 ? deviceId : 'legacy';
+  const version = cloneCategoryVersion(state.version);
+  version[updater] = (version[updater] ?? 0) + 1;
+  return {
+    name: state.name,
+    isDeleted: true,
+    updatedAt,
+    version,
+    updatedBy: updater,
+  };
+}
+
+function mergeCategoryStatesForSync(
+  local: VaultRuntimePayload,
+  remote: VaultRuntimePayload,
+  strategy: ConflictStrategy,
+): CategorySyncState[] {
+  const localStates = new Map<string, CategorySyncState>();
+  normalizeCategoryStates(
+    local.categoryStates,
+    local.categories,
+    local.categoryTemplates,
+    local.entries,
+    local.updatedAt,
+  ).forEach((state: CategorySyncState) => localStates.set(state.name.toLowerCase(), state));
+  const remoteStates = new Map<string, CategorySyncState>();
+  normalizeCategoryStates(
+    remote.categoryStates,
+    remote.categories,
+    remote.categoryTemplates,
+    remote.entries,
+    remote.updatedAt,
+  ).forEach((state: CategorySyncState) => remoteStates.set(state.name.toLowerCase(), state));
+
+  if (local.syncSettings.hasLocalChanges) {
+    remoteStates.forEach((state: CategorySyncState, key: string) => {
+      if (!state.isDeleted && !localStates.has(key)) {
+        localStates.set(
+          key,
+          categoryTombstone(state, local.syncSettings.deviceId, local.updatedAt),
+        );
+      }
+    });
+  } else if (strategy === ConflictStrategy.REMOTE_WINS) {
+    localStates.forEach((state: CategorySyncState, key: string) => {
+      if (!state.isDeleted && !remoteStates.has(key)) {
+        remoteStates.set(key, categoryTombstone(state, 'legacy-remote', remote.updatedAt));
+      }
+    });
+  }
+
+  const keys = new Set<string>();
+  localStates.forEach((_state: CategorySyncState, key: string) => keys.add(key));
+  remoteStates.forEach((_state: CategorySyncState, key: string) => keys.add(key));
+  const merged: CategorySyncState[] = [];
+  keys.forEach((key: string) => {
+    const localState = localStates.get(key);
+    const remoteState = remoteStates.get(key);
+    if (localState !== undefined && remoteState !== undefined) {
+      merged.push(resolveCategorySyncState(localState, remoteState, strategy));
+    } else if (localState !== undefined) {
+      merged.push(localState);
+    } else if (remoteState !== undefined) {
+      merged.push(remoteState);
+    }
+  });
+  merged.sort((a: CategorySyncState, b: CategorySyncState) => a.name.localeCompare(b.name));
+  return merged;
 }
 
 function normalizeCategoryTemplates(

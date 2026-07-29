@@ -552,6 +552,43 @@ std::map<std::string, int> readIntMap(JsonReader& reader) {
     return values;
 }
 
+CategorySyncState readCategorySyncState(JsonReader& reader) {
+    CategorySyncState state;
+    reader.objectStart();
+    if (!reader.objectEnd()) {
+        do {
+            const auto key = reader.key();
+            if (key == "name") {
+                state.name = reader.string();
+            } else if (key == "isDeleted") {
+                state.isDeleted = reader.boolean();
+            } else if (key == "updatedAt") {
+                state.updatedAt = reader.string();
+            } else if (key == "version") {
+                state.version = readIntMap(reader);
+            } else if (key == "updatedBy") {
+                state.updatedBy = reader.string();
+            } else {
+                reader.skipValue();
+            }
+        } while (reader.commaIfPresent());
+        if (!reader.objectEnd()) throw std::runtime_error("Expected JSON object end.");
+    }
+    return state;
+}
+
+std::vector<CategorySyncState> readCategorySyncStateArray(JsonReader& reader) {
+    std::vector<CategorySyncState> states;
+    reader.arrayStart();
+    if (!reader.arrayEnd()) {
+        do {
+            states.push_back(readCategorySyncState(reader));
+        } while (reader.commaIfPresent());
+        if (!reader.arrayEnd()) throw std::runtime_error("Expected JSON array end.");
+    }
+    return states;
+}
+
 CustomField readCustomField(JsonReader& reader) {
     CustomField field;
     reader.objectStart();
@@ -650,6 +687,167 @@ std::vector<std::string> mergeTaxonomyValues(std::vector<std::string> values) {
     return merged;
 }
 
+std::string normalizedCategoryKey(const std::string& category) {
+    return lowerCopy(trimCopy(category));
+}
+
+std::map<std::string, int> mergeVersions(
+    const std::map<std::string, int>& local,
+    const std::map<std::string, int>& remote
+) {
+    auto merged = local;
+    for (const auto& [device, count] : remote) {
+        merged[device] = std::max(merged[device], count);
+    }
+    return merged;
+}
+
+CategorySyncState normalizedCategoryState(const CategorySyncState& raw) {
+    auto state = raw;
+    state.name = trimCopy(state.name);
+    if (state.updatedBy.empty()) state.updatedBy = "legacy";
+    if (state.version.empty()) state.version = {{state.updatedBy, 1}};
+    return state;
+}
+
+CategorySyncState resolveCategoryState(
+    const CategorySyncState& local,
+    const CategorySyncState& remote,
+    const std::string& conflictStrategy
+) {
+    const auto comparison = compareVersion(local.version, remote.version);
+    if (comparison == "localDominates") return local;
+    if (comparison == "remoteDominates") return remote;
+
+    CategorySyncState selected;
+    if (local.isDeleted != remote.isDeleted) {
+        selected = local.isDeleted ? local : remote;
+    } else if (conflictStrategy == "remoteWins") {
+        selected = remote;
+    } else if (conflictStrategy == "localWins") {
+        selected = local;
+    } else {
+        selected = isTimestampAtLeast(local.updatedAt, remote.updatedAt) ? local : remote;
+    }
+    selected.updatedAt = isTimestampAtLeast(local.updatedAt, remote.updatedAt)
+        ? local.updatedAt
+        : remote.updatedAt;
+    selected.version = mergeVersions(local.version, remote.version);
+    return selected;
+}
+
+std::map<std::string, CategorySyncState> effectiveCategoryStates(const VaultSnapshot& snapshot) {
+    std::map<std::string, CategorySyncState> states;
+    for (const auto& rawState : snapshot.categoryStates) {
+        const auto state = normalizedCategoryState(rawState);
+        const auto key = normalizedCategoryKey(state.name);
+        if (key.empty()) continue;
+        const auto existing = states.find(key);
+        states[key] = existing == states.end()
+            ? state
+            : resolveCategoryState(existing->second, state, "keepBoth");
+    }
+
+    std::vector<std::string> legacyNames = snapshot.categories;
+    for (const auto& templateEntry : snapshot.categoryTemplates) {
+        legacyNames.push_back(templateEntry.category);
+    }
+    for (const auto& entry : snapshot.entries) {
+        if (!entry.isDeleted) legacyNames.push_back(entry.category);
+    }
+    for (const auto& rawName : legacyNames) {
+        const auto name = trimCopy(rawName);
+        const auto key = normalizedCategoryKey(name);
+        if (name.empty() || states.count(key) > 0) continue;
+        states[key] = CategorySyncState{
+            name,
+            false,
+            snapshot.updatedAt,
+            {{"legacy", 1}},
+            "legacy",
+        };
+    }
+    return states;
+}
+
+CategorySyncState categoryTombstone(
+    const CategorySyncState& state,
+    const std::string& deviceId,
+    const std::string& updatedAt
+) {
+    auto tombstone = state;
+    const auto updater = trimCopy(deviceId).empty() ? std::string("legacy") : trimCopy(deviceId);
+    tombstone.isDeleted = true;
+    tombstone.updatedAt = updatedAt;
+    tombstone.version[updater] += 1;
+    tombstone.updatedBy = updater;
+    return tombstone;
+}
+
+std::vector<CategorySyncState> mergeCategoryStatesForSync(
+    const VaultSnapshot& local,
+    const VaultSnapshot& remote,
+    bool localHasChanges,
+    const std::string& conflictStrategy,
+    const std::string& localDeviceId,
+    const std::string& remoteDeviceId
+) {
+    auto localStates = effectiveCategoryStates(local);
+    auto remoteStates = effectiveCategoryStates(remote);
+
+    if (localHasChanges) {
+        for (const auto& [key, remoteState] : remoteStates) {
+            if (localStates.count(key) == 0 && !remoteState.isDeleted) {
+                localStates[key] = categoryTombstone(remoteState, localDeviceId, local.updatedAt);
+            }
+        }
+    } else if (conflictStrategy == "remoteWins") {
+        for (const auto& [key, localState] : localStates) {
+            if (remoteStates.count(key) == 0 && !localState.isDeleted) {
+                remoteStates[key] = categoryTombstone(localState, remoteDeviceId, remote.updatedAt);
+            }
+        }
+    }
+
+    std::set<std::string> keys;
+    for (const auto& [key, _] : localStates) keys.insert(key);
+    for (const auto& [key, _] : remoteStates) keys.insert(key);
+    std::vector<CategorySyncState> merged;
+    for (const auto& key : keys) {
+        const auto localState = localStates.find(key);
+        const auto remoteState = remoteStates.find(key);
+        if (localState != localStates.end() && remoteState != remoteStates.end()) {
+            merged.push_back(resolveCategoryState(localState->second, remoteState->second, conflictStrategy));
+        } else if (localState != localStates.end()) {
+            merged.push_back(localState->second);
+        } else {
+            merged.push_back(remoteState->second);
+        }
+    }
+    std::sort(merged.begin(), merged.end(), [](const auto& left, const auto& right) {
+        return normalizedCategoryKey(left.name) < normalizedCategoryKey(right.name);
+    });
+    return merged;
+}
+
+std::vector<VaultEntry> clearDeletedCategoryReferences(
+    const std::vector<VaultEntry>& entries,
+    const std::set<std::string>& deletedCategoryKeys,
+    const std::string& deviceId
+) {
+    auto normalized = entries;
+    const auto updater = trimCopy(deviceId).empty() ? std::string("native-cli") : trimCopy(deviceId);
+    const auto updatedAt = isoTimestamp();
+    for (auto& entry : normalized) {
+        if (entry.isDeleted || deletedCategoryKeys.count(normalizedCategoryKey(entry.category)) == 0) continue;
+        entry.category.clear();
+        entry.updatedAt = updatedAt;
+        entry.version[updater] += 1;
+        entry.updatedBy = updater;
+    }
+    return normalized;
+}
+
 std::vector<CategoryTemplate> mergeCategoryTemplatesForSync(
     const std::vector<CategoryTemplate>& base,
     const std::vector<CategoryTemplate>& local,
@@ -681,20 +879,40 @@ VaultSnapshot mergeSnapshotsForSync(
     const VaultSnapshot& remote,
     const std::vector<VaultEntry>& entries,
     bool localHasChanges,
-    const std::string& conflictStrategy
+    const std::string& conflictStrategy,
+    const std::string& localDeviceId,
+    const std::string& remoteDeviceId
 ) {
     VaultSnapshot merged;
-    merged.entries = entries;
+    merged.categoryStates = mergeCategoryStatesForSync(
+        local,
+        remote,
+        localHasChanges,
+        conflictStrategy,
+        localDeviceId,
+        remoteDeviceId
+    );
+    std::set<std::string> deletedCategoryKeys;
+    std::vector<std::string> activeCategoryNames;
+    for (const auto& state : merged.categoryStates) {
+        if (state.isDeleted) {
+            deletedCategoryKeys.insert(normalizedCategoryKey(state.name));
+        } else {
+            activeCategoryNames.push_back(state.name);
+        }
+    }
+    merged.entries = clearDeletedCategoryReferences(entries, deletedCategoryKeys, localDeviceId);
     std::sort(merged.entries.begin(), merged.entries.end(), [](const auto& left, const auto& right) {
         return left.updatedAt > right.updatedAt;
     });
     const bool shouldMergeCleanLocalTaxonomy = conflictStrategy == "keepBoth" && !localHasChanges;
-    std::vector<std::string> values;
+    std::vector<std::string> values = activeCategoryNames;
     if (shouldMergeCleanLocalTaxonomy) {
-        values = local.categories;
+        values.insert(values.end(), local.categories.begin(), local.categories.end());
         values.insert(values.end(), remote.categories.begin(), remote.categories.end());
     } else {
-        values = localHasChanges ? local.categories : remote.categories;
+        const auto& baseCategories = localHasChanges ? local.categories : remote.categories;
+        values.insert(values.end(), baseCategories.begin(), baseCategories.end());
     }
     std::vector<CategoryTemplate> baseTemplates;
     if (shouldMergeCleanLocalTaxonomy) {
@@ -708,6 +926,12 @@ VaultSnapshot mergeSnapshotsForSync(
         if (!entry.isDeleted) values.push_back(entry.category);
     }
     merged.categories = mergeTaxonomyValues(values);
+    merged.categories.erase(
+        std::remove_if(merged.categories.begin(), merged.categories.end(), [&](const auto& category) {
+            return deletedCategoryKeys.count(normalizedCategoryKey(category)) > 0;
+        }),
+        merged.categories.end()
+    );
     if (shouldMergeCleanLocalTaxonomy) {
         values = local.tags;
         values.insert(values.end(), remote.tags.begin(), remote.tags.end());
@@ -1552,6 +1776,16 @@ std::string serializeSnapshotJson(const VaultSnapshot& snapshot) {
         }
         out << "]}";
     }
+    out << "],\"categoryStates\":[";
+    for (std::size_t stateIndex = 0; stateIndex < snapshot.categoryStates.size(); ++stateIndex) {
+        const auto& state = snapshot.categoryStates[stateIndex];
+        if (stateIndex > 0) out << ",";
+        out << "{\"name\":" << jsonString(state.name)
+            << ",\"isDeleted\":" << (state.isDeleted ? "true" : "false")
+            << ",\"updatedAt\":" << jsonString(state.updatedAt)
+            << ",\"version\":" << versionJson(state.version)
+            << ",\"updatedBy\":" << jsonString(state.updatedBy) << "}";
+    }
     out << "],\"tags\":" << jsonStringArray(snapshot.tags)
         << ",\"security\":{\"requireTotp\":" << (snapshot.requireTotp ? "true" : "false")
         << ",\"totpSecret\":" << jsonString(snapshot.totpSecret) << "}"
@@ -1575,6 +1809,8 @@ VaultSnapshot parseSnapshotJson(const std::string& json) {
                 snapshot.categories = readStringArray(reader);
             } else if (key == "categoryTemplates") {
                 snapshot.categoryTemplates = readCategoryTemplateArray(reader);
+            } else if (key == "categoryStates") {
+                snapshot.categoryStates = readCategorySyncStateArray(reader);
             } else if (key == "tags") {
                 snapshot.tags = readStringArray(reader);
             } else if (key == "security") {
@@ -1596,7 +1832,33 @@ VaultSnapshot parseSnapshotJson(const std::string& json) {
         if (!reader.objectEnd()) throw std::runtime_error("Expected JSON object end.");
     }
     if (snapshot.updatedAt.empty()) snapshot.updatedAt = isoTimestamp();
-    if (snapshot.categories.empty()) snapshot.categories = rebuildCategories(snapshot.entries, snapshot.categoryTemplates);
+    const auto states = effectiveCategoryStates(snapshot);
+    snapshot.categoryStates.clear();
+    std::set<std::string> deletedCategoryKeys;
+    std::vector<std::string> categoryValues = snapshot.categories;
+    for (const auto& [key, state] : states) {
+        snapshot.categoryStates.push_back(state);
+        if (state.isDeleted) {
+            deletedCategoryKeys.insert(key);
+        } else {
+            categoryValues.push_back(state.name);
+        }
+    }
+    snapshot.categoryTemplates.erase(
+        std::remove_if(snapshot.categoryTemplates.begin(), snapshot.categoryTemplates.end(), [&](const auto& templateEntry) {
+            return deletedCategoryKeys.count(normalizedCategoryKey(templateEntry.category)) > 0;
+        }),
+        snapshot.categoryTemplates.end()
+    );
+    const auto rebuiltCategories = rebuildCategories(snapshot.entries, snapshot.categoryTemplates);
+    categoryValues.insert(categoryValues.end(), rebuiltCategories.begin(), rebuiltCategories.end());
+    snapshot.categories = mergeTaxonomyValues(categoryValues);
+    snapshot.categories.erase(
+        std::remove_if(snapshot.categories.begin(), snapshot.categories.end(), [&](const auto& category) {
+            return deletedCategoryKeys.count(normalizedCategoryKey(category)) > 0;
+        }),
+        snapshot.categories.end()
+    );
     if (snapshot.tags.empty()) snapshot.tags = rebuildTags(snapshot.entries);
     if (snapshot.categoryTemplates.empty()) {
         for (const auto& category : snapshot.categories) {
@@ -1882,12 +2144,25 @@ bool addCategory(VaultSnapshot& snapshot, const std::string& category, const std
     const auto clean = trimCopy(category);
     if (clean.empty()) return false;
     const auto key = lowerCopy(clean);
-    for (const auto& existing : snapshot.categories) {
-        if (lowerCopy(trimCopy(existing)) == key) return false;
-    }
+    auto states = effectiveCategoryStates(snapshot);
+    const auto existingState = states.find(key);
+    if (existingState != states.end() && !existingState->second.isDeleted) return false;
+    snapshot.categories.erase(
+        std::remove_if(snapshot.categories.begin(), snapshot.categories.end(), [&](const auto& existing) {
+            return normalizedCategoryKey(existing) == key;
+        }),
+        snapshot.categories.end()
+    );
     snapshot.categories.push_back(clean);
     std::sort(snapshot.categories.begin(), snapshot.categories.end());
     upsertCategoryTemplate(snapshot, clean, fields);
+    auto version = existingState == states.end()
+        ? std::map<std::string, int>{}
+        : existingState->second.version;
+    version["native-cli"] += 1;
+    states[key] = CategorySyncState{clean, false, isoTimestamp(), version, "native-cli"};
+    snapshot.categoryStates.clear();
+    for (const auto& [_, state] : states) snapshot.categoryStates.push_back(state);
     return true;
 }
 
@@ -2141,7 +2416,9 @@ SnapshotSyncResult synchronizeSnapshots(
         remotePayload.snapshot,
         mergeResult.entries,
         resultSettings.hasLocalChanges,
-        resultSettings.conflictStrategy
+        resultSettings.conflictStrategy,
+        resultSettings.deviceId,
+        remotePayload.deviceId
     );
     if (snapshotsEquivalent(mergedSnapshot, remotePayload.snapshot)) {
         SnapshotSyncResult result;

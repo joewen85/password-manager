@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iomanip>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <sstream>
 #include <string>
@@ -1046,11 +1047,33 @@ void printCounts(const VaultSnapshot& snapshot) {
 }
 
 void rebuildTaxonomy(VaultSnapshot& snapshot) {
+    std::set<std::string> deletedCategoryKeys;
     auto categories = snapshot.categories;
+    for (const auto& state : snapshot.categoryStates) {
+        const auto key = lowerAscii(trimAscii(state.name));
+        if (key.empty()) continue;
+        if (state.isDeleted) {
+            deletedCategoryKeys.insert(key);
+        } else {
+            categories.push_back(trimAscii(state.name));
+        }
+    }
+    snapshot.categoryTemplates.erase(
+        std::remove_if(snapshot.categoryTemplates.begin(), snapshot.categoryTemplates.end(), [&](const auto& templateEntry) {
+            return deletedCategoryKeys.count(lowerAscii(trimAscii(templateEntry.category))) > 0;
+        }),
+        snapshot.categoryTemplates.end()
+    );
     const auto rebuiltCategories = rebuildCategories(snapshot.entries, snapshot.categoryTemplates);
     categories.insert(categories.end(), rebuiltCategories.begin(), rebuiltCategories.end());
     std::sort(categories.begin(), categories.end());
     categories.erase(std::unique(categories.begin(), categories.end()), categories.end());
+    categories.erase(
+        std::remove_if(categories.begin(), categories.end(), [&](const auto& category) {
+            return deletedCategoryKeys.count(lowerAscii(trimAscii(category))) > 0;
+        }),
+        categories.end()
+    );
     snapshot.categories = categories;
 
     auto tags = snapshot.tags;
@@ -1157,6 +1180,7 @@ void addEntryToVault(const CommandAuth& auth, int argc, char** argv, const char*
     entry.tags = args.tags;
     entry.notes = args.notes;
     entry.customFields = args.customFields;
+    if (!entry.category.empty()) (void)addCategory(snapshot, entry.category);
     snapshot.entries.push_back(entry);
     rebuildTaxonomy(snapshot);
     saveSnapshot(auth.password, args.vaultPath, snapshot);

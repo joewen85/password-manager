@@ -1,10 +1,12 @@
 package life.devops.passwordmanager.sync
 
 import life.devops.passwordmanager.model.CategoryTemplate
+import life.devops.passwordmanager.model.CategorySyncState
 import life.devops.passwordmanager.model.SecuritySettings
 import life.devops.passwordmanager.model.VaultEntry
 import life.devops.passwordmanager.model.VaultSnapshot
 import life.devops.passwordmanager.store.VaultJson
+import life.devops.passwordmanager.store.withCategory
 import org.json.JSONObject
 import java.time.Instant
 import java.util.UUID
@@ -138,6 +140,8 @@ class VaultSyncEngine(
             entries = mergeResult.entries,
             localHasChanges = settings.hasLocalChanges,
             conflictStrategy = settings.conflictStrategy,
+            localDeviceId = settings.deviceId,
+            remoteDeviceId = remotePayload.deviceId,
         )
 
         if (mergedSnapshot == remotePayload.snapshot) {
@@ -204,17 +208,29 @@ class VaultSyncEngine(
         entries: List<VaultEntry>,
         localHasChanges: Boolean,
         conflictStrategy: SyncSettingsConflictStrategy,
+        localDeviceId: String,
+        remoteDeviceId: String,
     ): VaultSnapshot {
         val latestSnapshot = if (local.updatedAt >= remote.updatedAt) local else remote
-        val activeEntries = entries.filterNot { it.isDeleted }
+        val categoryStates = mergeCategoryStates(
+            local = local,
+            remote = remote,
+            localHasChanges = localHasChanges,
+            conflictStrategy = conflictStrategy,
+            localDeviceId = localDeviceId,
+            remoteDeviceId = remoteDeviceId,
+        )
+        val deletedCategoryKeys = categoryStates
+            .filter { it.isDeleted }
+            .map { normalizedCategoryKey(it.name) }
+            .toSet()
+        val normalizedEntries = clearDeletedCategoryReferences(
+            entries = entries,
+            deletedCategoryKeys = deletedCategoryKeys,
+            deviceId = localDeviceId,
+        )
+        val activeEntries = normalizedEntries.filterNot { it.isDeleted }
         val shouldMergeCleanLocalTaxonomy = conflictStrategy == SyncSettingsConflictStrategy.KEEP_BOTH && !localHasChanges
-        val baseCategories = if (shouldMergeCleanLocalTaxonomy) {
-            local.categories + remote.categories
-        } else if (localHasChanges) {
-            local.categories
-        } else {
-            remote.categories
-        }
         val baseCategoryTemplates = if (shouldMergeCleanLocalTaxonomy) {
             remote.categoryTemplates + local.categoryTemplates
         } else if (localHasChanges) {
@@ -223,9 +239,9 @@ class VaultSyncEngine(
             remote.categoryTemplates
         }
         val categories = mergeTaxonomy(
-            base = baseCategories,
+            base = categoryStates.filterNot { it.isDeleted }.map { it.name },
             entries = activeEntries.map { it.payload.category } + baseCategoryTemplates.map { it.category },
-        )
+        ).filterNot { normalizedCategoryKey(it) in deletedCategoryKeys }
         val baseTags = if (shouldMergeCleanLocalTaxonomy) {
             local.tags + remote.tags
         } else if (localHasChanges) {
@@ -244,9 +260,10 @@ class VaultSyncEngine(
             categories = categories,
         )
         return VaultSnapshot(
-            entries = entries.sortedByDescending { it.updatedAt },
+            entries = normalizedEntries.sortedByDescending { it.updatedAt },
             categories = categories,
             categoryTemplates = categoryTemplates,
+            categoryStates = categoryStates,
             tags = tags,
             security = latestSnapshot.security.takeUnless { it == SecuritySettings() } ?: local.security,
             syncStatus = latestSnapshot.syncStatus,
@@ -254,6 +271,158 @@ class VaultSyncEngine(
             updatedAt = maxOf(local.updatedAt, remote.updatedAt),
         )
     }
+
+    private fun mergeCategoryStates(
+        local: VaultSnapshot,
+        remote: VaultSnapshot,
+        localHasChanges: Boolean,
+        conflictStrategy: SyncSettingsConflictStrategy,
+        localDeviceId: String,
+        remoteDeviceId: String,
+    ): List<CategorySyncState> {
+        val localStates = effectiveCategoryStates(local).toMutableMap()
+        val remoteStates = effectiveCategoryStates(remote).toMutableMap()
+
+        if (localHasChanges) {
+            remoteStates.forEach { (key, remoteState) ->
+                if (key !in localStates && !remoteState.isDeleted) {
+                    localStates[key] = categoryTombstone(
+                        state = remoteState,
+                        deviceId = localDeviceId,
+                        updatedAt = local.updatedAt,
+                    )
+                }
+            }
+        } else if (conflictStrategy == SyncSettingsConflictStrategy.REMOTE_WINS) {
+            localStates.forEach { (key, localState) ->
+                if (key !in remoteStates && !localState.isDeleted) {
+                    remoteStates[key] = categoryTombstone(
+                        state = localState,
+                        deviceId = remoteDeviceId,
+                        updatedAt = remote.updatedAt,
+                    )
+                }
+            }
+        }
+
+        return (localStates.keys + remoteStates.keys).mapNotNull { key ->
+            val localState = localStates[key]
+            val remoteState = remoteStates[key]
+            when {
+                localState != null && remoteState != null -> resolveCategoryState(
+                    local = localState,
+                    remote = remoteState,
+                    conflictStrategy = conflictStrategy,
+                )
+                localState != null -> localState
+                else -> remoteState
+            }
+        }.sortedBy { it.name.lowercase() }
+    }
+
+    private fun effectiveCategoryStates(snapshot: VaultSnapshot): Map<String, CategorySyncState> {
+        val states = linkedMapOf<String, CategorySyncState>()
+        snapshot.categoryStates.forEach { rawState ->
+            val name = rawState.name.trim()
+            if (name.isBlank()) return@forEach
+            val updater = rawState.updatedBy.ifBlank { "legacy" }
+            val state = rawState.copy(
+                name = name,
+                version = rawState.version.ifEmpty { mapOf(updater to 1) },
+                updatedBy = updater,
+            )
+            val key = normalizedCategoryKey(name)
+            states[key] = states[key]?.let { existing ->
+                resolveCategoryState(existing, state, SyncSettingsConflictStrategy.KEEP_BOTH)
+            } ?: state
+        }
+        val legacyNames = snapshot.categories +
+            snapshot.categoryTemplates.map { it.category } +
+            snapshot.entries.filterNot { it.isDeleted }.map { it.payload.category }
+        legacyNames.forEach { rawName ->
+            val name = rawName.trim()
+            val key = normalizedCategoryKey(name)
+            if (name.isNotBlank() && key !in states) {
+                states[key] = CategorySyncState(
+                    name = name,
+                    updatedAt = snapshot.updatedAt,
+                    version = mapOf("legacy" to 1),
+                    updatedBy = "legacy",
+                )
+            }
+        }
+        return states
+    }
+
+    private fun resolveCategoryState(
+        local: CategorySyncState,
+        remote: CategorySyncState,
+        conflictStrategy: SyncSettingsConflictStrategy,
+    ): CategorySyncState =
+        when (VaultSyncMerger.compareVersion(local.version, remote.version)) {
+            VersionComparison.LOCAL_DOMINATES -> local
+            VersionComparison.REMOTE_DOMINATES -> remote
+            VersionComparison.EQUAL,
+            VersionComparison.CONCURRENT,
+            -> {
+                val selected = when {
+                    local.isDeleted != remote.isDeleted -> if (local.isDeleted) local else remote
+                    conflictStrategy == SyncSettingsConflictStrategy.LOCAL_WINS -> local
+                    conflictStrategy == SyncSettingsConflictStrategy.REMOTE_WINS -> remote
+                    local.updatedAt >= remote.updatedAt -> local
+                    else -> remote
+                }
+                selected.copy(
+                    updatedAt = maxOf(local.updatedAt, remote.updatedAt),
+                    version = mergedVersion(local.version, remote.version),
+                )
+            }
+        }
+
+    private fun categoryTombstone(
+        state: CategorySyncState,
+        deviceId: String,
+        updatedAt: Instant,
+    ): CategorySyncState {
+        val updater = deviceId.trim().ifBlank { "legacy" }
+        val version = state.version.toMutableMap()
+        version[updater] = (version[updater] ?: 0) + 1
+        return state.copy(
+            isDeleted = true,
+            updatedAt = updatedAt,
+            version = version,
+            updatedBy = updater,
+        )
+    }
+
+    private fun clearDeletedCategoryReferences(
+        entries: List<VaultEntry>,
+        deletedCategoryKeys: Set<String>,
+        deviceId: String,
+    ): List<VaultEntry> {
+        val updater = deviceId.trim().ifBlank { "android-native" }
+        return entries.map { entry ->
+            if (entry.isDeleted || normalizedCategoryKey(entry.payload.category) !in deletedCategoryKeys) {
+                entry
+            } else {
+                val version = entry.version.toMutableMap()
+                version[updater] = (version[updater] ?: 0) + 1
+                entry.copy(
+                    payload = entry.payload.withCategory(""),
+                    updatedAt = clock(),
+                    version = version,
+                    updatedBy = updater,
+                )
+            }
+        }
+    }
+
+    private fun mergedVersion(local: Map<String, Int>, remote: Map<String, Int>): Map<String, Int> =
+        (local.keys + remote.keys).associateWith { key ->
+            maxOf(local[key] ?: 0, remote[key] ?: 0)
+        }
+
+    private fun normalizedCategoryKey(category: String): String = category.trim().lowercase()
 
     private fun mergeTaxonomy(base: List<String>, entries: List<String>): List<String> =
         (base + entries)

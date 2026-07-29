@@ -1,6 +1,7 @@
 package life.devops.passwordmanager.store
 
 import life.devops.passwordmanager.model.CredentialPayload
+import life.devops.passwordmanager.model.CategorySyncState
 import life.devops.passwordmanager.model.CategoryTemplate
 import life.devops.passwordmanager.model.CustomField
 import life.devops.passwordmanager.model.EncryptedPayloadRecord
@@ -49,6 +50,7 @@ object VaultJson {
             .put("entries", JSONArray(snapshot.entries.map { it.toJson() }))
             .put("categories", JSONArray(snapshot.categories))
             .put("categoryTemplates", JSONArray(snapshot.categoryTemplates.map { it.toJson() }))
+            .put("categoryStates", JSONArray(snapshot.categoryStates.map { it.toJson() }))
             .put("tags", JSONArray(snapshot.tags))
             .put("security", snapshot.security.toJson())
             .put("syncStatus", snapshot.syncStatus)
@@ -62,6 +64,7 @@ object VaultJson {
             entries = json.optJSONArray("entries").toVaultEntryList(),
             categories = json.optJSONArray("categories").toStringList(),
             categoryTemplates = json.optJSONArray("categoryTemplates").toCategoryTemplateList(),
+            categoryStates = json.optJSONArray("categoryStates").toCategorySyncStateList(),
             tags = json.optJSONArray("tags").toStringList(),
             security = json.optJSONObject("security")?.toSecuritySettings() ?: SecuritySettings(),
             syncStatus = json.optString("syncStatus", "Not configured"),
@@ -382,6 +385,23 @@ object VaultJson {
                 .ifEmpty { CategoryTemplate.defaultCategoryFields() },
         )
 
+    private fun CategorySyncState.toJson(): JSONObject =
+        JSONObject()
+            .put("name", name)
+            .put("isDeleted", isDeleted)
+            .put("updatedAt", updatedAt.toString())
+            .put("version", JSONObject(version))
+            .put("updatedBy", updatedBy)
+
+    private fun JSONObject.toCategorySyncState(): CategorySyncState =
+        CategorySyncState(
+            name = optString("name"),
+            isDeleted = optBoolean("isDeleted", false),
+            updatedAt = optInstant("updatedAt") ?: Instant.EPOCH,
+            version = optJSONObject("version").toIntMap(),
+            updatedBy = optString("updatedBy"),
+        )
+
     private fun SecuritySettings.toJson(): JSONObject =
         JSONObject()
             .put("requireTotp", requireTotp)
@@ -427,6 +447,11 @@ object VaultJson {
         if (this == null) return emptyList()
         return (0 until length()).mapNotNull { index -> optJSONObject(index)?.toCategoryTemplate() }
             .filter { it.category.isNotBlank() }
+    }
+
+    private fun JSONArray?.toCategorySyncStateList(): List<CategorySyncState> {
+        if (this == null) return emptyList()
+        return (0 until length()).mapNotNull { index -> optJSONObject(index)?.toCategorySyncState() }
     }
 
     private fun decodeFlutterEncryptedExport(

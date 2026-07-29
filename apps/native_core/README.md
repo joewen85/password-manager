@@ -16,6 +16,10 @@ link these sources instead of copying them into each app directory.
   backup/export/import, and libcurl-backed remote object sync.
 - `tests/vault_core_tests.cpp`: shared regression tests run by both
   `apps/windows_native` and `apps/linux_native`.
+- Category create/delete/recreate state is preserved through additive
+  `categoryStates` version vectors and remove-wins tombstones. The sync merge
+  also clears stale category references from active entries; see
+  `../../docs/CATEGORY_SYNC_CONTRACT.md`.
 - The entry-reference data contract is preserved in shared snapshot and sync
   serialization. The shared core also resolves opaque target IDs into
   `empty`, `resolved`, `missing`, `deleted`, or category-mismatch states while

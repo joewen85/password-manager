@@ -431,10 +431,19 @@ struct VaultPersistenceEnvelope: Codable, Equatable, Sendable {
     var updatedAt: Date = Date()
 }
 
+struct CategorySyncState: Codable, Equatable, Sendable {
+    var name: String
+    var isDeleted = false
+    var updatedAt: Date = Date()
+    var version: [String: Int] = [:]
+    var updatedBy = ""
+}
+
 struct VaultSnapshot: Codable, Equatable, Sendable {
     var entries: [VaultEntry] = []
     var categories: [String] = []
     var categoryTemplates: [CategoryTemplate] = []
+    var categoryStates: [CategorySyncState] = []
     var tags: [String] = []
     var security: SecuritySettings = SecuritySettings()
     var syncStatus: String = "Not configured"
@@ -445,6 +454,7 @@ struct VaultSnapshot: Codable, Equatable, Sendable {
         case entries
         case categories
         case categoryTemplates
+        case categoryStates
         case tags
         case security
         case syncStatus
@@ -456,6 +466,7 @@ struct VaultSnapshot: Codable, Equatable, Sendable {
         entries: [VaultEntry] = [],
         categories: [String] = [],
         categoryTemplates: [CategoryTemplate] = [],
+        categoryStates: [CategorySyncState] = [],
         tags: [String] = [],
         security: SecuritySettings = SecuritySettings(),
         syncStatus: String = "Not configured",
@@ -465,6 +476,7 @@ struct VaultSnapshot: Codable, Equatable, Sendable {
         self.entries = entries
         self.categories = categories
         self.categoryTemplates = categoryTemplates
+        self.categoryStates = categoryStates
         self.tags = tags
         self.security = security
         self.syncStatus = syncStatus
@@ -477,6 +489,7 @@ struct VaultSnapshot: Codable, Equatable, Sendable {
         entries = try container.decodeIfPresent([VaultEntry].self, forKey: .entries) ?? []
         categories = try container.decodeIfPresent([String].self, forKey: .categories) ?? []
         categoryTemplates = try container.decodeIfPresent([CategoryTemplate].self, forKey: .categoryTemplates) ?? []
+        categoryStates = try container.decodeIfPresent([CategorySyncState].self, forKey: .categoryStates) ?? []
         tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
         security = try container.decodeIfPresent(SecuritySettings.self, forKey: .security) ?? SecuritySettings()
         syncStatus = try container.decodeIfPresent(String.self, forKey: .syncStatus) ?? "Not configured"

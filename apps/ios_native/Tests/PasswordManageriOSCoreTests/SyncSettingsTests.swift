@@ -482,8 +482,12 @@ struct SyncSettingsTests {
         #expect(store.entries.contains { $0.label == "Legacy Remote Login" })
         #expect(client.uploadedPayloads.count == 1)
         let migrated = try decodeEncryptedSyncPayload(client.uploadedPayloads.first, repository: repository)
-        #expect(migrated.revision == 2)
+        #expect(migrated.revision == 3)
         #expect(migrated.snapshot.entries.contains { $0.label == "Legacy Remote Login" })
+        let defaultCategoryState = try #require(
+            migrated.snapshot.categoryStates.first { $0.name == "Default" }
+        )
+        #expect(defaultCategoryState.isDeleted)
         let rawUpload = try #require(client.uploadedPayloads.first)
         #expect(!rawUpload.contains("legacy-secret"))
         #expect(rawUpload.contains("encryptedVault"))

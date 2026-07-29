@@ -123,12 +123,15 @@ class VaultSyncEngineTest {
 
         val result = engine.synchronize(localSnapshot = local, settings = settings, client = client)
 
-        assertFalse(result.uploaded)
+        assertTrue(result.uploaded)
         assertTrue(result.appliedRemote)
         assertTrue(result.snapshot.entries.single().isDeleted)
         assertEquals(emptyList(), result.snapshot.categories)
+        assertEquals("Deleted Category", result.snapshot.categoryStates.single().name)
+        assertTrue(result.snapshot.categoryStates.single().isDeleted)
         assertEquals(emptyList(), result.snapshot.tags)
-        assertTrue(client.uploadedPayloads.isEmpty())
+        val migrated = requireNotNull(engine.decodePayload(client.uploadedPayloads.single()))
+        assertTrue(migrated.snapshot.categoryStates.single().isDeleted)
     }
 
     @Test
@@ -261,6 +264,130 @@ class VaultSyncEngineTest {
         val uploaded = engine.decodePayload(client.uploadedPayloads.single())!!
         assertEquals(emptyList(), uploaded.snapshot.categories)
         assertEquals(emptyList(), uploaded.snapshot.categoryTemplates)
+    }
+
+    @Test
+    fun successfulCategoryDeletionRemainsDeletedAcrossLaterSyncRounds() {
+        val now = Instant.parse("2027-01-15T08:00:00Z")
+        val engine = VaultSyncEngine(clock = { now })
+
+        listOf(
+            SyncSettingsConflictStrategy.REMOTE_WINS,
+            SyncSettingsConflictStrategy.KEEP_BOTH,
+        ).forEach { strategy ->
+            val settings = SyncSettings.defaults(deviceId = "android-device").copy(
+                lastSyncRevision = 2,
+                hasLocalChanges = true,
+                conflictStrategy = strategy,
+            )
+            val locallyDeleted = makeSnapshot(
+                entries = emptyList(),
+                updatedAt = Instant.parse("2027-01-15T08:01:40Z"),
+            )
+            val staleRemote = makeSnapshot(
+                categories = listOf("test"),
+                categoryTemplates = listOf(CategoryTemplate(category = "test")),
+                entries = emptyList(),
+                updatedAt = now,
+            )
+            val firstRemotePayload = engine.encodePayload(
+                VaultSyncPayload(
+                    exportedAt = now,
+                    deviceId = "remote-device",
+                    revision = 3,
+                    snapshot = staleRemote,
+                )
+            )
+            val firstClient = FakeSyncClient(
+                downloads = ArrayDeque(listOf(RemoteSyncResult(payload = firstRemotePayload, statusCode = 200))),
+                uploadStatusCodes = ArrayDeque(listOf(200)),
+            )
+
+            val firstResult = engine.synchronize(locallyDeleted, settings, firstClient)
+            assertEquals(emptyList(), firstResult.snapshot.categories)
+
+            val laterRemotePayload = engine.encodePayload(
+                VaultSyncPayload(
+                    exportedAt = now,
+                    deviceId = "other-device",
+                    revision = 5,
+                    snapshot = staleRemote,
+                )
+            )
+            val laterClient = FakeSyncClient(
+                downloads = ArrayDeque(listOf(RemoteSyncResult(payload = laterRemotePayload, statusCode = 200))),
+                uploadStatusCodes = ArrayDeque(listOf(200)),
+            )
+            val laterResult = engine.synchronize(
+                firstResult.snapshot,
+                firstResult.settings.copy(hasLocalChanges = false),
+                laterClient,
+            )
+
+            assertEquals(emptyList(), laterResult.snapshot.categories)
+            assertEquals(emptyList(), laterResult.snapshot.categoryTemplates)
+        }
+    }
+
+    @Test
+    fun categoryDeletionClearsConcurrentlyDiscoveredEntryReferences() {
+        val now = Instant.parse("2027-01-15T08:00:00Z")
+        val engine = VaultSyncEngine(clock = { now })
+        val settings = SyncSettings.defaults(deviceId = "android-device").copy(
+            lastSyncRevision = 2,
+            hasLocalChanges = true,
+            conflictStrategy = SyncSettingsConflictStrategy.KEEP_BOTH,
+        )
+        val local = makeSnapshot(
+            entries = listOf(
+                makeEntry(
+                    id = "known-entry",
+                    label = "Known local entry",
+                    device = "android-device",
+                    version = mapOf("android-device" to 2),
+                )
+            ),
+            updatedAt = Instant.parse("2027-01-15T08:01:40Z"),
+        )
+        val remote = makeSnapshot(
+            categories = listOf("test"),
+            categoryTemplates = listOf(CategoryTemplate(category = "test")),
+            entries = listOf(
+                makeEntry(
+                    id = "known-entry",
+                    label = "Known remote entry",
+                    category = "test",
+                    device = "remote-device",
+                    version = mapOf("android-device" to 1),
+                ),
+                makeEntry(
+                    id = "remote-only-entry",
+                    label = "Remote-only entry",
+                    category = "test",
+                    device = "remote-device",
+                    version = mapOf("remote-device" to 1),
+                ),
+            ),
+            updatedAt = now,
+        )
+        val remotePayload = engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt = now,
+                deviceId = "remote-device",
+                revision = 3,
+                snapshot = remote,
+            )
+        )
+        val client = FakeSyncClient(
+            downloads = ArrayDeque(listOf(RemoteSyncResult(payload = remotePayload, statusCode = 200))),
+            uploadStatusCodes = ArrayDeque(listOf(200)),
+        )
+
+        val result = engine.synchronize(local, settings, client)
+
+        assertEquals(emptyList(), result.snapshot.categories)
+        assertEquals(emptyList(), result.snapshot.categoryTemplates)
+        assertTrue(result.snapshot.entries.filterNot { it.isDeleted }.all { it.payload.category.isEmpty() })
     }
 
     @Test

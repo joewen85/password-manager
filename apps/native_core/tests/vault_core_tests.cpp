@@ -197,6 +197,26 @@ int main() {
     assert(parsedCategorySnapshot.categoryTemplates[0].fields[0].id == "template_名称");
     assert(parsedCategorySnapshot.categoryTemplates[0].fields[0].valueType == "text");
 
+    const auto categoryStateFixture = pm::parseSnapshotJson(R"json({
+        "entries":[],
+        "categories":[],
+        "categoryTemplates":[],
+        "categoryStates":[{
+            "name":"test",
+            "isDeleted":true,
+            "updatedAt":"2026-06-28T00:06:00Z",
+            "version":{"macos":2},
+            "updatedBy":"macos"
+        }],
+        "tags":[],
+        "updatedAt":"2026-06-28T00:06:00Z"
+    })json");
+    const auto categoryStateJson = pm::serializeSnapshotJson(categoryStateFixture);
+    assert(categoryStateJson.find("\"categoryStates\"") != std::string::npos);
+    assert(categoryStateJson.find("\"name\":\"test\"") != std::string::npos);
+    assert(categoryStateJson.find("\"isDeleted\":true") != std::string::npos);
+    assert(categoryStateJson.find("\"macos\":2") != std::string::npos);
+
     const auto referenceFixture = pm::parseSnapshotJson(
         readContractFixture("snapshot-entry-reference.json")
     );
@@ -669,6 +689,106 @@ int main() {
     assert(renamedEmptyCategoryMerge.snapshot.categoryTemplates.size() == 1);
     assert(renamedEmptyCategoryMerge.snapshot.categoryTemplates[0].category == "prod");
 
+    const auto deletedCategorySnapshot = pm::parseSnapshotJson(R"json({
+        "entries":[{
+            "id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            "type":"credential",
+            "label":"Category Tombstone",
+            "username":"user",
+            "secret":"secret",
+            "category":"",
+            "tags":[],
+            "notes":"",
+            "customFields":[],
+            "isDeleted":false,
+            "version":{"macos":2},
+            "updatedBy":"macos",
+            "createdAt":"2026-06-28T00:00:00Z",
+            "updatedAt":"2026-06-28T00:06:00Z"
+        }],
+        "categories":[],
+        "categoryTemplates":[],
+        "categoryStates":[{
+            "name":"test",
+            "isDeleted":true,
+            "updatedAt":"2026-06-28T00:06:00Z",
+            "version":{"macos":2},
+            "updatedBy":"macos"
+        }],
+        "tags":[],
+        "updatedAt":"2026-06-28T00:06:00Z"
+    })json");
+    const auto staleCategorySnapshot = pm::parseSnapshotJson(R"json({
+        "entries":[{
+            "id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            "type":"credential",
+            "label":"Category Tombstone",
+            "username":"user",
+            "secret":"secret",
+            "category":"test",
+            "tags":[],
+            "notes":"",
+            "customFields":[],
+            "isDeleted":false,
+            "version":{"macos":1},
+            "updatedBy":"macos",
+            "createdAt":"2026-06-28T00:00:00Z",
+            "updatedAt":"2026-06-28T00:05:00Z"
+        }],
+        "categories":["test"],
+        "categoryTemplates":[{"category":"test","fields":[]}],
+        "categoryStates":[{
+            "name":"test",
+            "isDeleted":false,
+            "updatedAt":"2026-06-28T00:05:00Z",
+            "version":{"macos":1},
+            "updatedBy":"macos"
+        }],
+        "tags":[],
+        "updatedAt":"2026-06-28T00:05:00Z"
+    })json");
+    for (const auto& strategy : {std::string("remoteWins"), std::string("keepBoth")}) {
+        pm::SyncSettingsState deletionSettings;
+        deletionSettings.deviceId = "macos";
+        deletionSettings.lastSyncRevision = 4;
+        deletionSettings.hasLocalChanges = true;
+        deletionSettings.conflictStrategy = strategy;
+        const auto firstStalePayload = pm::serializeSyncPayloadJson(
+            pm::VaultSyncPayload{1, "2026-06-28T00:05:00Z", "remote", 5, staleCategorySnapshot}
+        );
+        const auto firstDeletionSync = pm::synchronizeSnapshots(
+            deletedCategorySnapshot,
+            deletionSettings,
+            firstStalePayload
+        );
+        assert(firstDeletionSync.snapshot.categories.empty());
+        assert(!firstDeletionSync.settings.hasLocalChanges);
+
+        const auto secondStalePayload = pm::serializeSyncPayloadJson(
+            pm::VaultSyncPayload{1, "2026-06-28T00:07:00Z", "remote", 7, staleCategorySnapshot}
+        );
+        const auto secondDeletionSync = pm::synchronizeSnapshots(
+            firstDeletionSync.snapshot,
+            firstDeletionSync.settings,
+            secondStalePayload
+        );
+        assert(secondDeletionSync.snapshot.categories.empty());
+        assert(secondDeletionSync.snapshot.categoryTemplates.empty());
+        assert(secondDeletionSync.snapshot.entries[0].category.empty());
+
+        auto recreatedSnapshot = secondDeletionSync.snapshot;
+        assert(pm::addCategory(recreatedSnapshot, "test"));
+        auto recreatedSettings = secondDeletionSync.settings;
+        recreatedSettings.hasLocalChanges = true;
+        const auto recreatedSync = pm::synchronizeSnapshots(
+            recreatedSnapshot,
+            recreatedSettings,
+            secondStalePayload
+        );
+        assert(recreatedSync.snapshot.categories.size() == 1);
+        assert(recreatedSync.snapshot.categories[0] == "test");
+    }
+
     pm::VaultSnapshot remoteDominant;
     remoteDominant.updatedAt = "2026-06-28T00:05:00Z";
     remoteDominant.entries.push_back(pm::makeEntry("Remote Sync", "credential", "remote@example.com", "remote-secret"));
@@ -680,14 +800,16 @@ int main() {
     remoteDominant.categoryTemplates = {pm::CategoryTemplate{"Remote", pm::categoryFieldsWithCustom({"Owner"})}};
     const auto remotePayloadJson = pm::serializeSyncPayloadJson(pm::VaultSyncPayload{1, "2026-06-28T00:05:00Z", "android", 7, remoteDominant});
     syncSettings.hasLocalChanges = false;
+    syncSettings.conflictStrategy = "remoteWins";
     auto remoteOnlySync = pm::synchronizeSnapshots(syncLocal, syncSettings, remotePayloadJson, "etag-1");
-    assert(!remoteOnlySync.uploaded);
+    assert(remoteOnlySync.uploaded);
     assert(remoteOnlySync.appliedRemote);
-    assert(remoteOnlySync.settings.lastSyncRevision == 7);
-    assert(remoteOnlySync.settings.lastRemoteFingerprint == "etag-1");
+    assert(remoteOnlySync.settings.lastSyncRevision == 8);
+    assert(remoteOnlySync.settings.lastRemoteFingerprint.empty());
     assert(remoteOnlySync.snapshot.entries.size() == 1);
     assert(remoteOnlySync.snapshot.entries[0].label == "Remote Sync");
     assert(remoteOnlySync.snapshot.categoryTemplates[0].fields.size() == 3);
+    assert(remoteOnlySync.uploadPayloadJson.find("\"isDeleted\":true") != std::string::npos);
 
     syncSettings.hasLocalChanges = true;
     syncSettings.lastSyncRevision = 7;

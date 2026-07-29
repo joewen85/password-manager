@@ -1,6 +1,7 @@
 package life.devops.passwordmanager.store
 
 import android.content.Context
+import life.devops.passwordmanager.model.CategorySyncState
 import life.devops.passwordmanager.model.CategoryTemplate
 import life.devops.passwordmanager.model.CategoryTypePreset
 import life.devops.passwordmanager.model.CustomField
@@ -35,10 +36,12 @@ import life.devops.passwordmanager.sync.SyncLogEntry
 import life.devops.passwordmanager.sync.SyncProviderType
 import life.devops.passwordmanager.sync.SyncSettings
 import life.devops.passwordmanager.sync.SyncSettingsRepository
+import life.devops.passwordmanager.sync.VersionComparison
 import life.devops.passwordmanager.sync.VaultSyncCancelledException
 import life.devops.passwordmanager.sync.VaultSyncEngine
 import life.devops.passwordmanager.sync.VaultSyncEngineException
 import life.devops.passwordmanager.sync.VaultSyncEngineResult
+import life.devops.passwordmanager.sync.VaultSyncMerger
 import life.devops.passwordmanager.sync.VaultSyncPayload
 import java.time.Instant
 import java.util.UUID
@@ -107,6 +110,7 @@ class VaultStore(
     private val entries = mutableListOf<VaultEntry>()
     private val manualCategories = mutableSetOf<String>()
     private val categoryTemplates = mutableMapOf<String, CategoryTemplate>()
+    private val categoryStates = mutableMapOf<String, CategorySyncState>()
     private val manualTags = mutableSetOf<String>()
     @Volatile
     private var isSyncing = false
@@ -234,6 +238,7 @@ class VaultStore(
         val existingEntry = entries.getOrNull(existingIndex)
         val normalizedTags = draft.tags.map { it.trim() }.filter { it.isNotEmpty() }
         val normalizedCategory = draft.category.trim()
+        ensureCategoryIsActive(normalizedCategory, now)
         val destinationTemplate = editorCategoryTemplate(normalizedCategory)
         val normalizedCustomFields = draft.customFields
             .map { field ->
@@ -365,9 +370,11 @@ class VaultStore(
         buildSet {
             addAll(manualCategories)
             addAll(categoryTemplates.keys)
+            addAll(categoryStates.values.filterNot { it.isDeleted }.map { it.name })
             addAll(entries.filterNot { it.isDeleted }.map { it.payload.category })
         }
             .filter { it.isNotBlank() }
+            .filterNot { category -> categoryStates[category.trim().lowercase()]?.isDeleted == true }
             .sorted()
 
     fun categoryTemplate(category: String): CategoryTemplate? {
@@ -423,6 +430,7 @@ class VaultStore(
             return false
         }
         manualCategories += normalized
+        recordCategoryMutation(normalized, isDeleted = false, updatedAt = Instant.now())
         categoryTemplates[normalized] = CategoryTemplate(
             category = normalized,
             fields = fields.ifEmpty { CategoryTemplate.defaultCategoryFields() },
@@ -442,6 +450,7 @@ class VaultStore(
         if (categories().none { it.equals(normalized, ignoreCase = true) }) {
             manualCategories += normalized
         }
+        ensureCategoryIsActive(normalized, Instant.now())
         categoryTemplates[normalized] = CategoryTemplate(
             category = normalized,
             fields = CategoryTemplate.fieldsForPreset(preset),
@@ -480,6 +489,7 @@ class VaultStore(
             }
         }
         manualCategories += normalized
+        ensureCategoryIsActive(normalized, Instant.now())
         categoryTemplates[normalized] = updated
         persistUnlockedSnapshot()
         statusMessage = "Category template updated."
@@ -525,6 +535,9 @@ class VaultStore(
         }
         manualCategories.removeAll { it.equals(oldNormalized, ignoreCase = true) }
         manualCategories += newNormalized
+        val now = Instant.now()
+        recordCategoryMutation(oldNormalized, isDeleted = true, updatedAt = now)
+        recordCategoryMutation(newNormalized, isDeleted = false, updatedAt = now)
         val oldTemplate = categoryTemplates.entries.firstOrNull { it.key.equals(oldNormalized, ignoreCase = true) }
         if (oldTemplate != null) {
             categoryTemplates.remove(oldTemplate.key)
@@ -543,7 +556,6 @@ class VaultStore(
             }
             if (updatedFields == template.fields) template else template.copy(fields = updatedFields)
         }
-        val now = Instant.now()
         entries.replaceAll { entry ->
             if (!entry.isDeleted && entry.payload.category.equals(oldNormalized, ignoreCase = true)) {
                 entry.copy(payload = entry.payload.withCategory(newNormalized), updatedAt = now)
@@ -584,6 +596,7 @@ class VaultStore(
             statusMessage = "Category not found."
             return false
         }
+        recordCategoryMutation(normalized, isDeleted = true, updatedAt = now)
         persistUnlockedSnapshot()
         statusMessage = "Category deleted."
         return true
@@ -1081,6 +1094,10 @@ class VaultStore(
         if (!verifyMasterPassword(password)) {
             return false
         }
+        val now = Instant.now()
+        categories().forEach { category ->
+            recordCategoryMutation(category, isDeleted = true, updatedAt = now)
+        }
         entries.clear()
         manualCategories.clear()
         categoryTemplates.clear()
@@ -1152,6 +1169,7 @@ class VaultStore(
             categoryTemplates = categoryTemplates.values
                 .filter { it.category.isNotBlank() }
                 .sortedBy { it.category.lowercase() },
+            categoryStates = categoryStates.values.sortedBy { it.name.lowercase() },
             tags = tags(),
             security = SecuritySettings(requireTotp = requireTotp, totpSecret = totpSecret),
             syncStatus = syncStatus,
@@ -1258,6 +1276,7 @@ class VaultStore(
                 manualCategories += importedCategory
                 changed = true
             }
+            ensureCategoryIsActive(importedCategory, Instant.now())
 
             val existingEntry = categoryTemplates.entries.firstOrNull {
                 it.key.equals(importedCategory, ignoreCase = true)
@@ -1291,6 +1310,7 @@ class VaultStore(
     private fun applySnapshotState(snapshot: VaultSnapshot) {
         entries.clear()
         entries += snapshot.entries
+        loadCategoryStates(snapshot)
         manualCategories.clear()
         manualCategories += snapshot.categories.map { it.trim() }.filter { it.isNotBlank() }
         categoryTemplates.clear()
@@ -1309,6 +1329,82 @@ class VaultStore(
         totpSecret = snapshot.security.totpSecret
         syncStatus = snapshot.syncStatus
         backupStatus = snapshot.backupStatus
+    }
+
+    private fun loadCategoryStates(snapshot: VaultSnapshot) {
+        val loaded = linkedMapOf<String, CategorySyncState>()
+        snapshot.categoryStates.forEach { rawState ->
+            val name = rawState.name.trim()
+            if (name.isBlank()) return@forEach
+            val updater = rawState.updatedBy.ifBlank { "legacy" }
+            val state = rawState.copy(
+                name = name,
+                version = rawState.version.ifEmpty { mapOf(updater to 1) },
+                updatedBy = updater,
+            )
+            val key = name.lowercase()
+            loaded[key] = loaded[key]?.let { existing ->
+                preferredCategoryState(existing, state)
+            } ?: state
+        }
+        val legacyNames = snapshot.categories +
+            snapshot.categoryTemplates.map { it.category } +
+            snapshot.entries.filterNot { it.isDeleted }.map { it.payload.category }
+        legacyNames.forEach { rawName ->
+            val name = rawName.trim()
+            val key = name.lowercase()
+            if (name.isNotBlank() && key !in loaded) {
+                loaded[key] = CategorySyncState(
+                    name = name,
+                    updatedAt = snapshot.updatedAt,
+                    version = mapOf("legacy" to 1),
+                    updatedBy = "legacy",
+                )
+            }
+        }
+        categoryStates.clear()
+        categoryStates.putAll(loaded)
+    }
+
+    private fun preferredCategoryState(
+        existing: CategorySyncState,
+        candidate: CategorySyncState,
+    ): CategorySyncState =
+        when (VaultSyncMerger.compareVersion(existing.version, candidate.version)) {
+            VersionComparison.LOCAL_DOMINATES -> existing
+            VersionComparison.REMOTE_DOMINATES -> candidate
+            VersionComparison.EQUAL,
+            VersionComparison.CONCURRENT,
+            -> when {
+                existing.isDeleted != candidate.isDeleted -> if (existing.isDeleted) existing else candidate
+                existing.updatedAt >= candidate.updatedAt -> existing
+                else -> candidate
+            }
+        }
+
+    private fun ensureCategoryIsActive(category: String, updatedAt: Instant) {
+        val name = category.trim()
+        if (name.isBlank()) return
+        val existing = categoryStates[name.lowercase()]
+        if (existing == null || existing.isDeleted) {
+            recordCategoryMutation(name, isDeleted = false, updatedAt = updatedAt)
+        }
+    }
+
+    private fun recordCategoryMutation(category: String, isDeleted: Boolean, updatedAt: Instant) {
+        val name = category.trim()
+        if (name.isBlank()) return
+        val key = name.lowercase()
+        val updater = syncSettings.deviceId.ifBlank { "android-native" }
+        val version = categoryStates[key]?.version.orEmpty().toMutableMap()
+        version[updater] = (version[updater] ?: 0) + 1
+        categoryStates[key] = CategorySyncState(
+            name = name,
+            isDeleted = isDeleted,
+            updatedAt = updatedAt,
+            version = version,
+            updatedBy = updater,
+        )
     }
 
     private fun addTaxonomyValue(
@@ -1382,7 +1478,7 @@ private data class ImportResult(
     val skipped: Int,
 )
 
-private fun VaultPayload.withCategory(category: String): VaultPayload =
+internal fun VaultPayload.withCategory(category: String): VaultPayload =
     when (this) {
         is VaultPayload.Credential -> copy(value = value.copy(category = category))
         is VaultPayload.Server -> copy(value = value.copy(category = category))

@@ -140,7 +140,9 @@ struct VaultSyncEngine: Sendable {
             remote: remotePayload.snapshot,
             entries: mergeResult.entries,
             localHasChanges: settings.hasLocalChanges,
-            conflictStrategy: settings.conflictStrategy
+            conflictStrategy: settings.conflictStrategy,
+            localDeviceId: settings.deviceId,
+            remoteDeviceId: remotePayload.deviceId
         )
 
         if mergedSnapshot == remotePayload.snapshot {
@@ -217,21 +219,36 @@ struct VaultSyncEngine: Sendable {
         remote: VaultSnapshot,
         entries: [VaultEntry],
         localHasChanges: Bool,
-        conflictStrategy: SyncSettingsConflictStrategy
+        conflictStrategy: SyncSettingsConflictStrategy,
+        localDeviceId: String,
+        remoteDeviceId: String
     ) -> VaultSnapshot {
         let latestSnapshot = local.updatedAt >= remote.updatedAt ? local : remote
-        let activeEntries = entries.filter { !$0.isDeleted }
+        let categoryStates = mergeCategoryStates(
+            local: local,
+            remote: remote,
+            localHasChanges: localHasChanges,
+            conflictStrategy: conflictStrategy,
+            localDeviceId: localDeviceId,
+            remoteDeviceId: remoteDeviceId
+        )
+        let deletedCategoryKeys = Set(categoryStates.compactMap { state in
+            state.isDeleted ? normalizedCategoryKey(state.name) : nil
+        })
+        let normalizedEntries = clearDeletedCategoryReferences(
+            entries,
+            deletedCategoryKeys: deletedCategoryKeys,
+            deviceId: localDeviceId
+        )
+        let activeEntries = normalizedEntries.filter { !$0.isDeleted }
         let shouldMergeCleanLocalTaxonomy = conflictStrategy == .keepBoth && !localHasChanges
-        let baseCategories = shouldMergeCleanLocalTaxonomy
-            ? local.categories + remote.categories
-            : (localHasChanges ? local.categories : remote.categories)
         let baseCategoryTemplates = shouldMergeCleanLocalTaxonomy
             ? remote.categoryTemplates + local.categoryTemplates
             : (localHasChanges ? local.categoryTemplates : remote.categoryTemplates)
         let categories = mergeTaxonomy(
-            base: baseCategories,
+            base: categoryStates.compactMap { $0.isDeleted ? nil : $0.name },
             values: activeEntries.map(\.payload.category) + baseCategoryTemplates.map(\.category)
-        )
+        ).filter { !deletedCategoryKeys.contains(normalizedCategoryKey($0)) }
         let baseTags = shouldMergeCleanLocalTaxonomy
             ? local.tags + remote.tags
             : (localHasChanges ? local.tags : remote.tags)
@@ -246,15 +263,192 @@ struct VaultSyncEngine: Sendable {
             categories: categories
         )
         return VaultSnapshot(
-            entries: entries.sorted { $0.updatedAt > $1.updatedAt },
+            entries: normalizedEntries.sorted { $0.updatedAt > $1.updatedAt },
             categories: categories,
             categoryTemplates: categoryTemplates,
+            categoryStates: categoryStates,
             tags: tags,
             security: latestSnapshot.security,
             syncStatus: latestSnapshot.syncStatus,
             lastBackupStatus: latestSnapshot.lastBackupStatus,
             updatedAt: max(local.updatedAt, remote.updatedAt)
         )
+    }
+
+    private func mergeCategoryStates(
+        local: VaultSnapshot,
+        remote: VaultSnapshot,
+        localHasChanges: Bool,
+        conflictStrategy: SyncSettingsConflictStrategy,
+        localDeviceId: String,
+        remoteDeviceId: String
+    ) -> [CategorySyncState] {
+        var localStates = effectiveCategoryStates(in: local)
+        var remoteStates = effectiveCategoryStates(in: remote)
+
+        if localHasChanges {
+            for (key, remoteState) in remoteStates where localStates[key] == nil && !remoteState.isDeleted {
+                localStates[key] = categoryTombstone(
+                    replacing: remoteState,
+                    deviceId: localDeviceId,
+                    updatedAt: local.updatedAt
+                )
+            }
+        } else if conflictStrategy == .remoteWins {
+            for (key, localState) in localStates where remoteStates[key] == nil && !localState.isDeleted {
+                remoteStates[key] = categoryTombstone(
+                    replacing: localState,
+                    deviceId: remoteDeviceId,
+                    updatedAt: remote.updatedAt
+                )
+            }
+        }
+
+        var merged: [CategorySyncState] = []
+        for key in Set(localStates.keys).union(remoteStates.keys) {
+            switch (localStates[key], remoteStates[key]) {
+            case (.some(let localState), .some(let remoteState)):
+                merged.append(resolveCategoryState(
+                    local: localState,
+                    remote: remoteState,
+                    conflictStrategy: conflictStrategy
+                ))
+            case (.some(let localState), .none):
+                merged.append(localState)
+            case (.none, .some(let remoteState)):
+                merged.append(remoteState)
+            case (.none, .none):
+                break
+            }
+        }
+        return merged.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+
+    private func effectiveCategoryStates(in snapshot: VaultSnapshot) -> [String: CategorySyncState] {
+        var states: [String: CategorySyncState] = [:]
+        for rawState in snapshot.categoryStates {
+            let name = rawState.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            let updater = rawState.updatedBy.isEmpty ? "legacy" : rawState.updatedBy
+            let state = CategorySyncState(
+                name: name,
+                isDeleted: rawState.isDeleted,
+                updatedAt: rawState.updatedAt,
+                version: rawState.version.isEmpty ? [updater: 1] : rawState.version,
+                updatedBy: updater
+            )
+            let key = normalizedCategoryKey(name)
+            if let existing = states[key] {
+                states[key] = resolveCategoryState(
+                    local: existing,
+                    remote: state,
+                    conflictStrategy: .keepBoth
+                )
+            } else {
+                states[key] = state
+            }
+        }
+
+        let legacyNames = snapshot.categories
+            + snapshot.categoryTemplates.map(\.category)
+            + snapshot.entries.filter { !$0.isDeleted }.map(\.payload.category)
+        for rawName in legacyNames {
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = normalizedCategoryKey(name)
+            guard !name.isEmpty, states[key] == nil else { continue }
+            states[key] = CategorySyncState(
+                name: name,
+                updatedAt: snapshot.updatedAt,
+                version: ["legacy": 1],
+                updatedBy: "legacy"
+            )
+        }
+        return states
+    }
+
+    private func resolveCategoryState(
+        local: CategorySyncState,
+        remote: CategorySyncState,
+        conflictStrategy: SyncSettingsConflictStrategy
+    ) -> CategorySyncState {
+        switch VaultSyncMerger.compareVersion(local: local.version, remote: remote.version) {
+        case .localDominates:
+            return local
+        case .remoteDominates:
+            return remote
+        case .equal, .concurrent:
+            let selected: CategorySyncState
+            if local.isDeleted != remote.isDeleted {
+                selected = local.isDeleted ? local : remote
+            } else {
+                switch conflictStrategy {
+                case .localWins:
+                    selected = local
+                case .remoteWins:
+                    selected = remote
+                case .keepBoth:
+                    selected = local.updatedAt >= remote.updatedAt ? local : remote
+                }
+            }
+            var converged = selected
+            converged.updatedAt = max(local.updatedAt, remote.updatedAt)
+            converged.version = mergedVersion(local.version, remote.version)
+            return converged
+        }
+    }
+
+    private func categoryTombstone(
+        replacing state: CategorySyncState,
+        deviceId: String,
+        updatedAt: Date
+    ) -> CategorySyncState {
+        let updater = deviceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "legacy"
+            : deviceId
+        var version = state.version
+        version[updater] = (version[updater] ?? 0) + 1
+        return CategorySyncState(
+            name: state.name,
+            isDeleted: true,
+            updatedAt: updatedAt,
+            version: version,
+            updatedBy: updater
+        )
+    }
+
+    private func clearDeletedCategoryReferences(
+        _ entries: [VaultEntry],
+        deletedCategoryKeys: Set<String>,
+        deviceId: String
+    ) -> [VaultEntry] {
+        let updater = deviceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "macos-native"
+            : deviceId
+        return entries.map { entry in
+            let key = normalizedCategoryKey(entry.payload.category)
+            guard !entry.isDeleted, deletedCategoryKeys.contains(key) else { return entry }
+            var updated = entry
+            updated.payload = entry.payload.replacingCategory("", tags: entry.payload.tags)
+            updated.updatedAt = now()
+            updated.version[updater] = (updated.version[updater] ?? 0) + 1
+            updated.updatedBy = updater
+            return updated
+        }
+    }
+
+    private func mergedVersion(_ local: [String: Int], _ remote: [String: Int]) -> [String: Int] {
+        Dictionary(
+            Set(local.keys).union(remote.keys).map { key in
+                (key, max(local[key] ?? 0, remote[key] ?? 0))
+            },
+            uniquingKeysWith: max
+        )
+    }
+
+    private func normalizedCategoryKey(_ category: String) -> String {
+        category.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     private func mergeTaxonomy(base: [String], values: [String]) -> [String] {

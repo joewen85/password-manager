@@ -1,6 +1,7 @@
 package life.devops.passwordmanager.store
 
 import life.devops.passwordmanager.model.CredentialPayload
+import life.devops.passwordmanager.model.CategorySyncState
 import life.devops.passwordmanager.model.CategoryTemplate
 import life.devops.passwordmanager.model.CategoryTypePreset
 import life.devops.passwordmanager.model.CustomField
@@ -149,6 +150,15 @@ class VaultJsonTest {
                     fields = CategoryTemplate.fieldsForPreset(CategoryTypePreset.SERVER),
                 )
             ),
+            categoryStates = listOf(
+                CategorySyncState(
+                    name = "Deleted Category",
+                    isDeleted = true,
+                    updatedAt = Instant.parse("2026-05-23T00:09:00Z"),
+                    version = mapOf("android-device" to 2, "mac-device" to 1),
+                    updatedBy = "android-device",
+                )
+            ),
             tags = listOf("server", "service", "tag"),
             security = SecuritySettings(requireTotp = true, totpSecret = "JBSWY3DPEHPK3PXP"),
             syncStatus = "Idle",
@@ -162,6 +172,7 @@ class VaultJsonTest {
         assertEquals(4, decoded.entries.size)
         assertEquals(snapshot.categories, decoded.categories)
         assertEquals("Infra", decoded.categoryTemplates.single().category)
+        assertEquals(snapshot.categoryStates, decoded.categoryStates)
         assertEquals(listOf("名称", "备注", "IP地址", "端口", "关联账号"), decoded.categoryTemplates.single().fields.map { it.name })
         assertEquals(snapshot.tags, decoded.tags)
         assertEquals(snapshot.security, decoded.security)

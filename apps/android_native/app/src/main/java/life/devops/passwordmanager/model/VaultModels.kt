@@ -43,10 +43,19 @@ data class SecuritySettings(
     val totpSecret: String = "",
 )
 
+data class CategorySyncState(
+    val name: String,
+    val isDeleted: Boolean = false,
+    val updatedAt: Instant = Instant.now(),
+    val version: Map<String, Int> = emptyMap(),
+    val updatedBy: String = "",
+)
+
 data class VaultSnapshot(
     val entries: List<VaultEntry> = emptyList(),
     val categories: List<String> = emptyList(),
     val categoryTemplates: List<CategoryTemplate> = emptyList(),
+    val categoryStates: List<CategorySyncState> = emptyList(),
     val tags: List<String> = emptyList(),
     val security: SecuritySettings = SecuritySettings(),
     val syncStatus: String = "Not configured",

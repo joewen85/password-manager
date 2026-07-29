@@ -72,6 +72,14 @@ export interface CategoryTemplate {
   fields: FieldTemplate[];
 }
 
+export interface CategorySyncState {
+  name: string;
+  isDeleted: boolean;
+  updatedAt: number;
+  version: Record<string, number>;
+  updatedBy: string;
+}
+
 export enum CategoryTypePreset {
   SERVER = 'server',
   SERVICE = 'service',
@@ -103,6 +111,7 @@ export interface VaultSnapshot {
   tags: string[];
   categories: string[];
   categoryTemplates: CategoryTemplate[];
+  categoryStates?: CategorySyncState[];
   entries: VaultEntry[];
   updatedAt: number;
 }
@@ -118,6 +127,7 @@ export interface VaultPayloadRecord {
   tags: string[];
   categories: string[];
   categoryTemplates?: CategoryTemplate[];
+  categoryStates?: CategorySyncState[];
   entries: VaultEntry[];
   security?: SecuritySettings;
   updatedAt: number;
