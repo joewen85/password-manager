@@ -961,6 +961,18 @@ bool snapshotsEquivalent(const VaultSnapshot& left, const VaultSnapshot& right) 
     return serializeSnapshotJson(normalizedLeft) == serializeSnapshotJson(normalizedRight);
 }
 
+bool syncBusinessContentEquivalent(const VaultSnapshot& left, const VaultSnapshot& right) {
+    auto normalizedLeft = left;
+    auto normalizedRight = right;
+    normalizedLeft.syncStatus.clear();
+    normalizedLeft.backupStatus.clear();
+    normalizedLeft.updatedAt = "__sync_runtime_metadata__";
+    normalizedRight.syncStatus.clear();
+    normalizedRight.backupStatus.clear();
+    normalizedRight.updatedAt = "__sync_runtime_metadata__";
+    return serializeSnapshotJson(normalizedLeft) == serializeSnapshotJson(normalizedRight);
+}
+
 std::string versionJson(const std::map<std::string, int>& version) {
     std::ostringstream out;
     out << "{";
@@ -2650,7 +2662,7 @@ SnapshotSyncResult synchronizeSnapshots(
         resultSettings.deviceId,
         remotePayload.deviceId
     );
-    if (snapshotsEquivalent(mergedSnapshot, remotePayload.snapshot)) {
+    if (syncBusinessContentEquivalent(mergedSnapshot, remotePayload.snapshot)) {
         SnapshotSyncResult result;
         result.snapshot = mergedSnapshot;
         result.stats = mergeResult.stats;

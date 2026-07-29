@@ -290,6 +290,15 @@ final class VaultStore {
     }
 
     func addCategory(_ category: String, preset: CategoryTypePreset?, customFieldNames: [String]) -> Bool {
+        let defaultFieldIDs = Set(CategoryTemplate.defaultFields.map(\.id))
+        let customFields = CategoryTemplate.fields(
+            for: preset,
+            customFieldNames: customFieldNames
+        ).filter { !defaultFieldIDs.contains($0.id) }
+        return addCategory(category, preset: nil, customFields: customFields)
+    }
+
+    func addCategory(_ category: String, preset: CategoryTypePreset?, customFields: [FieldTemplate]) -> Bool {
         let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else {
             statusMessage = "Category is required."
@@ -299,10 +308,45 @@ final class VaultStore {
             statusMessage = "Category already exists."
             return false
         }
+
+        let presetFieldIDs = Set(CategoryTemplate.defaultFields.map(\.id))
+        let presetFields = CategoryTemplate.fields(for: preset).filter {
+            !presetFieldIDs.contains($0.id)
+        }
+        let requestedCustomFields = presetFields + customFields
+        guard !requestedCustomFields.contains(where: {
+            isEditableCategoryFieldType($0.valueType)
+                && $0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }) else {
+            statusMessage = "Field name is required."
+            return false
+        }
+
+        let fields = categoryTemplateFieldsForUserSave(
+            existing: [],
+            requestedCustomFields: requestedCustomFields
+        )
+        if let duplicateName = duplicateEditableCategoryTemplateFieldName(fields) {
+            statusMessage = "Field name already exists: \(duplicateName)."
+            return false
+        }
+        let template = CategoryTemplate(category: normalized, fields: fields)
+        let prospectiveTemplates = categoryTemplates + [template]
+        guard !fields.contains(where: {
+            $0.normalizedValueType == customFieldFieldReferenceValueType
+                && !fieldReferenceTemplateConfigurationIsValid(
+                    sourceCategory: normalized,
+                    sourceField: $0,
+                    templates: prospectiveTemplates
+                )
+        }) else {
+            statusMessage = "Field reference requires a target category and target text field."
+            return false
+        }
+
         categories.append(normalized)
         categories.sort()
         recordCategoryMutation(normalized, isDeleted: false, updatedAt: Date())
-        let fields = CategoryTemplate.fields(for: preset, customFieldNames: customFieldNames)
         upsertCategoryTemplate(category: normalized, fields: fields)
         persistUnlockedSnapshot()
         statusMessage = "Category added."

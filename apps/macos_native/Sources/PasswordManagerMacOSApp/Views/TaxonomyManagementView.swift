@@ -8,7 +8,8 @@ struct TaxonomyManagementView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selectedKind: TaxonomyKind = .category
     @State private var newValue = ""
-    @State private var categoryCustomFields: [CustomField] = []
+    @State private var categoryCustomFields: [FieldTemplate] = []
+    @State private var addError: String?
     @State private var renameRequest: TaxonomyEditRequest?
     @State private var fieldEditRequest: CategoryFieldsEditRequest?
     @State private var deleteRequest: TaxonomyEditRequest?
@@ -54,8 +55,18 @@ struct TaxonomyManagementView: View {
                 }
 
                 if selectedKind == .category {
-                    CategoryPresetShortcutButtons(fields: $categoryCustomFields)
-                    CategoryTemplateFieldNameEditor(fields: $categoryCustomFields)
+                    CategoryTemplateCreationFieldsEditor(
+                        fields: $categoryCustomFields,
+                        sourceCategory: newValue,
+                        categories: store.categories,
+                        templates: store.categoryTemplates
+                    )
+                }
+
+                if let addError {
+                    Text(addError)
+                        .font(.callout)
+                        .foregroundStyle(.red)
                 }
 
                 Group {
@@ -172,6 +183,7 @@ struct TaxonomyManagementView: View {
             if nextKind == .tag {
                 categoryCustomFields = []
             }
+            addError = nil
         }
         .sheet(item: $renameRequest) { request in
             TaxonomyRenameView(store: store, request: request) {
@@ -236,7 +248,7 @@ struct TaxonomyManagementView: View {
             didSave = store.addCategory(
                 value,
                 preset: nil,
-                customFieldNames: categoryCustomFields.map(\.name)
+                customFields: categoryCustomFields
             )
         case .tag:
             didSave = store.addTag(value)
@@ -244,7 +256,10 @@ struct TaxonomyManagementView: View {
         if didSave {
             newValue = ""
             categoryCustomFields = []
+            addError = nil
             onChange()
+        } else {
+            addError = store.statusMessage ?? L10n.t("Operation failed.")
         }
     }
 
@@ -398,7 +413,54 @@ private struct CategoryFieldsEditView: View {
     }
 }
 
-private struct CategoryTemplateFieldEditor: View {
+struct CategoryTemplateCreationFieldsEditor: View {
+    @Binding var fields: [FieldTemplate]
+    let sourceCategory: String
+    let categories: [String]
+    let templates: [CategoryTemplate]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            CategoryPresetShortcutButtons(fields: $fields)
+            CategoryTemplateFieldEditor(
+                fields: $fields,
+                sourceCategory: normalizedSourceCategory,
+                categories: availableCategories,
+                templates: prospectiveTemplates,
+                storedValueFieldIDs: [],
+                referencedTargetFieldIDs: []
+            )
+        }
+    }
+
+    private var normalizedSourceCategory: String {
+        sourceCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var availableCategories: [String] {
+        var values = categories
+        if !normalizedSourceCategory.isEmpty,
+           !values.contains(where: {
+               $0.caseInsensitiveCompare(normalizedSourceCategory) == .orderedSame
+           }) {
+            values.append(normalizedSourceCategory)
+        }
+        return values.sorted()
+    }
+
+    private var prospectiveTemplates: [CategoryTemplate] {
+        guard !normalizedSourceCategory.isEmpty else { return templates }
+        let updated = CategoryTemplate(
+            category: normalizedSourceCategory,
+            fields: CategoryTemplate.defaultCategoryFields() + fields
+        )
+        return templates.filter {
+            $0.category.caseInsensitiveCompare(normalizedSourceCategory) != .orderedSame
+        } + [updated]
+    }
+}
+
+struct CategoryTemplateFieldEditor: View {
     @Binding var fields: [FieldTemplate]
     let sourceCategory: String
     let categories: [String]

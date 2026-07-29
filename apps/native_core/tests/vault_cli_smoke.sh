@@ -10,6 +10,7 @@ bin="$1"
 work_dir="$(dirname "$bin")/cli-smoke-$(basename "$bin")"
 password="test-password"
 vault="$work_dir/vault.envelope"
+field_reference_vault="$work_dir/field-reference-vault.envelope"
 second_vault="$work_dir/second-vault.envelope"
 sync_state="$work_dir/vault.sync-state"
 second_sync_state="$work_dir/second-vault.sync-state"
@@ -21,6 +22,9 @@ display_fixture="$work_dir/display-fixture.json"
 display_output="$work_dir/display-output.json"
 display_secret_output="$work_dir/display-secret-output.json"
 display_export="$work_dir/display-export.json"
+field_reference_export="$work_dir/field-reference-export.json"
+field_reference_display="$work_dir/field-reference-display.json"
+field_reference_renamed_import="$work_dir/field-reference-renamed-import.json"
 
 rm -rf "$work_dir"
 mkdir -p "$work_dir"
@@ -33,6 +37,17 @@ cleanup() {
   rm -rf "$work_dir"
 }
 trap cleanup EXIT
+
+expect_failure() {
+  local expected="$1"
+  shift
+  local output
+  if output="$("$@" 2>&1)"; then
+    echo "expected command to fail: $*" >&2
+    return 1
+  fi
+  grep -q "$expected" <<<"$output"
+}
 
 "$bin" init "$password" --vault "$vault" >/dev/null
 "$bin" add-category "$password" Infra --shortcut server --field Owner --vault "$vault" >/dev/null
@@ -50,6 +65,164 @@ templates = {
     for item in snapshot.get("categoryTemplates", [])
 }
 assert templates["CustomOnly"] == ["名称", "备注", "Owner"]
+PY
+"$bin" init "$password" --vault "$field_reference_vault" >/dev/null
+"$bin" add-category "$password" Accounts --field Email --vault "$field_reference_vault" >/dev/null
+"$bin" add-category "$password" Servers \
+  --field Email \
+  --field-reference "Owner Email" Servers Email \
+  --vault "$field_reference_vault" >/dev/null
+field_reference_target_id="$("$bin" add-entry "$password" \
+  --label "CLI Target" \
+  --type credential \
+  --category Servers \
+  --field Email=cli-target@example.com \
+  --field Region=west \
+  --vault "$field_reference_vault" | awk '{print $3}')"
+test -n "$field_reference_target_id"
+field_reference_source_id="$("$bin" add-entry "$password" \
+  --label "CLI Source" \
+  --type server \
+  --category Servers \
+  --field-reference "Owner Email" "CLI Target" \
+  --vault "$field_reference_vault" | awk '{print $3}')"
+test -n "$field_reference_source_id"
+"$bin" export-snapshot "$password" --vault "$field_reference_vault" --out "$field_reference_export" >/dev/null
+python3 - "$field_reference_export" "$field_reference_target_id" "$field_reference_source_id" <<'PY'
+import json
+import sys
+
+path, target_id, source_id = sys.argv[1:]
+with open(path, "r", encoding="utf-8") as handle:
+    snapshot = json.load(handle)
+
+templates = {item["category"]: item["fields"] for item in snapshot["categoryTemplates"]}
+target_field = next(field for field in templates["Servers"] if field["name"] == "Email")
+source_field = next(field for field in templates["Servers"] if field["name"] == "Owner Email")
+target_entry = next(entry for entry in snapshot["entries"] if entry["id"] == target_id)
+source_entry = next(entry for entry in snapshot["entries"] if entry["id"] == source_id)
+target_binding = next(field for field in target_entry["customFields"] if field["name"] == "Email")
+ad_hoc_binding = next(field for field in target_entry["customFields"] if field["name"] == "Region")
+binding = next(field for field in source_entry["customFields"] if field["name"] == "Owner Email")
+assert target_field["valueType"] == "text"
+assert source_field["valueType"] == "fieldReference"
+assert source_field["targetCategory"] == "Servers"
+assert source_field["targetFieldId"] == target_field["id"]
+assert target_binding["templateFieldId"] == target_field["id"]
+assert ad_hoc_binding["templateFieldId"] == ""
+assert binding["templateFieldId"] == source_field["id"]
+assert binding["value"] == target_id
+PY
+"$bin" show-entry "$password" "$field_reference_source_id" --vault "$field_reference_vault" >"$field_reference_display"
+python3 - "$field_reference_display" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    snapshot = json.load(handle)
+fields = {field["name"]: field["value"] for field in snapshot["entries"][0]["customFields"]}
+assert fields["Owner Email"] == "resolved: CLI Target - Servers / Email = cli-target@example.com"
+PY
+
+expect_failure "target category does not exist" \
+  "$bin" add-category "$password" MissingCategory \
+    --field-reference Owner Missing Email --vault "$field_reference_vault"
+expect_failure "target field does not exist" \
+  "$bin" add-category "$password" MissingField \
+    --field-reference Owner Accounts Missing --vault "$field_reference_vault"
+expect_failure "target field must be text" \
+  "$bin" add-category "$password" UnsupportedTarget \
+    --field-reference Owner Servers "Owner Email" --vault "$field_reference_vault"
+expect_failure "direct self-reference is not allowed" \
+  "$bin" add-category "$password" SelfReference \
+    --field-reference Loop SelfReference Loop --vault "$field_reference_vault"
+expect_failure "source field duplicates another field" \
+  "$bin" add-category "$password" DuplicateSource \
+    --field Owner --field-reference Owner Accounts Email --vault "$field_reference_vault"
+expect_failure "requires add-category" \
+  "$bin" category PreviewOnly --field-reference Owner Accounts Email
+expect_failure "source field does not exist" \
+  "$bin" add-entry "$password" --label "Missing Source Field" --category Servers \
+    --field-reference Missing "$field_reference_target_id" --vault "$field_reference_vault"
+expect_failure "source field is not a field reference" \
+  "$bin" add-entry "$password" --label "Text Source Field" --category Accounts \
+    --field-reference Email "$field_reference_target_id" --vault "$field_reference_vault"
+expect_failure "target entry does not exist" \
+  "$bin" add-entry "$password" --label "Missing Target" --category Servers \
+    --field-reference "Owner Email" Missing --vault "$field_reference_vault"
+wrong_category_target_id="$("$bin" add-entry "$password" \
+  --label "Wrong Category Target" --category Accounts --vault "$field_reference_vault" | awk '{print $3}')"
+expect_failure "target entry category does not match" \
+  "$bin" add-entry "$password" --label "Wrong Category Binding" --category Servers \
+    --field-reference "Owner Email" "$wrong_category_target_id" --vault "$field_reference_vault"
+deleted_target_id="$("$bin" add-entry "$password" \
+  --label "Deleted CLI Target" --category Servers --vault "$field_reference_vault" | awk '{print $3}')"
+"$bin" delete-entry "$password" "$deleted_target_id" --vault "$field_reference_vault" >/dev/null
+expect_failure "target entry is deleted" \
+  "$bin" add-entry "$password" --label "Deleted Target Binding" --category Servers \
+    --field-reference "Owner Email" "$deleted_target_id" --vault "$field_reference_vault"
+"$bin" add-entry "$password" --label "CLI Target" --category Servers --vault "$field_reference_vault" >/dev/null
+expect_failure "target entry selector is ambiguous" \
+  "$bin" add-entry "$password" --label "Ambiguous Target" --category Servers \
+    --field-reference "Owner Email" "CLI Target" --vault "$field_reference_vault"
+expect_failure "bound more than once" \
+  "$bin" add-entry "$password" --label "Duplicate Binding" --category Servers \
+    --field-reference "Owner Email" "$field_reference_target_id" \
+    --field-reference "Owner Email" "$field_reference_target_id" \
+    --vault "$field_reference_vault"
+"$bin" export-snapshot "$password" --vault "$field_reference_vault" --out "$field_reference_export" >/dev/null
+python3 - "$field_reference_export" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    snapshot = json.load(handle)
+categories = set(snapshot["categories"])
+assert not categories.intersection({
+    "MissingCategory",
+    "MissingField",
+    "UnsupportedTarget",
+    "SelfReference",
+    "DuplicateSource",
+})
+labels = {entry["label"] for entry in snapshot["entries"]}
+assert not labels.intersection({
+    "Missing Source Field",
+    "Text Source Field",
+    "Missing Target",
+    "Wrong Category Binding",
+    "Deleted Target Binding",
+    "Ambiguous Target",
+    "Duplicate Binding",
+})
+PY
+python3 - "$field_reference_export" "$field_reference_renamed_import" <<'PY'
+import json
+import sys
+
+source, destination = sys.argv[1:]
+with open(source, "r", encoding="utf-8") as handle:
+    snapshot = json.load(handle)
+servers = next(item for item in snapshot["categoryTemplates"] if item["category"] == "Servers")
+target_field = next(field for field in servers["fields"] if field["name"] == "Email")
+target_field["name"] = "Directory Address"
+with open(destination, "w", encoding="utf-8") as handle:
+    json.dump(snapshot, handle, ensure_ascii=False)
+PY
+"$bin" import-snapshot "$password" --vault "$field_reference_vault" \
+  --in "$field_reference_renamed_import" >/dev/null
+"$bin" show-entry "$password" "$field_reference_source_id" \
+  --vault "$field_reference_vault" >"$field_reference_display"
+python3 - "$field_reference_display" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    snapshot = json.load(handle)
+fields = {field["name"]: field["value"] for field in snapshot["entries"][0]["customFields"]}
+assert fields["Owner Email"] == (
+    "resolved: CLI Target - Servers / Directory Address = cli-target@example.com"
+)
 PY
 "$bin" add-entry "$password" \
   --label "Smoke Entry" \

@@ -10,7 +10,7 @@
 - 首个原生等价切片：初始化/解锁保险库、锁定保险库、条目列表、搜索/筛选、详情页 Overview/Fields 分段、详情字段复制/敏感字段显示、新增/编辑/删除 credential/server/service 条目、分类和标签字段、分类/标签管理、清空保险库数据、基于 TOTP 的二次验证解锁、Keychain + Touch ID 解锁、手动同步入口、本地加密备份、完整快照 JSON 导入/导出。
 - 数据模型对齐现有共享契约：`credential`、`server`、`service`、PBKDF 元数据记录、AES-GCM payload 记录形状、软删除字段、删除 tombstone 时间戳、版本映射和 `updatedBy`。
 - 字段关联已完成 macOS 原生 UI 垂直切片：分类模板可配置文本或单条条目关联及目标分类；已有存储值的字段不可删除或改型，但仍可改名和调整目标分类，未知字段类型只读保留。条目编辑器可按目标分类选择、更换或清空 live 条目；详情展示 empty、resolved、missing、deleted、categoryMismatch 五态，并支持查看目标、修复和清空。搜索只加入成功解析目标的名称与分类，不索引或展示原始引用 ID、未知/孤儿字段值或目标秘密。标签继续承担宽松分组、搜索和筛选，字段关联承担精确单条引用；格式和生命周期规则见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
-- P8 已加入独立的字段级关联领域解析：`fieldReference` 按目标条目 ID 和稳定 `targetFieldId` 单跳解析目标文本字段，区分九种状态；搜索只投影已解析目标的名称、分类和字段名，copy import 重映射批次内目标条目 ID，分类改名传播目标分类，模板保存阻止删除或改型被引用的目标文本字段但允许改名。当前阶段仍不提供 `fieldReference` 的 macOS 创建、编辑或详情 UI，也不改变既有 `entryReference` 语义。API 见 `docs/FIELD_REFERENCE_API.md`。
+- 字段级关联使用 `fieldReference` 按目标条目 ID 和稳定 `targetFieldId` 单跳解析目标文本字段并区分九种状态。主创建菜单、分类/标签管理和条目编辑器内联分类创建现已在首次保存前提供 text/fieldReference 类型、目标分类和目标文本字段选择；prospective template 支持关联同分类草稿里的其他文本字段并拒绝自引用。搜索、copy import、分类改名和目标字段生命周期保护继续遵循既有契约，不改变 `entryReference` 语义。API 见 `docs/FIELD_REFERENCE_API.md`。
 - 已实现本地加密文件持久化。应用会将加密后的保险库 envelope 写入 Application Support，并使用 PBKDF2-SHA256 验证主密码、使用 AES-256-GCM 加密 payload。
 - PBKDF2 默认参数与 Dart package 契约对齐：新建 macOS 原生保险库使用 600000 次迭代。
 - 单元测试已覆盖 PBKDF2 verifier 确定性、AES-GCM 往返、篡改拒绝、TOTP 生成/验证、加密 envelope 持久化不泄露明文 secret、恢复最新加密备份、备份保留策略、同步合并数据层，以及解密由 `packages/crypto` 生成的多条目 fixture。
@@ -118,6 +118,7 @@ swift test
 - 条目列表空状态已对齐 Android：无条目时展示用途说明，并可直接从空状态新建条目。
 - 条目列表筛选/搜索状态会随导入、恢复备份、清空数据、分类/标签变化和搜索变化自动校正，避免详情页停留在不可见或已不存在的条目上。
 - 条目编辑器已对齐 Android 的分类/标签工作流：可从已有分类中选择、对已有标签多选，并可在编辑条目时快速创建分类或标签。
+- 三个分类创建入口均保存完整 `FieldTemplate`：可首次创建字段级关联、选择跨分类或同分类草稿文本目标，并在配置无效时原子拒绝创建。
 - Service 条目已支持编辑多个 service account；详情页会隐藏账号密码明细，并支持按需显示/复制。
 - 详情页字段支持一键复制；密码和 secret 字段默认隐藏，可按需显示/隐藏并复制。
 - 删除条目会记录删除 tombstone 时间戳；如果现有条目通过编辑恢复，会清除该时间戳，与 Android store 行为一致。
@@ -227,7 +228,7 @@ EXPECTED_SIGNING_CERT_SHA256=AA:BB:CC:... \
 
 privacy manifest 当前声明不追踪、不列出 tracking domains、不声明数据收集或 required-reason API。若后续加入 telemetry、第三方 SDK、账号系统、剪贴板/磁盘空间/文件时间戳等 required-reason API 使用，需要同步更新 `ReleaseSupport/PrivacyInfo.xcprivacy` 和 App Store Connect 隐私信息。
 
-P8 字段级关联只在已解锁的本地加密快照中读取目标条目和指定文本字段；目标字段值不会进入搜索、日志、复制或 UI。该行为不增加网络端点、系统权限、required-reason API、数据采集或追踪，因此无需修改 privacy manifest 或 entitlements。详见 `docs/PERMISSIONS_AND_PRIVACY.md`。
+字段级关联创建只读取已解锁内存中的分类模板名称和稳定字段 ID；解析仍限定在本地加密快照中。该行为不增加网络端点、系统权限、required-reason API、数据采集或追踪，因此无需修改 privacy manifest 或 entitlements。详见 `docs/PERMISSIONS_AND_PRIVACY.md`。
 
 app icon 当前由 `scripts/generate_app_icon.swift` 在打包时生成，输出到 `dist/release/AppIcon.iconset` 和 app bundle 内的 `Contents/Resources/AppIcon.icns`。`ReleaseSupport/Info.plist` 已声明 `CFBundleIconFile=AppIcon`。正式品牌视觉确定后，可以替换生成脚本或改为提交设计团队提供的 `.icns`，但发布包仍需保留 `CFBundleIconFile` 与 bundle resource 的一致性。
 
@@ -347,7 +348,7 @@ This directory contains the native macOS application target, used to build macOS
 - First native parity slice: initialize/unlock vault, lock vault, list entries, search/filter, detail field copy and secret reveal, add/edit/delete credential/server/service entries, category and tag fields, category/tag management, clear vault data, TOTP-based 2FA unlock verification, manual sync entry point, local encrypted backup creation, and full snapshot JSON import/export.
 - Data model mirrors the current shared contract: `credential`, `server`, `service`, PBKDF metadata records, AES-GCM payload record shape, soft-delete fields, deletion tombstone timestamps, version map, and `updatedBy`.
 - Entry references now have a complete native macOS UI slice. Category templates can define text or single-entry references and a target category; fields with stored values cannot be deleted or retyped but can still be renamed or point to a different target category, while unknown field types remain read-only and lossless. Entry editing can select, replace, or clear a live target filtered by category. Detail presents empty, resolved, missing, deleted, and categoryMismatch states with view, repair, and clear actions. Search includes only a successfully resolved target label and category, never raw reference IDs, unknown/orphan values, or target secrets. Tags remain the loose grouping and filtering mechanism; references provide exact single-entry links. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and lifecycle rules.
-- P8 adds an independent field-level domain resolver. A `fieldReference` resolves one hop through an exact target entry ID and stable `targetFieldId`, reports nine states, contributes only the resolved target label/category/field name to search, remaps batch target-entry IDs during copy import, propagates target categories on rename, and prevents referenced target text fields from being deleted or retyped while allowing rename. This phase still adds no macOS UI for creating, editing, or displaying `fieldReference` and does not change existing `entryReference` behavior. See `docs/FIELD_REFERENCE_API.md`.
+- A `fieldReference` resolves one hop through an exact target entry ID and stable `targetFieldId` and reports nine states. The main create sheet, taxonomy manager, and entry editor's inline category creation now configure text/field-reference types plus target category/text field before first save. Prospective templates allow another text field in the same category draft while rejecting direct self-reference. Search, copy import, category rename, and target-field lifecycle behavior remain unchanged, as does legacy `entryReference`. See `docs/FIELD_REFERENCE_API.md`.
 - Local encrypted file persistence is implemented. The app writes an encrypted vault envelope to Application Support using PBKDF2-SHA256 master password verification and AES-256-GCM payload encryption.
 - PBKDF2 defaults are aligned with the Dart package contract: 600000 iterations for new native macOS vaults.
 - Unit coverage exists for PBKDF2 verifier determinism, AES-GCM round trip, tamper rejection, TOTP generation/verification, encrypted envelope persistence without plaintext secret leakage, latest encrypted backup restore, backup retention, sync merge data layer, and decrypting a multi-entry fixture generated by `packages/crypto`.
@@ -571,7 +572,7 @@ EXPECTED_SIGNING_CERT_SHA256=AA:BB:CC:... \
 
 The current privacy manifest declares no tracking, no tracking domains, no collected data types, and no required-reason API usage. If telemetry, third-party SDKs, accounts, pasteboard, disk-space, file-timestamp, or other required-reason API usage is added later, update `ReleaseSupport/PrivacyInfo.xcprivacy` and the App Store Connect privacy answers at the same time.
 
-P8 field-level resolution reads the target entry and selected text field only inside the unlocked local encrypted snapshot. The target field value is excluded from search, logs, copy actions, and UI. It adds no network endpoint, system permission, required-reason API, data collection, or tracking, so this change requires no privacy manifest or entitlement update. See `docs/PERMISSIONS_AND_PRIVACY.md`.
+Field-reference creation reads only category-template names and stable field IDs in unlocked memory; resolution remains inside the local encrypted snapshot. It adds no network endpoint, system permission, required-reason API, data collection, or tracking, so this change requires no privacy manifest or entitlement update. See `docs/PERMISSIONS_AND_PRIVACY.md`.
 
 The app icon is currently generated by `scripts/generate_app_icon.swift` during packaging. The script writes `dist/release/AppIcon.iconset`, converts it to `Contents/Resources/AppIcon.icns`, and `ReleaseSupport/Info.plist` declares `CFBundleIconFile=AppIcon`. Once final brand artwork exists, replace the generator or commit a design-provided `.icns`, but keep `CFBundleIconFile` aligned with the bundled resource.
 
@@ -656,6 +657,7 @@ The script rejects ad-hoc signed apps and requires a bundle signed by a `Develop
 - [x] Category/tag management supports create, rename, and delete, matching Android entry updates when categories or tags are deleted.
 - [x] The create menu supports adding entries, creating categories, and creating tags.
 - [x] The entry editor supports searchable category selection, searchable tag multi-select, and creating categories/tags while editing.
+- [x] All three category-creation entry points persist complete field templates, including cross-category and same-draft field references, with atomic invalid/self-reference rejection.
 - [x] Detail fields support copy actions, and sensitive fields support reveal/hide plus copy.
 - [x] Clear data requires master password confirmation and clears entries, categories, tags, and vault security settings in line with Android behavior.
 - [x] Cross-implementation fixture test proves Swift can derive and decrypt a multi-entry payload generated by the current Dart crypto package.

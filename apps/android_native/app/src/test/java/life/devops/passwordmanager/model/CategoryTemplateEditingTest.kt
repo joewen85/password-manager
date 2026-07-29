@@ -187,6 +187,28 @@ class CategoryTemplateEditingTest {
     }
 
     @Test
+    fun firstCategorySavePreservesSameCategoryFieldReferenceConfiguration() {
+        val target = newCategoryTemplateField(name = "Endpoint")
+        val reference = newCategoryTemplateField(
+            name = "Primary endpoint",
+            valueType = "fieldReference",
+            targetCategory = " Services ",
+            targetFieldId = target.id,
+        )
+
+        val saved = categoryTemplateFieldsForUserSave(
+            existing = emptyList(),
+            requestedCustomFields = listOf(target, reference),
+        )
+
+        assertEquals(listOf("名称", "备注", "Endpoint", "Primary endpoint"), saved.map { it.name })
+        assertEquals(
+            reference.copy(targetCategory = "Services"),
+            saved.single { it.id == reference.id },
+        )
+    }
+
+    @Test
     fun nonEmptyWhitespaceIdsRemainOpaqueAndMatchExactly() {
         val legacy = FieldTemplate(id = "   ", name = "Owner")
 

@@ -106,7 +106,7 @@ struct CategoryTemplateEditorView: View {
     }
 }
 
-private struct CategoryTemplateFieldEditor: View {
+struct CategoryTemplateFieldEditor: View {
     @Binding var field: FieldTemplate
     var sourceCategory: String
     var categories: [String]

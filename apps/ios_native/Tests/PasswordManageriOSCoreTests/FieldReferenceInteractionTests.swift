@@ -209,4 +209,78 @@ struct FieldReferenceInteractionTests {
         #expect(!store.updateCategoryTemplate(category: "Servers", requestedCustomFields: [invalid]))
         #expect(store.categoryTemplate(for: "Servers") == beforeInvalidSave)
     }
+
+    @MainActor
+    @Test("Initial category creation persists cross-category and same-category field references")
+    func initialCategoryCreationPersistsCompleteFieldReferences() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManageriOSInitialFieldReferenceCreation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = VaultStore(
+            repository: FileVaultRepository(baseDirectory: directory),
+            syncSettingsRepository: nil
+        )
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+
+        let email = newCategoryTemplateField(name: "Email")
+        #expect(store.addCategory("Accounts", preset: nil, customFields: [email]))
+
+        let endpoint = newCategoryTemplateField(name: "Endpoint")
+        let accountEmail = newCategoryTemplateField(
+            name: "Account email",
+            valueType: customFieldFieldReferenceValueType,
+            targetCategory: "Accounts",
+            targetFieldId: email.id
+        )
+        let primaryEndpoint = newCategoryTemplateField(
+            name: "Primary endpoint",
+            valueType: customFieldFieldReferenceValueType,
+            targetCategory: "Services",
+            targetFieldId: endpoint.id
+        )
+        let creationFields = [endpoint, accountEmail, primaryEndpoint]
+
+        #expect(categoryCreationFieldValidationMessage(
+            category: " Services ",
+            customFields: creationFields,
+            existingTemplates: store.categoryTemplates
+        ) == nil)
+        #expect(store.addCategory(" Services ", preset: nil, customFields: creationFields))
+
+        let saved = try #require(store.categoryTemplate(for: "Services"))
+        #expect(saved.fields.map(\.name) == [
+            "名称", "备注", "Endpoint", "Account email", "Primary endpoint"
+        ])
+        #expect(saved.fields.first { $0.id == accountEmail.id }?.targetFieldId == email.id)
+        #expect(saved.fields.first { $0.id == primaryEndpoint.id }?.targetFieldId == endpoint.id)
+
+        let reloadedStore = VaultStore(
+            repository: FileVaultRepository(baseDirectory: directory),
+            syncSettingsRepository: nil
+        )
+        #expect(reloadedStore.unlock(password: "test-password"))
+        let reloaded = try #require(reloadedStore.categoryTemplate(for: "Services"))
+        #expect(reloaded.fields.first { $0.id == accountEmail.id }?.targetFieldId == email.id)
+        #expect(reloaded.fields.first { $0.id == primaryEndpoint.id }?.targetFieldId == endpoint.id)
+
+        let selfReference = newCategoryTemplateField(
+            name: "Loop",
+            valueType: customFieldFieldReferenceValueType,
+            targetCategory: "Invalid",
+            targetFieldId: "placeholder"
+        )
+        var invalidSelfReference = selfReference
+        invalidSelfReference.targetFieldId = invalidSelfReference.id
+        #expect(categoryCreationFieldValidationMessage(
+            category: "Invalid",
+            customFields: [invalidSelfReference],
+            existingTemplates: reloadedStore.categoryTemplates
+        ) == "Field reference requires a target category and target text field.")
+        #expect(!reloadedStore.addCategory(
+            "Invalid",
+            preset: nil,
+            customFields: [invalidSelfReference]
+        ))
+        #expect(!reloadedStore.categories.contains("Invalid"))
+    }
 }

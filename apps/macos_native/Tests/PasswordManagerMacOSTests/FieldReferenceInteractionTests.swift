@@ -80,6 +80,40 @@ struct FieldReferenceInteractionTests {
         ))
     }
 
+    @Test("Prospective same-category templates expose other draft text fields")
+    func prospectiveSameCategoryTemplateCandidates() {
+        let email = newCategoryTemplateField(name: "Email")
+        let alias = newCategoryTemplateField(
+            name: "Alias",
+            valueType: "fieldReference",
+            targetCategory: "Servers",
+            targetFieldId: email.id
+        )
+        let template = CategoryTemplate(
+            category: "Servers",
+            fields: CategoryTemplate.defaultCategoryFields() + [email, alias]
+        )
+
+        #expect(fieldReferenceTargetFieldCandidates(
+            sourceCategory: "Servers",
+            sourceField: alias,
+            templates: [template]
+        ).map(\.id).contains(email.id))
+        #expect(fieldReferenceTemplateConfigurationIsValid(
+            sourceCategory: "Servers",
+            sourceField: alias,
+            templates: [template]
+        ))
+
+        var selfReference = alias
+        selfReference.targetFieldId = alias.id
+        #expect(!fieldReferenceTemplateConfigurationIsValid(
+            sourceCategory: "Servers",
+            sourceField: selfReference,
+            templates: [template]
+        ))
+    }
+
     @Test("All nine states use safe text and route repair to the correct editor")
     func nineStatePresentationAndRepairRouting() {
         let target = FieldReferenceTarget(

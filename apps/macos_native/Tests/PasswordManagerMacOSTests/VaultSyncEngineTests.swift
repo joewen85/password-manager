@@ -64,6 +64,57 @@ struct VaultSyncEngineTests {
         #expect(client.uploadedPayloads.isEmpty)
     }
 
+    @Test("Runtime metadata differences do not reupload category tombstones")
+    func runtimeMetadataDifferencesDoNotReuploadCategoryTombstones() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        let tombstone = CategorySyncState(
+            name: "test",
+            isDeleted: true,
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_100),
+            version: ["mac-device": 2],
+            updatedBy: "mac-device"
+        )
+        var local = makeSnapshot(entries: [], updatedAt: Date(timeIntervalSince1970: 1_700_000_300))
+        local.categoryStates = [tombstone]
+        local.syncStatus = "Local sync status"
+        local.lastBackupStatus = "Local backup status"
+        var remote = local
+        remote.syncStatus = "Remote sync status"
+        remote.lastBackupStatus = "Remote backup status"
+        remote.updatedAt = Date(timeIntervalSince1970: 1_700_000_200)
+
+        for strategy in [SyncSettingsConflictStrategy.remoteWins, .keepBoth] {
+            var settings = SyncSettings.defaults(deviceId: "mac-device")
+            settings.lastSyncRevision = 8
+            settings.hasLocalChanges = false
+            settings.conflictStrategy = strategy
+            let remotePayload = try engine.encodePayload(
+                VaultSyncPayload(
+                    exportedAt: now,
+                    deviceId: "remote-device",
+                    revision: 9,
+                    snapshot: remote
+                )
+            )
+            let client = FakeSyncClient(
+                downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)]
+            )
+
+            let result = try await engine.synchronize(
+                localSnapshot: local,
+                settings: settings,
+                client: client
+            )
+
+            #expect(!result.uploaded)
+            #expect(result.settings.lastSyncRevision == 9)
+            #expect(client.uploadedPayloads.isEmpty)
+            #expect(result.snapshot.categories.isEmpty)
+            #expect(result.snapshot.categoryStates == [tombstone])
+        }
+    }
+
     @Test("Remote tombstone applies without restoring deleted taxonomy")
     func remoteTombstoneAppliesWithoutRestoringDeletedTaxonomy() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)

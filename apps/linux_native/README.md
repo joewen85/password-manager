@@ -9,7 +9,7 @@
 - 当前切片是 C++17 + OpenSSL 的 Linux terminal-native 起点，核心逻辑来自 `apps/native_core`。
 - 已实现可测试核心：PBKDF2-SHA256、AES-256-GCM encrypted vault envelope、TOTP、entry model、搜索/过滤、分类/标签集合、JSON snapshot 序列化/反序列化、encrypted vault 文件读写、version-vector merge。
 - CLI 入口支持初始化、`--password-stdin` 主密码输入、TOTP vault 解锁强制校验、解锁状态检查、分类模板持久化、credential/server/service 条目新增、搜索列表、单条查看、软删除、本地 encrypted envelope 备份/恢复、明文 snapshot 导出/导入、TOTP 生成、WebDAV / S3 presigned URL / 腾讯云 COS / 阿里云 OSS 远端对象同步和 `self-test`，Windows/Linux 共用 `apps/native_core/src/vault_cli.cpp`。
-- 共享 C++ core 已无损保留字段关联契约，并提供五态解析、生命周期传播、安全搜索投影、纯 copy-import ID 重映射 helper 和同步冲突保真测试。CLI 搜索只使用成功解析目标的名称/分类，不索引原始引用 ID、目标秘密、未知字段值或孤儿绑定值；`show-entry` 将引用安全展示为 `empty`、`resolved: <名称> - <分类>`、`missing`、`deleted` 或 `categoryMismatch`，即使传入 `--show-secret` 也不会泄露上述原值或目标秘密。`export-snapshot` 是用于无损往返的敏感明文数据边界，会保留原始引用 ID 和未知/孤儿值。标签职责不变，CLI 暂不提供关联编辑或 scoped-copy 导入流程，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
+- 共享 C++ core 已无损保留字段关联契约，并提供五态解析、生命周期传播、安全搜索投影、纯 copy-import ID 重映射 helper 和同步冲突保真测试。CLI 搜索只使用成功解析目标的名称/分类，不索引原始引用 ID、目标秘密、未知字段值或孤儿绑定值；`show-entry` 将引用安全展示为 `empty`、`resolved: <名称> - <分类>`、`missing`、`deleted` 或 `categoryMismatch`，即使传入 `--show-secret` 也不会泄露上述原值或目标秘密。`export-snapshot` 是用于无损往返的敏感明文数据边界，会保留原始引用 ID 和未知/孤儿值。标签职责不变，CLI 已支持在创建来源模板字段时配置 `fieldReference` 并在创建条目时选择目标条目；旧 `entryReference` 编辑和 scoped-copy 导入流程仍未提供，格式与上线顺序见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
 - 共享 core 已完成 `fieldReference` 九态单跳解析、目标字段生命周期保护、分类改名传播、安全搜索投影、copy-import 条目 ID 重映射和同步冲突保真；旧数据空字段 ID 名称回退与非空 ID 精确匹配规则在各端一致。P12 `show-entry` 已提供九态详情，只有 `resolved` 会在显式解锁详情中显示配置的目标文本字段值；原始 ID、目标秘密、无关字段和非成功态目标值始终隐藏，搜索也不索引目标字段值。
 - 当前尚未实现 GTK/Qt/libadwaita 图形界面、GUI CRUD 和 GUI 同步入口。
 - 当前在 macOS 上用 clang + Homebrew OpenSSL 验证核心逻辑；同时提供 Docker 化 Ubuntu release gate，可在真实 Linux userspace 中使用系统 OpenSSL/libcurl 重新构建、跑完整 core/CLI smoke，并构建/安装/卸载 CLI `.deb` 包。
@@ -129,6 +129,20 @@ make OPENSSL_PREFIX=/usr
    ./build/password-manager-linux add-category "test-password" Infra --shortcut server --field Owner
    ./build/password-manager-linux status "test-password"
    ```
+
+   字段到字段关联必须在创建来源模板字段的同一命令中设置。跨分类目标必须先存在；同分类目标文本字段可在同一命令用 `--field` 创建。参数使用人类可读名称，持久化时自动写入目标字段稳定 ID：
+
+   ```bash
+   ./build/password-manager-linux add-category "test-password" Servers \
+     --field Email --field-reference "Owner Email" Servers Email
+   ./build/password-manager-linux add-entry "test-password" \
+     --label "Production Account" --category Servers --field Email=ops@example.com
+   ./build/password-manager-linux add-entry "test-password" \
+     --label "Production Server" --category Servers \
+     --field-reference "Owner Email" "Production Account"
+   ```
+
+   条目目标可使用精确 ID，或使用目标分类内唯一的条目名称。命令会写入来源 `templateFieldId` 和目标条目 ID；普通 `--field` 与分类中的 text 模板同名时也会绑定其稳定 ID，真正的临时字段仍保持空绑定。命令拒绝缺失/非文本目标字段、直接自引用、失效目标和歧义名称，不需要先创建文本字段再改型。该能力仅增加现有加密 JSON 属性，不存在数据库 schema，因此不需要数据库迁移文件；旧快照由 decoder 默认值兼容。
 
 6. 添加、搜索、查看和软删除条目。列表和查看默认隐藏 secret，只有显式传入 `--show-secret` 才显示：
 
@@ -299,7 +313,7 @@ This directory contains the native Linux application target, used to build Linux
 - The current slice is a C++17 + OpenSSL Linux terminal-native starting point.
 - Testable core is implemented in shared `apps/native_core`: PBKDF2-SHA256, AES-256-GCM encrypted vault envelope, TOTP, entry model, search/filtering, category/tag collection rebuilding, JSON snapshot serialization/deserialization, encrypted vault file read/write, and version-vector merge.
 - The CLI entry point supports encrypted vault initialization, `--password-stdin` master password input, TOTP-protected vault enforcement, unlock status checks, persisted category templates, credential/server/service entry add, search/list, single-entry view, soft delete, local encrypted envelope backup/restore, plaintext snapshot export/import, TOTP generation, WebDAV / S3 presigned URL / Tencent COS / Aliyun OSS remote object sync, and `self-test`.
-- The shared C++ core losslessly preserves entry references and provides five-state resolution, lifecycle propagation, safe search projection, a pure copy-import ID remapping helper, and sync conflict-preservation coverage. CLI search uses only successfully resolved target labels/categories and suppresses raw reference IDs, target secrets, unknown field values, and orphaned binding values. `show-entry` provides five-state safe reference display as `empty`, `resolved: <label> - <category>`, `missing`, `deleted`, or `categoryMismatch`; this remains safe with `--show-secret`, which only controls the selected entry's own secret. `export-snapshot` is the lossless plaintext boundary and intentionally retains raw reference IDs and unknown/orphan values, so its output is sensitive vault data. Tags remain unchanged; reference editing and a scoped-copy CLI flow are still outside this slice. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
+- The shared C++ core losslessly preserves entry references and provides five-state resolution, lifecycle propagation, safe search projection, a pure copy-import ID remapping helper, and sync conflict-preservation coverage. CLI search uses only successfully resolved target labels/categories and suppresses raw reference IDs, target secrets, unknown field values, and orphaned binding values. `show-entry` provides five-state safe reference display as `empty`, `resolved: <label> - <category>`, `missing`, `deleted`, or `categoryMismatch`; this remains safe with `--show-secret`, which only controls the selected entry's own secret. `export-snapshot` is the lossless plaintext boundary and intentionally retains raw reference IDs and unknown/orphan values, so its output is sensitive vault data. Tags remain unchanged. The CLI now creates `fieldReference` definitions with their source fields and binds them while creating entries; legacy `entryReference` editing and scoped-copy remain outside this slice. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for the format and rollout order.
 - The P12 shared CLI renders all nine `fieldReference` states through `show-entry`. Only `resolved` includes the configured target text field value at this explicit unlocked detail boundary; raw IDs, target secrets, unrelated fields, and non-resolved target values remain hidden, and CLI search never indexes the target field value.
 - GTK/Qt/libadwaita GUI, GUI CRUD, and GUI sync entry points are not implemented yet.
 - The current verification runs on macOS with clang + Homebrew OpenSSL. A Dockerized Ubuntu release gate is also available to rebuild with distribution OpenSSL/libcurl, run the full core/CLI smoke coverage, and build/install/uninstall the CLI `.deb` package in a real Linux userspace.
@@ -405,6 +419,20 @@ The script builds the release binary and runs CLI `self-test`, then runs asserti
    ```bash
    ./build/password-manager-linux init "test-password"
    ```
+
+   Create the field-reference definition with its source template field, then bind it while creating the source entry. Cross-category targets must already exist; a same-category target text field can be declared with `--field` in the same command. Category and field arguments are human-readable names; the persisted contract uses stable field and entry IDs:
+
+   ```bash
+   ./build/password-manager-linux add-category "test-password" Servers \
+     --field Email --field-reference "Owner Email" Servers Email
+   ./build/password-manager-linux add-entry "test-password" \
+     --label "Production Account" --category Servers --field Email=ops@example.com
+   ./build/password-manager-linux add-entry "test-password" \
+     --label "Production Server" --category Servers \
+     --field-reference "Owner Email" "Production Account"
+   ```
+
+   A target entry may be selected by exact ID or by a unique label in the configured target category. Matching text `--field` values store the template field's stable ID, while genuinely ad-hoc fields keep an empty binding. Missing or non-text target fields, direct self-reference, unavailable targets, and ambiguous labels are rejected before saving. These are additive encrypted-JSON properties; there is no database schema or migration file, and legacy snapshots use decoder defaults.
 
 4. Add, search, view, and soft-delete an entry. List and view output hide secrets unless `--show-secret` is passed:
 

@@ -136,7 +136,7 @@ Resolution is strictly one hop. A target field that is itself `fieldReference`, 
 
 ### P8 Domain Boundaries and P10 UI
 
-- In P10, the Android template editor creates and edits `fieldReference` fields by selecting a stable target text-field ID from a target category. Same-category references may target another text field; direct self-reference is rejected.
+- In P10, both initial category creation and the Android template editor create and edit `fieldReference` fields by selecting a stable target text-field ID from a target category. Initial creation saves the complete definition in one operation; it does not require a temporary text field followed by a second edit. Same-category references may target another text field in the same creation draft; direct self-reference is rejected.
 - Entry editing uses a target-category-constrained safe candidate list. Invalid configuration and missing or unsupported target fields route to category-field repair; other failures route to target-entry reselection.
 - The resolved value appears only in the unlocked explicit detail view and is excluded from candidates, summaries, search, and logs. Legacy `entryReference` template definitions remain read-only while existing entry values remain editable.
 - Cascading mutation and recursive resolution remain unsupported.

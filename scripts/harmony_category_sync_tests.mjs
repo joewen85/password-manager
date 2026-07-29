@@ -86,6 +86,12 @@ function loadCategorySyncRuntime(controller) {
   return vm.runInNewContext(stripTypeScriptTypes(source, { mode: 'transform' }), {});
 }
 
+function loadBusinessEqualityRuntime(controller) {
+  const source = `${extractFunction(controller, 'hasSameSyncBusinessContent')}
+    ;hasSameSyncBusinessContent;`;
+  return vm.runInNewContext(stripTypeScriptTypes(source, { mode: 'transform' }), {});
+}
+
 function payload({
   categories = [],
   categoryTemplates = [],
@@ -142,6 +148,12 @@ function main() {
 
   const controller = fs.readFileSync(controllerPath, 'utf8');
   const runtime = loadCategorySyncRuntime(controller);
+  let hasSameSyncBusinessContent = null;
+  try {
+    hasSameSyncBusinessContent = loadBusinessEqualityRuntime(controller);
+  } catch (error) {
+    assert(false, `Harmony exposes a business-only sync equality check: ${error}`);
+  }
   const initialTombstone = {
     name: 'test',
     isDeleted: true,
@@ -221,6 +233,30 @@ function main() {
     runtime.ConflictStrategy.REMOTE_WINS,
   );
   assert(!recreated.isDeleted, 'Explicit recreation with a dominating version clears the tombstone');
+
+  if (hasSameSyncBusinessContent !== null) {
+    const localRuntimePayload = payload({
+      categoryStates: [initialTombstone],
+      updatedAt: 300,
+    });
+    localRuntimePayload.syncSettings.lastSyncStatus = 'local-status';
+    const remoteRuntimePayload = payload({
+      categoryStates: [initialTombstone],
+      updatedAt: 200,
+    });
+    remoteRuntimePayload.syncSettings.lastSyncStatus = 'remote-status';
+    assert(
+      hasSameSyncBusinessContent(localRuntimePayload, remoteRuntimePayload),
+      'Harmony ignores runtime metadata when deciding whether to upload',
+    );
+    assert(
+      !hasSameSyncBusinessContent(
+        localRuntimePayload,
+        payload({ categoryStates: [], updatedAt: 200 }),
+      ),
+      'Harmony still uploads when a category tombstone changes',
+    );
+  }
 
   assert(
     controller.includes('const categoryStates = mergeCategoryStatesForSync(local, remote, strategy);'),

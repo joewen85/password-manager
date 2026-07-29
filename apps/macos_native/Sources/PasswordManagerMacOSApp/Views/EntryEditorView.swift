@@ -7,7 +7,7 @@ struct EntryEditorView: View {
     var categoryTemplates: [CategoryTemplate]
     var entries: [VaultEntry]
     var tags: [String]
-    var onCreateCategory: (String, CategoryTypePreset?, [String]) -> Bool
+    var onCreateCategory: (String, CategoryTypePreset?, [FieldTemplate]) -> Bool
     var onCreateTag: (String) -> Bool
     var onEditCategoryFields: (String) -> Void
     var onSave: (EntryDraft) -> Void
@@ -26,7 +26,7 @@ struct EntryEditorView: View {
         categoryTemplates: [CategoryTemplate] = [],
         entries: [VaultEntry] = [],
         tags: [String],
-        onCreateCategory: @escaping (String, CategoryTypePreset?, [String]) -> Bool = { _, _, _ in false },
+        onCreateCategory: @escaping (String, CategoryTypePreset?, [FieldTemplate]) -> Bool = { _, _, _ in false },
         onCreateTag: @escaping (String) -> Bool = { _ in false },
         onEditCategoryFields: @escaping (String) -> Void = { _ in },
         onSave: @escaping (EntryDraft) -> Void,
@@ -67,6 +67,7 @@ struct EntryEditorView: View {
                     CategorySelectField(
                         selectedCategory: $draft.category,
                         categories: availableCategories,
+                        categoryTemplates: categoryTemplates,
                         onCreateCategory: createCategory
                     )
 
@@ -175,12 +176,12 @@ struct EntryEditorView: View {
         taxonomyMessage = nil
     }
 
-    private func createCategory(_ value: String, preset: CategoryTypePreset?, customFieldNames: [String]) -> Bool {
+    private func createCategory(_ value: String, preset: CategoryTypePreset?, customFields: [FieldTemplate]) -> Bool {
         guard !value.isEmpty else { return false }
-        if onCreateCategory(value, preset, customFieldNames) {
+        if onCreateCategory(value, preset, customFields) {
             availableCategories = mergedValues(availableCategories + [value])
             draft.category = value
-            applyTemplate(for: value, preset: preset, customFieldNames: customFieldNames)
+            applyTemplate(for: value, preset: preset, customFields: customFields)
             taxonomyMessage = L10n.t("Category added.")
             return true
         } else {
@@ -209,12 +210,20 @@ struct EntryEditorView: View {
     private func applyTemplate(
         for category: String,
         preset: CategoryTypePreset? = nil,
-        customFieldNames: [String] = []
+        customFields: [FieldTemplate] = []
     ) {
         let normalized = category.trimmingCharacters(in: .whitespacesAndNewlines)
         let fields: [FieldTemplate]
-        if preset != nil || !customFieldNames.isEmpty {
-            fields = CategoryTemplate.fields(for: preset, customFieldNames: customFieldNames)
+        if preset != nil || !customFields.isEmpty {
+            let defaultFields = CategoryTemplate.defaultCategoryFields()
+            let defaultFieldIDs = Set(defaultFields.map(\.id))
+            let presetFields = CategoryTemplate.fields(for: preset).filter {
+                !defaultFieldIDs.contains($0.id)
+            }
+            fields = CategoryTemplate(
+                category: normalized,
+                fields: defaultFields + presetFields + customFields
+            ).fields
         } else if let templateFields = Self.categoryTemplateFields(for: normalized, in: categoryTemplates) {
             fields = templateFields
         } else if entry == nil {
@@ -269,11 +278,12 @@ struct EntryEditorView: View {
 private struct CategorySelectField: View {
     @Binding var selectedCategory: String
     var categories: [String]
-    var onCreateCategory: (String, CategoryTypePreset?, [String]) -> Bool
+    var categoryTemplates: [CategoryTemplate]
+    var onCreateCategory: (String, CategoryTypePreset?, [FieldTemplate]) -> Bool
 
     @State private var isPresented = false
     @State private var searchText = ""
-    @State private var customFields: [CustomField] = []
+    @State private var customFields: [FieldTemplate] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -305,8 +315,12 @@ private struct CategorySelectField: View {
                     )
 
                     if canCreateCategory {
-                        CategoryPresetShortcutButtons(fields: $customFields)
-                        CategoryTemplateFieldNameEditor(fields: $customFields)
+                        CategoryTemplateCreationFieldsEditor(
+                            fields: $customFields,
+                            sourceCategory: trimmedSearchText,
+                            categories: categories,
+                            templates: categoryTemplates
+                        )
                     }
 
                     Divider()
@@ -351,7 +365,7 @@ private struct CategorySelectField: View {
 
     private func createCategory() {
         guard canCreateCategory else { return }
-        if onCreateCategory(trimmedSearchText, nil, customFields.map(\.name)) {
+        if onCreateCategory(trimmedSearchText, nil, customFields) {
             selectedCategory = trimmedSearchText
             searchText = ""
             customFields = []

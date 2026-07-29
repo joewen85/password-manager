@@ -144,7 +144,7 @@ class VaultSyncEngine(
             remoteDeviceId = remotePayload.deviceId,
         )
 
-        if (mergedSnapshot == remotePayload.snapshot) {
+        if (hasSameSyncBusinessContent(mergedSnapshot, remotePayload.snapshot)) {
             return result(
                 snapshot = mergedSnapshot,
                 settings = settings,
@@ -506,6 +506,14 @@ class VaultSyncEngine(
             appliedRemote = false,
         )
     }
+
+    private fun hasSameSyncBusinessContent(left: VaultSnapshot, right: VaultSnapshot): Boolean =
+        left.entries == right.entries &&
+            left.categories == right.categories &&
+            left.categoryTemplates == right.categoryTemplates &&
+            left.categoryStates == right.categoryStates &&
+            left.tags == right.tags &&
+            left.security == right.security
 
     private fun isSuccessfulDownload(statusCode: Int): Boolean =
         statusCode in 200..299 || statusCode == 404

@@ -2,7 +2,7 @@
 
 ## 中文
 
-P8 在 `PasswordManageriOSCore` 中加入字段级关联的领域与 Store 行为，但不加入创建、编辑或详情 UI。共享数据格式见 `../../../docs/FIELD_REFERENCE_CONTRACT.md`。
+`PasswordManageriOSCore` 已提供字段级关联的领域、Store 和 SwiftUI 交互。独立分类创建与条目编辑器内联创建均可在首次保存前配置 `text` 或 `fieldReference`，并选择目标分类和目标文本字段。共享数据格式见 `../../../docs/FIELD_REFERENCE_CONTRACT.md`。
 
 ### 解析 API
 
@@ -35,6 +35,8 @@ resolveFieldReference(
 
 ### Store 与生命周期 API
 
+- `VaultStore.addCategory(_:preset:customFields:)` 接收完整 `FieldTemplate`，在任何分类 mutation 或持久化前验证空名、重名和字段关联配置。旧的字段名重载继续兼容并委托给完整模板重载。
+- 创建 UI 把当前分类草稿和其他文本字段加入 prospective templates，因此可安全选择同分类目标；来源字段自身、空目标或非文本目标会被拒绝。
 - `VaultEntry.withFieldReferenceSearchProjection(categoryTemplates:entries:)`：先保留原 `entryReference` 搜索行为，再仅为已解析 `fieldReference` 加入目标名称、分类和字段名。
 - `VaultEntry.remappingFieldReferenceIDs(using:template:)`：copy import 对同批次目标条目 ID 做重映射；`targetFieldId` 不变，未映射值按原值保留。
 - `fieldReferenceTargetFieldIDs(targetCategory:templates:)`：按分类返回被引用的稳定目标字段 ID。
@@ -43,16 +45,17 @@ resolveFieldReference(
 
 分类模板保存会原子拒绝删除被引用的现有目标文本字段，或把它改成其他类型；保持相同 ID 的字段改名允许通过。已经指向缺失或非文本字段的旧错误配置不会永久阻塞模板编辑。
 
-### P8 边界
+### 行为边界
 
-- 不提供 `fieldReference` 创建、编辑、详情、复制或跳转 UI。
+- 新建模板使用 `fieldReference`，旧 `entryReference` 定义只读兼容；已有值仍可选择、更换或清空。
+- 解析值只在已解锁的显式详情中展示，不进入候选、摘要、搜索或日志。
 - 不改变现有 `entryReference` 解析、候选、详情或搜索行为。
 - 不支持递归、级联修改或隐式导出目标条目。
 - 快照、范围导入导出和同步继续使用现有加密 JSON 形状与 envelope 版本。
 
 ## English
 
-P8 adds field-level reference domain and Store behavior to `PasswordManageriOSCore`, without creation, editing, or detail UI. See `../../../docs/FIELD_REFERENCE_CONTRACT.md` for the shared data format.
+`PasswordManageriOSCore` now provides field-reference domain behavior, Store validation, and SwiftUI interaction. Standalone and entry-editor inline category creation configure `text` or `fieldReference` fields plus target category and target text field before the first save. See `../../../docs/FIELD_REFERENCE_CONTRACT.md` for the shared data format.
 
 `resolveFieldReference(sourceEntry:field:categoryTemplates:entries:)` recognizes only an exact `fieldReference` source template type and applies this precedence: `empty`, `invalidConfiguration`, `missing`, `deleted`, `categoryMismatch`, `targetFieldMissing`, `targetFieldUnsupported`, `targetFieldEmpty`, then `resolved`.
 
@@ -62,10 +65,12 @@ After finding the target entry, the result contains at most entry ID, label, cat
 
 Store behavior:
 
+- `VaultStore.addCategory(_:preset:customFields:)` accepts complete `FieldTemplate` values and validates blank/duplicate names and reference configuration before taxonomy mutation or persistence. The legacy name-only overload delegates to it.
+- Creation UI adds the current category draft and its other text fields to prospective templates, enabling same-category targets while rejecting the source field itself, blank targets, and unsupported target types.
 - `withFieldReferenceSearchProjection` preserves legacy entry-reference search and adds only resolved target label, category, and field name.
 - `remappingFieldReferenceIDs` remaps a target entry included in the same copy-import batch; `targetFieldId` and unmapped values remain unchanged.
 - `fieldReferenceTargetFieldIDs` and `categoryTemplateReferencedTargetFieldIDs` expose stable target-field dependencies.
 - `propagateFieldReferenceCategoryRename` updates matching exact field-reference target categories only.
 - Template save atomically rejects deletion or retyping of an existing referenced target text field, while stable-ID rename remains allowed. Existing references to already missing or unsupported targets do not permanently block editing.
 
-P8 adds no field-reference UI, recursion, cascading mutation, implicit target export, envelope change, or change to existing `entryReference` behavior.
+New templates use `fieldReference`; legacy `entryReference` definitions remain read-only-compatible and existing values remain selectable, replaceable, and clearable. Resolved values appear only in unlocked explicit details and stay out of candidates, summaries, search, and logs. This UI adds no recursion, cascading mutation, implicit target export, envelope change, or change to existing `entryReference` behavior.

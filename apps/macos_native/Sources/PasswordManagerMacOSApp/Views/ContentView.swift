@@ -32,7 +32,7 @@ struct ContentView: View {
     @State private var isPresentingCreateTaxonomy = false
     @State private var createTaxonomyKind: CreateTaxonomyKind = .category
     @State private var createTaxonomyValue = ""
-    @State private var createCategoryCustomFields: [CustomField] = []
+    @State private var createCategoryCustomFields: [FieldTemplate] = []
     @State private var createTaxonomyError: String?
     @State private var clearDataPassword = ""
     @State private var clearDataError: String?
@@ -126,8 +126,8 @@ struct ContentView: View {
                     categoryTemplates: store.categoryTemplates,
                     entries: store.entries,
                     tags: store.tags,
-                    onCreateCategory: { category, preset, customFieldNames in
-                        store.addCategory(category, preset: preset, customFieldNames: customFieldNames)
+                    onCreateCategory: { category, preset, customFields in
+                        store.addCategory(category, preset: preset, customFields: customFields)
                     },
                     onCreateTag: { store.addTag($0) },
                     onEditCategoryFields: beginEditingCategoryFields,
@@ -327,8 +327,12 @@ struct ContentView: View {
                         .textFieldStyle(.roundedBorder)
                         .onSubmit(saveCreatedTaxonomy)
                     if createTaxonomyKind == .category {
-                        CategoryPresetShortcutButtons(fields: $createCategoryCustomFields)
-                        CategoryTemplateFieldNameEditor(fields: $createCategoryCustomFields)
+                        CategoryTemplateCreationFieldsEditor(
+                            fields: $createCategoryCustomFields,
+                            sourceCategory: createTaxonomyValue,
+                            categories: store.categories,
+                            templates: store.categoryTemplates
+                        )
                     }
                     if let createTaxonomyError {
                         Text(createTaxonomyError)
@@ -346,7 +350,7 @@ struct ContentView: View {
                     }
                 }
                 .padding()
-                .frame(width: 420)
+                .frame(minWidth: 520, minHeight: 420)
             }
             .sheet(isPresented: $isPresentingClearData) {
                 VStack(alignment: .leading, spacing: 16) {
@@ -566,7 +570,7 @@ struct ContentView: View {
             didSave = store.addCategory(
                 value,
                 preset: nil,
-                customFieldNames: createCategoryCustomFields.map(\.name)
+                customFields: createCategoryCustomFields
             )
         case .tag:
             didSave = store.addTag(value)
@@ -805,7 +809,7 @@ private struct EntryExportOptionsView: View {
 }
 
 struct CategoryPresetShortcutButtons: View {
-    @Binding var fields: [CustomField]
+    @Binding var fields: [FieldTemplate]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -838,69 +842,8 @@ struct CategoryPresetShortcutButtons: View {
         for name in preset.fields {
             let key = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             guard !key.isEmpty, existing.insert(key).inserted else { continue }
-            fields.append(CustomField(name: name))
+            fields.append(newCategoryTemplateField(name: name))
         }
-    }
-}
-
-struct CategoryTemplateFieldNameEditor: View {
-    @Binding var fields: [CustomField]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(L10n.t("Fields"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if fields.isEmpty {
-                Text(L10n.t("No custom fields."))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(fields.indices, id: \.self) { index in
-                    HStack(spacing: 8) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(L10n.t("Field Name"))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            TextField(L10n.t("Field Name"), text: $fields[index].name)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(minWidth: 160)
-                        }
-                        Button(role: .destructive) {
-                            remove(at: index)
-                        } label: {
-                            Label(L10n.t("Remove Field"), systemImage: "trash")
-                        }
-                        .labelStyle(.iconOnly)
-                        .help(L10n.t("Remove Field"))
-                    }
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color(nsColor: .controlBackgroundColor))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-                    )
-                }
-            }
-
-            Button(action: addField) {
-                Label(L10n.t("Add Field"), systemImage: "plus")
-            }
-            .controlSize(.small)
-        }
-    }
-
-    private func addField() {
-        fields.append(CustomField())
-    }
-
-    private func remove(at index: Int) {
-        guard fields.indices.contains(index) else { return }
-        fields.remove(at: index)
     }
 }
 

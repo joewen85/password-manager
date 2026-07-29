@@ -70,6 +70,7 @@ import life.devops.passwordmanager.model.VaultEntry
 import life.devops.passwordmanager.model.VaultEntryType
 import life.devops.passwordmanager.model.VaultPayload
 import life.devops.passwordmanager.model.applyCategoryTemplateToDraft
+import life.devops.passwordmanager.model.categoryTemplateFieldsForUserSave
 import life.devops.passwordmanager.model.customFieldSemantics
 import life.devops.passwordmanager.model.draftCustomFieldStates
 import life.devops.passwordmanager.model.isEditableCategoryFieldType
@@ -2329,45 +2330,152 @@ class MainActivity : FragmentActivity() {
             setText(initialValue)
             setSelection(text?.length ?: 0)
         }
-        val customFieldNames = mutableListOf<String>()
+        val customFields = mutableListOf<FieldTemplate>()
         val customFieldsContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
-        fun renderCategoryCustomFields() {
+        lateinit var renderCategoryCustomFields: () -> Unit
+        fun sameCategory(left: String, right: String): Boolean =
+            left.trim().equals(right.trim(), ignoreCase = true)
+        fun targetTextFields(templateField: FieldTemplate): List<FieldTemplate> {
+            val targetCategory = templateField.targetCategory.trim()
+            if (targetCategory.isEmpty()) return emptyList()
+            val currentCategory = field.text.toString().trim()
+            val fields = if (currentCategory.isNotEmpty() && sameCategory(targetCategory, currentCategory)) {
+                CategoryTemplate.defaultCategoryFields() + customFields
+            } else {
+                store.categoryTemplate(targetCategory)?.fields.orEmpty()
+            }
+            return fields.asSequence()
+                .filter { candidate ->
+                    candidate.normalizedValueType() == CUSTOM_FIELD_TEXT_VALUE_TYPE &&
+                        candidate.name.trim() != "名称" &&
+                        candidate.id.isNotBlank() &&
+                        !(
+                            currentCategory.isNotEmpty() &&
+                                sameCategory(targetCategory, currentCategory) &&
+                                candidate.id == templateField.id
+                            )
+                }
+                .distinctBy { candidate -> candidate.id }
+                .toList()
+        }
+        fun updateField(index: Int, update: (FieldTemplate) -> FieldTemplate) {
+            val current = customFields.getOrNull(index) ?: return
+            customFields[index] = update(current)
+        }
+        renderCategoryCustomFields = {
             customFieldsContainer.removeAllViews()
             customFieldsContainer.addView(label(text(R.string.custom_fields), 12f, uiColor(R.color.ui_muted), Typeface.BOLD))
-            if (customFieldNames.isEmpty()) {
+            if (customFields.isEmpty()) {
                 customFieldsContainer.addView(label(text(R.string.no_custom_fields), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(6)))
             }
-            customFieldNames.forEachIndexed { index, name ->
-                val nameInput = input(text(R.string.custom_field_name)).apply { setText(name) }
-                nameInput.addTextChangedListener(SimpleTextWatcher { value ->
-                    customFieldNames[index] = value
-                })
+            customFields.forEachIndexed { index, templateField ->
                 customFieldsContainer.addView(LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    addView(nameInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    orientation = LinearLayout.VERTICAL
+                    background = rounded(uiColor(R.color.ui_surface_alt), dp(12), uiColor(R.color.ui_stroke))
+                    setPadding(dp(12), dp(12), dp(12), dp(12))
+                    val valueType = templateField.normalizedValueType()
+                    addView(input(text(R.string.custom_field_name)).apply {
+                        setText(templateField.name)
+                        addTextChangedListener(SimpleTextWatcher { value ->
+                            updateField(index) { current -> current.copy(name = value) }
+                        })
+                    }, matchWrap())
+                    addView(label(text(R.string.field_type), 12f, uiColor(R.color.ui_muted), Typeface.BOLD), matchWrap(top = dp(10)))
+                    addView(HorizontalScrollView(this@MainActivity).apply {
+                        isHorizontalScrollBarEnabled = false
+                        addView(LinearLayout(this@MainActivity).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            addView(filterChip(
+                                text(R.string.field_type_text),
+                                valueType == CUSTOM_FIELD_TEXT_VALUE_TYPE,
+                            ) {
+                                if (valueType != CUSTOM_FIELD_TEXT_VALUE_TYPE) {
+                                    updateField(index) { current ->
+                                        current.copy(
+                                            valueType = CUSTOM_FIELD_TEXT_VALUE_TYPE,
+                                            targetCategory = "",
+                                            targetFieldId = "",
+                                        )
+                                    }
+                                    renderCategoryCustomFields()
+                                }
+                            }, wrapWrap(right = dp(8)))
+                            addView(filterChip(
+                                text(R.string.field_type_field_reference),
+                                valueType == CUSTOM_FIELD_REFERENCE_VALUE_TYPE,
+                            ) {
+                                if (valueType != CUSTOM_FIELD_REFERENCE_VALUE_TYPE) {
+                                    updateField(index) { current ->
+                                        current.copy(
+                                            valueType = CUSTOM_FIELD_REFERENCE_VALUE_TYPE,
+                                            targetCategory = "",
+                                            targetFieldId = "",
+                                        )
+                                    }
+                                    renderCategoryCustomFields()
+                                }
+                            }, wrapWrap())
+                        })
+                    }, matchWrap(top = dp(6)))
+                    if (valueType == CUSTOM_FIELD_REFERENCE_VALUE_TYPE) {
+                        val targetCategory = templateField.targetCategory.trim()
+                        addView(label(text(R.string.target_category), 12f, uiColor(R.color.ui_muted), Typeface.BOLD), matchWrap(top = dp(10)))
+                        addView(selectBoxText(
+                            targetCategory.ifBlank { text(R.string.select_target_category) },
+                        ) {
+                            showCategorySelectionDialog(
+                                currentCategory = targetCategory,
+                                additionalCategories = listOf(field.text.toString().trim()),
+                            ) { selected ->
+                                updateField(index) { current ->
+                                    current.copy(targetCategory = selected, targetFieldId = "")
+                                }
+                                renderCategoryCustomFields()
+                            }
+                        }, matchWrap(top = dp(4)))
+
+                        val candidates = targetTextFields(templateField)
+                        val targetField = candidates.firstOrNull { candidate ->
+                            candidate.id == templateField.targetFieldId
+                        }
+                        addView(label(text(R.string.target_field), 12f, uiColor(R.color.ui_muted), Typeface.BOLD), matchWrap(top = dp(10)))
+                        addView(selectBoxText(
+                            targetField?.name?.trim().orEmpty().ifBlank { text(R.string.select_target_field) },
+                        ) {
+                            showFieldTemplateSelectionDialog(
+                                title = text(R.string.select_target_field),
+                                fields = candidates,
+                                currentFieldId = templateField.targetFieldId,
+                            ) { selected ->
+                                updateField(index) { current -> current.copy(targetFieldId = selected.id) }
+                                renderCategoryCustomFields()
+                            }
+                        }, matchWrap(top = dp(4)))
+                    }
                     addView(actionButton(text(R.string.delete), primary = false, compact = true) {
-                        customFieldNames.removeAt(index)
-                        renderCategoryCustomFields()
-                    }, wrapWrap(left = dp(8)))
+                        if (index in customFields.indices) {
+                            customFields.removeAt(index)
+                            renderCategoryCustomFields()
+                        }
+                    }, wrapWrap(top = dp(10)))
                 }, matchWrap(top = dp(8)))
             }
             customFieldsContainer.addView(actionButton(text(R.string.add_custom_field), primary = false, compact = true) {
-                customFieldNames += ""
+                customFields += newCategoryTemplateField()
                 renderCategoryCustomFields()
             }, wrapWrap(top = dp(8)))
         }
         fun addCategoryShortcutFields(preset: CategoryTypePreset) {
-            val existing = customFieldNames
-                .map { it.trim().lowercase() }
+            val existing = customFields
+                .map { it.name.trim().lowercase() }
                 .filter { it.isNotBlank() }
                 .toMutableSet()
             preset.fields.forEach { name ->
                 val key = name.trim().lowercase()
                 if (key.isNotBlank() && existing.add(key)) {
-                    customFieldNames += name
+                    customFields += newCategoryTemplateField(name = name)
                 }
             }
             renderCategoryCustomFields()
@@ -2404,7 +2512,7 @@ class MainActivity : FragmentActivity() {
             form.addView(customFieldsContainer, matchWrap(top = dp(12)))
         }
         val dialog = AlertDialog.Builder(this)
-            .setView(form)
+            .setView(ScrollView(this).apply { addView(form) })
             .setPositiveButton(text(R.string.save), null)
             .setNegativeButton(text(R.string.cancel), null)
             .create()
@@ -2415,11 +2523,40 @@ class MainActivity : FragmentActivity() {
                     toast(text(R.string.value_required))
                     return@setOnClickListener
                 }
+                if (kind == TaxonomyKind.CATEGORY && customFields.any { templateField ->
+                        templateField.name.trim().isEmpty()
+                    }) {
+                    toast(text(R.string.value_required))
+                    return@setOnClickListener
+                }
+                if (kind == TaxonomyKind.CATEGORY) {
+                    val fieldNames = (CategoryTemplate.defaultCategoryFields() + customFields)
+                        .map { templateField -> templateField.name.trim().lowercase() }
+                    if (fieldNames.size != fieldNames.distinct().size) {
+                        toast(text(R.string.already_exists))
+                        return@setOnClickListener
+                    }
+                }
+                if (kind == TaxonomyKind.CATEGORY && customFields.any { templateField ->
+                        templateField.normalizedValueType() == CUSTOM_FIELD_REFERENCE_VALUE_TYPE &&
+                            (
+                                templateField.targetCategory.isBlank() ||
+                                    templateField.targetFieldId.isBlank() ||
+                                    targetTextFields(templateField).none { candidate ->
+                                        candidate.id == templateField.targetFieldId
+                                    }
+                                )
+                    }) {
+                    toast(text(R.string.field_reference_configuration_required))
+                    return@setOnClickListener
+                }
                 val saved = when (kind) {
                     TaxonomyKind.CATEGORY -> store.addCategory(
                         value,
-                        null,
-                        customFieldNames.map { it.trim() },
+                        categoryTemplateFieldsForUserSave(
+                            existing = emptyList(),
+                            requestedCustomFields = customFields,
+                        ),
                     )
                     TaxonomyKind.TAG -> store.addTag(value)
                 }
@@ -3337,9 +3474,13 @@ class MainActivity : FragmentActivity() {
 
     private fun showCategorySelectionDialog(
         currentCategory: String,
+        additionalCategories: List<String> = emptyList(),
         onSelected: (String) -> Unit,
     ) {
-        val options = listOf("") + store.categories()
+        val options = (listOf("") + additionalCategories + store.categories())
+            .map { category -> category.trim() }
+            .filterIndexed { index, category -> index == 0 || category.isNotEmpty() }
+            .distinctBy { category -> category.lowercase() }
         val form = formRoot()
         val search = searchInput(text(R.string.search_categories))
         val addButton = toolbarIconButton(R.drawable.ic_add_24, text(R.string.create_category), accent = true) {}

@@ -33,8 +33,9 @@ link these sources instead of copying them into each app directory.
   and blanks unknown/orphan values. This remains true with `--show-secret`, which
   only controls the selected entry's own secret. A pure import helper remaps
   references through a complete copy ID map, and conflict-copy tests verify
-  reference values plus template field IDs. Reference editing and a scoped-copy
-  CLI flow remain outside this slice; see `../../docs/FIELD_REFERENCE_CONTRACT.md`.
+  reference values plus template field IDs. Legacy `entryReference` editing and
+  a scoped-copy CLI flow remain outside this slice; see
+  `../../docs/FIELD_REFERENCE_CONTRACT.md`.
 - The additive `fieldReference` type and opaque `targetFieldId` survive snapshot
   and sync JSON, with legacy defaults and unknown types preserved. The P8 core
   resolver now implements the shared nine-state, one-hop contract, including
@@ -48,6 +49,44 @@ link these sources instead of copying them into each app directory.
   explicit unlocked detail boundary. Raw IDs, target secrets, unrelated fields,
   and non-resolved target values remain suppressed with or without
   `--show-secret`.
+
+## CLI Field-Reference Creation
+
+The shared Windows/Linux CLI creates a field-reference definition in the same
+`add-category` command that creates its source template field:
+
+```bash
+password-manager-linux add-category "$PASSWORD" Servers \
+  --field Email --field-reference "Owner Email" Servers Email
+```
+
+`--field-reference <source-field> <target-category> <target-field>` accepts
+human-readable names. A cross-category target must already exist in the unlocked
+vault; a same-category target text field can be declared with `--field` in the
+same command. The writer stores the target category's canonical name and the
+exact target field's stable opaque ID; it rejects missing categories or fields,
+non-text targets, duplicate source names, and direct self-reference. The
+standalone `category` preview cannot resolve vault-owned target IDs, so this
+option is available only through `add-category`.
+
+When creating a source entry, bind the configured source field directly to a
+live target entry by exact ID or by a unique label in the configured target
+category:
+
+```bash
+password-manager-linux add-entry "$PASSWORD" --label "Production Account" \
+  --category Servers --field Email=ops@example.com
+password-manager-linux add-entry "$PASSWORD" --label "Production Server" \
+  --category Servers --field-reference "Owner Email" "Production Account"
+```
+
+The reference binding stores the selected target entry ID and the source field's
+stable `templateFieldId`. A `--field <name=value>` that matches a text field in
+the selected category also stores that field's stable `templateFieldId`, while
+an ad-hoc field keeps an empty binding. There is no intermediate text field or
+later type change. Field references remain additive properties inside the
+encrypted JSON snapshot, so there is no database schema and no migration file;
+legacy snapshots continue through decoder defaults.
 
 `export-snapshot` is a lossless plaintext data export, not a display projection.
 It intentionally retains stored reference IDs and unknown/orphan values so a

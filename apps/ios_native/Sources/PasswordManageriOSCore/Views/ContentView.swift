@@ -75,8 +75,8 @@ struct ContentView: View {
                     categoryTemplates: store.categoryTemplates,
                     entries: store.entries,
                     tags: store.tags,
-                    onCreateCategory: { category, preset, customFieldNames in
-                        store.addCategory(category, preset: preset, customFieldNames: customFieldNames)
+                    onCreateCategory: { category, preset, customFields in
+                        store.addCategory(category, preset: preset, customFields: customFields)
                     },
                     onCreateTag: store.addTag,
                     onEditCategoryFields: beginEditingCategoryFields,

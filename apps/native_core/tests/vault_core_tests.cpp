@@ -1082,6 +1082,36 @@ int main() {
         assert(recreatedSync.snapshot.categories[0] == "test");
     }
 
+    auto runtimeOnlyLocal = deletedCategorySnapshot;
+    runtimeOnlyLocal.syncStatus = "Local sync status";
+    runtimeOnlyLocal.backupStatus = "Local backup status";
+    runtimeOnlyLocal.updatedAt = "2026-06-28T00:09:00Z";
+    auto runtimeOnlyRemote = runtimeOnlyLocal;
+    runtimeOnlyRemote.syncStatus = "Remote sync status";
+    runtimeOnlyRemote.backupStatus = "Remote backup status";
+    runtimeOnlyRemote.updatedAt = "2026-06-28T00:08:00Z";
+    const auto runtimeOnlyRemotePayload = pm::serializeSyncPayloadJson(
+        pm::VaultSyncPayload{1, "2026-06-28T00:08:00Z", "remote", 9, runtimeOnlyRemote}
+    );
+    for (const auto& strategy : {std::string("remoteWins"), std::string("keepBoth")}) {
+        pm::SyncSettingsState runtimeOnlySettings;
+        runtimeOnlySettings.deviceId = "linux";
+        runtimeOnlySettings.lastSyncRevision = 8;
+        runtimeOnlySettings.hasLocalChanges = false;
+        runtimeOnlySettings.conflictStrategy = strategy;
+        const auto runtimeOnlySync = pm::synchronizeSnapshots(
+            runtimeOnlyLocal,
+            runtimeOnlySettings,
+            runtimeOnlyRemotePayload
+        );
+        assert(!runtimeOnlySync.uploaded);
+        assert(runtimeOnlySync.settings.lastSyncRevision == 9);
+        assert(runtimeOnlySync.uploadPayloadJson.empty());
+        assert(runtimeOnlySync.snapshot.categories.empty());
+        assert(runtimeOnlySync.snapshot.categoryStates.size() == 1);
+        assert(runtimeOnlySync.snapshot.categoryStates[0].isDeleted);
+    }
+
     pm::VaultSnapshot remoteDominant;
     remoteDominant.updatedAt = "2026-06-28T00:05:00Z";
     remoteDominant.entries.push_back(pm::makeEntry("Remote Sync", "credential", "remote@example.com", "remote-secret"));

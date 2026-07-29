@@ -144,7 +144,7 @@ struct VaultSyncEngine: Sendable {
             remoteDeviceId: remotePayload.deviceId
         )
 
-        if mergedSnapshot == remotePayload.snapshot {
+        if hasSameSyncBusinessContent(mergedSnapshot, remotePayload.snapshot) {
             return result(
                 snapshot: mergedSnapshot,
                 settings: settings,
@@ -531,6 +531,15 @@ struct VaultSyncEngine: Sendable {
             uploaded: false,
             appliedRemote: false
         )
+    }
+
+    private func hasSameSyncBusinessContent(_ left: VaultSnapshot, _ right: VaultSnapshot) -> Bool {
+        left.entries == right.entries
+            && left.categories == right.categories
+            && left.categoryTemplates == right.categoryTemplates
+            && left.categoryStates == right.categoryStates
+            && left.tags == right.tags
+            && left.security == right.security
     }
 
     private static func isSuccessfulDownload(_ statusCode: Int) -> Bool {

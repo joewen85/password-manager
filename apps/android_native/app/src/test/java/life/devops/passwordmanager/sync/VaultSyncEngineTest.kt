@@ -1,6 +1,7 @@
 package life.devops.passwordmanager.sync
 
 import life.devops.passwordmanager.model.CategoryTemplate
+import life.devops.passwordmanager.model.CategorySyncState
 import life.devops.passwordmanager.model.CredentialPayload
 import life.devops.passwordmanager.model.SecuritySettings
 import life.devops.passwordmanager.model.VaultEntry
@@ -69,6 +70,62 @@ class VaultSyncEngineTest {
         assertEquals("Remote", result.snapshot.entries.single().label)
         assertEquals(2, result.settings.lastSyncRevision)
         assertTrue(client.uploadedPayloads.isEmpty())
+    }
+
+    @Test
+    fun runtimeMetadataDifferencesDoNotReuploadCategoryTombstones() {
+        val now = Instant.parse("2027-01-15T08:00:00Z")
+        val engine = VaultSyncEngine(clock = { now })
+        val tombstone = CategorySyncState(
+            name = "test",
+            isDeleted = true,
+            updatedAt = Instant.parse("2026-01-01T00:01:00Z"),
+            version = mapOf("android-device" to 2),
+            updatedBy = "android-device",
+        )
+        val local = makeSnapshot(
+            entries = emptyList(),
+            updatedAt = Instant.parse("2026-01-01T00:03:00Z"),
+        ).copy(
+            categoryStates = listOf(tombstone),
+            syncStatus = "Local sync status",
+            backupStatus = "Local backup status",
+        )
+        val remote = local.copy(
+            syncStatus = "Remote sync status",
+            backupStatus = "Remote backup status",
+            updatedAt = Instant.parse("2026-01-01T00:02:00Z"),
+        )
+
+        listOf(
+            SyncSettingsConflictStrategy.REMOTE_WINS,
+            SyncSettingsConflictStrategy.KEEP_BOTH,
+        ).forEach { strategy ->
+            val settings = SyncSettings.defaults(deviceId = "android-device").copy(
+                lastSyncRevision = 8,
+                hasLocalChanges = false,
+                conflictStrategy = strategy,
+            )
+            val remotePayload = engine.encodePayload(
+                VaultSyncPayload(
+                    exportedAt = now,
+                    deviceId = "remote-device",
+                    revision = 9,
+                    snapshot = remote,
+                )
+            )
+            val client = FakeSyncClient(
+                downloads = ArrayDeque(listOf(RemoteSyncResult(payload = remotePayload, statusCode = 200)))
+            )
+
+            val result = engine.synchronize(localSnapshot = local, settings = settings, client = client)
+
+            assertFalse(result.uploaded)
+            assertEquals(9, result.settings.lastSyncRevision)
+            assertTrue(client.uploadedPayloads.isEmpty())
+            assertTrue(result.snapshot.categories.isEmpty())
+            assertEquals(listOf(tombstone), result.snapshot.categoryStates)
+        }
     }
 
     @Test

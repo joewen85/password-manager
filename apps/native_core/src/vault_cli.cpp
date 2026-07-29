@@ -56,12 +56,14 @@ void printUsage(const char* platformName, const char* defaultVaultPath) {
               << "                              Create an encrypted vault file\n"
               << "  status <password>|--password-stdin [--totp-code <code>|--totp-stdin] [--vault <path>]\n"
               << "                              Unlock and print vault counts\n"
-              << "  add-category <password>|--password-stdin <name> [--shortcut server|service|account] [--field <name>]... [--vault <path>]\n"
-              << "                              Persist a category template; shortcuts add editable custom fields\n"
+              << "  add-category <password>|--password-stdin <name> [--shortcut server|service|account] [--field <name>]...\n"
+              << "               [--field-reference <name> <target-category> <target-field>]... [--vault <path>]\n"
+              << "                              Persist text and field-reference template fields in one command\n"
               << "  add-entry <password>|--password-stdin --label <text> [--type credential|server|service]\n"
               << "            [--username <value>] [--secret <value>] [--category <name>]\n"
-              << "            [--tag <name>]... [--note <text>] [--field <name=value>]... [--vault <path>]\n"
-              << "                              Add an encrypted vault entry\n"
+              << "            [--tag <name>]... [--note <text>] [--field <name=value>]...\n"
+              << "            [--field-reference <source-field> <target-entry-id-or-label>]... [--vault <path>]\n"
+              << "                              Add an entry and bind configured field references\n"
               << "  list <password>|--password-stdin [--query <text>] [--type all|credential|server|service]\n"
               << "       [--show-secret] [--vault <path>]\n"
               << "                              Search entries without exposing secrets by default\n"
@@ -100,7 +102,11 @@ std::string parseEntryType(const std::string& value) {
     throw std::invalid_argument("entry type must be credential, server, or service");
 }
 
-std::vector<FieldTemplate> fieldsForCli(bool hasPreset, CategoryTypePreset preset, const std::vector<std::string>& customFields) {
+std::vector<FieldTemplate> fieldsForCli(
+    bool hasPreset,
+    CategoryTypePreset preset,
+    const std::vector<std::string>& customFields
+) {
     return hasPreset ? categoryFieldsForPreset(preset, customFields) : categoryFieldsWithCustom(customFields);
 }
 
@@ -224,9 +230,21 @@ void requireTotpIfNeeded(const CommandAuth& auth, const VaultSnapshot& snapshot)
     }
 }
 
+struct CategoryFieldReferenceArgs {
+    std::string sourceFieldName;
+    std::string targetCategory;
+    std::string targetFieldName;
+};
+
+struct EntryFieldReferenceArgs {
+    std::string sourceFieldName;
+    std::string targetEntrySelector;
+};
+
 struct CategoryArgs {
     std::string name;
     std::vector<std::string> customFields;
+    std::vector<CategoryFieldReferenceArgs> fieldReferences;
     CategoryTypePreset preset = CategoryTypePreset::Account;
     bool hasPreset = false;
     std::string vaultPath;
@@ -241,6 +259,7 @@ struct EntryArgs {
     std::string notes;
     std::vector<std::string> tags;
     std::vector<CustomField> customFields;
+    std::vector<EntryFieldReferenceArgs> fieldReferences;
     std::string vaultPath;
 };
 
@@ -452,6 +471,16 @@ EntryArgs parseEntryArgs(int argc, char** argv, int start, const char* defaultVa
             args.customFields.push_back(parseCustomField(requireValue(arg)));
         } else if (arg.rfind("--field=", 0) == 0) {
             args.customFields.push_back(parseCustomField(arg.substr(8)));
+        } else if (arg == "--field-reference") {
+            args.fieldReferences.push_back(EntryFieldReferenceArgs{
+                requireValue(arg),
+                requireValue(arg),
+            });
+        } else if (arg.rfind("--field-reference=", 0) == 0) {
+            args.fieldReferences.push_back(EntryFieldReferenceArgs{
+                arg.substr(18),
+                requireValue("--field-reference"),
+            });
         } else if (arg == "--vault") {
             args.vaultPath = requireValue(arg);
         } else if (arg.rfind("--vault=", 0) == 0) {
@@ -543,6 +572,24 @@ CategoryArgs parseCategoryArgs(
             args.customFields.push_back(argv[i]);
         } else if (arg.rfind("--field=", 0) == 0) {
             args.customFields.push_back(arg.substr(8));
+        } else if (arg == "--field-reference") {
+            if (i + 3 >= argc) {
+                throw std::invalid_argument("--field-reference requires source field, target category, and target field");
+            }
+            args.fieldReferences.push_back(CategoryFieldReferenceArgs{
+                argv[++i],
+                argv[++i],
+                argv[++i],
+            });
+        } else if (arg.rfind("--field-reference=", 0) == 0) {
+            if (i + 2 >= argc) {
+                throw std::invalid_argument("--field-reference requires source field, target category, and target field");
+            }
+            args.fieldReferences.push_back(CategoryFieldReferenceArgs{
+                arg.substr(18),
+                argv[++i],
+                argv[++i],
+            });
         } else if (allowVault && arg == "--vault") {
             if (++i >= argc) throw std::invalid_argument("--vault requires a value");
             args.vaultPath = argv[i];
@@ -553,6 +600,180 @@ CategoryArgs parseCategoryArgs(
         }
     }
     return args;
+}
+
+const CategoryTemplate* categoryTemplateByName(
+    const std::vector<CategoryTemplate>& templates,
+    const std::string& category
+) {
+    const auto key = lowerAscii(trimAscii(category));
+    const auto match = std::find_if(templates.begin(), templates.end(), [&](const CategoryTemplate& candidate) {
+        return lowerAscii(trimAscii(candidate.category)) == key;
+    });
+    return match == templates.end() ? nullptr : &*match;
+}
+
+const FieldTemplate* templateFieldByName(
+    const std::vector<FieldTemplate>& fields,
+    const std::string& fieldName
+) {
+    const auto key = lowerAscii(trimAscii(fieldName));
+    const auto match = std::find_if(fields.begin(), fields.end(), [&](const FieldTemplate& candidate) {
+        return lowerAscii(trimAscii(candidate.name)) == key;
+    });
+    return match == fields.end() ? nullptr : &*match;
+}
+
+void bindTextTemplateFieldsForCli(
+    std::vector<CustomField>& fields,
+    const std::string& category,
+    const std::vector<CategoryTemplate>& categoryTemplates
+) {
+    const auto* categoryTemplate = categoryTemplateByName(categoryTemplates, category);
+    if (categoryTemplate == nullptr) return;
+
+    for (auto& field : fields) {
+        const auto* templateField = templateFieldByName(categoryTemplate->fields, field.name);
+        if (templateField != nullptr && templateField->valueType == "text") {
+            field.templateFieldId = templateField->id;
+        }
+    }
+}
+
+std::vector<FieldTemplate> fieldReferenceTemplatesForCli(
+    const std::string& sourceCategory,
+    const std::vector<FieldTemplate>& existingFields,
+    const std::vector<CategoryFieldReferenceArgs>& definitions,
+    const std::vector<CategoryTemplate>& categoryTemplates
+) {
+    std::set<std::string> sourceFieldNames;
+    for (const auto& field : existingFields) {
+        sourceFieldNames.insert(lowerAscii(trimAscii(field.name)));
+    }
+
+    std::vector<FieldTemplate> references;
+    for (const auto& definition : definitions) {
+        const auto sourceFieldName = trimAscii(definition.sourceFieldName);
+        const auto targetCategoryName = trimAscii(definition.targetCategory);
+        const auto targetFieldName = trimAscii(definition.targetFieldName);
+        if (sourceFieldName.empty() || targetCategoryName.empty() || targetFieldName.empty()) {
+            throw std::invalid_argument("field reference names must not be empty");
+        }
+        if (!sourceFieldNames.insert(lowerAscii(sourceFieldName)).second) {
+            throw std::invalid_argument("field reference source field duplicates another field");
+        }
+        if (lowerAscii(trimAscii(sourceCategory)) == lowerAscii(targetCategoryName)
+            && lowerAscii(sourceFieldName) == lowerAscii(targetFieldName)) {
+            throw std::invalid_argument("field reference direct self-reference is not allowed");
+        }
+
+        const auto targetsCurrentCategory =
+            lowerAscii(trimAscii(sourceCategory)) == lowerAscii(targetCategoryName);
+        const auto* targetTemplate = targetsCurrentCategory
+            ? nullptr
+            : categoryTemplateByName(categoryTemplates, targetCategoryName);
+        const auto* targetField = targetsCurrentCategory
+            ? templateFieldByName(existingFields, targetFieldName)
+            : targetTemplate == nullptr ? nullptr : templateFieldByName(targetTemplate->fields, targetFieldName);
+        if (!targetsCurrentCategory && targetTemplate == nullptr) {
+            throw std::invalid_argument("field reference target category does not exist: " + targetCategoryName);
+        }
+        if (targetField == nullptr) {
+            throw std::invalid_argument("field reference target field does not exist: " + targetFieldName);
+        }
+        if (targetField->valueType != "text") {
+            throw std::invalid_argument("field reference target field must be text: " + targetFieldName);
+        }
+
+        const auto sourceFieldId = randomId();
+        if (targetsCurrentCategory && sourceFieldId == targetField->id) {
+            throw std::invalid_argument("field reference direct self-reference is not allowed");
+        }
+        references.push_back(FieldTemplate{
+            sourceFieldId,
+            sourceFieldName,
+            "fieldReference",
+            targetsCurrentCategory ? trimAscii(sourceCategory) : trimAscii(targetTemplate->category),
+            targetField->id,
+        });
+    }
+    return references;
+}
+
+CustomField fieldReferenceBindingForCli(
+    const EntryFieldReferenceArgs& binding,
+    const std::string& sourceCategory,
+    const std::vector<CategoryTemplate>& categoryTemplates,
+    const std::vector<VaultEntry>& entries
+) {
+    const auto* sourceTemplate = categoryTemplateByName(categoryTemplates, sourceCategory);
+    if (sourceTemplate == nullptr) {
+        throw std::invalid_argument("field reference source category does not exist: " + trimAscii(sourceCategory));
+    }
+    const auto sourceFieldName = trimAscii(binding.sourceFieldName);
+    const auto* sourceField = templateFieldByName(sourceTemplate->fields, sourceFieldName);
+    if (sourceField == nullptr) {
+        throw std::invalid_argument("field reference source field does not exist: " + sourceFieldName);
+    }
+    if (sourceField->valueType != "fieldReference") {
+        throw std::invalid_argument("field reference source field is not a field reference: " + sourceFieldName);
+    }
+
+    const auto targetCategory = trimAscii(sourceField->targetCategory);
+    if (targetCategory.empty() || trimAscii(sourceField->targetFieldId).empty()) {
+        throw std::invalid_argument("field reference source field configuration is invalid: " + sourceFieldName);
+    }
+    if (lowerAscii(trimAscii(sourceTemplate->category)) == lowerAscii(targetCategory)
+        && sourceField->id == sourceField->targetFieldId) {
+        throw std::invalid_argument("field reference direct self-reference is not allowed");
+    }
+    const auto* targetTemplate = categoryTemplateByName(categoryTemplates, targetCategory);
+    if (targetTemplate == nullptr) {
+        throw std::invalid_argument("field reference target category does not exist: " + targetCategory);
+    }
+    const auto targetField = std::find_if(
+        targetTemplate->fields.begin(),
+        targetTemplate->fields.end(),
+        [&](const FieldTemplate& candidate) { return candidate.id == sourceField->targetFieldId; }
+    );
+    if (targetField == targetTemplate->fields.end()) {
+        throw std::invalid_argument("field reference target field does not exist for source field: " + sourceFieldName);
+    }
+    if (targetField->valueType != "text") {
+        throw std::invalid_argument("field reference target field must be text for source field: " + sourceFieldName);
+    }
+
+    const auto selector = trimAscii(binding.targetEntrySelector);
+    if (selector.empty()) throw std::invalid_argument("field reference target entry selector must not be empty");
+    const auto exactId = std::find_if(entries.begin(), entries.end(), [&](const VaultEntry& candidate) {
+        return candidate.id == selector;
+    });
+    const VaultEntry* targetEntry = exactId == entries.end() ? nullptr : &*exactId;
+    if (targetEntry == nullptr) {
+        std::vector<const VaultEntry*> matches;
+        for (const auto& candidate : entries) {
+            if (!candidate.isDeleted
+                && lowerAscii(trimAscii(candidate.category)) == lowerAscii(targetCategory)
+                && lowerAscii(trimAscii(candidate.label)) == lowerAscii(selector)) {
+                matches.push_back(&candidate);
+            }
+        }
+        if (matches.size() > 1) {
+            throw std::invalid_argument("field reference target entry selector is ambiguous: " + selector);
+        }
+        if (matches.size() == 1) targetEntry = matches.front();
+    }
+    if (targetEntry == nullptr) {
+        throw std::invalid_argument("field reference target entry does not exist: " + selector);
+    }
+    if (targetEntry->isDeleted) {
+        throw std::invalid_argument("field reference target entry is deleted: " + selector);
+    }
+    if (lowerAscii(trimAscii(targetEntry->category)) != lowerAscii(targetCategory)) {
+        throw std::invalid_argument("field reference target entry category does not match: " + selector);
+    }
+
+    return CustomField{randomId(), sourceField->name, targetEntry->id, sourceField->id};
 }
 
 BackupArgs parseBackupArgs(int argc, char** argv, int start, const char* defaultVaultPath, bool allowBackupName) {
@@ -1133,6 +1354,9 @@ std::string entryJsonForDisplay(const VaultEntry& entry, const VaultSnapshot& so
 
 void printCategoryTemplate(int argc, char** argv, const char* defaultVaultPath) {
     const auto args = parseCategoryArgs(argc, argv, 2, 3, defaultVaultPath, false);
+    if (!args.fieldReferences.empty()) {
+        throw std::invalid_argument("--field-reference requires add-category so the target field can be resolved from the vault");
+    }
     VaultSnapshot snapshot;
     const auto fields = fieldsForCli(args.hasPreset, args.preset, args.customFields);
     if (!addCategory(snapshot, args.name, fields)) throw std::invalid_argument("category name is required");
@@ -1155,7 +1379,15 @@ void addCategoryToVault(const CommandAuth& auth, int argc, char** argv, const ch
     if (argc < 4) throw std::invalid_argument("password and category name are required");
     const auto args = parseCategoryArgs(argc, argv, 3, 4, defaultVaultPath, true);
     auto snapshot = loadUnlockedSnapshot(auth, args.vaultPath);
-    const auto fields = fieldsForCli(args.hasPreset, args.preset, args.customFields);
+    const auto baseFields = fieldsForCli(args.hasPreset, args.preset, args.customFields);
+    const auto referenceFields = fieldReferenceTemplatesForCli(
+        args.name,
+        baseFields,
+        args.fieldReferences,
+        snapshot.categoryTemplates
+    );
+    auto fields = baseFields;
+    fields.insert(fields.end(), referenceFields.begin(), referenceFields.end());
     if (!addCategory(snapshot, args.name, fields)) throw std::invalid_argument("category already exists or is empty");
     saveSnapshot(auth.password, args.vaultPath, snapshot);
     markLocalChanges(args.vaultPath);
@@ -1170,6 +1402,23 @@ void addEntryToVault(const CommandAuth& auth, int argc, char** argv, const char*
     entry.tags = args.tags;
     entry.notes = args.notes;
     entry.customFields = args.customFields;
+    bindTextTemplateFieldsForCli(entry.customFields, entry.category, snapshot.categoryTemplates);
+    std::set<std::string> boundFieldNames;
+    for (const auto& field : entry.customFields) {
+        boundFieldNames.insert(lowerAscii(trimAscii(field.name)));
+    }
+    for (const auto& binding : args.fieldReferences) {
+        const auto bindingName = lowerAscii(trimAscii(binding.sourceFieldName));
+        if (!boundFieldNames.insert(bindingName).second) {
+            throw std::invalid_argument("field reference source field is bound more than once: " + trimAscii(binding.sourceFieldName));
+        }
+        entry.customFields.push_back(fieldReferenceBindingForCli(
+            binding,
+            entry.category,
+            snapshot.categoryTemplates,
+            snapshot.entries
+        ));
+    }
     if (!entry.category.empty()) (void)addCategory(snapshot, entry.category);
     snapshot.entries.push_back(entry);
     rebuildTaxonomy(snapshot);

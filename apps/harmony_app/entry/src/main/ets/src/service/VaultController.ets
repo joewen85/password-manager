@@ -707,6 +707,7 @@ export class VaultController {
     const revisionAtStart = this.localChangeRevision;
     try {
       let mergedPayload = deepCopyRuntimePayload(this.snapshot);
+      let remoteBusinessPayload: VaultRuntimePayload | null = null;
       let remoteRevision = localSettings.lastSyncRevision;
       let mergedMasterKey = this.masterKeyRecord;
       let remoteFingerprint = '';
@@ -809,6 +810,7 @@ export class VaultController {
             const remotePayload = sanitizeRuntimePayload(
               JSON.parse(remotePlain) as VaultPayloadRecord,
             );
+            remoteBusinessPayload = remotePayload;
             mergedPayload = this.mergePayloads(
               mergedPayload,
               remotePayload,
@@ -827,6 +829,25 @@ export class VaultController {
       }
 
       mergedPayload.syncSettings = cloneSyncSettings(localSettings);
+      if (
+        remoteBusinessPayload !== null &&
+        hasSameSyncBusinessContent(mergedPayload, remoteBusinessPayload)
+      ) {
+        if (this.localRevisionChangedSince(revisionAtStart)) {
+          this.syncRequestedAgain = true;
+          return;
+        }
+        this.snapshot = mergedPayload;
+        this.masterKeyRecord = mergedMasterKey;
+        this.recordSyncStatus(
+          'success',
+          `同步完成：修订${remoteRevision}，条目${mergedPayload.entries.length}项`,
+          remoteRevision,
+          remoteFingerprint,
+        );
+        await this.persist(false);
+        return;
+      }
       const uploadPayload = sanitizeRuntimePayload(mergedPayload);
       uploadPayload.syncSettings.hasLocalChanges = false;
       uploadPayload.syncSettings.lastRemoteFingerprint = '';
@@ -2505,6 +2526,27 @@ function sanitizeRuntimePayload(
       maybeSettings === undefined ? defaultSyncSettings() : maybeSettings,
     ),
   };
+}
+
+function hasSameSyncBusinessContent(
+  left: VaultRuntimePayload,
+  right: VaultRuntimePayload,
+): boolean {
+  return JSON.stringify({
+    entries: left.entries,
+    categories: left.categories,
+    categoryTemplates: left.categoryTemplates,
+    categoryStates: left.categoryStates,
+    tags: left.tags,
+    security: left.security,
+  }) === JSON.stringify({
+    entries: right.entries,
+    categories: right.categories,
+    categoryTemplates: right.categoryTemplates,
+    categoryStates: right.categoryStates,
+    tags: right.tags,
+    security: right.security,
+  });
 }
 
 function normalizeRuntimeEntry(entry: VaultEntry): VaultEntry {

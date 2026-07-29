@@ -121,6 +121,103 @@ struct VaultStoreTaxonomyTests {
     }
 
     @MainActor
+    @Test("Category creation persists complete same-category field references atomically")
+    func categoryCreationPersistsCompleteSameCategoryFieldReferencesAtomically() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManagerMacOSCategoryFieldReferenceCreation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(repository: repository, syncSettingsRepository: nil)
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+
+        let email = newCategoryTemplateField(name: "Email")
+        let alias = newCategoryTemplateField(
+            name: "Alias",
+            valueType: "fieldReference",
+            targetCategory: "Servers",
+            targetFieldId: email.id
+        )
+        #expect(store.addCategory(
+            " Servers ",
+            preset: nil,
+            customFields: [email, alias]
+        ))
+
+        let template = try #require(store.categoryTemplates.first { $0.category == "Servers" })
+        #expect(template.fields.first { $0.name == "Email" }?.id == email.id)
+        #expect(template.fields.first { $0.name == "Alias" } == alias)
+
+        let selfReference = newCategoryTemplateField(
+            name: "Loop",
+            valueType: "fieldReference",
+            targetCategory: "Broken",
+            targetFieldId: "self-reference"
+        )
+        var invalidSelfReference = selfReference
+        invalidSelfReference.id = "self-reference"
+        #expect(!store.addCategory(
+            "Broken",
+            preset: nil,
+            customFields: [invalidSelfReference]
+        ))
+        #expect(!store.categories.contains("Broken"))
+        #expect(!store.categoryTemplates.contains { $0.category == "Broken" })
+        #expect(store.statusMessage == "Field reference requires a target category and target text field.")
+
+        let reloadedStore = VaultStore(repository: repository, syncSettingsRepository: nil)
+        #expect(reloadedStore.unlock(password: "test-password"))
+        let reloaded = try #require(reloadedStore.categoryTemplates.first { $0.category == "Servers" })
+        #expect(reloaded.fields.first { $0.id == alias.id } == alias)
+    }
+
+    @MainActor
+    @Test("Category creation rejects duplicate editable field names atomically")
+    func categoryCreationRejectsDuplicateEditableFieldNamesAtomically() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManagerMacOSCategoryDuplicateFieldCreation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(repository: repository, syncSettingsRepository: nil)
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+
+        #expect(!store.addCategory(
+            "DefaultConflict",
+            preset: nil,
+            customFields: [newCategoryTemplateField(name: " 备注 ")]
+        ))
+        #expect(store.statusMessage == "Field name already exists: 备注.")
+
+        #expect(!store.addCategory(
+            "CustomConflict",
+            preset: nil,
+            customFields: [
+                newCategoryTemplateField(name: "Owner"),
+                newCategoryTemplateField(name: " owner ")
+            ]
+        ))
+        #expect(store.statusMessage == "Field name already exists: owner.")
+
+        #expect(!store.addCategory(
+            "PresetConflict",
+            preset: .server,
+            customFields: [newCategoryTemplateField(name: " ip地址 ")]
+        ))
+        #expect(store.statusMessage == "Field name already exists: ip地址.")
+
+        for category in ["DefaultConflict", "CustomConflict", "PresetConflict"] {
+            #expect(!store.categories.contains(category))
+            #expect(!store.categoryTemplates.contains { $0.category == category })
+        }
+
+        let reloadedStore = VaultStore(repository: repository, syncSettingsRepository: nil)
+        #expect(reloadedStore.unlock(password: "test-password"))
+        #expect(reloadedStore.categories.isEmpty)
+        #expect(reloadedStore.categoryTemplates.isEmpty)
+    }
+
+    @MainActor
     @Test("Category template updates persist and reconfigure saved entry fields")
     func categoryTemplateUpdatesPersistAndReconfigureSavedEntryFields() throws {
         let directory = FileManager.default.temporaryDirectory
