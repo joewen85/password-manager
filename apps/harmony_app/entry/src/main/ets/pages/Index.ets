@@ -3288,12 +3288,15 @@ struct Index {
 
   private async onSyncNow(): Promise<void> {
     this.syncBusy = true;
+    let contentChanged = false;
     try {
-      await this.controller().syncNow();
+      contentChanged = await this.controller().syncNow();
     } catch (error) {
       this.toast(`同步失败: ${error}`);
     } finally {
-      this.refreshData(true);
+      if (contentChanged) {
+        this.refreshData(true);
+      }
       this.refreshSyncState();
       this.syncBusy = false;
     }
@@ -3325,12 +3328,15 @@ struct Index {
       return;
     }
     this.syncBusy = true;
+    let contentChanged = false;
     try {
-      await this.controller().runAutoSyncIfNeeded();
+      contentChanged = await this.controller().runAutoSyncIfNeeded();
     } catch (error) {
       console.error(`Scheduled auto sync failed: ${error}`);
     } finally {
-      this.refreshData(true);
+      if (contentChanged) {
+        this.refreshData(true);
+      }
       this.refreshSyncState();
       this.syncBusy = false;
       this.configureAutoSyncTimer();

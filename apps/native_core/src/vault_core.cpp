@@ -944,7 +944,7 @@ VaultSnapshot mergeSnapshotsForSync(
     }
     merged.entries = clearDeletedCategoryReferences(entries, deletedCategoryKeys, localDeviceId);
     std::sort(merged.entries.begin(), merged.entries.end(), [](const auto& left, const auto& right) {
-        return left.updatedAt > right.updatedAt;
+        return left.updatedAt == right.updatedAt ? left.id < right.id : left.updatedAt > right.updatedAt;
     });
     const bool shouldMergeCleanLocalTaxonomy = conflictStrategy == "keepBoth" && !localHasChanges;
     std::vector<std::string> values = activeCategoryNames;
@@ -1009,6 +1009,21 @@ bool snapshotsEquivalent(const VaultSnapshot& left, const VaultSnapshot& right) 
 bool syncBusinessContentEquivalent(const VaultSnapshot& left, const VaultSnapshot& right) {
     auto normalizedLeft = left;
     auto normalizedRight = right;
+    const auto normalizeOrder = [](VaultSnapshot& snapshot) {
+        std::sort(snapshot.entries.begin(), snapshot.entries.end(), [](const auto& first, const auto& second) {
+            return first.id < second.id;
+        });
+        std::sort(snapshot.categories.begin(), snapshot.categories.end());
+        std::sort(snapshot.categoryTemplates.begin(), snapshot.categoryTemplates.end(), [](const auto& first, const auto& second) {
+            return first.category < second.category;
+        });
+        std::sort(snapshot.categoryStates.begin(), snapshot.categoryStates.end(), [](const auto& first, const auto& second) {
+            return first.name < second.name;
+        });
+        std::sort(snapshot.tags.begin(), snapshot.tags.end());
+    };
+    normalizeOrder(normalizedLeft);
+    normalizeOrder(normalizedRight);
     normalizedLeft.syncStatus.clear();
     normalizedLeft.backupStatus.clear();
     normalizedLeft.updatedAt = "__sync_runtime_metadata__";
@@ -2509,6 +2524,9 @@ std::vector<VaultEntry> filterEntries(
         }
         if (terms.empty() || matches) result.push_back(entry);
     }
+    std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
+        return left.updatedAt == right.updatedAt ? left.id < right.id : left.updatedAt > right.updatedAt;
+    });
     return result;
 }
 

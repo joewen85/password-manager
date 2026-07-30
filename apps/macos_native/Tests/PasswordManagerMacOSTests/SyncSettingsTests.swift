@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Testing
 @testable import PasswordManagerMacOSApp
 
@@ -1037,6 +1038,61 @@ struct SyncSettingsTests {
         #expect(uploaded.revision == 4)
         #expect(uploaded.snapshot.categories == [])
         #expect(uploaded.snapshot.categoryTemplates == [])
+    }
+
+    @MainActor
+    @Test("Unchanged sync does not republish the entry collection")
+    func unchangedSyncDoesNotRepublishEntryCollection() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManagerMacOSNoRefreshSyncTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(repository: repository, syncSettingsRepository: nil)
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+        var settings = SyncSettings.defaults(deviceId: "mac-device")
+        settings.providerType = .webdav
+        settings.webdavUrl = "https://dav.example.com/root"
+        settings.webdavPath = "/vault.json"
+        store.updateSyncSettings(settings)
+        store.upsert(EntryDraft(entry: VaultEntry(
+            label: "Stable Entry",
+            type: .credential,
+            payload: .credential(CredentialPayload(username: "stable"))
+        )), editing: nil)
+
+        let initialClient = VaultStoreSyncFakeClient(
+            downloads: [RemoteSyncResult(payload: nil, statusCode: 404)],
+            uploadStatusCodes: [200]
+        )
+        await store.syncNow(client: initialClient)
+        let remotePayload = try #require(initialClient.uploadedPayloads.first)
+        let observation = ObservationChangeCounter()
+        withObservationTracking {
+            _ = store.entries
+        } onChange: {
+            observation.increment()
+        }
+
+        await store.syncNow(client: VaultStoreSyncFakeClient(
+            downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)],
+            uploadStatusCodes: []
+        ))
+
+        #expect(observation.value == 0)
+    }
+}
+
+private final class ObservationChangeCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.withLock { count }
+    }
+
+    func increment() {
+        lock.withLock { count += 1 }
     }
 }
 

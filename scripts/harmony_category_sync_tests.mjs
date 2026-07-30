@@ -433,11 +433,15 @@ async function assertRuntimeMetadataSyncPath({
     },
   };
 
-  await performSyncOnce.call(harness, client, localSettings);
+  const contentChanged = await performSyncOnce.call(harness, client, localSettings);
 
   assert(
     builtPayloads.length === 0 && uploads.length === 0,
     `${strategy} full sync path does not upload a runtime-metadata-only revision`,
+  );
+  assert(
+    contentChanged === false,
+    `${strategy} runtime-metadata-only sync reports no presentation content change`,
   );
   assert(
     statuses.length === 1 &&

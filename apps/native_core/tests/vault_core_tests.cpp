@@ -77,6 +77,16 @@ int main() {
     assert(pm::filterEntries(snapshot.entries, "https://ops.example.com", "all").size() == 1);
     assert(pm::filterEntries(snapshot.entries, "tag:mail ip:1.2.3.4", "all").size() == 1);
     assert(pm::filterEntries(snapshot.entries, "ip:9.9.9.9", "all").empty());
+    auto laterId = entry;
+    laterId.id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    laterId.updatedAt = "2026-07-30T10:00:00Z";
+    auto earlierId = entry;
+    earlierId.id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    earlierId.updatedAt = laterId.updatedAt;
+    const auto stableOrder = pm::filterEntries({laterId, earlierId}, "", "all");
+    assert(stableOrder.size() == 2);
+    assert(stableOrder[0].id == earlierId.id);
+    assert(stableOrder[1].id == laterId.id);
     assert(pm::rebuildCategories(snapshot.entries).front() == "Work");
     assert(pm::rebuildTags(snapshot.entries).size() == 2);
 

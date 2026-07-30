@@ -268,7 +268,9 @@ class VaultSyncEngine(
             conflictStrategy = conflictStrategy,
         )
         return VaultSnapshot(
-            entries = normalizedEntries.sortedByDescending { it.updatedAt },
+            entries = normalizedEntries.sortedWith(
+                compareByDescending<VaultEntry> { it.updatedAt }.thenBy { it.id }
+            ),
             categories = categories,
             categoryTemplates = categoryTemplates,
             categoryStates = categoryStates,
@@ -541,11 +543,13 @@ class VaultSyncEngine(
     }
 
     private fun hasSameSyncBusinessContent(left: VaultSnapshot, right: VaultSnapshot): Boolean =
-        left.entries == right.entries &&
-            left.categories == right.categories &&
-            left.categoryTemplates == right.categoryTemplates &&
-            left.categoryStates == right.categoryStates &&
-            left.tags == right.tags &&
+        left.entries.sortedBy { it.id } == right.entries.sortedBy { it.id } &&
+            left.categories.sorted() == right.categories.sorted() &&
+            left.categoryTemplates.sortedWith(compareBy<CategoryTemplate> { it.category.lowercase() }.thenBy { it.category }) ==
+            right.categoryTemplates.sortedWith(compareBy<CategoryTemplate> { it.category.lowercase() }.thenBy { it.category }) &&
+            left.categoryStates.sortedWith(compareBy<CategorySyncState> { it.name.lowercase() }.thenBy { it.name }) ==
+            right.categoryStates.sortedWith(compareBy<CategorySyncState> { it.name.lowercase() }.thenBy { it.name }) &&
+            left.tags.sorted() == right.tags.sorted() &&
             left.security == right.security
 
     private fun isSuccessfulDownload(statusCode: Int): Boolean =

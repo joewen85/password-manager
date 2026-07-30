@@ -1207,7 +1207,9 @@ final class VaultStore {
                     entries: entries
                 ).matchesSearchQuery(query)
             }
-            .sorted { $0.updatedAt > $1.updatedAt }
+            .sorted { left, right in
+                left.updatedAt == right.updatedAt ? left.id < right.id : left.updatedAt > right.updatedAt
+            }
     }
 
     private func seedInitialCollectionsIfNeeded() {
@@ -1371,24 +1373,43 @@ final class VaultStore {
     }
 
     private func applySyncResult(_ result: VaultSyncEngineResult) throws {
-        entries = result.snapshot.entries
-        manualCategories = Set(normalizedTaxonomyValues(result.snapshot.categories))
-        loadCategoryStates(from: result.snapshot)
-        categoryTemplates = normalizedCategoryTemplates(
-            result.snapshot.categoryTemplates,
-            categories: result.snapshot.categories
-        )
-        manualTags = Set(normalizedTaxonomyValues(result.snapshot.tags))
-        requireTotp = result.snapshot.security.requireTotp
-        totpSecret = result.snapshot.security.totpSecret
-        lastBackupStatus = result.snapshot.lastBackupStatus
+        if !hasSameSyncBusinessContent(currentSnapshot(), result.snapshot) {
+            entries = result.snapshot.entries
+            manualCategories = Set(normalizedTaxonomyValues(result.snapshot.categories))
+            loadCategoryStates(from: result.snapshot)
+            categoryTemplates = normalizedCategoryTemplates(
+                result.snapshot.categoryTemplates,
+                categories: result.snapshot.categories
+            )
+            manualTags = Set(normalizedTaxonomyValues(result.snapshot.tags))
+            requireTotp = result.snapshot.security.requireTotp
+            totpSecret = result.snapshot.security.totpSecret
+            lastBackupStatus = result.snapshot.lastBackupStatus
+            rebuildCollections()
+        }
         syncSettings = result.settings
         syncSettings.hasLocalChanges = false
         syncStatus = result.settings.lastSyncMessage ?? "Sync complete."
         statusMessage = syncStatus
-        rebuildCollections()
         try syncSettingsRepository?.save(syncSettings)
         try saveSnapshot()
+    }
+
+    private func hasSameSyncBusinessContent(_ left: VaultSnapshot, _ right: VaultSnapshot) -> Bool {
+        left.entries.sorted { $0.id < $1.id } == right.entries.sorted { $0.id < $1.id }
+            && left.categories.sorted() == right.categories.sorted()
+            && left.categoryTemplates.sorted {
+                $0.category.localizedCaseInsensitiveCompare($1.category) == .orderedAscending
+            } == right.categoryTemplates.sorted {
+                $0.category.localizedCaseInsensitiveCompare($1.category) == .orderedAscending
+            }
+            && left.categoryStates.sorted {
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            } == right.categoryStates.sorted {
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+            && left.tags.sorted() == right.tags.sorted()
+            && left.security == right.security
     }
 
     private func applyImportedSnapshot(_ snapshot: VaultSnapshot) throws {

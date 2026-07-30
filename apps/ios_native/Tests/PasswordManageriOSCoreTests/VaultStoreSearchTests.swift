@@ -5,6 +5,41 @@ import Testing
 @Suite("VaultStore Search")
 struct VaultStoreSearchTests {
     @MainActor
+    @Test("Equal update timestamps use entry ID as a stable display order")
+    func equalUpdateTimestampsUseEntryIDAsStableDisplayOrder() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManageriOSStableEntryOrderTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(repository: repository, syncSettingsRepository: nil)
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+        let timestamp = Date(timeIntervalSince1970: 1_800_000_000)
+        let laterID = VaultEntry(
+            id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            label: "Later ID",
+            type: .credential,
+            payload: .credential(CredentialPayload()),
+            createdAt: timestamp,
+            updatedAt: timestamp
+        )
+        let earlierID = VaultEntry(
+            id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            label: "Earlier ID",
+            type: .credential,
+            payload: .credential(CredentialPayload()),
+            createdAt: timestamp,
+            updatedAt: timestamp
+        )
+        let fileName = "stable-order.json"
+        try repository.encodeSnapshot(VaultSnapshot(entries: [laterID, earlierID]))
+            .write(to: try repository.importsDirectoryURL.appendingPathComponent(fileName))
+        store.importSnapshot(fileName: fileName)
+
+        #expect(store.filteredEntries(searchText: "", filter: .all).map(\.id) == [earlierID.id, laterID.id])
+    }
+
+    @MainActor
     @Test("Structured key-value search matches typed and custom fields")
     func structuredKeyValueSearchMatchesTypedAndCustomFields() throws {
         let directory = FileManager.default.temporaryDirectory

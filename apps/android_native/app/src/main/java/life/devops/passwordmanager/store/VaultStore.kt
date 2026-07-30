@@ -233,7 +233,7 @@ class VaultStore(
                     categoryTemplatesByName = templatesByCategory,
                 ).matchesSearchTerms(searchTerms)
             }
-            .sortedByDescending { it.updatedAt }
+            .sortedWith(compareByDescending<VaultEntry> { it.updatedAt }.thenBy { it.id })
             .toList()
     }
 
@@ -725,9 +725,9 @@ class VaultStore(
         return true
     }
 
-    fun syncNow() {
+    fun syncNow(): Boolean {
         if (!beginSyncIfPossible()) {
-            return
+            return false
         }
         val client = syncClientFactory.makeClient(syncSettings)
         if (client == null) {
@@ -735,19 +735,20 @@ class VaultStore(
             syncStatus = "Not configured"
             statusMessage = "Configure a sync provider before syncing."
             persistUnlockedSnapshot(markLocalChange = false)
-            return
+            return false
         }
-        performSyncLoop(client)
+        return performSyncLoop(client)
     }
 
-    fun syncNow(client: RemoteSyncClient) {
+    fun syncNow(client: RemoteSyncClient): Boolean {
         if (!beginSyncIfPossible()) {
-            return
+            return false
         }
-        performSyncLoop(client)
+        return performSyncLoop(client)
     }
 
-    private fun performSyncLoop(client: RemoteSyncClient) {
+    private fun performSyncLoop(client: RemoteSyncClient): Boolean {
+        var contentChanged = false
         try {
             do {
                 syncRequestedAgain = false
@@ -809,7 +810,7 @@ class VaultStore(
                                 activeVaultKey = remoteKey
                                 hasMasterKey = true
                             }
-                            applySyncResult(result)
+                            contentChanged = applySyncResult(result) || contentChanged
                         }
                     }
                 }.onFailure {
@@ -823,6 +824,7 @@ class VaultStore(
         } finally {
             isSyncing = false
         }
+        return contentChanged
     }
 
     @Synchronized
@@ -1235,14 +1237,28 @@ class VaultStore(
             updatedAt = Instant.now(),
         )
 
-    private fun applySyncResult(result: VaultSyncEngineResult) {
-        applySnapshotState(result.snapshot)
+    private fun applySyncResult(result: VaultSyncEngineResult): Boolean {
+        val contentChanged = !hasSameSyncBusinessContent(currentSnapshot(), result.snapshot)
+        if (contentChanged) {
+            applySnapshotState(result.snapshot)
+        }
         syncSettings = result.settings.copy(hasLocalChanges = false)
         syncStatus = result.settings.lastSyncMessage ?: "Sync complete."
         statusMessage = syncStatus
         syncSettingsRepository?.save(syncSettings)
         saveSnapshot()
+        return contentChanged
     }
+
+    private fun hasSameSyncBusinessContent(left: VaultSnapshot, right: VaultSnapshot): Boolean =
+        left.entries.sortedBy { it.id } == right.entries.sortedBy { it.id } &&
+            left.categories.sorted() == right.categories.sorted() &&
+            left.categoryTemplates.sortedWith(compareBy<CategoryTemplate> { it.category.lowercase() }.thenBy { it.category }) ==
+            right.categoryTemplates.sortedWith(compareBy<CategoryTemplate> { it.category.lowercase() }.thenBy { it.category }) &&
+            left.categoryStates.sortedWith(compareBy<CategorySyncState> { it.name.lowercase() }.thenBy { it.name }) ==
+            right.categoryStates.sortedWith(compareBy<CategorySyncState> { it.name.lowercase() }.thenBy { it.name }) &&
+            left.tags.sorted() == right.tags.sorted() &&
+            left.security == right.security
 
     private fun recordSyncFailure(error: Throwable) {
         val message = error.message ?: "Sync failed."

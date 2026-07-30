@@ -34,6 +34,50 @@ import kotlin.test.assertTrue
 
 class VaultStoreSyncTest {
     @Test
+    fun unchangedSyncReportsNoPresentationContentChange() {
+        val directory = createTempDirectory("PasswordManagerAndroidNoRefreshSyncTests").toFile()
+        try {
+            val repository = FileVaultRepository(directory)
+            val store = VaultStore(repository = repository)
+            assertTrue(store.setupMasterPassword("test-password", "test-password"))
+            store.updateSyncSettings(
+                SyncSettings.defaults(deviceId = "android-device").copy(
+                    providerType = SyncProviderType.WEBDAV,
+                    webdavUrl = "https://dav.example.com/root",
+                    webdavPath = "/vault.json",
+                )
+            )
+            store.upsert(
+                EntryDraft(
+                    label = "Stable Entry",
+                    type = VaultEntryType.CREDENTIAL,
+                    category = "",
+                    tags = emptyList(),
+                    credential = CredentialPayload(username = "stable"),
+                )
+            )
+            val initialClient = VaultStoreSyncFakeClient(
+                downloads = ArrayDeque(listOf(RemoteSyncResult(payload = null, statusCode = 404))),
+                uploadStatusCodes = ArrayDeque(listOf(200)),
+            )
+            store.syncNow(initialClient)
+
+            val contentChanged = store.syncNow(
+                VaultStoreSyncFakeClient(
+                    downloads = ArrayDeque(listOf(
+                        RemoteSyncResult(payload = initialClient.uploadedPayloads.single(), statusCode = 200)
+                    )),
+                    uploadStatusCodes = ArrayDeque(),
+                )
+            )
+
+            assertFalse(contentChanged)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun syncSettingsPersistAndReloadThroughRepository() {
         val directory = createTempDirectory("PasswordManagerAndroidVaultStoreSyncSettingsTests").toFile()
         try {
@@ -201,7 +245,7 @@ class VaultStoreSyncTest {
                 uploadStatusCodes = ArrayDeque(listOf(200)),
             )
 
-            store.syncNow(client)
+            assertTrue(store.syncNow(client))
 
             assertTrue(store.listEntries().any { it.label == "Remote Login" })
             assertFalse(remotePayload.contains("remote-secret"))
@@ -229,7 +273,7 @@ class VaultStoreSyncTest {
                 uploadStatusCodes = ArrayDeque(listOf(200)),
             )
 
-            fresh.store.syncNow(freshClient)
+            assertTrue(fresh.store.syncNow(freshClient))
 
             assertEquals("success", fresh.store.syncSettings.lastSyncStatus, fresh.store.syncSettings.lastSyncMessage)
             val expectedLabels = setOf("Remote Login", "Remote Server")
@@ -237,12 +281,12 @@ class VaultStoreSyncTest {
             assertEquals(expectedLabels, fresh.store.listEntries().map { it.label }.toSet())
             assertEquals(expectedCategories, fresh.store.categories().toSet())
             assertEquals(remote.masterKeyRecord, fresh.repository.loadEnvelope()?.masterKeyRecord)
-            val mergedRemotePayload = freshClient.uploadedPayloads.single()
+            assertTrue(freshClient.uploadedPayloads.isEmpty())
             assertEquals(
                 remote.masterKeyRecord.saltBase64,
-                JSONObject(mergedRemotePayload).getJSONObject("masterKeyRecord").getString("saltBase64"),
+                JSONObject(remote.payload).getJSONObject("masterKeyRecord").getString("saltBase64"),
             )
-            val mergedRemoteLabels = decodeEncryptedSyncPayload(mergedRemotePayload, remote.repository)
+            val mergedRemoteLabels = decodeEncryptedSyncPayload(remote.payload, remote.repository)
                 .snapshot.entries.map { it.label }.toSet()
             assertEquals(expectedLabels, mergedRemoteLabels)
 

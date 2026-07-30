@@ -329,7 +329,10 @@ export class VaultController {
     const visible = this.snapshot.entries.filter(
       (entry: VaultEntry) => !entry.isDeleted,
     );
-    visible.sort((a: VaultEntry, b: VaultEntry) => b.updatedAt - a.updatedAt);
+    visible.sort((a: VaultEntry, b: VaultEntry) => {
+      const timeOrder = b.updatedAt - a.updatedAt;
+      return timeOrder !== 0 ? timeOrder : a.id.localeCompare(b.id);
+    });
     return visible.map((entry: VaultEntry) => deepCopyEntry(entry));
   }
 
@@ -673,13 +676,14 @@ export class VaultController {
     await this.persist();
   }
 
-  async syncNow(): Promise<void> {
+  async syncNow(): Promise<boolean> {
     this.ensureUnlocked();
     if (this.syncInProgress) {
       this.syncRequestedAgain = true;
-      return;
+      return false;
     }
 
+    let contentChanged = false;
     this.syncInProgress = true;
     try {
       do {
@@ -688,22 +692,24 @@ export class VaultController {
         if (localSettings.providerType === SyncProviderType.NONE) {
           this.recordSyncStatus('skipped', '未配置同步', localSettings.lastSyncRevision);
           await this.persist(false);
-          return;
+          return contentChanged;
         }
         const client = this.buildSyncClient(localSettings);
         if (client === null) {
           this.recordSyncStatus('error', '同步配置不完整', localSettings.lastSyncRevision);
           await this.persist(false);
-          return;
+          return contentChanged;
         }
-        await this.performSyncOnce(client, localSettings);
+        contentChanged = await this.performSyncOnce(client, localSettings) || contentChanged;
       } while (this.syncRequestedAgain);
     } finally {
       this.syncInProgress = false;
     }
+    return contentChanged;
   }
 
-  private async performSyncOnce(client: RemoteSyncClient, localSettings: SyncSettings): Promise<void> {
+  private async performSyncOnce(client: RemoteSyncClient, localSettings: SyncSettings): Promise<boolean> {
+    const contentBefore = deepCopyRuntimePayload(this.snapshot);
     const revisionAtStart = this.localChangeRevision;
     const hasSyncBaseline = hasEstablishedSyncBaseline(localSettings);
     try {
@@ -729,7 +735,7 @@ export class VaultController {
             remoteFingerprint,
           );
           await this.persist(false);
-          return;
+          return false;
         }
       } catch (error) {
         console.warn(`Remote metadata check failed, falling back to full sync: ${error}`);
@@ -764,12 +770,12 @@ export class VaultController {
             );
             if (this.localRevisionChangedSince(revisionAtStart)) {
               this.syncRequestedAgain = true;
-              return;
+              return false;
             }
             const upload = await client.upload(payload);
             if (this.localRevisionChangedSince(revisionAtStart)) {
               this.syncRequestedAgain = true;
-              return;
+              return false;
             }
             if (upload.statusCode < 200 || upload.statusCode >= 300) {
               this.recordSyncStatus(
@@ -778,11 +784,11 @@ export class VaultController {
                 localSettings.lastSyncRevision,
               );
               await this.persist(false);
-              return;
+              return false;
             }
             if (this.localRevisionChangedSince(revisionAtStart)) {
               this.syncRequestedAgain = true;
-              return;
+              return false;
             }
             this.snapshot = uploadPayload;
             const uploadedFingerprint = await this.safeRemoteFingerprint(client);
@@ -793,7 +799,7 @@ export class VaultController {
               uploadedFingerprint,
             );
             await this.persist(false);
-            return;
+            return false;
           }
 
           if (
@@ -830,7 +836,7 @@ export class VaultController {
           localSettings.lastSyncRevision,
         );
         await this.persist(false);
-        return;
+        return false;
       }
 
       mergedPayload.syncSettings = cloneSyncSettings(localSettings);
@@ -840,7 +846,7 @@ export class VaultController {
       ) {
         if (this.localRevisionChangedSince(revisionAtStart)) {
           this.syncRequestedAgain = true;
-          return;
+          return false;
         }
         this.snapshot = mergedPayload;
         this.masterKeyRecord = mergedMasterKey;
@@ -851,7 +857,7 @@ export class VaultController {
           remoteFingerprint,
         );
         await this.persist(false);
-        return;
+        return !hasSameSyncBusinessContent(contentBefore, this.snapshot);
       }
       const uploadPayload = sanitizeRuntimePayload(mergedPayload);
       uploadPayload.syncSettings.hasLocalChanges = false;
@@ -867,12 +873,12 @@ export class VaultController {
 
       if (this.localRevisionChangedSince(revisionAtStart)) {
         this.syncRequestedAgain = true;
-        return;
+        return false;
       }
       const upload = await client.upload(payload);
       if (this.localRevisionChangedSince(revisionAtStart)) {
         this.syncRequestedAgain = true;
-        return;
+        return false;
       }
       if (upload.statusCode < 200 || upload.statusCode >= 300) {
         this.snapshot = mergedPayload;
@@ -883,12 +889,12 @@ export class VaultController {
           localSettings.lastSyncRevision,
         );
         await this.persist(false);
-        return;
+        return !hasSameSyncBusinessContent(contentBefore, this.snapshot);
       }
 
       if (this.localRevisionChangedSince(revisionAtStart)) {
         this.syncRequestedAgain = true;
-        return;
+        return false;
       }
       this.snapshot = uploadPayload;
       this.masterKeyRecord = mergedMasterKey;
@@ -900,6 +906,7 @@ export class VaultController {
         uploadedFingerprint,
       );
       await this.persist(false);
+      return !hasSameSyncBusinessContent(contentBefore, this.snapshot);
     } catch (error) {
       this.recordSyncStatus(
         'error',
@@ -907,6 +914,7 @@ export class VaultController {
         this.snapshot.syncSettings.lastSyncRevision,
       );
       await this.persist(false);
+      return !hasSameSyncBusinessContent(contentBefore, this.snapshot);
     }
   }
 
@@ -936,8 +944,7 @@ export class VaultController {
       return false;
     }
     this.lastAutoSyncAttemptAt = now;
-    await this.syncNow();
-    return true;
+    return this.syncNow();
   }
 
   async addCredential(input: CreateCredentialInput, entryId: string = nextId()): Promise<void> {
@@ -2396,7 +2403,10 @@ export class VaultController {
         strategy,
       ),
       categoryStates,
-      entries: mergedEntries,
+      entries: mergedEntries.sort((a: VaultEntry, b: VaultEntry) => {
+        const timeOrder = b.updatedAt - a.updatedAt;
+        return timeOrder !== 0 ? timeOrder : a.id.localeCompare(b.id);
+      }),
       security: pickMergedSecurity(local, remote, strategy),
       updatedAt: Math.max(local.updatedAt, remote.updatedAt, Date.now()),
       syncSettings: cloneSyncSettings(local.syncSettings),
@@ -2583,19 +2593,37 @@ function hasSameSyncBusinessContent(
   left: VaultRuntimePayload,
   right: VaultRuntimePayload,
 ): boolean {
+  const leftEntries = left.entries.slice().sort((a: VaultEntry, b: VaultEntry) => a.id.localeCompare(b.id));
+  const rightEntries = right.entries.slice().sort((a: VaultEntry, b: VaultEntry) => a.id.localeCompare(b.id));
+  const leftCategories = left.categories.slice().sort((a: string, b: string) => a.localeCompare(b));
+  const rightCategories = right.categories.slice().sort((a: string, b: string) => a.localeCompare(b));
+  const leftTemplates = left.categoryTemplates.slice().sort(
+    (a: CategoryTemplate, b: CategoryTemplate) => a.category.localeCompare(b.category),
+  );
+  const rightTemplates = right.categoryTemplates.slice().sort(
+    (a: CategoryTemplate, b: CategoryTemplate) => a.category.localeCompare(b.category),
+  );
+  const leftStates = left.categoryStates.slice().sort(
+    (a: CategorySyncState, b: CategorySyncState) => a.name.localeCompare(b.name),
+  );
+  const rightStates = right.categoryStates.slice().sort(
+    (a: CategorySyncState, b: CategorySyncState) => a.name.localeCompare(b.name),
+  );
+  const leftTags = left.tags.slice().sort((a: string, b: string) => a.localeCompare(b));
+  const rightTags = right.tags.slice().sort((a: string, b: string) => a.localeCompare(b));
   return JSON.stringify({
-    entries: left.entries,
-    categories: left.categories,
-    categoryTemplates: left.categoryTemplates,
-    categoryStates: left.categoryStates,
-    tags: left.tags,
+    entries: leftEntries,
+    categories: leftCategories,
+    categoryTemplates: leftTemplates,
+    categoryStates: leftStates,
+    tags: leftTags,
     security: left.security,
   }) === JSON.stringify({
-    entries: right.entries,
-    categories: right.categories,
-    categoryTemplates: right.categoryTemplates,
-    categoryStates: right.categoryStates,
-    tags: right.tags,
+    entries: rightEntries,
+    categories: rightCategories,
+    categoryTemplates: rightTemplates,
+    categoryStates: rightStates,
+    tags: rightTags,
     security: right.security,
   });
 }

@@ -269,7 +269,9 @@ struct VaultSyncEngine: Sendable {
             conflictStrategy: conflictStrategy
         )
         return VaultSnapshot(
-            entries: normalizedEntries.sorted { $0.updatedAt > $1.updatedAt },
+            entries: normalizedEntries.sorted { left, right in
+                left.updatedAt == right.updatedAt ? left.id < right.id : left.updatedAt > right.updatedAt
+            },
             categories: categories,
             categoryTemplates: categoryTemplates,
             categoryStates: categoryStates,
@@ -579,11 +581,19 @@ struct VaultSyncEngine: Sendable {
     }
 
     private func hasSameSyncBusinessContent(_ left: VaultSnapshot, _ right: VaultSnapshot) -> Bool {
-        left.entries == right.entries
-            && left.categories == right.categories
-            && left.categoryTemplates == right.categoryTemplates
-            && left.categoryStates == right.categoryStates
-            && left.tags == right.tags
+        left.entries.sorted { $0.id < $1.id } == right.entries.sorted { $0.id < $1.id }
+            && left.categories.sorted() == right.categories.sorted()
+            && left.categoryTemplates.sorted {
+                $0.category.localizedCaseInsensitiveCompare($1.category) == .orderedAscending
+            } == right.categoryTemplates.sorted {
+                $0.category.localizedCaseInsensitiveCompare($1.category) == .orderedAscending
+            }
+            && left.categoryStates.sorted {
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            } == right.categoryStates.sorted {
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+            && left.tags.sorted() == right.tags.sorted()
             && left.security == right.security
     }
 

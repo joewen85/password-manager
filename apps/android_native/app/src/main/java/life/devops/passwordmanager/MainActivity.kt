@@ -3016,17 +3016,19 @@ class MainActivity : FragmentActivity() {
             return
         }
         activeSyncJob = layoutScope.launch {
-            val message = withContext(Dispatchers.IO) {
-                store.syncNow()
-                store.statusMessage ?: store.syncStatus
+            val result = withContext(Dispatchers.IO) {
+                val contentChanged = store.syncNow()
+                contentChanged to (store.statusMessage ?: store.syncStatus)
             }
             if (store.isUnlocked) {
-                showHome(preserveEntryScroll = true)
+                if (result.first) {
+                    showHome(preserveEntryScroll = true)
+                }
             } else {
                 showUnlock()
             }
             if (showToast) {
-                toast(message)
+                toast(result.second)
             }
         }
     }
