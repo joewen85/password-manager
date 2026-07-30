@@ -20,6 +20,58 @@ import kotlin.test.assertTrue
 
 class VaultStoreTaxonomyTemplateTest {
     @Test
+    fun categoryTemplateEditsAdvanceCategoryVersion() {
+        val directory = createTempDirectory("PasswordManagerAndroidCategoryTemplateVersionTests").toFile()
+        try {
+            val store = VaultStore(repository = FileVaultRepository(directory))
+            assertTrue(store.setupMasterPassword("test-password", "test-password"))
+            assertTrue(store.addCategory("Private"))
+            val initialSnapshot = VaultJson.decodeSnapshot(assertNotNull(store.exportSnapshotJson()))
+            val initialState = initialSnapshot.categoryStates.single()
+            val updater = initialState.updatedBy
+
+            val addedField = FieldTemplate(id = "field-owner", name = "Owner")
+            assertTrue(store.updateCategoryTemplate("Private", listOf(addedField)))
+            val editedSnapshot = VaultJson.decodeSnapshot(assertNotNull(store.exportSnapshotJson()))
+            val editedState = editedSnapshot.categoryStates.single()
+            assertTrue(
+                editedState.version.getValue(updater) > initialState.version.getValue(updater),
+                "Editing category fields must advance the category version vector",
+            )
+
+            assertTrue(store.applyCategoryPreset("Private", CategoryTypePreset.SERVER))
+            val presetSnapshot = VaultJson.decodeSnapshot(assertNotNull(store.exportSnapshotJson()))
+            val presetState = presetSnapshot.categoryStates.single()
+            assertTrue(
+                presetState.version.getValue(updater) > editedState.version.getValue(updater),
+                "Applying a category preset must advance the category version vector",
+            )
+
+            val importedField = FieldTemplate(id = "field-imported", name = "Imported")
+            val importedTemplate = assertNotNull(store.categoryTemplate("Private")).copy(
+                fields = assertNotNull(store.categoryTemplate("Private")).fields + importedField,
+            )
+            assertTrue(store.importScopedExportJson(
+                VaultJson.encodeScopedExport(ScopedVaultExport(
+                    scope = ScopedExportScope.CATEGORY,
+                    category = "Private",
+                    items = emptyList(),
+                    categoryTemplates = listOf(importedTemplate),
+                )),
+                ImportConflictStrategy.KEEP_COPY,
+            ))
+            val importedSnapshot = VaultJson.decodeSnapshot(assertNotNull(store.exportSnapshotJson()))
+            val importedState = importedSnapshot.categoryStates.single()
+            assertTrue(
+                importedState.version.getValue(updater) > presetState.version.getValue(updater),
+                "Importing category fields must advance the category version vector",
+            )
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun newCategoryStartsWithOnlyNameAndNotesTemplateFields() {
         val directory = createTempDirectory("PasswordManagerAndroidCategoryTemplateTests").toFile()
         try {

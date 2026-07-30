@@ -265,6 +265,102 @@ struct VaultSyncEngineTests {
         #expect(uploaded.snapshot.categoryTemplates.first?.fields.map(\.name) == ["名称", "备注"])
     }
 
+    @Test("Category template fields merge by category causality")
+    func categoryTemplateFieldsMergeByCategoryCausality() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        let baseFields = CategoryTemplate.defaultCategoryFields()
+        let addedField = FieldTemplate(id: "field-owner", name: "Owner")
+        let modifiedField = FieldTemplate(id: "field-owner", name: "Maintainer")
+        let localTime = Date(timeIntervalSince1970: 1_800_000_100)
+        let remoteTime = Date(timeIntervalSince1970: 1_800_000_200)
+
+        func mergedTemplate(
+            localFields: [FieldTemplate],
+            localVersion: [String: Int],
+            remoteFields: [FieldTemplate],
+            remoteVersion: [String: Int],
+            strategy: SyncSettingsConflictStrategy
+        ) async throws -> CategoryTemplate {
+            var local = makeSnapshot(
+                categories: ["test"],
+                categoryTemplates: [CategoryTemplate(category: "test", fields: localFields)],
+                entries: [],
+                updatedAt: localTime
+            )
+            local.categoryStates = [CategorySyncState(
+                name: "test",
+                updatedAt: localTime,
+                version: localVersion,
+                updatedBy: "local-device"
+            )]
+            var remote = makeSnapshot(
+                categories: ["test"],
+                categoryTemplates: [CategoryTemplate(category: "test", fields: remoteFields)],
+                entries: [],
+                updatedAt: remoteTime
+            )
+            remote.categoryStates = [CategorySyncState(
+                name: "test",
+                updatedAt: remoteTime,
+                version: remoteVersion,
+                updatedBy: "remote-device"
+            )]
+            var settings = SyncSettings.defaults(deviceId: "local-device")
+            settings.lastSyncRevision = 1
+            settings.conflictStrategy = strategy
+            let payload = try engine.encodePayload(VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 2,
+                snapshot: remote
+            ))
+            let client = FakeSyncClient(
+                downloads: [RemoteSyncResult(payload: payload, statusCode: 200)],
+                uploadStatusCodes: [200]
+            )
+            let result = try await engine.synchronize(
+                localSnapshot: local,
+                settings: settings,
+                client: client
+            )
+            return try #require(result.snapshot.categoryTemplates.first)
+        }
+
+        let scenarios: [(
+            localFields: [FieldTemplate],
+            localVersion: [String: Int],
+            remoteFields: [FieldTemplate],
+            remoteVersion: [String: Int],
+            strategy: SyncSettingsConflictStrategy,
+            expectedCustomName: String?
+        )] = [
+            (baseFields + [addedField], ["shared": 2], baseFields, ["shared": 1], .remoteWins, "Owner"),
+            (baseFields + [addedField], ["shared": 2], baseFields, ["shared": 1], .keepBoth, "Owner"),
+            (baseFields + [addedField], ["shared": 2], baseFields, ["shared": 3], .localWins, nil),
+            (baseFields + [addedField], ["shared": 2], baseFields, ["shared": 3], .remoteWins, nil),
+            (baseFields + [addedField], ["shared": 2], baseFields, ["shared": 3], .keepBoth, nil),
+            (baseFields + [addedField], ["shared": 2], baseFields + [modifiedField], ["shared": 3], .localWins, "Maintainer"),
+            (baseFields + [addedField], ["shared": 2], baseFields + [modifiedField], ["shared": 3], .remoteWins, "Maintainer"),
+            (baseFields + [addedField], ["shared": 2], baseFields + [modifiedField], ["shared": 3], .keepBoth, "Maintainer"),
+            (baseFields + [addedField], ["local": 1], baseFields + [modifiedField], ["remote": 1], .localWins, "Owner"),
+            (baseFields + [addedField], ["local": 1], baseFields + [modifiedField], ["remote": 1], .remoteWins, "Maintainer"),
+            (baseFields + [addedField], ["local": 1], baseFields + [modifiedField], ["remote": 1], .keepBoth, "Maintainer"),
+        ]
+
+        for scenario in scenarios {
+            let template = try await mergedTemplate(
+                localFields: scenario.localFields,
+                localVersion: scenario.localVersion,
+                remoteFields: scenario.remoteFields,
+                remoteVersion: scenario.remoteVersion,
+                strategy: scenario.strategy
+            )
+            let customField = template.fields.first { $0.id == addedField.id }
+            #expect(customField?.name == scenario.expectedCustomName)
+        }
+    }
+
     @Test("Keep both preserves local empty category even when local changes flag is clean")
     func keepBothPreservesLocalEmptyCategoryWhenClean() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)

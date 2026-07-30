@@ -718,6 +718,94 @@ struct SyncSettingsTests {
     }
 
     @MainActor
+    @Test("VaultStore sync preserves a newly added category field")
+    func vaultStoreSyncPreservesNewlyAddedCategoryField() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManagerMacOSVaultStoreSyncCategoryFieldTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let secretStore = InMemorySyncSecretStore()
+        let syncRepository = try SyncSettingsRepository(baseDirectory: directory, secretStore: secretStore)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(
+            repository: repository,
+            syncSettingsRepository: syncRepository,
+            syncEngine: engine
+        )
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+        var settings = SyncSettings.defaults(deviceId: "mac-device")
+        settings.providerType = .webdav
+        settings.webdavUrl = "https://dav.example.com/root"
+        settings.webdavPath = "/vault.json"
+        settings.conflictStrategy = .remoteWins
+        store.updateSyncSettings(settings)
+        #expect(store.addCategory("test"))
+
+        let baselineClient = VaultStoreSyncFakeClient(
+            downloads: [RemoteSyncResult(payload: nil, statusCode: 404)],
+            uploadStatusCodes: [200]
+        )
+        await store.syncNow(client: baselineClient)
+        let baselineUpload = try decodeEncryptedSyncPayload(
+            baselineClient.uploadedPayloads.first,
+            repository: repository
+        )
+
+        let existingTemplate = try #require(store.categoryTemplates.first)
+        let addedField = FieldTemplate(id: "field-owner", name: "Owner")
+        #expect(store.updateCategoryTemplate(
+            "test",
+            fields: existingTemplate.fields + [addedField]
+        ))
+        #expect(store.categoryTemplates.first?.fields.contains(addedField) == true)
+
+        let remotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: baselineUpload.revision + 1,
+                snapshot: baselineUpload.snapshot
+            )
+        )
+        let client = VaultStoreSyncFakeClient(
+            downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)],
+            uploadStatusCodes: [200]
+        )
+
+        await store.syncNow(client: client)
+
+        let syncedTemplate = try #require(store.categoryTemplates.first)
+        #expect(syncedTemplate.fields.contains(addedField))
+        let uploaded = try decodeEncryptedSyncPayload(client.uploadedPayloads.first, repository: repository)
+        #expect(uploaded.snapshot.categoryTemplates.first?.fields.contains(addedField) == true)
+
+        let staleRemotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "stale-device",
+                revision: uploaded.revision + 1,
+                snapshot: baselineUpload.snapshot
+            )
+        )
+        let staleClient = VaultStoreSyncFakeClient(
+            downloads: [RemoteSyncResult(payload: staleRemotePayload, statusCode: 200)],
+            uploadStatusCodes: [200]
+        )
+
+        await store.syncNow(client: staleClient)
+
+        let convergedTemplate = try #require(store.categoryTemplates.first)
+        #expect(convergedTemplate.fields.contains(addedField))
+        let convergedUpload = try decodeEncryptedSyncPayload(
+            staleClient.uploadedPayloads.first,
+            repository: repository
+        )
+        #expect(convergedUpload.snapshot.categoryTemplates.first?.fields.contains(addedField) == true)
+    }
+
+    @MainActor
     @Test("VaultStore sync does not restore locally deleted empty category")
     func vaultStoreSyncDoesNotRestoreLocallyDeletedEmptyCategory() async throws {
         let directory = FileManager.default.temporaryDirectory

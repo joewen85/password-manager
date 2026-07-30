@@ -60,7 +60,9 @@ function extractFunction(source, name) {
 }
 
 function extractPrivateAsyncMethod(source, name) {
-  const signature = `private async ${name}(`;
+  const privateSignature = `private async ${name}(`;
+  const publicSignature = `async ${name}(`;
+  const signature = source.includes(privateSignature) ? privateSignature : publicSignature;
   const start = source.indexOf(signature);
   if (start < 0) {
     throw new Error(`Cannot find Harmony controller method: ${name}`);
@@ -99,9 +101,59 @@ function extractPrivateAsyncMethod(source, name) {
   throw new Error(`Cannot find end of Harmony controller method: ${name}`);
 }
 
+function extractPrivateMethod(source, name) {
+  const signature = `private ${name}(`;
+  const start = source.indexOf(signature);
+  if (start < 0) {
+    throw new Error(`Cannot find Harmony controller method: ${name}`);
+  }
+  const bodyStart = source.indexOf('{', start);
+  let depth = 0;
+  let quote = '';
+  let escaped = false;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote.length > 0) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === quote) {
+        quote = '';
+      }
+      continue;
+    }
+    if (char === "'" || char === '"' || char === '`') {
+      quote = char;
+      continue;
+    }
+    if (char === '{') {
+      depth += 1;
+    } else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return source
+          .slice(start, index + 1)
+          .replace(signature, `function ${name}(`);
+      }
+    }
+  }
+  throw new Error(`Cannot find end of Harmony controller method: ${name}`);
+}
+
 function loadCategorySyncRuntime(controller) {
   const functionNames = [
     'readString',
+    'readPreservedString',
+    'canonicalIdString',
+    'defaultCategoryFields',
+    'createFieldTemplate',
+    'stableFieldId',
+    'utf8Hex',
+    'normalizeCategoryTemplates',
+    'normalizeCategoryTemplate',
+    'normalizeFieldTemplates',
+    'normalizeFieldValueType',
     'pickFirstNonEmpty',
     'resolveEntryCategory',
     'cloneCategoryVersion',
@@ -113,6 +165,7 @@ function loadCategorySyncRuntime(controller) {
     'categoryTombstone',
     'hasEstablishedSyncBaseline',
     'mergeCategoryStatesForSync',
+    'mergeCategoryTemplates',
   ];
   const conflictStrategy = `
     const ConflictStrategy = Object.freeze({
@@ -130,6 +183,29 @@ function loadCategorySyncRuntime(controller) {
 function loadBusinessEqualityRuntime(controller) {
   const source = `${extractFunction(controller, 'hasSameSyncBusinessContent')}
     ;hasSameSyncBusinessContent;`;
+  return vm.runInNewContext(stripTypeScriptTypes(source, { mode: 'transform' }), {});
+}
+
+function loadTemplateMutationRuntime(controller) {
+  const functionNames = [
+    'readString',
+    'readPreservedString',
+    'canonicalIdString',
+    'defaultCategoryFields',
+    'createFieldTemplate',
+    'stableFieldId',
+    'utf8Hex',
+    'normalizeCategoryTemplates',
+    'normalizeCategoryTemplate',
+    'normalizeFieldTemplates',
+    'normalizeFieldValueType',
+    'cloneFieldTemplate',
+    'mergeImportedCategoryTemplateDefinitions',
+  ];
+  const methodName = 'mergeImportedCategoryTemplates';
+  const source = `${functionNames.map((name) => extractFunction(controller, name)).join('\n')}
+    ${extractPrivateMethod(controller, methodName)}
+    ;({ ${methodName}, ${functionNames.join(', ')} });`;
   return vm.runInNewContext(stripTypeScriptTypes(source, { mode: 'transform' }), {});
 }
 
@@ -392,6 +468,7 @@ async function main() {
 
   const controller = fs.readFileSync(controllerPath, 'utf8');
   const runtime = loadCategorySyncRuntime(controller);
+  const templateMutationRuntime = loadTemplateMutationRuntime(controller);
   let performSyncOnce = null;
   try {
     performSyncOnce = loadSyncPathRuntime(controller);
@@ -411,6 +488,114 @@ async function main() {
     version: { legacy: 1, 'harmony-device': 1 },
     updatedBy: 'harmony-device',
   };
+  const addedField = {
+    id: 'field-owner',
+    name: 'Owner',
+    valueType: 'text',
+    targetCategory: '',
+    targetFieldId: '',
+  };
+  const localTemplateState = {
+    name: 'test',
+    isDeleted: false,
+    updatedAt: 200,
+    version: { 'harmony-device': 2 },
+    updatedBy: 'harmony-device',
+  };
+  const staleTemplateState = {
+    ...localTemplateState,
+    updatedAt: 100,
+    version: { 'harmony-device': 1 },
+  };
+
+  for (const strategy of [
+    runtime.ConflictStrategy.REMOTE_WINS,
+    runtime.ConflictStrategy.KEEP_BOTH,
+  ]) {
+    const templates = runtime.mergeCategoryTemplates(
+      [{ category: 'test', fields: [] }],
+      [{ category: 'test', fields: runtime.defaultCategoryFields().concat([addedField]) }],
+      [{ category: 'test', fields: [] }],
+      ['test'],
+      [localTemplateState],
+      [staleTemplateState],
+      strategy,
+    );
+    assert(
+      templates[0].fields.some((field) => field.id === addedField.id),
+      `${strategy} keeps a causally newer category template after local dirty state is cleared`,
+    );
+  }
+
+  const modifiedField = { ...addedField, name: 'Maintainer' };
+  const dominantRemoteState = {
+    ...localTemplateState,
+    updatedAt: 300,
+    version: { 'harmony-device': 3 },
+    updatedBy: 'remote-device',
+  };
+  for (const strategy of [
+    runtime.ConflictStrategy.LOCAL_WINS,
+    runtime.ConflictStrategy.REMOTE_WINS,
+    runtime.ConflictStrategy.KEEP_BOTH,
+  ]) {
+    const removed = runtime.mergeCategoryTemplates(
+      [],
+      [{ category: 'test', fields: runtime.defaultCategoryFields().concat([addedField]) }],
+      [{ category: 'test', fields: runtime.defaultCategoryFields() }],
+      ['test'],
+      [localTemplateState],
+      [dominantRemoteState],
+      strategy,
+    );
+    assert(
+      !removed[0].fields.some((field) => field.id === addedField.id),
+      `${strategy} accepts a causally newer field deletion`,
+    );
+    const modified = runtime.mergeCategoryTemplates(
+      [],
+      [{ category: 'test', fields: runtime.defaultCategoryFields().concat([addedField]) }],
+      [{ category: 'test', fields: runtime.defaultCategoryFields().concat([modifiedField]) }],
+      ['test'],
+      [localTemplateState],
+      [dominantRemoteState],
+      strategy,
+    );
+    assert(
+      modified[0].fields.find((field) => field.id === addedField.id)?.name === 'Maintainer',
+      `${strategy} accepts a causally newer field modification`,
+    );
+  }
+
+  const concurrentLocalState = {
+    ...localTemplateState,
+    version: { local: 1 },
+    updatedAt: 200,
+  };
+  const concurrentRemoteState = {
+    ...dominantRemoteState,
+    version: { remote: 1 },
+    updatedAt: 300,
+  };
+  for (const [strategy, expectedName] of [
+    [runtime.ConflictStrategy.LOCAL_WINS, 'Owner'],
+    [runtime.ConflictStrategy.REMOTE_WINS, 'Maintainer'],
+    [runtime.ConflictStrategy.KEEP_BOTH, 'Maintainer'],
+  ]) {
+    const concurrent = runtime.mergeCategoryTemplates(
+      [],
+      [{ category: 'test', fields: runtime.defaultCategoryFields().concat([addedField]) }],
+      [{ category: 'test', fields: runtime.defaultCategoryFields().concat([modifiedField]) }],
+      ['test'],
+      [concurrentLocalState],
+      [concurrentRemoteState],
+      strategy,
+    );
+    assert(
+      concurrent[0].fields.find((field) => field.id === addedField.id)?.name === expectedName,
+      `${strategy} resolves concurrent field changes by conflict strategy`,
+    );
+  }
 
   for (const strategy of [
     runtime.ConflictStrategy.REMOTE_WINS,
@@ -510,6 +695,62 @@ async function main() {
     runtime.ConflictStrategy.REMOTE_WINS,
   );
   assert(!recreated.isDeleted, 'Explicit recreation with a dominating version clears the tombstone');
+
+  const mutationHarness = {
+    snapshot: {
+      categories: ['test'],
+      categoryTemplates: [{
+        category: 'test',
+        fields: templateMutationRuntime.defaultCategoryFields(),
+      }],
+    },
+    recordedMutations: [],
+    mergeCategories(categories) {
+      categories.forEach((category) => {
+        if (!this.snapshot.categories.includes(category)) {
+          this.snapshot.categories.push(category);
+        }
+      });
+    },
+    recordCategoryMutation(category, isDeleted) {
+      this.recordedMutations.push({ category, isDeleted });
+    },
+  };
+  const importedTemplate = {
+    category: 'test',
+    fields: templateMutationRuntime.defaultCategoryFields().concat([addedField]),
+  };
+  const importedChanged = templateMutationRuntime.mergeImportedCategoryTemplates.call(
+    mutationHarness,
+    [importedTemplate],
+  );
+  assert(importedChanged, 'Harmony detects an imported category template change');
+  assert(
+    mutationHarness.recordedMutations.length === 1 &&
+      mutationHarness.recordedMutations[0].category === 'test' &&
+      !mutationHarness.recordedMutations[0].isDeleted,
+    'Harmony imported template changes advance the category version',
+  );
+  const recordedMutationCount = mutationHarness.recordedMutations.length;
+  const unchangedImport = templateMutationRuntime.mergeImportedCategoryTemplates.call(
+    mutationHarness,
+    [importedTemplate],
+  );
+  assert(!unchangedImport, 'Harmony recognizes an unchanged imported category template');
+  assert(
+    mutationHarness.recordedMutations.length === recordedMutationCount,
+    'Harmony unchanged template imports do not create a false category version',
+  );
+  for (const methodName of [
+    'applyCategoryPreset',
+    'saveCategoryTemplate',
+    'saveCategoryTemplateFields',
+  ]) {
+    assert(
+      extractPrivateAsyncMethod(controller, methodName).includes('this.recordCategoryMutation('),
+      `Harmony ${methodName} advances the category version`,
+    );
+  }
 
   if (hasSameSyncBusinessContent !== null) {
     const localRuntimePayload = payload({

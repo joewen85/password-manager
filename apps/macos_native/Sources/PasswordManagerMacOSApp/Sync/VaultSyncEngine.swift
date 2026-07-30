@@ -263,10 +263,10 @@ struct VaultSyncEngine: Sendable {
             values: activeEntries.flatMap(\.payload.tags)
         )
         let categoryTemplates = mergeCategoryTemplates(
-            base: baseCategoryTemplates,
-            local: local.categoryTemplates,
-            remote: remote.categoryTemplates,
-            categories: categories
+            local: local,
+            remote: remote,
+            categories: categories,
+            conflictStrategy: conflictStrategy
         )
         return VaultSnapshot(
             entries: normalizedEntries.sorted { $0.updatedAt > $1.updatedAt },
@@ -469,30 +469,55 @@ struct VaultSyncEngine: Sendable {
     }
 
     private func mergeCategoryTemplates(
-        base: [CategoryTemplate],
-        local: [CategoryTemplate],
-        remote: [CategoryTemplate],
-        categories: [String]
+        local: VaultSnapshot,
+        remote: VaultSnapshot,
+        categories: [String],
+        conflictStrategy: SyncSettingsConflictStrategy
     ) -> [CategoryTemplate] {
-        let categoryKeys = Set(categories.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
-        var templatesByCategory: [String: CategoryTemplate] = [:]
-
-        func insert(_ template: CategoryTemplate) {
-            let category = template.category.trimmingCharacters(in: .whitespacesAndNewlines)
-            let key = category.lowercased()
-            guard !category.isEmpty, categoryKeys.contains(key), templatesByCategory[key] == nil else {
-                return
-            }
-            templatesByCategory[key] = CategoryTemplate(category: category, fields: template.fields)
+        func indexedTemplates(_ templates: [CategoryTemplate]) -> [String: CategoryTemplate] {
+            Dictionary(templates.map { template in
+                (normalizedCategoryKey(template.category), template)
+            }, uniquingKeysWith: { first, _ in first })
         }
 
-        base.forEach(insert)
-        local.forEach(insert)
-        remote.forEach(insert)
+        let localTemplates = indexedTemplates(local.categoryTemplates)
+        let remoteTemplates = indexedTemplates(remote.categoryTemplates)
+        let localStates = effectiveCategoryStates(in: local)
+        let remoteStates = effectiveCategoryStates(in: remote)
 
-        return categories.compactMap { category in
-            let key = category.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            return templatesByCategory[key]
+        return categories.map { category in
+            let key = normalizedCategoryKey(category)
+            let selected: CategoryTemplate?
+            switch (localStates[key], remoteStates[key]) {
+            case (.some(let localState), .some(let remoteState)):
+                switch VaultSyncMerger.compareVersion(local: localState.version, remote: remoteState.version) {
+                case .localDominates:
+                    selected = localTemplates[key]
+                case .remoteDominates:
+                    selected = remoteTemplates[key]
+                case .equal, .concurrent:
+                    switch conflictStrategy {
+                    case .localWins:
+                        selected = localTemplates[key]
+                    case .remoteWins:
+                        selected = remoteTemplates[key]
+                    case .keepBoth:
+                        selected = localState.updatedAt >= remoteState.updatedAt
+                            ? localTemplates[key]
+                            : remoteTemplates[key]
+                    }
+                }
+            case (.some, .none):
+                selected = localTemplates[key]
+            case (.none, .some):
+                selected = remoteTemplates[key]
+            case (.none, .none):
+                selected = localTemplates[key] ?? remoteTemplates[key]
+            }
+            return CategoryTemplate(
+                category: category,
+                fields: selected?.fields ?? CategoryTemplate.defaultCategoryFields()
+            )
         }
     }
 

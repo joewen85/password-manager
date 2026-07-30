@@ -851,27 +851,64 @@ std::vector<VaultEntry> clearDeletedCategoryReferences(
 }
 
 std::vector<CategoryTemplate> mergeCategoryTemplatesForSync(
-    const std::vector<CategoryTemplate>& base,
-    const std::vector<CategoryTemplate>& local,
-    const std::vector<CategoryTemplate>& remote,
-    const std::vector<std::string>& categories
+    const VaultSnapshot& local,
+    const VaultSnapshot& remote,
+    const std::vector<std::string>& categories,
+    const std::string& conflictStrategy
 ) {
-    std::set<std::string> categoryKeys;
-    for (const auto& category : categories) categoryKeys.insert(lowerCopy(trimCopy(category)));
-    std::map<std::string, CategoryTemplate> templatesByCategory;
-    auto insert = [&](const CategoryTemplate& templateEntry) {
-        const auto category = trimCopy(templateEntry.category);
-        const auto key = lowerCopy(category);
-        if (category.empty() || categoryKeys.count(key) == 0 || templatesByCategory.count(key) > 0) return;
-        templatesByCategory[key] = CategoryTemplate{category, normalizeFieldTemplates(templateEntry.fields)};
+    auto indexTemplates = [](const std::vector<CategoryTemplate>& templates) {
+        std::map<std::string, CategoryTemplate> indexed;
+        for (const auto& templateEntry : templates) {
+            const auto category = trimCopy(templateEntry.category);
+            const auto key = lowerCopy(category);
+            if (!category.empty() && indexed.count(key) == 0) {
+                indexed[key] = CategoryTemplate{category, normalizeFieldTemplates(templateEntry.fields)};
+            }
+        }
+        return indexed;
     };
-    for (const auto& templateEntry : base) insert(templateEntry);
-    for (const auto& templateEntry : local) insert(templateEntry);
-    for (const auto& templateEntry : remote) insert(templateEntry);
+    const auto localTemplates = indexTemplates(local.categoryTemplates);
+    const auto remoteTemplates = indexTemplates(remote.categoryTemplates);
+    const auto localStates = effectiveCategoryStates(local);
+    const auto remoteStates = effectiveCategoryStates(remote);
     std::vector<CategoryTemplate> result;
-    for (const auto& category : categories) {
-        const auto found = templatesByCategory.find(lowerCopy(trimCopy(category)));
-        if (found != templatesByCategory.end()) result.push_back(found->second);
+    for (const auto& rawCategory : categories) {
+        const auto category = trimCopy(rawCategory);
+        const auto key = lowerCopy(category);
+        const auto localTemplate = localTemplates.find(key);
+        const auto remoteTemplate = remoteTemplates.find(key);
+        const auto localState = localStates.find(key);
+        const auto remoteState = remoteStates.find(key);
+        const CategoryTemplate* selected = nullptr;
+        if (localState == localStates.end()) {
+            if (remoteTemplate != remoteTemplates.end()) {
+                selected = &remoteTemplate->second;
+            } else if (localTemplate != localTemplates.end()) {
+                selected = &localTemplate->second;
+            }
+        } else if (remoteState == remoteStates.end()) {
+            if (localTemplate != localTemplates.end()) selected = &localTemplate->second;
+        } else {
+            const auto comparison = compareVersion(localState->second.version, remoteState->second.version);
+            bool selectLocal;
+            if (comparison == "localDominates") {
+                selectLocal = true;
+            } else if (comparison == "remoteDominates") {
+                selectLocal = false;
+            } else if (conflictStrategy == "localWins") {
+                selectLocal = true;
+            } else if (conflictStrategy == "remoteWins") {
+                selectLocal = false;
+            } else {
+                selectLocal = isTimestampAtLeast(localState->second.updatedAt, remoteState->second.updatedAt);
+            }
+            if (selectLocal && localTemplate != localTemplates.end()) selected = &localTemplate->second;
+            if (!selectLocal && remoteTemplate != remoteTemplates.end()) selected = &remoteTemplate->second;
+        }
+        result.push_back(CategoryTemplate{
+            category,
+            selected == nullptr ? defaultCategoryFields() : normalizeFieldTemplates(selected->fields),
+        });
     }
     return result;
 }
@@ -946,7 +983,12 @@ VaultSnapshot mergeSnapshotsForSync(
         if (!entry.isDeleted) values.insert(values.end(), entry.tags.begin(), entry.tags.end());
     }
     merged.tags = mergeTaxonomyValues(values);
-    merged.categoryTemplates = mergeCategoryTemplatesForSync(baseTemplates, local.categoryTemplates, remote.categoryTemplates, merged.categories);
+    merged.categoryTemplates = mergeCategoryTemplatesForSync(
+        local,
+        remote,
+        merged.categories,
+        conflictStrategy
+    );
     const auto& latestSnapshot = isTimestampAtLeast(local.updatedAt, remote.updatedAt) ? local : remote;
     merged.requireTotp = latestSnapshot.requireTotp;
     merged.totpSecret = latestSnapshot.totpSecret;

@@ -91,6 +91,7 @@ function loadControllerRuntime(controllerSource) {
     'normalizeCategoryTemplates',
     'normalizeCategoryTemplate',
     'normalizeFieldTemplates',
+    'compareCategoryVersion',
     'mergeEditableTemplateFields',
     'mergeCategoryTemplates',
     'mergeImportedCategoryTemplateDefinitions',
@@ -100,8 +101,16 @@ function loadControllerRuntime(controllerSource) {
     'normalizeFieldValueType',
     'readPreservedString',
   ];
-  const source = `${functionNames.map((name) => extractFunction(controllerSource, name)).join('\n')}
-    ;({ ${functionNames.join(', ')} });`;
+  const conflictStrategy = `
+    const ConflictStrategy = Object.freeze({
+      LOCAL_WINS: 'localWins',
+      REMOTE_WINS: 'remoteWins',
+      KEEP_BOTH: 'keepBoth',
+    });
+  `;
+  const source = `${conflictStrategy}
+    ${functionNames.map((name) => extractFunction(controllerSource, name)).join('\n')}
+    ;({ ConflictStrategy, ${functionNames.join(', ')} });`;
   return vm.runInNewContext(
     stripTypeScriptTypes(source, { mode: 'transform' }),
     {},
@@ -287,7 +296,15 @@ function main() {
     'Scoped export and decode round trip targetFieldId',
   );
 
-  const synced = runtime.mergeCategoryTemplates([], sourceTemplates, [], ['Servers']);
+  const synced = runtime.mergeCategoryTemplates(
+    [],
+    sourceTemplates,
+    [],
+    ['Servers'],
+    [{ name: 'Servers', version: { local: 1 }, updatedAt: 1 }],
+    [],
+    runtime.ConflictStrategy.KEEP_BOTH,
+  );
   assert(
     synced[0].fields[0].valueType === 'fieldReference' &&
       synced[0].fields[0].targetFieldId === reference.targetFieldId,

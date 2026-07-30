@@ -3,6 +3,7 @@ package life.devops.passwordmanager.sync
 import life.devops.passwordmanager.model.CategoryTemplate
 import life.devops.passwordmanager.model.CategorySyncState
 import life.devops.passwordmanager.model.CredentialPayload
+import life.devops.passwordmanager.model.FieldTemplate
 import life.devops.passwordmanager.model.SecuritySettings
 import life.devops.passwordmanager.model.VaultEntry
 import life.devops.passwordmanager.model.VaultEntryType
@@ -278,6 +279,153 @@ class VaultSyncEngineTest {
         assertEquals(listOf("test"), uploaded.snapshot.categories)
         assertEquals(listOf("test"), uploaded.snapshot.categoryTemplates.map { it.category })
         assertEquals(listOf("名称", "备注"), uploaded.snapshot.categoryTemplates.single().fields.map { it.name })
+    }
+
+    @Test
+    fun causallyNewerCategoryStatePreservesTemplateWhenLocalIsClean() {
+        val now = Instant.parse("2027-01-15T08:00:00Z")
+        val engine = VaultSyncEngine(clock = { now })
+        val addedField = FieldTemplate(id = "field-owner", name = "Owner")
+        val local = makeSnapshot(
+            categories = listOf("test"),
+            categoryTemplates = listOf(CategoryTemplate(
+                category = "test",
+                fields = CategoryTemplate.defaultCategoryFields() + addedField,
+            )),
+            entries = emptyList(),
+        ).copy(categoryStates = listOf(CategorySyncState(
+            name = "test",
+            updatedAt = Instant.parse("2027-01-15T08:01:00Z"),
+            version = mapOf("android-device" to 2),
+            updatedBy = "android-device",
+        )))
+        val remote = makeSnapshot(
+            categories = listOf("test"),
+            categoryTemplates = listOf(CategoryTemplate(category = "test")),
+            entries = emptyList(),
+            updatedAt = Instant.parse("2027-01-15T08:02:00Z"),
+        ).copy(categoryStates = listOf(CategorySyncState(
+            name = "test",
+            updatedAt = Instant.parse("2027-01-15T08:00:30Z"),
+            version = mapOf("android-device" to 1),
+            updatedBy = "android-device",
+        )))
+
+        listOf(
+            SyncSettingsConflictStrategy.REMOTE_WINS,
+            SyncSettingsConflictStrategy.KEEP_BOTH,
+        ).forEach { strategy ->
+            val settings = SyncSettings.defaults(deviceId = "android-device").copy(
+                lastSyncRevision = 1,
+                hasLocalChanges = false,
+                conflictStrategy = strategy,
+            )
+            val remotePayload = engine.encodePayload(VaultSyncPayload(
+                exportedAt = now,
+                deviceId = "remote-device",
+                revision = 2,
+                snapshot = remote,
+            ))
+            val client = FakeSyncClient(
+                downloads = ArrayDeque(listOf(RemoteSyncResult(payload = remotePayload, statusCode = 200))),
+                uploadStatusCodes = ArrayDeque(listOf(200)),
+            )
+
+            val result = engine.synchronize(localSnapshot = local, settings = settings, client = client)
+
+            assertEquals(2, result.snapshot.categoryStates.single().version["android-device"])
+            assertTrue(result.snapshot.categoryTemplates.single().fields.contains(addedField))
+            val uploaded = engine.decodePayload(client.uploadedPayloads.single())!!
+            assertTrue(uploaded.snapshot.categoryTemplates.single().fields.contains(addedField))
+        }
+
+        val baseFields = CategoryTemplate.defaultCategoryFields()
+        val modifiedField = FieldTemplate(id = addedField.id, name = "Maintainer")
+        val localTime = Instant.parse("2027-01-15T08:01:00Z")
+        val remoteTime = Instant.parse("2027-01-15T08:02:00Z")
+
+        fun mergedTemplate(
+            localFields: List<FieldTemplate>,
+            localVersion: Map<String, Int>,
+            remoteFields: List<FieldTemplate>,
+            remoteVersion: Map<String, Int>,
+            strategy: SyncSettingsConflictStrategy,
+        ): CategoryTemplate {
+            val scenarioLocal = makeSnapshot(
+                categories = listOf("test"),
+                categoryTemplates = listOf(CategoryTemplate("test", localFields)),
+                entries = emptyList(),
+                updatedAt = localTime,
+            ).copy(categoryStates = listOf(CategorySyncState(
+                name = "test",
+                updatedAt = localTime,
+                version = localVersion,
+                updatedBy = "local-device",
+            )))
+            val scenarioRemote = makeSnapshot(
+                categories = listOf("test"),
+                categoryTemplates = listOf(CategoryTemplate("test", remoteFields)),
+                entries = emptyList(),
+                updatedAt = remoteTime,
+            ).copy(categoryStates = listOf(CategorySyncState(
+                name = "test",
+                updatedAt = remoteTime,
+                version = remoteVersion,
+                updatedBy = "remote-device",
+            )))
+            val scenarioSettings = SyncSettings.defaults(deviceId = "local-device").copy(
+                lastSyncRevision = 1,
+                conflictStrategy = strategy,
+            )
+            val payload = engine.encodePayload(VaultSyncPayload(
+                exportedAt = now,
+                deviceId = "remote-device",
+                revision = 2,
+                snapshot = scenarioRemote,
+            ))
+            val scenarioClient = FakeSyncClient(
+                downloads = ArrayDeque(listOf(RemoteSyncResult(payload = payload, statusCode = 200))),
+                uploadStatusCodes = ArrayDeque(listOf(200)),
+            )
+            return engine.synchronize(scenarioLocal, scenarioSettings, scenarioClient)
+                .snapshot.categoryTemplates.single()
+        }
+
+        data class Scenario(
+            val localFields: List<FieldTemplate>,
+            val localVersion: Map<String, Int>,
+            val remoteFields: List<FieldTemplate>,
+            val remoteVersion: Map<String, Int>,
+            val strategy: SyncSettingsConflictStrategy,
+            val expectedCustomName: String?,
+        )
+
+        val scenarios = listOf(
+            Scenario(baseFields + addedField, mapOf("shared" to 2), baseFields, mapOf("shared" to 1), SyncSettingsConflictStrategy.REMOTE_WINS, "Owner"),
+            Scenario(baseFields + addedField, mapOf("shared" to 2), baseFields, mapOf("shared" to 1), SyncSettingsConflictStrategy.KEEP_BOTH, "Owner"),
+            Scenario(baseFields + addedField, mapOf("shared" to 2), baseFields, mapOf("shared" to 3), SyncSettingsConflictStrategy.LOCAL_WINS, null),
+            Scenario(baseFields + addedField, mapOf("shared" to 2), baseFields, mapOf("shared" to 3), SyncSettingsConflictStrategy.REMOTE_WINS, null),
+            Scenario(baseFields + addedField, mapOf("shared" to 2), baseFields, mapOf("shared" to 3), SyncSettingsConflictStrategy.KEEP_BOTH, null),
+            Scenario(baseFields + addedField, mapOf("shared" to 2), baseFields + modifiedField, mapOf("shared" to 3), SyncSettingsConflictStrategy.LOCAL_WINS, "Maintainer"),
+            Scenario(baseFields + addedField, mapOf("shared" to 2), baseFields + modifiedField, mapOf("shared" to 3), SyncSettingsConflictStrategy.REMOTE_WINS, "Maintainer"),
+            Scenario(baseFields + addedField, mapOf("shared" to 2), baseFields + modifiedField, mapOf("shared" to 3), SyncSettingsConflictStrategy.KEEP_BOTH, "Maintainer"),
+            Scenario(baseFields + addedField, mapOf("local" to 1), baseFields + modifiedField, mapOf("remote" to 1), SyncSettingsConflictStrategy.LOCAL_WINS, "Owner"),
+            Scenario(baseFields + addedField, mapOf("local" to 1), baseFields + modifiedField, mapOf("remote" to 1), SyncSettingsConflictStrategy.REMOTE_WINS, "Maintainer"),
+            Scenario(baseFields + addedField, mapOf("local" to 1), baseFields + modifiedField, mapOf("remote" to 1), SyncSettingsConflictStrategy.KEEP_BOTH, "Maintainer"),
+        )
+        scenarios.forEach { scenario ->
+            val template = mergedTemplate(
+                localFields = scenario.localFields,
+                localVersion = scenario.localVersion,
+                remoteFields = scenario.remoteFields,
+                remoteVersion = scenario.remoteVersion,
+                strategy = scenario.strategy,
+            )
+            assertEquals(
+                scenario.expectedCustomName,
+                template.fields.firstOrNull { it.id == addedField.id }?.name,
+            )
+        }
     }
 
     @Test

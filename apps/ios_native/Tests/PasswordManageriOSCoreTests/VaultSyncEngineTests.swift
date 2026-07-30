@@ -265,6 +265,182 @@ struct VaultSyncEngineTests {
         #expect(uploaded.snapshot.categoryTemplates.first?.fields.map(\.name) == ["名称", "备注"])
     }
 
+    @Test("Causally newer category state preserves its template when local is clean")
+    func causallyNewerCategoryStatePreservesTemplateWhenLocalIsClean() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        let addedField = FieldTemplate(id: "field-owner", name: "Owner")
+        var local = makeSnapshot(
+            categories: ["test"],
+            categoryTemplates: [CategoryTemplate(
+                category: "test",
+                fields: CategoryTemplate.defaultFields + [addedField]
+            )],
+            entries: []
+        )
+        local.categoryStates = [CategorySyncState(
+            name: "test",
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_100),
+            version: ["ios-device": 2],
+            updatedBy: "ios-device"
+        )]
+        var remote = makeSnapshot(
+            categories: ["test"],
+            categoryTemplates: [CategoryTemplate(category: "test")],
+            entries: [],
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_200)
+        )
+        remote.categoryStates = [CategorySyncState(
+            name: "test",
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_050),
+            version: ["ios-device": 1],
+            updatedBy: "ios-device"
+        )]
+
+        for strategy in [SyncSettingsConflictStrategy.remoteWins, .keepBoth] {
+            var settings = SyncSettings.defaults(deviceId: "ios-device")
+            settings.lastSyncRevision = 1
+            settings.hasLocalChanges = false
+            settings.conflictStrategy = strategy
+            let remotePayload = try engine.encodePayload(VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 2,
+                snapshot: remote
+            ))
+            let client = FakeSyncClient(
+                downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)],
+                uploadStatusCodes: [200]
+            )
+
+            let result = try await engine.synchronize(
+                localSnapshot: local,
+                settings: settings,
+                client: client
+            )
+
+            #expect(result.snapshot.categoryStates.first?.version["ios-device"] == 2)
+            #expect(result.snapshot.categoryTemplates.first?.fields.contains(addedField) == true)
+            let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.single))
+            #expect(uploaded.snapshot.categoryTemplates.first?.fields.contains(addedField) == true)
+        }
+
+        func mergedTemplate(
+            localFields: [FieldTemplate],
+            localVersion: [String: Int],
+            localUpdatedAt: Date,
+            remoteFields: [FieldTemplate],
+            remoteVersion: [String: Int],
+            remoteUpdatedAt: Date,
+            strategy: SyncSettingsConflictStrategy
+        ) async throws -> CategoryTemplate {
+            var scenarioLocal = makeSnapshot(
+                categories: ["test"],
+                categoryTemplates: [CategoryTemplate(category: "test", fields: localFields)],
+                entries: []
+            )
+            scenarioLocal.categoryStates = [CategorySyncState(
+                name: "test",
+                updatedAt: localUpdatedAt,
+                version: localVersion,
+                updatedBy: "local-device"
+            )]
+            var scenarioRemote = makeSnapshot(
+                categories: ["test"],
+                categoryTemplates: [CategoryTemplate(category: "test", fields: remoteFields)],
+                entries: [],
+                updatedAt: remoteUpdatedAt
+            )
+            scenarioRemote.categoryStates = [CategorySyncState(
+                name: "test",
+                updatedAt: remoteUpdatedAt,
+                version: remoteVersion,
+                updatedBy: "remote-device"
+            )]
+            var scenarioSettings = SyncSettings.defaults(deviceId: "local-device")
+            scenarioSettings.lastSyncRevision = 1
+            scenarioSettings.conflictStrategy = strategy
+            let payload = try engine.encodePayload(VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 2,
+                snapshot: scenarioRemote
+            ))
+            let scenarioClient = FakeSyncClient(
+                downloads: [RemoteSyncResult(payload: payload, statusCode: 200)],
+                uploadStatusCodes: [200]
+            )
+            let result = try await engine.synchronize(
+                localSnapshot: scenarioLocal,
+                settings: scenarioSettings,
+                client: scenarioClient
+            )
+            return try #require(result.snapshot.categoryTemplates.first)
+        }
+
+        let baseFields = CategoryTemplate.defaultFields
+        let modifiedField = FieldTemplate(id: addedField.id, name: "Maintainer")
+        for strategy in [
+            SyncSettingsConflictStrategy.localWins,
+            .remoteWins,
+            .keepBoth,
+        ] {
+            let removed = try await mergedTemplate(
+                localFields: baseFields + [addedField],
+                localVersion: ["shared": 2],
+                localUpdatedAt: Date(timeIntervalSince1970: 1_800_000_100),
+                remoteFields: baseFields,
+                remoteVersion: ["shared": 3],
+                remoteUpdatedAt: Date(timeIntervalSince1970: 1_800_000_200),
+                strategy: strategy
+            )
+            #expect(!removed.fields.contains(addedField))
+
+            let modified = try await mergedTemplate(
+                localFields: baseFields + [addedField],
+                localVersion: ["shared": 2],
+                localUpdatedAt: Date(timeIntervalSince1970: 1_800_000_100),
+                remoteFields: baseFields + [modifiedField],
+                remoteVersion: ["shared": 3],
+                remoteUpdatedAt: Date(timeIntervalSince1970: 1_800_000_200),
+                strategy: strategy
+            )
+            #expect(modified.fields.contains(modifiedField))
+            #expect(!modified.fields.contains(addedField))
+        }
+
+        let concurrentLocal = try await mergedTemplate(
+            localFields: baseFields + [addedField],
+            localVersion: ["local-device": 1],
+            localUpdatedAt: Date(timeIntervalSince1970: 1_800_000_100),
+            remoteFields: baseFields + [modifiedField],
+            remoteVersion: ["remote-device": 1],
+            remoteUpdatedAt: Date(timeIntervalSince1970: 1_800_000_200),
+            strategy: .localWins
+        )
+        #expect(concurrentLocal.fields.contains(addedField))
+        let concurrentRemote = try await mergedTemplate(
+            localFields: baseFields + [addedField],
+            localVersion: ["local-device": 1],
+            localUpdatedAt: Date(timeIntervalSince1970: 1_800_000_100),
+            remoteFields: baseFields + [modifiedField],
+            remoteVersion: ["remote-device": 1],
+            remoteUpdatedAt: Date(timeIntervalSince1970: 1_800_000_200),
+            strategy: .remoteWins
+        )
+        #expect(concurrentRemote.fields.contains(modifiedField))
+        let concurrentNewest = try await mergedTemplate(
+            localFields: baseFields + [addedField],
+            localVersion: ["local-device": 1],
+            localUpdatedAt: Date(timeIntervalSince1970: 1_800_000_100),
+            remoteFields: baseFields + [modifiedField],
+            remoteVersion: ["remote-device": 1],
+            remoteUpdatedAt: Date(timeIntervalSince1970: 1_800_000_200),
+            strategy: .keepBoth
+        )
+        #expect(concurrentNewest.fields.contains(modifiedField))
+    }
+
     @Test("Keep both preserves local empty category even when local changes flag is clean")
     func keepBothPreservesLocalEmptyCategoryWhenClean() async throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)

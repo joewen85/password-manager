@@ -121,6 +121,54 @@ struct VaultStoreTaxonomyTests {
     }
 
     @MainActor
+    @Test("Category template edits and imports advance category version")
+    func categoryTemplateMutationsAdvanceCategoryVersion() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManagerMacOSCategoryTemplateVersionTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(repository: repository, syncSettingsRepository: nil)
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+        #expect(store.addCategory("Private"))
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        func exportedSnapshot() throws -> VaultSnapshot {
+            let export = try #require(store.makeSnapshotExport())
+            return try decoder.decode(VaultSnapshot.self, from: export.data)
+        }
+        func versionTotal(_ snapshot: VaultSnapshot) throws -> Int {
+            try #require(snapshot.categoryStates.first { $0.name == "Private" })
+                .version.values.reduce(0, +)
+        }
+
+        let initialVersion = try versionTotal(exportedSnapshot())
+        let owner = FieldTemplate(id: "field-owner", name: "Owner")
+        #expect(store.updateCategoryTemplate("Private", fields: [owner]))
+        let editedVersion = try versionTotal(exportedSnapshot())
+        #expect(editedVersion > initialVersion)
+
+        let imported = FieldTemplate(id: "field-imported", name: "Imported")
+        let scopedExport = ScopedVaultExport(
+            scope: .category,
+            exportedAt: Date(),
+            item: nil,
+            category: "Private",
+            items: [],
+            categoryTemplates: [CategoryTemplate(category: "Private", fields: [owner, imported])]
+        )
+        let importURL = directory.appendingPathComponent("category-template-version-import.json")
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(scopedExport).write(to: importURL)
+        store.importScopedExport(from: importURL, strategy: .keepCopy)
+
+        let importedVersion = try versionTotal(exportedSnapshot())
+        #expect(importedVersion > editedVersion)
+        #expect(store.categoryTemplates.first?.fields.contains(imported) == true)
+    }
+
+    @MainActor
     @Test("Category creation persists complete same-category field references atomically")
     func categoryCreationPersistsCompleteSameCategoryFieldReferencesAtomically() throws {
         let directory = FileManager.default.temporaryDirectory

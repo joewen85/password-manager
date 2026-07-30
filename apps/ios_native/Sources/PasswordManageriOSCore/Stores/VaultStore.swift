@@ -1008,6 +1008,7 @@ final class VaultStore {
         for importedTemplate in importedTemplates {
             let importedCategory = importedTemplate.category.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !importedCategory.isEmpty else { continue }
+            var templateChanged = false
             if !categories.contains(where: { $0.caseInsensitiveCompare(importedCategory) == .orderedSame }) {
                 categories.append(importedCategory)
                 changed = true
@@ -1022,16 +1023,22 @@ final class VaultStore {
                         if mergedTemplate.fields[fieldIndex] != importedField {
                             mergedTemplate.fields[fieldIndex] = importedField
                             changed = true
+                            templateChanged = true
                         }
                     } else {
                         mergedTemplate.fields.append(importedField)
                         changed = true
+                        templateChanged = true
                     }
                 }
                 categoryTemplates[templateIndex] = mergedTemplate
             } else {
                 categoryTemplates.append(CategoryTemplate(category: importedCategory, fields: importedTemplate.fields))
                 changed = true
+                templateChanged = true
+            }
+            if templateChanged {
+                recordCategoryMutation(importedCategory, isDeleted: false, updatedAt: Date())
             }
         }
         categories.sort()

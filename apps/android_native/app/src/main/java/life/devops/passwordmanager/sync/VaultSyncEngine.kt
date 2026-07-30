@@ -262,10 +262,10 @@ class VaultSyncEngine(
             entries = activeEntries.flatMap { it.payload.tags },
         )
         val categoryTemplates = mergeCategoryTemplates(
-            base = baseCategoryTemplates,
-            local = local.categoryTemplates,
-            remote = remote.categoryTemplates,
+            local = local,
+            remote = remote,
             categories = categories,
+            conflictStrategy = conflictStrategy,
         )
         return VaultSnapshot(
             entries = normalizedEntries.sortedByDescending { it.updatedAt },
@@ -446,29 +446,48 @@ class VaultSyncEngine(
             .sorted()
 
     private fun mergeCategoryTemplates(
-        base: List<CategoryTemplate>,
-        local: List<CategoryTemplate>,
-        remote: List<CategoryTemplate>,
+        local: VaultSnapshot,
+        remote: VaultSnapshot,
         categories: List<String>,
+        conflictStrategy: SyncSettingsConflictStrategy,
     ): List<CategoryTemplate> {
-        val categoryKeys = categories.map { it.trim().lowercase() }.toSet()
-        val templatesByCategory = linkedMapOf<String, CategoryTemplate>()
+        val localTemplates = local.categoryTemplates.associateBy { normalizedCategoryKey(it.category) }
+        val remoteTemplates = remote.categoryTemplates.associateBy { normalizedCategoryKey(it.category) }
+        val localStates = effectiveCategoryStates(local)
+        val remoteStates = effectiveCategoryStates(remote)
 
-        fun insert(template: CategoryTemplate) {
-            val category = template.category.trim()
-            val key = category.lowercase()
-            if (category.isNotEmpty() && key in categoryKeys && key !in templatesByCategory) {
-                templatesByCategory[key] = template.copy(category = category)
+        return categories.map { category ->
+            val key = normalizedCategoryKey(category)
+            val selected = when {
+                localStates[key] == null -> remoteTemplates[key] ?: localTemplates[key]
+                remoteStates[key] == null -> localTemplates[key]
+                else -> when (
+                    VaultSyncMerger.compareVersion(
+                        localStates.getValue(key).version,
+                        remoteStates.getValue(key).version,
+                    )
+                ) {
+                    VersionComparison.LOCAL_DOMINATES -> localTemplates[key]
+                    VersionComparison.REMOTE_DOMINATES -> remoteTemplates[key]
+                    VersionComparison.EQUAL,
+                    VersionComparison.CONCURRENT,
+                    -> when (conflictStrategy) {
+                        SyncSettingsConflictStrategy.LOCAL_WINS -> localTemplates[key]
+                        SyncSettingsConflictStrategy.REMOTE_WINS -> remoteTemplates[key]
+                        SyncSettingsConflictStrategy.KEEP_BOTH -> {
+                            if (localStates.getValue(key).updatedAt >= remoteStates.getValue(key).updatedAt) {
+                                localTemplates[key]
+                            } else {
+                                remoteTemplates[key]
+                            }
+                        }
+                    }
+                }
             }
-        }
-
-        base.forEach(::insert)
-        local.forEach(::insert)
-        remote.forEach(::insert)
-
-        return categories.mapNotNull { category ->
-            val key = category.trim().lowercase()
-            templatesByCategory[key]
+            CategoryTemplate(
+                category = category,
+                fields = selected?.fields.orEmpty().ifEmpty { CategoryTemplate.defaultCategoryFields() },
+            )
         }
     }
 

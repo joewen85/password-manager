@@ -1230,6 +1230,7 @@ export class VaultController {
         fieldsForCategoryPreset(preset, customFieldNames),
       ),
     );
+    this.recordCategoryMutation(clean, false, Date.now());
     await this.persist();
   }
 
@@ -1250,6 +1251,7 @@ export class VaultController {
         fieldsForCategoryPreset('', customFieldNames),
       ),
     );
+    this.recordCategoryMutation(clean, false, Date.now());
     await this.persist();
   }
 
@@ -1280,6 +1282,7 @@ export class VaultController {
         storedValueFieldIds,
       ),
     );
+    this.recordCategoryMutation(clean, false, Date.now());
     await this.persist();
   }
 
@@ -1606,6 +1609,13 @@ export class VaultController {
   private mergeImportedCategoryTemplates(importedTemplates: CategoryTemplate[]): boolean {
     const previousCategories = JSON.stringify(this.snapshot.categories);
     const previousTemplates = JSON.stringify(this.snapshot.categoryTemplates);
+    const previousTemplatesByCategory = new Map<string, string>();
+    this.snapshot.categoryTemplates.forEach((template: CategoryTemplate) => {
+      previousTemplatesByCategory.set(
+        template.category.trim().toLowerCase(),
+        JSON.stringify(normalizeCategoryTemplate(template)),
+      );
+    });
     this.mergeCategories(
       importedTemplates.map((template: CategoryTemplate) => template.category),
     );
@@ -1613,6 +1623,21 @@ export class VaultController {
       this.snapshot.categoryTemplates,
       importedTemplates,
     );
+    const now = Date.now();
+    importedTemplates.forEach((template: CategoryTemplate) => {
+      const category = template.category.trim();
+      const key = category.toLowerCase();
+      const mergedTemplate = this.snapshot.categoryTemplates.find(
+        (candidate: CategoryTemplate) => candidate.category.trim().toLowerCase() === key,
+      );
+      if (
+        category.length > 0 &&
+        mergedTemplate !== undefined &&
+        previousTemplatesByCategory.get(key) !== JSON.stringify(mergedTemplate)
+      ) {
+        this.recordCategoryMutation(category, false, now);
+      }
+    });
     return previousCategories !== JSON.stringify(this.snapshot.categories) ||
       previousTemplates !== JSON.stringify(this.snapshot.categoryTemplates);
   }
@@ -2354,6 +2379,21 @@ export class VaultController {
         local.categoryTemplates,
         remote.categoryTemplates,
         setToArray(categories),
+        normalizeCategoryStates(
+          local.categoryStates,
+          local.categories,
+          local.categoryTemplates,
+          local.entries,
+          local.updatedAt,
+        ),
+        normalizeCategoryStates(
+          remote.categoryStates,
+          remote.categories,
+          remote.categoryTemplates,
+          remote.entries,
+          remote.updatedAt,
+        ),
+        strategy,
       ),
       categoryStates,
       entries: mergedEntries,
@@ -3286,29 +3326,66 @@ function mergeCategoryTemplates(
   local: CategoryTemplate[],
   remote: CategoryTemplate[],
   categories: string[],
+  localCategoryStates: CategorySyncState[],
+  remoteCategoryStates: CategorySyncState[],
+  strategy: ConflictStrategy,
 ): CategoryTemplate[] {
-  const merged = new Map<string, CategoryTemplate>();
-  base.forEach((template: CategoryTemplate) => {
-    const normalized = normalizeCategoryTemplate(template);
-    if (normalized.category.length > 0) {
-      merged.set(normalized.category.toLowerCase(), normalized);
-    }
+  const indexTemplates = (templates: CategoryTemplate[]): Map<string, CategoryTemplate> => {
+    const indexed = new Map<string, CategoryTemplate>();
+    templates.forEach((template: CategoryTemplate) => {
+      const normalized = normalizeCategoryTemplate(template);
+      const key = normalized.category.toLowerCase();
+      if (key.length > 0 && !indexed.has(key)) {
+        indexed.set(key, normalized);
+      }
+    });
+    return indexed;
+  };
+  const baseTemplates = indexTemplates(base);
+  const localTemplates = indexTemplates(local);
+  const remoteTemplates = indexTemplates(remote);
+  const localStates = new Map<string, CategorySyncState>();
+  localCategoryStates.forEach((state: CategorySyncState) => {
+    localStates.set(state.name.trim().toLowerCase(), state);
   });
-  local.forEach((template: CategoryTemplate) => {
-    const normalized = normalizeCategoryTemplate(template);
-    if (normalized.category.length > 0 && !merged.has(normalized.category.toLowerCase())) {
-      merged.set(normalized.category.toLowerCase(), normalized);
-    }
+  const remoteStates = new Map<string, CategorySyncState>();
+  remoteCategoryStates.forEach((state: CategorySyncState) => {
+    remoteStates.set(state.name.trim().toLowerCase(), state);
   });
-  remote.forEach((template: CategoryTemplate) => {
-    const normalized = normalizeCategoryTemplate(template);
-    if (normalized.category.length > 0 && !merged.has(normalized.category.toLowerCase())) {
-      merged.set(normalized.category.toLowerCase(), normalized);
+  const merged: CategoryTemplate[] = [];
+  categories.forEach((rawCategory: string) => {
+    const category = rawCategory.trim();
+    const key = category.toLowerCase();
+    const localTemplate = localTemplates.get(key);
+    const remoteTemplate = remoteTemplates.get(key);
+    let selected = baseTemplates.get(key);
+    const localState = localStates.get(key);
+    const remoteState = remoteStates.get(key);
+    if (localState === undefined) {
+      selected = remoteTemplate ?? localTemplate ?? selected;
+    } else if (remoteState === undefined) {
+      selected = localTemplate;
+    } else {
+      const comparison = compareCategoryVersion(localState.version, remoteState.version);
+      if (comparison === 'local') {
+        selected = localTemplate;
+      } else if (comparison === 'remote') {
+        selected = remoteTemplate;
+      } else if (strategy === ConflictStrategy.LOCAL_WINS) {
+        selected = localTemplate;
+      } else if (strategy === ConflictStrategy.REMOTE_WINS) {
+        selected = remoteTemplate;
+      } else {
+        selected = localState.updatedAt >= remoteState.updatedAt
+          ? localTemplate
+          : remoteTemplate;
+      }
     }
+    merged.push(normalizeCategoryTemplate(
+      selected ?? { category, fields: defaultCategoryFields() },
+    ));
   });
-  const output: CategoryTemplate[] = [];
-  merged.forEach((template: CategoryTemplate) => output.push(template));
-  return normalizeCategoryTemplates(output, categories);
+  return normalizeCategoryTemplates(merged, categories);
 }
 
 function mergeImportedCategoryTemplateDefinitions(

@@ -1018,6 +1018,109 @@ int main() {
     assert(cleanEmptyCategoryMerge.snapshot.categoryTemplates.size() == 1);
     assert(cleanEmptyCategoryMerge.snapshot.categoryTemplates[0].fields.size() == 2);
 
+    pm::VaultSnapshot newerTemplateLocal;
+    newerTemplateLocal.updatedAt = "2026-06-28T00:01:00Z";
+    newerTemplateLocal.categories = {"test"};
+    auto newerFields = pm::defaultCategoryFields();
+    newerFields.push_back(pm::FieldTemplate{"field-owner", "Owner", "text", "", ""});
+    newerTemplateLocal.categoryTemplates = {pm::CategoryTemplate{"test", newerFields}};
+    newerTemplateLocal.categoryStates = {pm::CategorySyncState{
+        "test", false, "2026-06-28T00:01:00Z", {{"native-cli", 2}}, "native-cli"
+    }};
+    pm::VaultSnapshot staleTemplateRemote;
+    staleTemplateRemote.updatedAt = "2026-06-28T00:02:00Z";
+    staleTemplateRemote.categories = {"test"};
+    staleTemplateRemote.categoryTemplates = {pm::CategoryTemplate{"test", pm::defaultCategoryFields()}};
+    staleTemplateRemote.categoryStates = {pm::CategorySyncState{
+        "test", false, "2026-06-28T00:00:30Z", {{"native-cli", 1}}, "native-cli"
+    }};
+    const auto staleTemplatePayload = pm::serializeSyncPayloadJson(
+        pm::VaultSyncPayload{1, "2026-06-28T00:02:00Z", "stale-device", 2, staleTemplateRemote}
+    );
+    for (const auto& strategy : {std::string("remoteWins"), std::string("keepBoth")}) {
+        pm::SyncSettingsState newerTemplateSettings;
+        newerTemplateSettings.deviceId = "native-cli";
+        newerTemplateSettings.lastSyncRevision = 1;
+        newerTemplateSettings.hasLocalChanges = false;
+        newerTemplateSettings.conflictStrategy = strategy;
+        const auto templateMerge = pm::synchronizeSnapshots(
+            newerTemplateLocal,
+            newerTemplateSettings,
+            staleTemplatePayload
+        );
+        assert(templateMerge.snapshot.categoryStates[0].version.at("native-cli") == 2);
+        assert(templateMerge.snapshot.categoryTemplates.size() == 1);
+        assert(templateMerge.snapshot.categoryTemplates[0].fields.size() == 3);
+        assert(templateMerge.snapshot.categoryTemplates[0].fields[2].id == "field-owner");
+    }
+
+    const auto mergeTemplateScenario = [&](const std::vector<pm::FieldTemplate>& localFields,
+                                           const std::map<std::string, int>& localVersion,
+                                           const std::vector<pm::FieldTemplate>& remoteFields,
+                                           const std::map<std::string, int>& remoteVersion,
+                                           const std::string& strategy) {
+        pm::VaultSnapshot scenarioLocal;
+        scenarioLocal.updatedAt = "2026-06-28T00:01:00Z";
+        scenarioLocal.categories = {"test"};
+        scenarioLocal.categoryTemplates = {pm::CategoryTemplate{"test", localFields}};
+        scenarioLocal.categoryStates = {pm::CategorySyncState{
+            "test", false, scenarioLocal.updatedAt, localVersion, "local-device"
+        }};
+        pm::VaultSnapshot scenarioRemote;
+        scenarioRemote.updatedAt = "2026-06-28T00:02:00Z";
+        scenarioRemote.categories = {"test"};
+        scenarioRemote.categoryTemplates = {pm::CategoryTemplate{"test", remoteFields}};
+        scenarioRemote.categoryStates = {pm::CategorySyncState{
+            "test", false, scenarioRemote.updatedAt, remoteVersion, "remote-device"
+        }};
+        pm::SyncSettingsState scenarioSettings;
+        scenarioSettings.deviceId = "local-device";
+        scenarioSettings.lastSyncRevision = 1;
+        scenarioSettings.conflictStrategy = strategy;
+        const auto remotePayload = pm::serializeSyncPayloadJson(
+            pm::VaultSyncPayload{1, scenarioRemote.updatedAt, "remote-device", 2, scenarioRemote}
+        );
+        const auto scenarioResult = pm::synchronizeSnapshots(
+            scenarioLocal,
+            scenarioSettings,
+            remotePayload
+        );
+        assert(scenarioResult.snapshot.categoryTemplates.size() == 1);
+        return scenarioResult.snapshot.categoryTemplates[0];
+    };
+    const auto baseTemplateFields = pm::defaultCategoryFields();
+    const pm::FieldTemplate ownerField{"field-owner", "Owner", "text", "", ""};
+    const pm::FieldTemplate maintainerField{"field-owner", "Maintainer", "text", "", ""};
+    auto fieldsWithOwner = baseTemplateFields;
+    fieldsWithOwner.push_back(ownerField);
+    auto fieldsWithMaintainer = baseTemplateFields;
+    fieldsWithMaintainer.push_back(maintainerField);
+    const auto customFieldName = [](const pm::CategoryTemplate& categoryTemplate) {
+        const auto found = std::find_if(
+            categoryTemplate.fields.begin(),
+            categoryTemplate.fields.end(),
+            [](const auto& field) { return field.id == "field-owner"; }
+        );
+        return found == categoryTemplate.fields.end() ? std::string() : found->name;
+    };
+    for (const auto& strategy : {std::string("localWins"), std::string("remoteWins"), std::string("keepBoth")}) {
+        assert(customFieldName(mergeTemplateScenario(
+            fieldsWithOwner, {{"shared", 2}}, baseTemplateFields, {{"shared", 3}}, strategy
+        )).empty());
+        assert(customFieldName(mergeTemplateScenario(
+            fieldsWithOwner, {{"shared", 2}}, fieldsWithMaintainer, {{"shared", 3}}, strategy
+        )) == "Maintainer");
+    }
+    assert(customFieldName(mergeTemplateScenario(
+        fieldsWithOwner, {{"local", 1}}, fieldsWithMaintainer, {{"remote", 1}}, "localWins"
+    )) == "Owner");
+    assert(customFieldName(mergeTemplateScenario(
+        fieldsWithOwner, {{"local", 1}}, fieldsWithMaintainer, {{"remote", 1}}, "remoteWins"
+    )) == "Maintainer");
+    assert(customFieldName(mergeTemplateScenario(
+        fieldsWithOwner, {{"local", 1}}, fieldsWithMaintainer, {{"remote", 1}}, "keepBoth"
+    )) == "Maintainer");
+
     const auto retainedEmptyCategoryRemotePayload = pm::serializeSyncPayloadJson(
         pm::VaultSyncPayload{1, "2026-06-28T00:05:00Z", "remote", 4, emptyCategoryLocal}
     );

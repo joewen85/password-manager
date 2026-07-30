@@ -45,6 +45,60 @@ struct VaultStoreTaxonomyTests {
     }
 
     @MainActor
+    @Test("Category template edits and imports advance category version")
+    func categoryTemplateMutationsAdvanceCategoryVersion() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManageriOSCategoryTemplateVersionTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(repository: repository, syncSettingsRepository: nil)
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+        #expect(store.addCategory("Private"))
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        func exportedSnapshot() throws -> VaultSnapshot {
+            store.exportSnapshot()
+            let exports = try FileManager.default.contentsOfDirectory(
+                at: repository.exportsDirectoryURL,
+                includingPropertiesForKeys: nil
+            ).filter { $0.lastPathComponent.hasPrefix("vault-export-") }
+            return try decoder.decode(VaultSnapshot.self, from: Data(contentsOf: try #require(exports.first)))
+        }
+        func versionTotal(_ snapshot: VaultSnapshot) throws -> Int {
+            try #require(snapshot.categoryStates.first { $0.name == "Private" })
+                .version.values.reduce(0, +)
+        }
+
+        let initialVersion = try versionTotal(exportedSnapshot())
+        let owner = FieldTemplate(id: "field-owner", name: "Owner")
+        #expect(store.updateCategoryTemplate(category: "Private", requestedCustomFields: [owner]))
+        let editedVersion = try versionTotal(exportedSnapshot())
+        #expect(editedVersion > initialVersion)
+
+        let imported = FieldTemplate(id: "field-imported", name: "Imported")
+        let scopedExport = ScopedVaultExport(
+            scope: .category,
+            exportedAt: Date(),
+            item: nil,
+            category: "Private",
+            items: [],
+            categoryTemplates: [CategoryTemplate(category: "Private", fields: [owner, imported])]
+        )
+        let fileName = "category-template-version-import.json"
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(scopedExport).write(
+            to: repository.importsDirectoryURL.appendingPathComponent(fileName)
+        )
+        store.importScopedExport(fileName: fileName, strategy: .keepCopy)
+
+        let importedVersion = try versionTotal(exportedSnapshot())
+        #expect(importedVersion > editedVersion)
+        #expect(store.categoryTemplates.first?.fields.contains(imported) == true)
+    }
+
+    @MainActor
     @Test("Category template saves reject duplicate editable field names atomically")
     func categoryTemplateRejectsDuplicateEditableNamesAtomically() throws {
         let directory = FileManager.default.temporaryDirectory

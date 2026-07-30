@@ -482,7 +482,6 @@ class VaultStore(
         if (categories().none { it.equals(normalized, ignoreCase = true) }) {
             manualCategories += normalized
         }
-        ensureCategoryIsActive(normalized, Instant.now())
         val existing = editorCategoryTemplate(normalized)
         val defaultFieldIds = CategoryTemplate.defaultCategoryFields().mapTo(mutableSetOf()) { it.id }
         categoryTemplates[normalized] = CategoryTemplate(
@@ -498,6 +497,7 @@ class VaultStore(
                 ),
             ),
         )
+        recordCategoryMutation(normalized, isDeleted = false, updatedAt = Instant.now())
         persistUnlockedSnapshot()
         statusMessage = "Category template updated."
         return true
@@ -536,8 +536,8 @@ class VaultStore(
             }
         }
         manualCategories += normalized
-        ensureCategoryIsActive(normalized, Instant.now())
         categoryTemplates[normalized] = updated
+        recordCategoryMutation(normalized, isDeleted = false, updatedAt = Instant.now())
         persistUnlockedSnapshot()
         statusMessage = "Category template updated."
         return true
@@ -1329,6 +1329,7 @@ class VaultStore(
         importedTemplates.forEach { importedTemplate ->
             val importedCategory = importedTemplate.category.trim()
             if (importedCategory.isBlank()) return@forEach
+            var templateChanged = false
 
             if (manualCategories.none { it.equals(importedCategory, ignoreCase = true) }) {
                 manualCategories += importedCategory
@@ -1342,6 +1343,7 @@ class VaultStore(
             if (existingEntry == null) {
                 categoryTemplates[importedCategory] = importedTemplate.copy(category = importedCategory)
                 changed = true
+                recordCategoryMutation(importedCategory, isDeleted = false, updatedAt = Instant.now())
                 return@forEach
             }
 
@@ -1351,15 +1353,21 @@ class VaultStore(
                 if (existingIndex < 0) {
                     mergedFields += importedField
                     changed = true
+                    templateChanged = true
                 } else if (mergedFields[existingIndex] != importedField) {
                     mergedFields[existingIndex] = importedField
                     changed = true
+                    templateChanged = true
                 }
             }
             if (existingEntry.value.category != importedCategory || existingEntry.value.fields != mergedFields) {
                 categoryTemplates.remove(existingEntry.key)
                 categoryTemplates[importedCategory] = CategoryTemplate(importedCategory, mergedFields)
                 changed = true
+                templateChanged = true
+            }
+            if (templateChanged) {
+                recordCategoryMutation(importedCategory, isDeleted = false, updatedAt = Instant.now())
             }
         }
         return changed
