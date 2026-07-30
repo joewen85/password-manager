@@ -485,50 +485,52 @@ struct CategoryTemplateFieldEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(fields.indices, id: \.self) { index in
-                let isKnown = isEditableCategoryFieldType(fields[index].valueType)
-                let isLocked = storedValueFieldIDs.contains(fields[index].id)
-                    || referencedTargetFieldIDs.contains(fields[index].id)
+            ForEach(fields) { field in
+                let fieldBinding = $fields.element(identifiedBy: field.id, fallback: field)
+                let candidates = targetFieldCandidates(field)
+                let isKnown = isEditableCategoryFieldType(field.valueType)
+                let isLocked = storedValueFieldIDs.contains(field.id)
+                    || referencedTargetFieldIDs.contains(field.id)
                 VStack(alignment: .leading, spacing: 8) {
                     if isKnown {
-                        TextField(L10n.t("Field Name"), text: $fields[index].name)
+                        TextField(L10n.t("Field Name"), text: fieldBinding.name)
                             .textFieldStyle(.roundedBorder)
 
-                        Picker(L10n.t("Field Type"), selection: $fields[index].valueType) {
+                        Picker(L10n.t("Field Type"), selection: fieldBinding.valueType) {
                             Text(L10n.t("Text")).tag("text")
                             Text(L10n.t("Field Reference")).tag("fieldReference")
                         }
                         .pickerStyle(.segmented)
                         .disabled(isLocked)
 
-                        if fields[index].normalizedValueType == "fieldReference" {
-                            Picker(L10n.t("Target Category"), selection: targetCategoryBinding(index)) {
+                        if field.normalizedValueType == "fieldReference" {
+                            Picker(L10n.t("Target Category"), selection: targetCategoryBinding(fieldBinding)) {
                                 Text(L10n.t("Select Target Category")).tag("")
-                                if !fields[index].targetCategory.isEmpty,
+                                if !field.targetCategory.isEmpty,
                                    !categories.contains(where: {
-                                       $0.caseInsensitiveCompare(fields[index].targetCategory) == .orderedSame
+                                       $0.caseInsensitiveCompare(field.targetCategory) == .orderedSame
                                    }) {
-                                    Text(fields[index].targetCategory).tag(fields[index].targetCategory)
+                                    Text(field.targetCategory).tag(field.targetCategory)
                                 }
                                 ForEach(categories, id: \.self) { category in
                                     Text(category).tag(category)
                                 }
                             }
 
-                            Picker(L10n.t("Target Field"), selection: $fields[index].targetFieldId) {
+                            Picker(L10n.t("Target Field"), selection: fieldBinding.targetFieldId) {
                                 Text(L10n.t("Select Target Field")).tag("")
-                                if !fields[index].targetFieldId.isEmpty,
-                                   !targetFieldCandidates(index).contains(where: {
-                                       $0.id == fields[index].targetFieldId
+                                if !field.targetFieldId.isEmpty,
+                                   !candidates.contains(where: {
+                                       $0.id == field.targetFieldId
                                    }) {
                                     Text(L10n.t("Target field is no longer available."))
-                                        .tag(fields[index].targetFieldId)
+                                        .tag(field.targetFieldId)
                                 }
-                                ForEach(targetFieldCandidates(index)) { candidate in
+                                ForEach(candidates) { candidate in
                                     Text(candidate.name).tag(candidate.id)
                                 }
                             }
-                            .disabled(fields[index].targetCategory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .disabled(field.targetCategory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
 
                         if isLocked {
@@ -540,7 +542,7 @@ struct CategoryTemplateFieldEditor: View {
                             .foregroundStyle(.secondary)
                         }
                     } else {
-                        Text(fields[index].name.isEmpty ? L10n.t("Unsupported Field") : fields[index].name)
+                        Text(field.name.isEmpty ? L10n.t("Unsupported Field") : field.name)
                             .font(.callout.weight(.medium))
                         Text(L10n.t("Unsupported field metadata and values are preserved read-only."))
                             .font(.caption)
@@ -551,7 +553,7 @@ struct CategoryTemplateFieldEditor: View {
                         HStack {
                             Spacer()
                             Button(role: .destructive) {
-                                fields.remove(at: index)
+                                fields.removeAll { $0.id == field.id }
                             } label: {
                                 Label(L10n.t("Remove Field"), systemImage: "trash")
                             }
@@ -569,14 +571,12 @@ struct CategoryTemplateFieldEditor: View {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
                 )
-                .onChange(of: fields[index].valueType) { _, valueType in
-                    if valueType == "text" {
-                        fields[index].targetCategory = ""
-                        fields[index].targetFieldId = ""
-                    } else if valueType == "fieldReference" {
-                        fields[index].targetCategory = ""
-                        fields[index].targetFieldId = ""
-                    }
+                .onChange(of: field.valueType) { _, valueType in
+                    guard valueType == "text" || valueType == "fieldReference" else { return }
+                    var updatedField = fieldBinding.wrappedValue
+                    updatedField.targetCategory = ""
+                    updatedField.targetFieldId = ""
+                    fieldBinding.wrappedValue = updatedField
                 }
             }
 
@@ -589,22 +589,22 @@ struct CategoryTemplateFieldEditor: View {
         }
     }
 
-    private func targetFieldCandidates(_ index: Int) -> [FieldTemplate] {
-        guard fields.indices.contains(index) else { return [] }
+    private func targetFieldCandidates(_ field: FieldTemplate) -> [FieldTemplate] {
         return fieldReferenceTargetFieldCandidates(
             sourceCategory: sourceCategory,
-            sourceField: fields[index],
+            sourceField: field,
             templates: templates
         )
     }
 
-    private func targetCategoryBinding(_ index: Int) -> Binding<String> {
+    private func targetCategoryBinding(_ field: Binding<FieldTemplate>) -> Binding<String> {
         Binding(
-            get: { fields.indices.contains(index) ? fields[index].targetCategory : "" },
+            get: { field.wrappedValue.targetCategory },
             set: { value in
-                guard fields.indices.contains(index) else { return }
-                fields[index].targetCategory = value
-                fields[index].targetFieldId = ""
+                var updatedField = field.wrappedValue
+                updatedField.targetCategory = value
+                updatedField.targetFieldId = ""
+                field.wrappedValue = updatedField
             }
         )
     }

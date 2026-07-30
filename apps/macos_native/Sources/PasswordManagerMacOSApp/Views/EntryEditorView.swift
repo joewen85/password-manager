@@ -619,11 +619,11 @@ private struct ServiceAccountsEditor: View {
                     .foregroundStyle(.secondary)
             }
 
-            ForEach(accounts.indices, id: \.self) { index in
+            ForEach(Array(accounts.enumerated()), id: \.element.id) { index, account in
                 ServiceAccountEditor(
-                    account: $accounts[index],
+                    account: $accounts.element(identifiedBy: account.id, fallback: account),
                     title: L10n.tf("Account %d", index + 1),
-                    remove: { removeAccount(at: index) }
+                    remove: { removeAccount(id: account.id) }
                 )
             }
 
@@ -637,9 +637,8 @@ private struct ServiceAccountsEditor: View {
         accounts.append(ServiceAccount())
     }
 
-    private func removeAccount(at index: Int) {
-        guard accounts.indices.contains(index) else { return }
-        accounts.remove(at: index)
+    private func removeAccount(id: UUID) {
+        accounts.removeAll { $0.id == id }
     }
 }
 
@@ -652,8 +651,8 @@ private struct CustomFieldsEditor: View {
     var entries: [VaultEntry]
     var onEditCategoryFields: (String) -> Void
 
-    private var editableIndices: [Int] {
-        fields.indices.filter { !protectedFieldIDs.contains(fields[$0].id) }
+    private var editableFields: [CustomField] {
+        fields.filter { !protectedFieldIDs.contains($0.id) }
     }
 
     private var hasProtectedFields: Bool {
@@ -662,12 +661,12 @@ private struct CustomFieldsEditor: View {
 
     var body: some View {
         Section(L10n.t("Fields")) {
-            if editableIndices.isEmpty {
+            if editableFields.isEmpty {
                 Text(L10n.t("No custom fields."))
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(editableIndices, id: \.self) { index in
-                    customFieldEditor(at: index)
+                ForEach(editableFields) { field in
+                    customFieldEditor(field)
                 }
             }
 
@@ -690,23 +689,23 @@ private struct CustomFieldsEditor: View {
         fields.append(CustomField())
     }
 
-    private func remove(at index: Int) {
-        guard fields.indices.contains(index) else { return }
-        fields.remove(at: index)
+    private func remove(id: String) {
+        fields.removeAll { $0.id == id }
     }
 
     @ViewBuilder
-    private func customFieldEditor(at index: Int) -> some View {
-        let semantics = customFieldSemantics(field: fields[index], template: template)
+    private func customFieldEditor(_ field: CustomField) -> some View {
+        let fieldBinding = $fields.element(identifiedBy: field.id, fallback: field)
+        let semantics = customFieldSemantics(field: field, template: template)
         if let template, semantics.semantic == .entryReference {
             EntryReferenceFieldEditor(
-                field: $fields[index],
+                field: fieldBinding,
                 template: template,
                 entries: entries
             )
         } else if let templateField = semantics.templateField, semantics.semantic == .fieldReference {
             FieldReferenceFieldEditor(
-                field: $fields[index],
+                field: fieldBinding,
                 sourceCategory: sourceCategory,
                 templateField: templateField,
                 categoryTemplates: categoryTemplates,
@@ -714,7 +713,7 @@ private struct CustomFieldsEditor: View {
                 onEditCategoryFields: onEditCategoryFields
             )
         } else if semantics.semantic == .text {
-            CustomFieldRow(field: $fields[index], showsValue: true, remove: { remove(at: index) })
+            CustomFieldRow(field: fieldBinding, showsValue: true, remove: { remove(id: field.id) })
         }
     }
 }
@@ -728,8 +727,8 @@ private struct TemplateFieldsEditor: View {
     var entries: [VaultEntry]
     var onEditCategoryFields: (String) -> Void
 
-    private var editableIndices: [Int] {
-        fields.indices.filter { !protectedFieldIDs.contains(fields[$0].id) }
+    private var editableFields: [CustomField] {
+        fields.filter { !protectedFieldIDs.contains($0.id) }
     }
 
     private var hasProtectedFields: Bool {
@@ -738,12 +737,12 @@ private struct TemplateFieldsEditor: View {
 
     var body: some View {
         Section(L10n.t("Fields")) {
-            if editableIndices.isEmpty {
+            if editableFields.isEmpty {
                 Text(L10n.t("No custom fields."))
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(editableIndices, id: \.self) { index in
-                    customFieldEditor(at: index)
+                ForEach(editableFields) { field in
+                    customFieldEditor(field)
                 }
             }
 
@@ -766,23 +765,23 @@ private struct TemplateFieldsEditor: View {
         fields.append(CustomField())
     }
 
-    private func remove(at index: Int) {
-        guard fields.indices.contains(index) else { return }
-        fields.remove(at: index)
+    private func remove(id: String) {
+        fields.removeAll { $0.id == id }
     }
 
     @ViewBuilder
-    private func customFieldEditor(at index: Int) -> some View {
-        let semantics = customFieldSemantics(field: fields[index], template: template)
+    private func customFieldEditor(_ field: CustomField) -> some View {
+        let fieldBinding = $fields.element(identifiedBy: field.id, fallback: field)
+        let semantics = customFieldSemantics(field: field, template: template)
         if let template, semantics.semantic == .entryReference {
             EntryReferenceFieldEditor(
-                field: $fields[index],
+                field: fieldBinding,
                 template: template,
                 entries: entries
             )
         } else if let templateField = semantics.templateField, semantics.semantic == .fieldReference {
             FieldReferenceFieldEditor(
-                field: $fields[index],
+                field: fieldBinding,
                 sourceCategory: sourceCategory,
                 templateField: templateField,
                 categoryTemplates: categoryTemplates,
@@ -790,7 +789,7 @@ private struct TemplateFieldsEditor: View {
                 onEditCategoryFields: onEditCategoryFields
             )
         } else if semantics.semantic == .text {
-            CustomFieldRow(field: $fields[index], showsValue: true, remove: { remove(at: index) })
+            CustomFieldRow(field: fieldBinding, showsValue: true, remove: { remove(id: field.id) })
         }
     }
 }
