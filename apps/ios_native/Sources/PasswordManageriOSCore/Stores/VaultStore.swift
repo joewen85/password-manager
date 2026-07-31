@@ -281,6 +281,24 @@ final class VaultStore {
         }
     }
 
+    func exportSelectedEntryText(_ entry: VaultEntry, selectedFieldIDs: Set<String>) {
+        guard isUnlocked else {
+            statusMessage = "Unlock the vault before exporting."
+            return
+        }
+        do {
+            let exportURL = try repository.saveSelectedEntryTextExport(
+                entry,
+                selectedFieldIDs: selectedFieldIDs,
+                categoryTemplates: categoryTemplates,
+                entries: entries
+            )
+            statusMessage = "Entry export saved: \(exportURL.lastPathComponent)"
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
     func addCategory(_ category: String) -> Bool {
         addCategory(category, preset: nil)
     }

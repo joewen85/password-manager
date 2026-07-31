@@ -39,7 +39,9 @@ import {
 import { VaultStore } from '../storage/VaultStore';
 import {
   EntryReferenceResolution,
+  EntryReferenceStatus,
   FieldValueReferenceResolution,
+  FieldValueReferenceStatus,
   propagateEntryReferenceCategoryRename,
   resolveEntryReference,
   resolveFieldValueReference,
@@ -126,6 +128,12 @@ interface SelectedExportItemRecord {
   createdAt?: string;
   updatedAt?: string;
   payload?: object;
+}
+
+interface EntryTextExportFieldRecord {
+  id: string;
+  label: string;
+  value: string;
 }
 
 interface ImportSingleItemRecord {
@@ -1436,6 +1444,18 @@ export class VaultController {
     return JSON.stringify(payload, null, 2);
   }
 
+  exportSelectedEntryText(entryId: string, selectedFieldIds: string[]): string {
+    this.ensureUnlocked();
+    const targetId = canonicalIdString(entryId);
+    const entry = this.snapshot.entries.find(
+      (value: VaultEntry) => canonicalIdString(value.id) === targetId && !value.isDeleted,
+    );
+    if (entry === undefined) {
+      throw new Error('条目不存在或已删除');
+    }
+    return this.buildSelectedEntryText(entry, selectedFieldIds);
+  }
+
   exportCategoryData(category: string): string {
     this.ensureUnlocked();
     const clean = category.trim();
@@ -1764,6 +1784,94 @@ export class VaultController {
     }
     return item as object;
   }
+
+  private buildSelectedEntryText(entry: VaultEntry, selectedFieldIds: string[]): string {
+    const selected = new Set<string>(selectedFieldIds);
+    return this.entryTextExportFields(entry)
+      .filter((field: EntryTextExportFieldRecord) => selected.has(field.id))
+      .map((field: EntryTextExportFieldRecord) =>
+        `${escapeEntryTextLine(field.label)}: ${escapeEntryTextLine(field.value)}`
+      )
+      .join('\n');
+  }
+
+  private entryTextExportFields(entry: VaultEntry): EntryTextExportFieldRecord[] {
+    const fields: EntryTextExportFieldRecord[] = [
+      { id: 'label', label: '名称', value: entry.label },
+      { id: 'category', label: '分类', value: this.entryCategory(entry) },
+      { id: 'tags', label: '标签', value: entry.tags.join(', ') },
+      { id: 'createdAt', label: '创建时间', value: new Date(entry.createdAt).toISOString() },
+      { id: 'updatedAt', label: '更新时间', value: new Date(entry.updatedAt).toISOString() },
+    ];
+
+    entry.customFields.forEach((field: CustomField) => {
+      fields.push({
+        id: `custom.${field.id}`,
+        label: field.name.trim().length > 0 ? field.name : '自定义字段',
+        value: this.customFieldExportText(entry, field),
+      });
+    });
+    return fields;
+  }
+
+  private customFieldExportText(entry: VaultEntry, field: CustomField): string {
+    const fieldResolution = resolveFieldValueReference(
+      entry,
+      field,
+      this.snapshot.categoryTemplates,
+      this.snapshot.entries,
+    );
+    if (fieldResolution !== null) {
+      switch (fieldResolution.status) {
+        case FieldValueReferenceStatus.EMPTY:
+          return '尚未选择条目';
+        case FieldValueReferenceStatus.INVALID_CONFIGURATION:
+          return '字段关联配置需要修复';
+        case FieldValueReferenceStatus.MISSING:
+          return '关联条目不可用';
+        case FieldValueReferenceStatus.DELETED:
+          return '关联条目已删除';
+        case FieldValueReferenceStatus.CATEGORY_MISMATCH:
+          return '关联条目已不属于目标分类';
+        case FieldValueReferenceStatus.TARGET_FIELD_MISSING:
+          return '目标字段已不存在';
+        case FieldValueReferenceStatus.TARGET_FIELD_UNSUPPORTED:
+          return '目标字段已不再是文本类型';
+        case FieldValueReferenceStatus.TARGET_FIELD_EMPTY:
+          return '目标字段值为空';
+        case FieldValueReferenceStatus.RESOLVED:
+          if (fieldResolution.target === undefined) {
+            return '关联条目不可用';
+          }
+          return `${fieldResolution.target.label.length > 0 ? fieldResolution.target.label : '未命名'}: ${fieldResolution.target.value}`;
+      }
+    }
+
+    const categoryKey = this.entryCategory(entry).trim().toLowerCase();
+    const template = this.snapshot.categoryTemplates.find(
+      (candidate: CategoryTemplate) => candidate.category.trim().toLowerCase() === categoryKey,
+    ) ?? null;
+    const entryResolution = resolveEntryReference(field, template, this.snapshot.entries);
+    if (entryResolution === null) {
+      return field.value;
+    }
+    switch (entryResolution.status) {
+      case EntryReferenceStatus.EMPTY:
+        return '尚未选择条目';
+      case EntryReferenceStatus.RESOLVED:
+        if (entryResolution.target === undefined) {
+          return '关联条目不可用';
+        }
+        return entryResolution.target.label.length > 0 ? entryResolution.target.label : '未命名';
+      case EntryReferenceStatus.MISSING:
+        return '关联条目不可用';
+      case EntryReferenceStatus.DELETED:
+        return '关联条目已删除';
+      case EntryReferenceStatus.CATEGORY_MISMATCH:
+        return '关联条目已不属于目标分类';
+    }
+  }
+
 
   private async buildImportPlan(contents: string, scope: string): Promise<ImportPlanItem[]> {
     this.ensureUnlocked();
@@ -2719,6 +2827,10 @@ function normalizeReferenceIds(values: string[] | undefined): string[] {
     }
   });
   return normalized;
+}
+
+function escapeEntryTextLine(value: string): string {
+  return value.replace(/\r\n/g, '\\n').replace(/\r/g, '\\n').replace(/\n/g, '\\n');
 }
 
 function mappedReferenceId(idMap: Map<string, string>, value: string | undefined): string {

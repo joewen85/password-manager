@@ -59,6 +59,7 @@ import life.devops.passwordmanager.model.EntryDraft
 import life.devops.passwordmanager.model.EntryReferenceCandidate
 import life.devops.passwordmanager.model.EntryReferenceResolution
 import life.devops.passwordmanager.model.EntryReferenceStatus
+import life.devops.passwordmanager.model.EntryTextExportField
 import life.devops.passwordmanager.model.FieldTemplate
 import life.devops.passwordmanager.model.FieldReferenceResolution
 import life.devops.passwordmanager.model.FieldReferenceStatus
@@ -76,6 +77,7 @@ import life.devops.passwordmanager.model.draftCustomFieldStates
 import life.devops.passwordmanager.model.isEditableCategoryFieldType
 import life.devops.passwordmanager.model.newCategoryTemplateField
 import life.devops.passwordmanager.model.normalizedValueType
+import life.devops.passwordmanager.model.selectedFieldsText
 import life.devops.passwordmanager.store.BiometricCredentialStore
 import life.devops.passwordmanager.store.BackupInfo
 import life.devops.passwordmanager.store.VaultStore
@@ -2278,7 +2280,12 @@ class MainActivity : FragmentActivity() {
                     toast(text(R.string.choose_at_least_one_field))
                     return@setOnClickListener
                 }
-                exportEntryJson(entry, selected.toSet())
+                exportEntryText(
+                    entry,
+                    fields
+                        .filter { it.id in selected }
+                        .map { EntryTextExportField(id = it.id, title = it.title) },
+                )
                 dialog.dismiss()
             }
         }
@@ -2289,6 +2296,18 @@ class MainActivity : FragmentActivity() {
         store.exportEntryJson(entry, selectedFieldIds)?.let { json ->
             createJsonDocument("entry-export-${safeExportName(entry.label)}-${exportTimestamp()}.json", json)
         } ?: toast(store.statusMessage ?: text(R.string.export_failed))
+    }
+
+    private fun exportEntryText(entry: VaultEntry, fields: List<EntryTextExportField>) {
+        val contents = entry.selectedFieldsText(
+            fields = fields,
+            categoryTemplates = store.categories().mapNotNull(store::categoryTemplate),
+            entries = store.listEntries(),
+        )
+        createTextDocument(
+            "entry-export-${safeExportName(entry.label)}-${exportTimestamp()}.txt",
+            contents,
+        )
     }
 
     private fun showImportCenterDialog() {
@@ -3044,6 +3063,21 @@ class MainActivity : FragmentActivity() {
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "application/json"
+            putExtra(Intent.EXTRA_TITLE, fileName)
+        }
+        runCatching {
+            startActivityForResult(intent, RequestCodeCreateDocument)
+        }.onFailure {
+            pendingExportJson = null
+            toast(text(R.string.no_file_manager_save))
+        }
+    }
+
+    private fun createTextDocument(fileName: String, contents: String) {
+        pendingExportJson = contents
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "text/plain"
             putExtra(Intent.EXTRA_TITLE, fileName)
         }
         runCatching {

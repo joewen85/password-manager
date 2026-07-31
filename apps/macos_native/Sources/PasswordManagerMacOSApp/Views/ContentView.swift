@@ -24,6 +24,7 @@ struct ContentView: View {
     @State private var isExportingJSON = false
     @State private var exportDocument = JSONExportDocument()
     @State private var exportFileName = "vault-export.json"
+    @State private var exportContentType: UTType = .json
     @State private var exportCategoryValue = ""
     @State private var importFileName = ""
     @State private var scopedImportFileName = ""
@@ -262,7 +263,7 @@ struct ContentView: View {
                         let fieldIDs = selectedExportFieldIDs
                         entryPendingExport = nil
                         DispatchQueue.main.async {
-                            presentExport(store.makeEntryExport(entry, selectedFieldIDs: fieldIDs))
+                            presentExport(store.makeSelectedEntryTextExport(entry, selectedFieldIDs: fieldIDs))
                         }
                     },
                     cancel: {
@@ -511,7 +512,7 @@ struct ContentView: View {
             .fileExporter(
                 isPresented: $isExportingJSON,
                 document: exportDocument,
-                contentType: .json,
+                contentType: exportContentType,
                 defaultFilename: exportFileName
             ) { _ in }
             .alert("Import", isPresented: isShowingImportResult) {
@@ -670,6 +671,7 @@ struct ContentView: View {
         guard let export else { return }
         exportDocument = JSONExportDocument(data: export.data)
         exportFileName = export.fileName
+        exportContentType = export.fileName.hasSuffix(".txt") ? .plainText : .json
         isExportingJSON = true
     }
 

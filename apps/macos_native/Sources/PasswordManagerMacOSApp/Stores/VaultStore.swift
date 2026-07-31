@@ -971,6 +971,24 @@ final class VaultStore {
         }
     }
 
+    func makeSelectedEntryTextExport(
+        _ entry: VaultEntry,
+        selectedFieldIDs: Set<String>
+    ) -> VaultExportFile? {
+        guard isUnlocked else {
+            statusMessage = "Unlock the vault before exporting."
+            return nil
+        }
+        let export = repository.makeSelectedEntryTextExport(
+            entry,
+            selectedFieldIDs: selectedFieldIDs,
+            categoryTemplates: categoryTemplates,
+            entries: entries
+        )
+        statusMessage = "Entry export ready: \(export.fileName)"
+        return export
+    }
+
     func exportCategory(_ category: String) {
         guard isUnlocked else {
             statusMessage = "Unlock the vault before exporting."

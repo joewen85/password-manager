@@ -102,7 +102,7 @@ struct ContentView: View {
                         exportingEntry = nil
                     },
                     exportSelected: { selectedFieldIDs in
-                        store.exportEntry(entry, selectedFieldIDs: selectedFieldIDs)
+                        store.exportSelectedEntryText(entry, selectedFieldIDs: selectedFieldIDs)
                         exportingEntry = nil
                     }
                 )

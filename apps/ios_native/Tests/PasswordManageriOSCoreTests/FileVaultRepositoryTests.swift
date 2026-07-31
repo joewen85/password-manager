@@ -436,4 +436,104 @@ struct FileVaultRepositoryTests {
         #expect(credential.category.isEmpty)
         #expect(exportedEntry.customFields == [CustomField(id: customFieldID, name: "Recovery", value: "code")])
     }
+
+    @Test("Selected entry text export contains only chosen key value lines")
+    func selectedEntryTextExportContainsOnlyChosenKeyValueLines() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManageriOSSelectedTextExportTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let targetFieldID = "target-ip"
+        let entryReferenceFieldID = "owner-reference"
+        let fieldReferenceFieldID = "ip-reference"
+        let recoveryFieldID = "recovery"
+        let target = VaultEntry(
+            id: "target-entry",
+            label: "Target Server",
+            type: .server,
+            payload: .server(ServerPayload(category: "Targets")),
+            customFields: [
+                CustomField(templateFieldId: targetFieldID, name: "IP", value: "10.0.0.8")
+            ]
+        )
+        let entry = VaultEntry(
+            label: "Example",
+            type: .credential,
+            payload: .credential(
+                CredentialPayload(
+                    username: "user@example.com",
+                    password: "secret",
+                    category: "Sources"
+                )
+            ),
+            customFields: [
+                CustomField(id: recoveryFieldID, name: "Recovery", value: "line 1\nline 2"),
+                CustomField(
+                    id: entryReferenceFieldID,
+                    templateFieldId: entryReferenceFieldID,
+                    name: "Owner",
+                    value: target.id
+                ),
+                CustomField(
+                    id: fieldReferenceFieldID,
+                    templateFieldId: fieldReferenceFieldID,
+                    name: "Server IP",
+                    value: target.id
+                )
+            ]
+        )
+        let templates = [
+            CategoryTemplate(
+                category: "Sources",
+                fields: [
+                    FieldTemplate(
+                        id: entryReferenceFieldID,
+                        name: "Owner",
+                        valueType: "entryReference",
+                        targetCategory: "Targets"
+                    ),
+                    FieldTemplate(
+                        id: fieldReferenceFieldID,
+                        name: "Server IP",
+                        valueType: "fieldReference",
+                        targetCategory: "Targets",
+                        targetFieldId: targetFieldID
+                    )
+                ]
+            ),
+            CategoryTemplate(
+                category: "Targets",
+                fields: [FieldTemplate(id: targetFieldID, name: "IP")]
+            )
+        ]
+
+        let exportURL = try repository.saveSelectedEntryTextExport(
+            entry,
+            selectedFieldIDs: [
+                "label",
+                "credential.username",
+                "custom.\(recoveryFieldID)",
+                "custom.\(entryReferenceFieldID)",
+                "custom.\(fieldReferenceFieldID)"
+            ],
+            categoryTemplates: templates,
+            entries: [entry, target],
+            at: Date(timeIntervalSince1970: 1_700_000_001)
+        )
+        let text = try String(contentsOf: exportURL, encoding: .utf8)
+
+        #expect(exportURL.pathExtension == "txt")
+        #expect(text == [
+            "Label: Example",
+            "Username: user@example.com",
+            "Recovery: line 1\\nline 2",
+            "Owner: Target Server",
+            "Server IP: Target Server: 10.0.0.8"
+        ].joined(separator: "\n"))
+        #expect(!text.contains("Password:"))
+        #expect(!text.contains(target.id))
+        #expect(!text.contains("{"))
+        #expect(!text.contains("scope"))
+    }
 }

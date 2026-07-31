@@ -135,6 +135,24 @@ struct FileVaultRepository {
         return exportURL
     }
 
+    func saveSelectedEntryTextExport(
+        _ entry: VaultEntry,
+        selectedFieldIDs: Set<String>,
+        categoryTemplates: [CategoryTemplate] = [],
+        entries: [VaultEntry] = [],
+        at date: Date = Date()
+    ) throws -> URL {
+        let exportURL = try exportsDirectoryURL
+            .appendingPathComponent("entry-export-\(entry.safeExportName)-\(Self.backupTimestamp.string(from: date)).txt")
+        let text = entry.selectedFieldsText(
+            selectedFieldIDs: selectedFieldIDs,
+            categoryTemplates: categoryTemplates,
+            entries: entries
+        )
+        try Data(text.utf8).write(to: exportURL, options: [.atomic])
+        return exportURL
+    }
+
     func saveCategoryExport(
         category: String,
         entries: [VaultEntry],

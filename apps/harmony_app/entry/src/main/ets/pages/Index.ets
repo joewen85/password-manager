@@ -2763,8 +2763,8 @@ struct Index {
       return;
     }
     try {
-      const data = this.controller().exportEntryData(entry.id, this.exportSelectedFieldIds);
-      const filePath = await this.saveJsonExportFile('entry-export-selected', entry.label, data);
+      const data = this.controller().exportSelectedEntryText(entry.id, this.exportSelectedFieldIds);
+      const filePath = await this.saveTextExportFile('entry-export-selected', entry.label, data);
       this.toast(`条目所选字段已导出到 ${filePath}`);
     } catch (error) {
       this.toast(`导出失败: ${error}`);
@@ -3961,6 +3961,42 @@ struct Index {
     const options = new picker.DocumentSaveOptions();
     options.newFileNames = [`${prefix}-${this.sanitizeFilename(name)}-${this.exportTimestamp()}.json`];
     options.fileSuffixChoices = ['JSON|json'];
+    const uris = await documentPicker.save(options);
+    if (uris.length === 0) {
+      throw new Error('未选择保存位置');
+    }
+    const targetUri = uris[0];
+    let file: fs.File | null = null;
+    try {
+      file = fs.openSync(
+        targetUri,
+        fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE,
+      );
+      fs.writeSync(file.fd, contents, {
+        encoding: 'utf-8',
+      });
+      return targetUri;
+    } catch (error) {
+      throw new Error(`写入导出文件失败: ${error}`);
+    } finally {
+      if (file !== null) {
+        try {
+          fs.closeSync(file);
+        } catch (closeError) {
+          console.error(`close export file failed: ${closeError}`);
+        }
+      }
+    }
+  }
+
+  private async saveTextExportFile(prefix: string, name: string, contents: string): Promise<string> {
+    if (this.hostContext === null) {
+      throw new Error('Host context unavailable');
+    }
+    const documentPicker = new picker.DocumentViewPicker(this.hostContext);
+    const options = new picker.DocumentSaveOptions();
+    options.newFileNames = [`${prefix}-${this.sanitizeFilename(name)}-${this.exportTimestamp()}.txt`];
+    options.fileSuffixChoices = ['文本|txt'];
     const uris = await documentPicker.save(options);
     if (uris.length === 0) {
       throw new Error('未选择保存位置');
