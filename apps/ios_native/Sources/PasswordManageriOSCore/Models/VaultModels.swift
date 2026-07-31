@@ -772,7 +772,7 @@ extension VaultEntry {
         ]
 
         switch payload {
-        case .credential:
+        case .credential where payload.hasLegacyExportValues:
             fields += [
                 EntryExportField(id: "credential.username", title: "Username"),
                 EntryExportField(id: "credential.password", title: "Password"),
@@ -783,7 +783,7 @@ extension VaultEntry {
                 EntryExportField(id: "credential.secretKey", title: "Secret Key"),
                 EntryExportField(id: "credential.notes", title: "Notes")
             ]
-        case .server:
+        case .server where payload.hasLegacyExportValues:
             fields += [
                 EntryExportField(id: "server.name", title: "Name"),
                 EntryExportField(id: "server.ipAddress", title: "IP Address"),
@@ -791,12 +791,13 @@ extension VaultEntry {
                 EntryExportField(id: "server.username", title: "Username"),
                 EntryExportField(id: "server.password", title: "Password"),
                 EntryExportField(id: "server.accounts", title: "Accounts"),
+                EntryExportField(id: "server.accountId", title: "Account ID"),
                 EntryExportField(id: "server.basicConfig", title: "Config"),
                 EntryExportField(id: "server.operatingSystem", title: "OS"),
                 EntryExportField(id: "server.location", title: "Location"),
                 EntryExportField(id: "server.notes", title: "Notes")
             ]
-        case .service:
+        case .service where payload.hasLegacyExportValues:
             fields += [
                 EntryExportField(id: "service.name", title: "Name"),
                 EntryExportField(id: "service.connectionAddress", title: "Address"),
@@ -806,6 +807,8 @@ extension VaultEntry {
                 EntryExportField(id: "service.accounts", title: "Accounts"),
                 EntryExportField(id: "service.notes", title: "Notes")
             ]
+        default:
+            break
         }
 
         fields += customFields.map {
@@ -841,6 +844,48 @@ extension VaultEntry {
 }
 
 private extension VaultPayload {
+    var hasLegacyExportValues: Bool {
+        switch self {
+        case .credential(let payload):
+            !payload.accounts.isEmpty
+                || payload.username.hasExportValue
+                || payload.password.hasExportValue
+                || payload.token.hasExportValue
+                || payload.appId.hasExportValue
+                || payload.accessKey.hasExportValue
+                || payload.secretKey.hasExportValue
+                || payload.notes.hasExportValue
+        case .server(let payload):
+            !payload.accounts.isEmpty
+                || payload.name.hasExportValue
+                || payload.ipAddress.hasExportValue
+                || payload.port.hasExportValue
+                || payload.username.hasExportValue
+                || payload.password.hasExportValue
+                || (payload.accountId?.hasExportValue ?? false)
+                || payload.basicConfig.hasExportValue
+                || payload.operatingSystem.hasExportValue
+                || payload.location.hasExportValue
+                || payload.notes.hasExportValue
+        case .service(let payload):
+            !payload.accounts.isEmpty
+                || payload.name.hasExportValue
+                || payload.connectionAddress.hasExportValue
+                || payload.connectionPort.hasExportValue
+                || (payload.accountId?.hasExportValue ?? false)
+                || payload.serverIds.contains { $0.hasExportValue }
+                || payload.notes.hasExportValue
+        }
+    }
+}
+
+private extension String {
+    var hasExportValue: Bool {
+        !trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+private extension VaultPayload {
     func keepingExportFields(_ selectedFieldIDs: Set<String>) -> VaultPayload {
         switch self {
         case .credential(var credential):
@@ -864,6 +909,7 @@ private extension VaultPayload {
             if !selectedFieldIDs.contains("server.username") { server.username = "" }
             if !selectedFieldIDs.contains("server.password") { server.password = "" }
             if !selectedFieldIDs.contains("server.accounts") { server.accounts = [] }
+            if !selectedFieldIDs.contains("server.accountId") { server.accountId = nil }
             if !selectedFieldIDs.contains("server.basicConfig") { server.basicConfig = "" }
             if !selectedFieldIDs.contains("server.operatingSystem") { server.operatingSystem = "" }
             if !selectedFieldIDs.contains("server.location") { server.location = "" }

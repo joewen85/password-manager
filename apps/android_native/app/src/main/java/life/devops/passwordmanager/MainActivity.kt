@@ -74,6 +74,7 @@ import life.devops.passwordmanager.model.applyCategoryTemplateToDraft
 import life.devops.passwordmanager.model.categoryTemplateFieldsForUserSave
 import life.devops.passwordmanager.model.customFieldSemantics
 import life.devops.passwordmanager.model.draftCustomFieldStates
+import life.devops.passwordmanager.model.hasLegacyExportValues
 import life.devops.passwordmanager.model.isEditableCategoryFieldType
 import life.devops.passwordmanager.model.newCategoryTemplateField
 import life.devops.passwordmanager.model.normalizedValueType
@@ -2244,7 +2245,8 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun showEntryExportFieldDialog(entry: VaultEntry) {
-        val fields = entry.exportFields(this)
+        val currentEntry = store.liveEntry(entry.id) ?: entry
+        val fields = currentEntry.exportFields(this)
         val selected = mutableSetOf<String>()
         val form = formRoot()
         form.addView(formTitle(text(R.string.choose_export_fields)))
@@ -2272,7 +2274,7 @@ class MainActivity : FragmentActivity() {
             .create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                exportEntryJson(entry, null)
+                exportEntryJson(currentEntry, null)
                 dialog.dismiss()
             }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -2281,7 +2283,7 @@ class MainActivity : FragmentActivity() {
                     return@setOnClickListener
                 }
                 exportEntryText(
-                    entry,
+                    currentEntry,
                     fields
                         .filter { it.id in selected }
                         .map { EntryTextExportField(id = it.id, title = it.title) },
@@ -2293,13 +2295,15 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun exportEntryJson(entry: VaultEntry, selectedFieldIds: Set<String>?) {
-        store.exportEntryJson(entry, selectedFieldIds)?.let { json ->
+        val currentEntry = store.liveEntry(entry.id) ?: entry
+        store.exportEntryJson(currentEntry, selectedFieldIds)?.let { json ->
             createJsonDocument("entry-export-${safeExportName(entry.label)}-${exportTimestamp()}.json", json)
         } ?: toast(store.statusMessage ?: text(R.string.export_failed))
     }
 
     private fun exportEntryText(entry: VaultEntry, fields: List<EntryTextExportField>) {
-        val contents = entry.selectedFieldsText(
+        val currentEntry = store.liveEntry(entry.id) ?: entry
+        val contents = currentEntry.selectedFieldsText(
             fields = fields,
             categoryTemplates = store.categories().mapNotNull(store::categoryTemplate),
             entries = store.listEntries(),
@@ -4034,8 +4038,9 @@ private fun VaultEntry.exportFields(activity: Activity): List<EntryExportField> 
         EntryExportField("category", activity.getString(R.string.category)),
         EntryExportField("tags", activity.getString(R.string.tags)),
     )
-    when (payload) {
-        is VaultPayload.Credential -> fields += listOf(
+    when {
+        !hasLegacyExportValues -> Unit
+        payload is VaultPayload.Credential -> fields += listOf(
             EntryExportField("credential.username", activity.getString(R.string.username)),
             EntryExportField("credential.password", activity.getString(R.string.password)),
             EntryExportField("credential.accounts", activity.getString(R.string.service_accounts)),
@@ -4045,19 +4050,20 @@ private fun VaultEntry.exportFields(activity: Activity): List<EntryExportField> 
             EntryExportField("credential.secretKey", activity.getString(R.string.secret_key)),
             EntryExportField("credential.notes", activity.getString(R.string.notes)),
         )
-        is VaultPayload.Server -> fields += listOf(
+        payload is VaultPayload.Server -> fields += listOf(
             EntryExportField("server.name", activity.getString(R.string.name)),
             EntryExportField("server.ipAddress", activity.getString(R.string.ip_address)),
             EntryExportField("server.port", activity.getString(R.string.port)),
             EntryExportField("server.username", activity.getString(R.string.username)),
             EntryExportField("server.password", activity.getString(R.string.password)),
             EntryExportField("server.accounts", activity.getString(R.string.service_accounts)),
+            EntryExportField("server.accountId", activity.getString(R.string.account_id)),
             EntryExportField("server.basicConfig", activity.getString(R.string.basic_config)),
             EntryExportField("server.operatingSystem", activity.getString(R.string.os)),
             EntryExportField("server.location", activity.getString(R.string.location)),
             EntryExportField("server.notes", activity.getString(R.string.notes)),
         )
-        is VaultPayload.Service -> fields += listOf(
+        payload is VaultPayload.Service -> fields += listOf(
             EntryExportField("service.name", activity.getString(R.string.name)),
             EntryExportField("service.connectionAddress", activity.getString(R.string.connection_address)),
             EntryExportField("service.connectionPort", activity.getString(R.string.connection_port)),

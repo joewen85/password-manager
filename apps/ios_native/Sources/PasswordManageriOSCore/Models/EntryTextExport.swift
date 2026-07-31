@@ -47,6 +47,7 @@ extension VaultEntry {
             case "server.username": return server.username
             case "server.password": return server.password
             case "server.accounts": return server.accounts.exportText
+            case "server.accountId": return referencedEntryText(server.accountId, entries: entries)
             case "server.basicConfig": return server.basicConfig
             case "server.operatingSystem": return server.operatingSystem
             case "server.location": return server.location

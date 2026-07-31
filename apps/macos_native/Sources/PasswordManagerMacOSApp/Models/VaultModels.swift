@@ -804,7 +804,7 @@ extension VaultEntry {
         ]
 
         switch payload {
-        case .credential:
+        case .credential where payload.hasLegacyExportValues:
             fields += [
                 EntryExportField(id: "credential.username", title: L10n.t("Username")),
                 EntryExportField(id: "credential.password", title: L10n.t("Password")),
@@ -815,7 +815,7 @@ extension VaultEntry {
                 EntryExportField(id: "credential.secretKey", title: L10n.t("Secret Key")),
                 EntryExportField(id: "credential.notes", title: L10n.t("Notes"))
             ]
-        case .server:
+        case .server where payload.hasLegacyExportValues:
             fields += [
                 EntryExportField(id: "server.name", title: L10n.t("Name")),
                 EntryExportField(id: "server.ipAddress", title: L10n.t("IP Address")),
@@ -823,12 +823,13 @@ extension VaultEntry {
                 EntryExportField(id: "server.username", title: L10n.t("Username")),
                 EntryExportField(id: "server.password", title: L10n.t("Password")),
                 EntryExportField(id: "server.accounts", title: L10n.t("Accounts")),
+                EntryExportField(id: "server.accountId", title: L10n.t("Account ID")),
                 EntryExportField(id: "server.basicConfig", title: L10n.t("Config")),
                 EntryExportField(id: "server.operatingSystem", title: L10n.t("OS")),
                 EntryExportField(id: "server.location", title: L10n.t("Location")),
                 EntryExportField(id: "server.notes", title: L10n.t("Notes"))
             ]
-        case .service:
+        case .service where payload.hasLegacyExportValues:
             fields += [
                 EntryExportField(id: "service.name", title: L10n.t("Name")),
                 EntryExportField(id: "service.connectionAddress", title: L10n.t("Address")),
@@ -838,6 +839,8 @@ extension VaultEntry {
                 EntryExportField(id: "service.accounts", title: L10n.t("Accounts")),
                 EntryExportField(id: "service.notes", title: L10n.t("Notes"))
             ]
+        default:
+            break
         }
 
         fields += customFields.map {
@@ -870,6 +873,48 @@ extension VaultEntry {
 }
 
 private extension VaultPayload {
+    var hasLegacyExportValues: Bool {
+        switch self {
+        case .credential(let payload):
+            !payload.accounts.isEmpty
+                || payload.username.hasExportValue
+                || payload.password.hasExportValue
+                || payload.token.hasExportValue
+                || payload.appId.hasExportValue
+                || payload.accessKey.hasExportValue
+                || payload.secretKey.hasExportValue
+                || payload.notes.hasExportValue
+        case .server(let payload):
+            !payload.accounts.isEmpty
+                || payload.name.hasExportValue
+                || payload.ipAddress.hasExportValue
+                || payload.port.hasExportValue
+                || payload.username.hasExportValue
+                || payload.password.hasExportValue
+                || (payload.accountId?.hasExportValue ?? false)
+                || payload.basicConfig.hasExportValue
+                || payload.operatingSystem.hasExportValue
+                || payload.location.hasExportValue
+                || payload.notes.hasExportValue
+        case .service(let payload):
+            !payload.accounts.isEmpty
+                || payload.name.hasExportValue
+                || payload.connectionAddress.hasExportValue
+                || payload.connectionPort.hasExportValue
+                || (payload.accountId?.hasExportValue ?? false)
+                || payload.serverIds.contains { $0.hasExportValue }
+                || payload.notes.hasExportValue
+        }
+    }
+}
+
+private extension String {
+    var hasExportValue: Bool {
+        !trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+private extension VaultPayload {
     func keepingExportFields(_ selectedFieldIDs: Set<String>) -> VaultPayload {
         switch self {
         case .credential(var credential):
@@ -893,6 +938,7 @@ private extension VaultPayload {
             if !selectedFieldIDs.contains("server.username") { server.username = "" }
             if !selectedFieldIDs.contains("server.password") { server.password = "" }
             if !selectedFieldIDs.contains("server.accounts") { server.accounts = [] }
+            if !selectedFieldIDs.contains("server.accountId") { server.accountId = nil }
             if !selectedFieldIDs.contains("server.basicConfig") { server.basicConfig = "" }
             if !selectedFieldIDs.contains("server.operatingSystem") { server.operatingSystem = "" }
             if !selectedFieldIDs.contains("server.location") { server.location = "" }

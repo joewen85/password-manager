@@ -971,9 +971,10 @@ class VaultStore(
             return
         }
         runCatching {
+            val currentEntry = liveEntry(entry.id) ?: entry
             val exportFile = repository.saveEntryExport(
-                entry = entry,
-                categoryTemplates = categoryTemplate(entry.payload.category)?.let(::listOf).orEmpty(),
+                entry = currentEntry,
+                categoryTemplates = categoryTemplate(currentEntry.payload.category)?.let(::listOf).orEmpty(),
             )
             statusMessage = "Entry export saved: ${exportFile.name}"
         }.onFailure {
@@ -987,8 +988,9 @@ class VaultStore(
             return null
         }
         return runCatching {
+            val currentEntry = liveEntry(entry.id) ?: entry
             statusMessage = "Entry export is ready."
-            val exportedEntry = selectedFieldIds?.let { entry.keepingExportFields(it) } ?: entry
+            val exportedEntry = selectedFieldIds?.let { currentEntry.keepingExportFields(it) } ?: currentEntry
             VaultJson.encodeScopedExport(
                 ScopedVaultExport(
                     scope = ScopedExportScope.ITEM,
@@ -996,7 +998,7 @@ class VaultStore(
                     item = exportedEntry,
                     category = null,
                     items = null,
-                    categoryTemplates = categoryTemplate(entry.payload.category)?.let(::listOf).orEmpty(),
+                    categoryTemplates = categoryTemplate(currentEntry.payload.category)?.let(::listOf).orEmpty(),
                 )
             )
         }.getOrElse {
@@ -1616,6 +1618,7 @@ private fun VaultPayload.keepingExportFields(selectedFieldIds: Set<String>): Vau
                 username = if ("server.username" in selectedFieldIds) value.username else "",
                 password = if ("server.password" in selectedFieldIds) value.password else "",
                 accounts = if ("server.accounts" in selectedFieldIds) value.accounts else emptyList(),
+                accountId = if ("server.accountId" in selectedFieldIds) value.accountId else null,
                 basicConfig = if ("server.basicConfig" in selectedFieldIds) value.basicConfig else "",
                 operatingSystem = if ("server.operatingSystem" in selectedFieldIds) value.operatingSystem else "",
                 location = if ("server.location" in selectedFieldIds) value.location else "",

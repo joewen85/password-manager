@@ -269,9 +269,10 @@ final class VaultStore {
             statusMessage = "Unlock the vault before exporting."
             return
         }
+        let currentEntry = entries.first { $0.id == entry.id && !$0.isDeleted } ?? entry
         do {
             let exportURL = try repository.saveEntryExport(
-                entry,
+                currentEntry,
                 selectedFieldIDs: selectedFieldIDs,
                 categoryTemplates: categoryTemplates
             )
@@ -286,9 +287,10 @@ final class VaultStore {
             statusMessage = "Unlock the vault before exporting."
             return
         }
+        let currentEntry = entries.first { $0.id == entry.id && !$0.isDeleted } ?? entry
         do {
             let exportURL = try repository.saveSelectedEntryTextExport(
-                entry,
+                currentEntry,
                 selectedFieldIDs: selectedFieldIDs,
                 categoryTemplates: categoryTemplates,
                 entries: entries

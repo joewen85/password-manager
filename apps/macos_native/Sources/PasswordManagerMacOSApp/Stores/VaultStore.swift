@@ -944,8 +944,9 @@ final class VaultStore {
             statusMessage = "Unlock the vault before exporting."
             return
         }
+        let currentEntry = entries.first { $0.id == entry.id && !$0.isDeleted } ?? entry
         do {
-            let exportURL = try repository.saveEntryExport(entry, categoryTemplates: categoryTemplates)
+            let exportURL = try repository.saveEntryExport(currentEntry, categoryTemplates: categoryTemplates)
             statusMessage = "Entry export saved: \(exportURL.lastPathComponent)"
         } catch {
             statusMessage = error.localizedDescription
@@ -957,9 +958,10 @@ final class VaultStore {
             statusMessage = "Unlock the vault before exporting."
             return nil
         }
+        let currentEntry = entries.first { $0.id == entry.id && !$0.isDeleted } ?? entry
         do {
             let export = try repository.makeEntryExport(
-                entry,
+                currentEntry,
                 selectedFieldIDs: selectedFieldIDs,
                 categoryTemplates: categoryTemplates
             )
@@ -979,8 +981,9 @@ final class VaultStore {
             statusMessage = "Unlock the vault before exporting."
             return nil
         }
+        let currentEntry = entries.first { $0.id == entry.id && !$0.isDeleted } ?? entry
         let export = repository.makeSelectedEntryTextExport(
-            entry,
+            currentEntry,
             selectedFieldIDs: selectedFieldIDs,
             categoryTemplates: categoryTemplates,
             entries: entries

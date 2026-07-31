@@ -14,6 +14,42 @@ internal fun VaultEntry.selectedFieldsText(
         "${field.title.exportLineEscaped()}: ${exportValue(field.id, categoryTemplates, entries).exportLineEscaped()}"
     }
 
+internal val VaultEntry.hasLegacyExportValues: Boolean
+    get() = when (val entryPayload = payload) {
+        is VaultPayload.Credential -> entryPayload.value.run {
+            accounts.isNotEmpty() ||
+                username.isNotBlank() ||
+                password.isNotBlank() ||
+                token.isNotBlank() ||
+                appId.isNotBlank() ||
+                accessKey.isNotBlank() ||
+                secretKey.isNotBlank() ||
+                notes.isNotBlank()
+        }
+        is VaultPayload.Server -> entryPayload.value.run {
+            accounts.isNotEmpty() ||
+                name.isNotBlank() ||
+                ipAddress.isNotBlank() ||
+                port.isNotBlank() ||
+                username.isNotBlank() ||
+                password.isNotBlank() ||
+                !accountId.isNullOrBlank() ||
+                basicConfig.isNotBlank() ||
+                operatingSystem.isNotBlank() ||
+                location.isNotBlank() ||
+                notes.isNotBlank()
+        }
+        is VaultPayload.Service -> entryPayload.value.run {
+            accounts.isNotEmpty() ||
+                name.isNotBlank() ||
+                connectionAddress.isNotBlank() ||
+                connectionPort.isNotBlank() ||
+                !accountId.isNullOrBlank() ||
+                serverIds.any(String::isNotBlank) ||
+                notes.isNotBlank()
+        }
+    }
+
 private fun VaultEntry.exportValue(
     fieldId: String,
     categoryTemplates: Collection<CategoryTemplate>,
@@ -43,6 +79,7 @@ private fun VaultEntry.exportValue(
             "server.username" -> return entryPayload.value.username
             "server.password" -> return entryPayload.value.password
             "server.accounts" -> return entryPayload.value.accounts.exportText()
+            "server.accountId" -> return referencedEntryText(entryPayload.value.accountId, entries)
             "server.basicConfig" -> return entryPayload.value.basicConfig
             "server.operatingSystem" -> return entryPayload.value.operatingSystem
             "server.location" -> return entryPayload.value.location
