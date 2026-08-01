@@ -523,7 +523,7 @@ struct Index {
         this.ToolbarIconButton('+', '添加', true, () => {
           this.openTopOverlay('create');
         });
-        this.ToolbarIconButton(this.syncBusy ? '···' : '↻', '同步', false, () => {
+        this.SyncToolbarIconButton(() => {
           if (!this.syncBusy) {
             this.onSyncNow();
           }
@@ -559,6 +559,32 @@ struct Index {
       .borderRadius(12)
       .accessibilityText(label)
       .onClick(action);
+  }
+
+  @Builder
+  private SyncToolbarIconButton(action: () => void) {
+    Stack({ alignContent: Alignment.Center }) {
+      if (this.syncBusy) {
+        LoadingProgress()
+          .width(this.toolbarIconSize() - 12)
+          .height(this.toolbarIconSize() - 12)
+          .color(UI_TEXT);
+      } else {
+        Text('↻')
+          .fontSize(this.toolbarIconFontSize('↻'))
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_TEXT)
+          .textAlign(TextAlign.Center);
+      }
+    }
+    .width(this.toolbarIconSize())
+    .height(this.toolbarIconSize())
+    .margin({ left: 2 })
+    .backgroundColor(UI_SURFACE)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(12)
+    .accessibilityText('同步')
+    .onClick(action);
   }
 
   @Builder
