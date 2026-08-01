@@ -37,7 +37,7 @@ final class VaultStore {
     private var manualCategories: Set<String> = []
     private var categoryStates: [String: CategorySyncState] = [:]
     private var manualTags: Set<String> = []
-    private var isSyncing = false
+    private(set) var isSyncing = false
     private var syncRequestedAgain = false
     private var localChangeRevision = 0
     private var masterPassword = ""

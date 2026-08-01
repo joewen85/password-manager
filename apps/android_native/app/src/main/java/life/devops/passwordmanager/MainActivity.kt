@@ -2,6 +2,8 @@ package life.devops.passwordmanager
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -26,6 +28,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
+import android.view.animation.LinearInterpolator
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
@@ -128,6 +131,8 @@ class MainActivity : FragmentActivity() {
     private var lastAutoSyncAttemptAt: Instant? = null
     private var lastAutoSyncUnlockState: Boolean = false
     private var activeSyncJob: Job? = null
+    private var syncButton: ImageButton? = null
+    private var syncRotationAnimator: ObjectAnimator? = null
     private val idleLockHandler = Handler(Looper.getMainLooper())
     private val idleLockRunnable = object : Runnable {
         override fun run() {
@@ -161,6 +166,7 @@ class MainActivity : FragmentActivity() {
         idleLockHandler.removeCallbacks(idleLockRunnable)
         autoSyncHandler.removeCallbacks(autoSyncRunnable)
         windowLayoutJob?.cancel()
+        stopSyncButtonAnimation()
         layoutScope.cancel()
         super.onDestroy()
     }
@@ -488,7 +494,7 @@ class MainActivity : FragmentActivity() {
             }, wrapWrap(right = dp(2)))
             addView(toolbarIconButton(R.drawable.ic_sync_24, text(R.string.sync)) {
                 runSync()
-            }, wrapWrap(right = dp(2)))
+            }.also { registerSyncButton(it) }, wrapWrap(right = dp(2)))
             addView(toolbarIconButton(R.drawable.ic_cloud_upload_24, text(R.string.backups)) {
                 showBackupCenter(it)
             }, wrapWrap(right = dp(2)))
@@ -571,7 +577,7 @@ class MainActivity : FragmentActivity() {
                 }, wrapWrap(right = dp(4)))
                 addView(toolbarIconButton(R.drawable.ic_sync_24, text(R.string.sync)) {
                     runSync()
-                }, wrapWrap(right = dp(4)))
+                }.also { registerSyncButton(it) }, wrapWrap(right = dp(4)))
                 addView(toolbarIconButton(R.drawable.ic_cloud_upload_24, text(R.string.backups)) {
                     showBackupCenter(it)
                 }, wrapWrap(right = dp(4)))
@@ -3038,21 +3044,58 @@ class MainActivity : FragmentActivity() {
             }
             return
         }
+        startSyncButtonAnimation()
         activeSyncJob = layoutScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                val contentChanged = store.syncNow()
-                contentChanged to (store.statusMessage ?: store.syncStatus)
-            }
-            if (store.isUnlocked) {
-                if (result.first) {
-                    showHome(preserveEntryScroll = true)
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    val contentChanged = store.syncNow()
+                    contentChanged to (store.statusMessage ?: store.syncStatus)
                 }
-            } else {
-                showUnlock()
+                if (store.isUnlocked) {
+                    if (result.first) {
+                        showHome(preserveEntryScroll = true)
+                    }
+                } else {
+                    showUnlock()
+                }
+                if (showToast) {
+                    toast(result.second)
+                }
+            } finally {
+                stopSyncButtonAnimation()
             }
-            if (showToast) {
-                toast(result.second)
-            }
+        }
+    }
+
+    private fun registerSyncButton(button: ImageButton) {
+        stopSyncButtonAnimation()
+        syncButton = button
+        if (activeSyncJob?.isActive == true) {
+            startSyncButtonAnimation()
+        }
+    }
+
+    private fun startSyncButtonAnimation() {
+        val button = syncButton ?: return
+        syncRotationAnimator?.cancel()
+        button.isEnabled = false
+        button.alpha = 0.72f
+        button.rotation = 0f
+        syncRotationAnimator = ObjectAnimator.ofFloat(button, View.ROTATION, 0f, 360f).apply {
+            duration = 900L
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = LinearInterpolator()
+            start()
+        }
+    }
+
+    private fun stopSyncButtonAnimation() {
+        syncRotationAnimator?.cancel()
+        syncRotationAnimator = null
+        syncButton?.apply {
+            isEnabled = true
+            alpha = 1f
+            rotation = 0f
         }
     }
 

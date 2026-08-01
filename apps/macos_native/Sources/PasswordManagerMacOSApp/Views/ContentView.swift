@@ -81,10 +81,19 @@ struct ContentView: View {
                     Button {
                         store.syncNow()
                     } label: {
-                        Label(L10n.t("Run Sync Now"), systemImage: "arrow.triangle.2.circlepath")
+                        Label {
+                            Text(L10n.t("Run Sync Now"))
+                        } icon: {
+                            if store.isSyncing {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                            }
+                        }
                     }
                     .help(L10n.t("Run Sync Now"))
-                    .disabled(store.syncSettings.providerType == .none)
+                    .disabled(store.syncSettings.providerType == .none || store.isSyncing)
 
                     Menu {
                         Button(action: beginAddingEntry) {

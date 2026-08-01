@@ -83,10 +83,19 @@ struct SyncCenterView: View {
                     Button {
                         store.syncNow()
                     } label: {
-                        Label("Run Sync Now", systemImage: "arrow.triangle.2.circlepath")
+                        Label {
+                            Text("Run Sync Now")
+                        } icon: {
+                            if store.isSyncing {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                            }
+                        }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(store.syncSettings.providerType == .none)
+                    .disabled(store.syncSettings.providerType == .none || store.isSyncing)
                     .help("Run Sync Now")
                 }
             }

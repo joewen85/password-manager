@@ -30,7 +30,7 @@ final class VaultStore {
     private(set) var syncSettings = SyncSettings.defaults()
 
     private var categoryStates: [String: CategorySyncState] = [:]
-    private var isSyncing = false
+    private(set) var isSyncing = false
     private var syncRequestedAgain = false
     private var localChangeRevision = 0
     private var masterPassword = ""

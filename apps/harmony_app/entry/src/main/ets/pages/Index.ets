@@ -1551,7 +1551,7 @@ struct Index {
 
       Row({ space: 8 }) {
         Column() {
-          this.SecondaryTextButton('立即同步', () => {
+          this.SyncSettingsSyncButton(() => {
             if (!this.syncBusy) {
               this.onSyncNow();
             }
@@ -1634,6 +1634,31 @@ struct Index {
       .border({ width: 1, color: UI_STROKE })
       .borderRadius(12)
       .onClick(action);
+  }
+
+  @Builder
+  private SyncSettingsSyncButton(action: () => void) {
+    Stack({ alignContent: Alignment.Center }) {
+      if (this.syncBusy) {
+        LoadingProgress()
+          .width(18)
+          .height(18)
+          .color(UI_TEXT);
+      } else {
+        Text('立即同步')
+          .fontSize(14)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UI_TEXT);
+      }
+    }
+    .height(44)
+    .width('100%')
+    .backgroundColor(UI_SURFACE_ALT)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(12)
+    .opacity(this.syncBusy ? 0.72 : 1)
+    .accessibilityText('立即同步')
+    .onClick(action);
   }
 
   @Builder

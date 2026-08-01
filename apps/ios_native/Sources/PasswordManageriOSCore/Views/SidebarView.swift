@@ -59,8 +59,18 @@ struct SidebarView: View {
 
             Section("Operations") {
                 Button(action: syncNow) {
-                    Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
+                    Label {
+                        Text("Sync Now")
+                    } icon: {
+                        if store.isSyncing {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                        }
+                    }
                 }
+                .disabled(store.isSyncing)
                 Button(action: createCategory) {
                     Label("Create Category", systemImage: "folder.badge.plus")
                 }
