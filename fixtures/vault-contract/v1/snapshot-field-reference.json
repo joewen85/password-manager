@@ -1,0 +1,116 @@
+{
+  "entries": [
+    {
+      "id": "account_target_01",
+      "label": "Production Account",
+      "type": "credential",
+      "payload": {
+        "credential": {
+          "username": "ops-user",
+          "password": "fixture-password",
+          "accounts": [],
+          "token": "",
+          "appId": "",
+          "accessKey": "",
+          "secretKey": "",
+          "notes": "",
+          "tags": [],
+          "category": "Accounts"
+        }
+      },
+      "customFields": [
+        {
+          "id": "target_email_value",
+          "templateFieldId": "target_email_field",
+          "name": "Email",
+          "value": "ops@example.com"
+        }
+      ],
+      "createdAt": "2026-07-29T00:00:00Z",
+      "updatedAt": "2026-07-29T00:01:00Z",
+      "version": {
+        "fixture": 1
+      },
+      "updatedBy": "fixture",
+      "isDeleted": false,
+      "deletedAt": null
+    },
+    {
+      "id": "server_source_01",
+      "label": "Production Server",
+      "type": "server",
+      "payload": {
+        "server": {
+          "name": "prod-01",
+          "ipAddress": "192.0.2.10",
+          "port": "22",
+          "username": "root",
+          "password": "fixture-server-password",
+          "accounts": [],
+          "basicConfig": "",
+          "operatingSystem": "Linux",
+          "location": "",
+          "notes": "",
+          "tags": [],
+          "accountId": null,
+          "category": "Servers"
+        }
+      },
+      "customFields": [
+        {
+          "id": "source_owner_email_value",
+          "templateFieldId": "source_owner_email_field",
+          "name": "Owner Email",
+          "value": "account_target_01"
+        }
+      ],
+      "createdAt": "2026-07-29T00:02:00Z",
+      "updatedAt": "2026-07-29T00:03:00Z",
+      "version": {
+        "fixture": 1
+      },
+      "updatedBy": "fixture",
+      "isDeleted": false,
+      "deletedAt": null
+    }
+  ],
+  "categories": [
+    "Accounts",
+    "Servers"
+  ],
+  "categoryTemplates": [
+    {
+      "category": "Accounts",
+      "fields": [
+        {
+          "id": "target_email_field",
+          "name": "Email",
+          "valueType": "text",
+          "targetCategory": "",
+          "targetFieldId": ""
+        }
+      ]
+    },
+    {
+      "category": "Servers",
+      "fields": [
+        {
+          "id": "source_owner_email_field",
+          "name": "Owner Email",
+          "valueType": "fieldReference",
+          "targetCategory": "Accounts",
+          "targetFieldId": "target_email_field"
+        }
+      ]
+    }
+  ],
+  "tags": [],
+  "security": {
+    "requireTotp": false,
+    "totpSecret": ""
+  },
+  "syncStatus": "Fixture",
+  "backupStatus": "Fixture",
+  "lastBackupStatus": "Fixture",
+  "updatedAt": "2026-07-29T00:04:00Z"
+}

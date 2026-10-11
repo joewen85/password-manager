@@ -1,0 +1,391 @@
+# Password Manager iOS Native
+
+## 中文
+
+该目录包含 iOS 原生应用，用于逐步补齐 iOS 端原生能力。
+
+### 范围
+
+- 使用 Swift 和 SwiftUI 建立 iOS 原生起点。
+- 当前切片复用并迁移 macOS 原生端已验证的 Swift 核心：数据模型、本地加密持久化、TOTP、导入导出、备份、同步设置、远端同步 transport、同步合并和同步引擎。
+- SwiftUI 视图已放入 `PasswordManageriOSCore`，并提供 `PasswordManageriOSAppRoot` 作为 Xcode iOS app target 的根视图。
+- 当前包含 SwiftPM 可测试核心模块和 `PasswordManageriOS.xcodeproj` 原生 app target。
+- 字段关联已接入完整 SwiftUI 垂直切片：分类模板可配置文本或单条条目关联及目标分类；条目编辑可按目标分类选择、更换或清空；详情覆盖空值、已解析、缺失、已删除和分类不匹配五态，并支持查看、修复和清空。搜索只加入成功解析目标的名称与分类，不索引原始引用 ID、未知/孤儿值或目标秘密；未知类型和孤儿绑定在 UI 中隐藏原值并无损保存。标签继续承担宽松分组与筛选，格式规则见 `../../docs/FIELD_REFERENCE_CONTRACT.md`。
+- 字段级关联使用 `fieldReference` 按目标条目 ID 和稳定 `targetFieldId` 单跳解析目标文本字段并区分九种状态。独立分类创建和条目编辑器内联创建均能在首次保存前选择 text/fieldReference、目标分类和目标文本字段；同分类可关联当前草稿的其他文本字段，直接自引用会被原子拒绝。已有模板编辑、条目绑定和九态详情继续使用同一契约，不改变 `entryReference` 语义。API 见 `docs/FIELD_REFERENCE_API.md`。
+- 字段关联只在已解锁的本地加密 vault 内处理目标；创建配置只列出分类和兼容文本字段名，目标值仅在显式的已解析详情中展示，不进入搜索或日志。该能力没有新增 entitlement、required-reason API、网络端点或数据采集。详见 `docs/PERMISSIONS_AND_PRIVACY.md`。
+- 已配置 Debug/Release build configuration、bundle identifier、生成式 launch screen、asset catalog、空 entitlements、包含 UserDefaults required-reason 声明的 privacy manifest，以及本机可运行的 Release simulator build/install/launch smoke + generic iOS archive contract gate。生产发布前仍需配置 Apple Developer Team/signing、真机验证和 App Store Connect 验证。
+- 本目录不依赖已移除的 Flutter iOS 工程。
+
+### 目录说明
+
+- `Package.swift`: SwiftPM 包定义。
+- `PasswordManageriOS.xcodeproj`: iOS app target 工程。
+- `PasswordManageriOS`: iOS app 入口、asset catalog、entitlements 和 privacy manifest。
+- `Sources/PasswordManageriOSCore/App`: iOS app root wiring。
+- `Sources/PasswordManageriOSCore/Models`: vault 数据模型。
+- `Sources/PasswordManageriOSCore/Services`: crypto 与 TOTP 服务。
+- `Sources/PasswordManageriOSCore/Stores`: encrypted vault repository 与 app state store。
+- `Sources/PasswordManageriOSCore/Sync`: sync settings、secret store、remote clients、merge 和 engine。
+- `Sources/PasswordManageriOSCore/Views`: SwiftUI vault UI 起点。
+- `Tests/PasswordManageriOSCoreTests`: core 兼容性和行为测试。
+- `docs`: 字段级关联 API、权限与隐私边界。
+
+### 环境要求
+
+- macOS 14 或更高版本。
+- Xcode，含 Swift 6 toolchain。
+- 后续真机/App Store 验证需要 Apple Developer Program 账号、iOS provisioning profile 和 App Store Connect 访问权限。
+
+检查工具链：
+
+```bash
+swift --version
+xcodebuild -version
+```
+
+### 开发
+
+核心模块可通过 SwiftPM 构建和测试：
+
+```bash
+swift build
+swift test
+```
+
+Xcode app target 可通过 Xcode 或命令行构建。常规 simulator 编译：
+
+```bash
+xcodebuild build \
+  -project PasswordManageriOS.xcodeproj \
+  -target PasswordManageriOS \
+  -configuration Debug \
+  -sdk iphonesimulator \
+  CODE_SIGNING_ALLOWED=NO
+```
+
+本地 simulator 安装和启动示例：
+
+```bash
+xcrun simctl boot "iPhone 17 Pro"
+xcrun simctl install booted build/Debug-iphonesimulator/PasswordManageriOS.app
+xcrun simctl launch booted life.devops.passwordmanager
+```
+
+运行本地 release gate：
+
+```bash
+./scripts/verify_release.sh
+```
+
+该脚本会运行 SwiftPM 测试、首屏 UI test smoke、Release simulator build、simulator 安装/启动 smoke，并创建 `build/PasswordManageriOS.xcarchive` 的 generic iOS archive；默认使用 `CODE_SIGNING_ALLOWED=NO` 做本机 archive 内容校验，不声称已完成 Apple 签名。版本号可通过 `IOS_MARKETING_VERSION` 和 `IOS_BUILD_NUMBER` 覆盖，默认仍是 `0.1.0` / `1`：
+
+```bash
+IOS_MARKETING_VERSION=1.0.0 \
+IOS_BUILD_NUMBER=100 \
+./scripts/verify_release.sh
+```
+
+配置 Apple Developer Team 后，可强制签名 archive，并可用 `IOS_EXPECTED_SIGNING_CERT_SHA256` 校验签名证书 SHA-256 指纹：
+
+```bash
+IOS_REQUIRE_SIGNED_ARCHIVE=true \
+IOS_DEVELOPMENT_TEAM=ABCDE12345 \
+IOS_CODE_SIGN_IDENTITY="Apple Distribution" \
+IOS_EXPECTED_SIGNING_CERT_SHA256="0123456789ABCDEF..." \
+IOS_ALLOW_PROVISIONING_UPDATES=true \
+./scripts/verify_release.sh
+```
+
+`./scripts/verify_ui_smoke.sh` 默认创建临时 iPhone simulator，运行 `PasswordManageriOSUITests`，断言启动后出现 `Initialize Vault` 或 `Unlock Vault`、`Master password` 输入框以及对应主操作按钮。`verify_simulator_smoke.sh` 默认创建临时 iPhone simulator，安装 `build/Release-iphonesimulator/PasswordManageriOS.app`，通过 `simctl appinfo` 确认安装，再启动 `life.devops.passwordmanager`，并保存启动截图到 `build/simulator-smoke/launch.png`。如需复用指定模拟器，可分别设置 `IOS_UI_TEST_SIMULATOR_UDID=<udid>` 或 `IOS_SIMULATOR_UDID=<udid>`。
+
+### 本地功能验证
+
+iPhone Duo 的布局适配、独立测试密码库、设备回归矩阵与验证边界见 [iPhone Duo 原生适配验证](docs/IPHONE_DUO_VALIDATION.md)。
+
+当前可自动验证的范围：
+
+- PBKDF2-SHA256 verifier 与默认迭代次数。
+- AES-256-GCM 加密/解密和 tamper rejection。
+- 加密 vault envelope 不在 `vault.json` 泄露明文密码库字段。
+- TOTP SHA1、30 秒周期、6 位数字、+/-1 窗口。
+- 完整快照 JSON 导入/导出。
+- 单条/分类 scoped JSON 导入/导出和冲突策略。
+- 本地加密备份、恢复最新备份、保留最近 5 个备份。
+- Dart crypto fixture 解密兼容。
+- WebDAV / S3 presigned URL remote sync transport 行为。
+- 同步设置 redaction、secret store 生命周期和普通配置文件无明文 sync secrets。
+- 同步合并和 `VaultStore.syncNow(client:)` 写回流程。
+- 分类模板字段安全编辑：未知类型只读保留，有存值字段不可删除或改型，但可改名及调整关联目标分类。
+- 条目关联候选、选择/更换/清空、五态详情安全文案、A→A、A→B→A、跨分类相同 legacy 模板 ID 和未知/孤儿值隐私隔离。
+- iOS 首屏启动 UI smoke：初始化/解锁标题、主密码输入框和主操作按钮。
+
+已在 iPhone 17 Pro simulator 启动验证初始 `Initialize Vault` 界面。真机和发布候选环境仍需手动验证：
+
+1. 初始化密码库。
+2. 新增 credential、server、service 条目。
+3. 搜索、分类、标签筛选。
+4. 编辑分类关联字段，验证选择、更换、清空、查看目标及五种详情状态。
+5. 锁定、解锁和 TOTP 解锁。
+6. 杀进程重启后数据保留。
+7. 导入、导出、备份、恢复。
+8. WebDAV 或 S3 presigned URL 真实服务同步。
+9. iPhone portrait/landscape、iPad split view、Dynamic Type、深色模式和 VoiceOver 基础可访问性。
+
+### 发布构建
+
+当前已创建 Xcode iOS app target，并且本地 release gate 会生成 generic iOS archive 并校验 bundle id、版本号、arm64 app、privacy manifest、Assets.car 和 dSYM。发布 iOS app 前还需要完成 Apple signing、真机安装和 App Store Connect 验证：
+
+1. 在 `PasswordManageriOS.xcodeproj` 中设置 Apple Developer Team、release signing certificate 和 provisioning profile。
+2. 确认正式 1024x1024 app icon 和 asset catalog 参与 Release target。
+3. 更新 display name、version、build number、deployment target 和 App Store Connect bundle id。
+4. 按实际实现最小化配置必要 entitlements；当前通用 Keychain password item 不需要额外 keychain access group。
+5. 审查 `PrivacyInfo.xcprivacy`；当前已声明 `@AppStorage`/UserDefaults 的 `CA92.1` required reason，新增 required-reason API 或数据收集时必须同步更新。
+6. 选择 Generic iOS Device 或 Any iOS Device。
+7. 执行 Product > Archive。
+8. Validate archive。
+9. 上传到 App Store Connect 或导出 Ad Hoc / Development 包做 QA。
+
+命令行归档示例在 Xcode project 建立后使用：
+
+```bash
+xcodebuild archive \
+  -project PasswordManageriOS.xcodeproj \
+  -scheme PasswordManageriOS \
+  -configuration Release \
+  -destination 'generic/platform=iOS' \
+  -archivePath build/PasswordManageriOS.xcarchive
+```
+
+本地无签名 archive contract 可由 release gate 自动执行；上传候选包必须设置 `IOS_REQUIRE_SIGNED_ARCHIVE=true`，并建议同时设置 `IOS_EXPECTED_SIGNING_CERT_SHA256` 固定签名证书指纹，在 Apple signing 通过后再进入 Validate archive / TestFlight。
+
+### TestFlight / App Store 上架
+
+1. 在 Apple Developer 账号中创建 App ID，并启用所需 capabilities。
+2. 在 App Store Connect 创建 app record，填写 bundle id、SKU、默认语言和分类。
+3. 配置 signing certificates、provisioning profiles 或使用 Xcode automatic signing。
+4. Archive 并上传 build。
+5. 在 App Store Connect 中等待处理完成。
+6. 配置 TestFlight 内部测试，完成安装、初始化、解锁、导入导出、备份、同步和重启验证。
+7. 准备隐私信息：数据收集、加密说明、账号/密码库数据处理、网络同步说明、隐私政策 URL。
+8. 准备截图、描述、关键词、支持 URL、营销 URL、年龄分级、App Review notes 和演示账号/步骤。
+9. 提交 App Review。
+10. 审核通过后选择手动发布或自动发布。
+
+官方入口：
+
+- App Store Connect Help：https://developer.apple.com/help/app-store-connect/
+- TestFlight：https://developer.apple.com/testflight/
+- Distributing apps in Xcode：https://developer.apple.com/documentation/xcode/distributing-your-app-for-beta-testing-and-releases
+
+### 发布检查清单
+
+- [x] iOS 原生目录在 `apps/ios_native` 下创建。
+- [x] SwiftPM core 模块可构建。
+- [x] README 提供中文和英文版本。
+- [x] README 说明开发、发布构建、TestFlight 和 App Store 上架步骤。
+- [x] Core 测试覆盖 macOS 原生端已验证的 crypto、TOTP、导入导出、备份和同步数据层。
+- [x] Xcode iOS app target 已创建。
+- [x] iOS bundle id、生成式 launch screen、空 entitlements、app icon asset 和 UserDefaults privacy manifest 已配置。
+- [x] iOS simulator build/run 已验证。
+- [x] 本地 release gate 可在 iOS simulator 中安装并启动 Release app，确认 bundle id、安装状态和启动截图。
+- [x] 本地 release gate 会生成 generic iOS archive，并校验 arm64 app、Info.plist、privacy manifest、Assets.car 和 dSYM。
+- [ ] Apple Developer Team、release signing、真机安装和 App Store/TestFlight 上传验证已完成。
+- [ ] iOS 真机安装和基础回归已验证。
+- [ ] 真实 WebDAV/S3 同步服务端到端验证完成。
+- [ ] TestFlight internal testing 安装验证完成。
+- [ ] App Store Review 通过。
+
+---
+
+## English
+
+This directory contains the native iOS application target, used to build iOS-native parity incrementally.
+
+### Scope
+
+- Native iOS starting point written in Swift and SwiftUI.
+- The current slice migrates the already-verified Swift core from the native macOS target: data models, local encrypted persistence, TOTP, import/export, backup, sync settings, remote sync transport, sync merge, and sync engine.
+- SwiftUI views are included in `PasswordManageriOSCore`, and `PasswordManageriOSAppRoot` is used as the root view for the Xcode iOS app target.
+- The current form includes a SwiftPM-tested core module and a `PasswordManageriOS.xcodeproj` native app target.
+- Entry references now have a complete SwiftUI vertical slice: category templates configure text or single-entry references and target categories; entry editing selects, replaces, or clears a category-scoped target; detail covers empty, resolved, missing, deleted, and category-mismatch states with view, repair, and clear actions. Search adds only a successfully resolved target label and category, never raw reference IDs, unknown/orphan values, or target secrets. Unsupported and orphan-bound values remain hidden in UI and are preserved losslessly. Tags remain the loose grouping and filtering mechanism. See `../../docs/FIELD_REFERENCE_CONTRACT.md` for format rules.
+- A `fieldReference` resolves one hop through an exact target entry ID and stable `targetFieldId` and reports nine states. Standalone and entry-editor inline category creation configure text/field-reference types plus target category/text field before first save. Prospective templates allow another text field in the same category draft while atomically rejecting direct self-reference. Existing template editing, entry binding, and nine-state details use the same contract without changing legacy `entryReference`. See `docs/FIELD_REFERENCE_API.md`.
+- Field references operate only inside the unlocked local encrypted vault. Creation configuration lists category and compatible text-field names; target values appear only in explicit resolved details and remain excluded from search and logs. This adds no entitlement, required-reason API, endpoint, or data collection. See `docs/PERMISSIONS_AND_PRIVACY.md`.
+- Debug/Release build configurations, bundle identifier, generated launch screen, asset catalog, empty entitlements, a privacy manifest with the UserDefaults required-reason disclosure, and a locally runnable Release simulator build/install/launch smoke + generic iOS archive contract gate are configured. Production release still needs Apple Developer Team/signing, device validation, and App Store Connect validation.
+- This directory does not depend on the removed Flutter iOS project.
+
+### Directory Layout
+
+- `Package.swift`: SwiftPM package definition.
+- `PasswordManageriOS.xcodeproj`: iOS app target project.
+- `PasswordManageriOS`: iOS app entry point, asset catalog, entitlements, and privacy manifest.
+- `Sources/PasswordManageriOSCore/App`: iOS app root wiring.
+- `Sources/PasswordManageriOSCore/Models`: vault data models.
+- `Sources/PasswordManageriOSCore/Services`: crypto and TOTP services.
+- `Sources/PasswordManageriOSCore/Stores`: encrypted vault repository and app state store.
+- `Sources/PasswordManageriOSCore/Sync`: sync settings, secret store, remote clients, merge, and engine.
+- `Sources/PasswordManageriOSCore/Views`: SwiftUI vault UI starting point.
+- `Tests/PasswordManageriOSCoreTests`: core compatibility and behavior tests.
+- `docs`: field-level reference API, permission, and privacy boundaries.
+
+### Requirements
+
+- macOS 14 or later.
+- Xcode with the Swift 6 toolchain.
+- Device/App Store validation later requires an Apple Developer Program account, iOS provisioning profiles, and App Store Connect access.
+
+Check the toolchain:
+
+```bash
+swift --version
+xcodebuild -version
+```
+
+### Develop
+
+The core module builds and tests with SwiftPM:
+
+```bash
+swift build
+swift test
+```
+
+The Xcode app target can be built from Xcode or the command line. Standard simulator build:
+
+```bash
+xcodebuild build \
+  -project PasswordManageriOS.xcodeproj \
+  -target PasswordManageriOS \
+  -configuration Debug \
+  -sdk iphonesimulator \
+  CODE_SIGNING_ALLOWED=NO
+```
+
+Local simulator install and launch example:
+
+```bash
+xcrun simctl boot "iPhone 17 Pro"
+xcrun simctl install booted build/Debug-iphonesimulator/PasswordManageriOS.app
+xcrun simctl launch booted life.devops.passwordmanager
+```
+
+Run the local release gate:
+
+```bash
+./scripts/verify_release.sh
+```
+
+The script runs SwiftPM tests, a first-screen UI test smoke, a Release simulator build, simulator install/launch smoke, and creates `build/PasswordManageriOS.xcarchive` as a generic iOS archive. By default it uses `CODE_SIGNING_ALLOWED=NO` for local archive content validation and does not claim Apple signing is complete. Override the version with `IOS_MARKETING_VERSION` and `IOS_BUILD_NUMBER`; defaults remain `0.1.0` / `1`:
+
+```bash
+IOS_MARKETING_VERSION=1.0.0 \
+IOS_BUILD_NUMBER=100 \
+./scripts/verify_release.sh
+```
+
+After configuring an Apple Developer Team, require a signed archive and optionally gate the signing certificate SHA-256 fingerprint with `IOS_EXPECTED_SIGNING_CERT_SHA256`:
+
+```bash
+IOS_REQUIRE_SIGNED_ARCHIVE=true \
+IOS_DEVELOPMENT_TEAM=ABCDE12345 \
+IOS_CODE_SIGN_IDENTITY="Apple Distribution" \
+IOS_EXPECTED_SIGNING_CERT_SHA256="0123456789ABCDEF..." \
+IOS_ALLOW_PROVISIONING_UPDATES=true \
+./scripts/verify_release.sh
+```
+
+`./scripts/verify_ui_smoke.sh` creates a temporary iPhone simulator by default, runs `PasswordManageriOSUITests`, and asserts that launch shows `Initialize Vault` or `Unlock Vault`, the `Master password` field, and the matching primary action. `verify_simulator_smoke.sh` creates a temporary iPhone simulator by default, installs `build/Release-iphonesimulator/PasswordManageriOS.app`, verifies the installation with `simctl appinfo`, launches `life.devops.passwordmanager`, and writes a launch screenshot to `build/simulator-smoke/launch.png`. Set `IOS_UI_TEST_SIMULATOR_UDID=<udid>` or `IOS_SIMULATOR_UDID=<udid>` to reuse a specific simulator.
+
+### Local Feature Verification
+
+The current automated scope covers:
+
+- PBKDF2-SHA256 verifier and default iteration count.
+- AES-256-GCM encryption/decryption and tamper rejection.
+- Encrypted vault envelope without plaintext vault fields in `vault.json`.
+- TOTP SHA1, 30-second period, 6 digits, and +/-1 time window.
+- Full snapshot JSON import/export.
+- Item/category scoped JSON import/export and conflict strategies.
+- Local encrypted backup, latest-backup restore, and latest-5 retention.
+- Dart crypto fixture decryption compatibility.
+- WebDAV / S3 presigned URL remote sync transport behavior.
+- Sync settings redaction, secret-store lifecycle, and no plaintext sync secrets in normal config files.
+- Sync merge and `VaultStore.syncNow(client:)` writeback flow.
+- Safe category-template editing: unknown types remain read-only; fields with stored values cannot be deleted or retyped, but can be renamed and can change reference target category.
+- Reference candidate filtering, select/replace/clear, five-state safe detail presentation, A-to-A, A-to-B-to-A, shared legacy template IDs across categories, and unknown/orphan value isolation.
+- iOS first-screen launch UI smoke: setup/unlock title, master-password field, and primary action.
+
+The initial `Initialize Vault` screen has been launched on an iPhone 17 Pro simulator. Device and release-candidate environments still need manual verification:
+
+1. Initialize the vault.
+2. Add credential, server, and service entries.
+3. Search, category filtering, and tag filtering.
+4. Edit a category reference field and verify select, replace, clear, view-target, and all five detail states.
+5. Lock, unlock, and TOTP unlock.
+6. Data retention after process kill and relaunch.
+7. Import, export, backup, and restore.
+8. Real WebDAV or S3 presigned URL sync.
+9. iPhone portrait/landscape, iPad split view, Dynamic Type, dark mode, and basic VoiceOver accessibility.
+
+### Release Build
+
+The Xcode iOS app target now exists, and the local release gate creates a generic iOS archive and verifies the bundle id, version, arm64 app, privacy manifest, Assets.car, and dSYM. Before releasing an iOS app, finish Apple signing, device installation, and App Store Connect validation:
+
+1. Set Apple Developer Team, release signing certificate, and provisioning profile in `PasswordManageriOS.xcodeproj`.
+2. Confirm the final 1024x1024 app icon and asset catalog participate in the Release target.
+3. Update display name, version, build number, deployment target, and the App Store Connect bundle id.
+4. Configure required entitlements with least privilege; the current generic Keychain password item usage does not require an extra keychain access group.
+5. Review `PrivacyInfo.xcprivacy`; `@AppStorage`/UserDefaults currently declares the `CA92.1` required reason, and any new required-reason API or data collection disclosure must be added here.
+6. Select Generic iOS Device or Any iOS Device.
+7. Product > Archive.
+8. Validate the archive.
+9. Upload to App Store Connect or export an Ad Hoc / Development build for QA.
+
+Command-line archive example after the Xcode project exists:
+
+```bash
+xcodebuild archive \
+  -project PasswordManageriOS.xcodeproj \
+  -scheme PasswordManageriOS \
+  -configuration Release \
+  -destination 'generic/platform=iOS' \
+  -archivePath build/PasswordManageriOS.xcarchive
+```
+
+The unsigned local archive contract is run by the release gate. Upload candidates must set `IOS_REQUIRE_SIGNED_ARCHIVE=true`, should also set `IOS_EXPECTED_SIGNING_CERT_SHA256` to pin the signing certificate fingerprint, and must pass Apple signing before Validate archive / TestFlight.
+
+### TestFlight / App Store Submission
+
+1. Create an App ID in the Apple Developer account and enable required capabilities.
+2. Create the app record in App Store Connect with bundle id, SKU, default language, and category.
+3. Configure signing certificates and provisioning profiles, or use Xcode automatic signing.
+4. Archive and upload a build.
+5. Wait for processing in App Store Connect.
+6. Configure TestFlight internal testing and validate install, setup, unlock, import/export, backup, sync, and relaunch flows.
+7. Prepare privacy information: data collection, encryption usage, account/password-vault data handling, network sync behavior, and privacy policy URL.
+8. Prepare screenshots, description, keywords, support URL, marketing URL, age rating, App Review notes, and demo account/steps if needed.
+9. Submit for App Review.
+10. After approval, choose manual or automatic release.
+
+Official entry points:
+
+- App Store Connect Help: https://developer.apple.com/help/app-store-connect/
+- TestFlight: https://developer.apple.com/testflight/
+- Distributing apps in Xcode: https://developer.apple.com/documentation/xcode/distributing-your-app-for-beta-testing-and-releases
+
+### Release Checklist
+
+- [x] Native iOS directory is created under `apps/ios_native`.
+- [x] SwiftPM core module builds.
+- [x] README provides Chinese and English versions.
+- [x] README documents development, release build, TestFlight, and App Store submission steps.
+- [x] Core tests cover the crypto, TOTP, import/export, backup, and sync data-layer behavior already verified in the native macOS target.
+- [x] Xcode iOS app target is created.
+- [x] iOS bundle id, generated launch screen, empty entitlements, app icon asset, and UserDefaults privacy manifest are configured.
+- [x] iOS simulator build/run is verified.
+- [x] The local release gate installs and launches the Release app in an iOS simulator, verifying the bundle id, installation state, and launch screenshot.
+- [x] The local release gate creates a generic iOS archive and verifies the arm64 app, Info.plist, privacy manifest, Assets.car, and dSYM.
+- [ ] Apple Developer Team, release signing, device installation, and App Store/TestFlight upload validation are complete.
+- [ ] iOS device install and baseline regression are verified.
+- [ ] Real WebDAV/S3 end-to-end sync validation is complete.
+- [ ] TestFlight internal testing install validation is complete.
+- [ ] App Store Review is approved.

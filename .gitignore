@@ -1,0 +1,68 @@
+# Dart/Flutter
+.dart_tool/
+.packages
+pubspec.lock
+/build/
+**/build/
+**/.dart_tool/
+**/.packages
+**/pubspec.lock
+
+# Swift / native build artifacts
+**/.build/
+**/.swiftpm/
+**/dist/
+*.dSYM/
+*.xcresult/
+*.xcarchive/
+**/Pods/
+*.ipa
+*.apk
+*.aab
+*.hap
+
+# IDE
+.idea/
+.vscode/
+*.iml
+**/xcuserdata/
+**/*.xcuserstate
+**/project.xcworkspace/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Env
+.env
+.env.*
+
+# Node (if used)
+node_modules/
+**/oh_modules/
+
+# HarmonyOS / DevEco local artifacts
+**/.hvigor/
+**/.preview/
+**/local.properties
+
+signing.env
+**/signing.env
+*.keystore
+*.jks
+*.p12
+*.mobileprovision
+
+# Local plans and task notes
+/PLAN.md
+/ios适配duo计划.md
+
+# Local agent state
+.gitnexus
+AGENTS.md
+CLAUDE.md
+.claude/
+.learnings/

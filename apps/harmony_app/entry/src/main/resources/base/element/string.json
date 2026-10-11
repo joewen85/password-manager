@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "密码管理器入口模块"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "密码管理器主界面能力"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "密码管理器"
+    }
+  ]
+}

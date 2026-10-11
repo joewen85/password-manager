@@ -1,0 +1,1076 @@
+import Foundation
+import Testing
+@testable import PasswordManagerMacOSApp
+
+@Suite("VaultSyncEngine")
+struct VaultSyncEngineTests {
+    @Test("Missing remote uploads local payload and records status")
+    func missingRemoteUploadsLocalPayload() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        let client = FakeSyncClient(
+            downloads: [RemoteSyncResult(payload: nil, statusCode: 404)],
+            uploadStatusCodes: [201]
+        )
+        let snapshot = makeSnapshot(
+            entries: [makeEntry(id: "11111111-1111-1111-1111-111111111111", label: "Local", device: "mac")]
+        )
+        let settings = SyncSettings.defaults(deviceId: "mac-device")
+
+        let result = try await engine.synchronize(
+            localSnapshot: snapshot,
+            settings: settings,
+            client: client
+        )
+
+        #expect(result.uploaded)
+        #expect(!result.appliedRemote)
+        #expect(result.settings.lastSyncRevision == 0)
+        #expect(result.settings.lastSyncStatus == "success")
+        #expect(client.uploadedPayloads.count == 1)
+        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.single))
+        #expect(uploaded.deviceId == "mac-device")
+        #expect(uploaded.snapshot.entries.first?.label == "Local")
+    }
+
+    @Test("Remote dominant payload applies locally without uploading")
+    func remoteDominantPayloadAppliesWithoutUpload() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        var settings = SyncSettings.defaults(deviceId: "mac-device")
+        settings.lastSyncRevision = 1
+        let local = makeSnapshot(
+            entries: [makeEntry(id: "22222222-2222-2222-2222-222222222222", label: "Old", device: "mac", version: ["mac": 1])]
+        )
+        let remote = makeSnapshot(
+            entries: [makeEntry(id: "22222222-2222-2222-2222-222222222222", label: "Remote", device: "remote", version: ["mac": 1, "remote": 1])]
+        )
+        let remotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 2,
+                snapshot: remote
+            )
+        )
+        let client = FakeSyncClient(downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)])
+
+        let result = try await engine.synchronize(localSnapshot: local, settings: settings, client: client)
+
+        #expect(!result.uploaded)
+        #expect(result.appliedRemote)
+        #expect(result.snapshot.entries.first?.label == "Remote")
+        #expect(result.settings.lastSyncRevision == 2)
+        #expect(client.uploadedPayloads.isEmpty)
+    }
+
+    @Test("First sync never infers remote categories were deleted locally")
+    func firstSyncPreservesRemoteCategories() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        let local = makeSnapshot(entries: [])
+        let remote = makeSnapshot(
+            categories: ["Remote Category"],
+            categoryTemplates: [CategoryTemplate(category: "Remote Category")],
+            entries: []
+        )
+
+        for remoteRevision in [0, 1] {
+            for strategy in [SyncSettingsConflictStrategy.remoteWins, .keepBoth] {
+                for hasFailedSyncAttempt in [false, true] {
+                    var settings = SyncSettings.defaults(deviceId: "fresh-device")
+                    settings.hasLocalChanges = true
+                    settings.conflictStrategy = strategy
+                    settings.lastSyncAt = hasFailedSyncAttempt ? now : nil
+                    settings.lastSyncStatus = hasFailedSyncAttempt ? "error" : nil
+                    let remotePayload = try engine.encodePayload(
+                        VaultSyncPayload(
+                            exportedAt: now,
+                            deviceId: "remote-device",
+                            revision: remoteRevision,
+                            snapshot: remote
+                        )
+                    )
+                    let client = FakeSyncClient(
+                        downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)]
+                    )
+
+                    let result = try await engine.synchronize(
+                        localSnapshot: local,
+                        settings: settings,
+                        client: client
+                    )
+
+                    #expect(result.snapshot.categories == ["Remote Category"])
+                    #expect(result.snapshot.categoryTemplates.map(\.category) == ["Remote Category"])
+                    #expect(result.snapshot.categoryStates.allSatisfy { !$0.isDeleted })
+                }
+            }
+        }
+    }
+
+    @Test("Runtime metadata differences do not reupload category tombstones")
+    func runtimeMetadataDifferencesDoNotReuploadCategoryTombstones() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        let tombstone = CategorySyncState(
+            name: "test",
+            isDeleted: true,
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_100),
+            version: ["mac-device": 2],
+            updatedBy: "mac-device"
+        )
+        var local = makeSnapshot(entries: [], updatedAt: Date(timeIntervalSince1970: 1_700_000_300))
+        local.categoryStates = [tombstone]
+        local.syncStatus = "Local sync status"
+        local.lastBackupStatus = "Local backup status"
+        var remote = local
+        remote.syncStatus = "Remote sync status"
+        remote.lastBackupStatus = "Remote backup status"
+        remote.updatedAt = Date(timeIntervalSince1970: 1_700_000_200)
+
+        for strategy in [SyncSettingsConflictStrategy.remoteWins, .keepBoth] {
+            var settings = SyncSettings.defaults(deviceId: "mac-device")
+            settings.lastSyncRevision = 8
+            settings.hasLocalChanges = false
+            settings.conflictStrategy = strategy
+            let remotePayload = try engine.encodePayload(
+                VaultSyncPayload(
+                    exportedAt: now,
+                    deviceId: "remote-device",
+                    revision: 9,
+                    snapshot: remote
+                )
+            )
+            let client = FakeSyncClient(
+                downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)]
+            )
+
+            let result = try await engine.synchronize(
+                localSnapshot: local,
+                settings: settings,
+                client: client
+            )
+
+            #expect(!result.uploaded)
+            #expect(result.settings.lastSyncRevision == 9)
+            #expect(client.uploadedPayloads.isEmpty)
+            #expect(result.snapshot.categories.isEmpty)
+            #expect(result.snapshot.categoryStates == [tombstone])
+        }
+    }
+
+    @Test("Remote tombstone applies without restoring deleted taxonomy")
+    func remoteTombstoneAppliesWithoutRestoringDeletedTaxonomy() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        var settings = SyncSettings.defaults(deviceId: "mac-device")
+        settings.lastSyncRevision = 1
+        settings.hasLocalChanges = false
+        let sharedId = "99999999-9999-9999-9999-999999999999"
+        let local = makeSnapshot(
+            categories: ["Deleted Category"],
+            tags: ["deleted-tag"],
+            entries: [
+                makeEntry(
+                    id: sharedId,
+                    label: "Local",
+                    category: "Deleted Category",
+                    tags: ["deleted-tag"],
+                    device: "mac",
+                    version: ["mac": 1]
+                )
+            ]
+        )
+        let remote = makeSnapshot(
+            categories: [],
+            tags: [],
+            entries: [
+                makeEntry(
+                    id: sharedId,
+                    label: "Local",
+                    category: "Deleted Category",
+                    tags: ["deleted-tag"],
+                    device: "remote",
+                    version: ["mac": 1, "remote": 1],
+                    isDeleted: true
+                )
+            ]
+        )
+        let remotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 2,
+                snapshot: remote
+            )
+        )
+        let client = FakeSyncClient(downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)])
+
+        let result = try await engine.synchronize(localSnapshot: local, settings: settings, client: client)
+
+        #expect(result.uploaded)
+        #expect(result.appliedRemote)
+        #expect(result.snapshot.entries.first?.isDeleted == true)
+        #expect(result.snapshot.categories == [])
+        let categoryState = try #require(result.snapshot.categoryStates.first)
+        #expect(result.snapshot.categoryStates.count == 1)
+        #expect(categoryState.isDeleted)
+        #expect(categoryState.name == "Deleted Category")
+        #expect(result.snapshot.tags == [])
+        let migrated = try #require(try engine.decodePayload(client.uploadedPayloads.single))
+        #expect(migrated.snapshot.categoryStates.first?.isDeleted == true)
+    }
+
+    @Test("Local empty category keeps its template when merged with newer remote")
+    func localEmptyCategoryKeepsTemplateWhenMergedWithNewerRemote() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        var settings = SyncSettings.defaults(deviceId: "mac-device")
+        settings.lastSyncRevision = 1
+        settings.hasLocalChanges = true
+        let local = makeSnapshot(
+            categories: ["test"],
+            categoryTemplates: [CategoryTemplate(category: "test")],
+            entries: []
+        )
+        let remote = makeSnapshot(
+            categories: [],
+            categoryTemplates: [],
+            entries: [],
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_100)
+        )
+        let remotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 2,
+                snapshot: remote
+            )
+        )
+        let client = FakeSyncClient(
+            downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)],
+            uploadStatusCodes: [200]
+        )
+
+        let result = try await engine.synchronize(localSnapshot: local, settings: settings, client: client)
+
+        #expect(result.uploaded)
+        #expect(result.snapshot.categories == ["test"])
+        #expect(result.snapshot.categoryTemplates.map(\.category) == ["test"])
+        #expect(result.snapshot.categoryTemplates.first?.fields.map(\.name) == ["名称", "备注"])
+        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.single))
+        #expect(uploaded.snapshot.categories == ["test"])
+        #expect(uploaded.snapshot.categoryTemplates.map(\.category) == ["test"])
+        #expect(uploaded.snapshot.categoryTemplates.first?.fields.map(\.name) == ["名称", "备注"])
+    }
+
+    @Test("Category template fields merge by category causality")
+    func categoryTemplateFieldsMergeByCategoryCausality() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        let baseFields = CategoryTemplate.defaultCategoryFields()
+        let addedField = FieldTemplate(id: "field-owner", name: "Owner")
+        let modifiedField = FieldTemplate(id: "field-owner", name: "Maintainer")
+        let localTime = Date(timeIntervalSince1970: 1_800_000_100)
+        let remoteTime = Date(timeIntervalSince1970: 1_800_000_200)
+
+        func mergedTemplate(
+            localFields: [FieldTemplate],
+            localVersion: [String: Int],
+            remoteFields: [FieldTemplate],
+            remoteVersion: [String: Int],
+            strategy: SyncSettingsConflictStrategy
+        ) async throws -> CategoryTemplate {
+            var local = makeSnapshot(
+                categories: ["test"],
+                categoryTemplates: [CategoryTemplate(category: "test", fields: localFields)],
+                entries: [],
+                updatedAt: localTime
+            )
+            local.categoryStates = [CategorySyncState(
+                name: "test",
+                updatedAt: localTime,
+                version: localVersion,
+                updatedBy: "local-device"
+            )]
+            var remote = makeSnapshot(
+                categories: ["test"],
+                categoryTemplates: [CategoryTemplate(category: "test", fields: remoteFields)],
+                entries: [],
+                updatedAt: remoteTime
+            )
+            remote.categoryStates = [CategorySyncState(
+                name: "test",
+                updatedAt: remoteTime,
+                version: remoteVersion,
+                updatedBy: "remote-device"
+            )]
+            var settings = SyncSettings.defaults(deviceId: "local-device")
+            settings.lastSyncRevision = 1
+            settings.conflictStrategy = strategy
+            let payload = try engine.encodePayload(VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 2,
+                snapshot: remote
+            ))
+            let client = FakeSyncClient(
+                downloads: [RemoteSyncResult(payload: payload, statusCode: 200)],
+                uploadStatusCodes: [200]
+            )
+            let result = try await engine.synchronize(
+                localSnapshot: local,
+                settings: settings,
+                client: client
+            )
+            return try #require(result.snapshot.categoryTemplates.first)
+        }
+
+        let scenarios: [(
+            localFields: [FieldTemplate],
+            localVersion: [String: Int],
+            remoteFields: [FieldTemplate],
+            remoteVersion: [String: Int],
+            strategy: SyncSettingsConflictStrategy,
+            expectedCustomName: String?
+        )] = [
+            (baseFields + [addedField], ["shared": 2], baseFields, ["shared": 1], .remoteWins, "Owner"),
+            (baseFields + [addedField], ["shared": 2], baseFields, ["shared": 1], .keepBoth, "Owner"),
+            (baseFields + [addedField], ["shared": 2], baseFields, ["shared": 3], .localWins, nil),
+            (baseFields + [addedField], ["shared": 2], baseFields, ["shared": 3], .remoteWins, nil),
+            (baseFields + [addedField], ["shared": 2], baseFields, ["shared": 3], .keepBoth, nil),
+            (baseFields + [addedField], ["shared": 2], baseFields + [modifiedField], ["shared": 3], .localWins, "Maintainer"),
+            (baseFields + [addedField], ["shared": 2], baseFields + [modifiedField], ["shared": 3], .remoteWins, "Maintainer"),
+            (baseFields + [addedField], ["shared": 2], baseFields + [modifiedField], ["shared": 3], .keepBoth, "Maintainer"),
+            (baseFields + [addedField], ["local": 1], baseFields + [modifiedField], ["remote": 1], .localWins, "Owner"),
+            (baseFields + [addedField], ["local": 1], baseFields + [modifiedField], ["remote": 1], .remoteWins, "Maintainer"),
+            (baseFields + [addedField], ["local": 1], baseFields + [modifiedField], ["remote": 1], .keepBoth, "Maintainer"),
+        ]
+
+        for scenario in scenarios {
+            let template = try await mergedTemplate(
+                localFields: scenario.localFields,
+                localVersion: scenario.localVersion,
+                remoteFields: scenario.remoteFields,
+                remoteVersion: scenario.remoteVersion,
+                strategy: scenario.strategy
+            )
+            let customField = template.fields.first { $0.id == addedField.id }
+            #expect(customField?.name == scenario.expectedCustomName)
+        }
+    }
+
+    @Test("Keep both preserves local empty category even when local changes flag is clean")
+    func keepBothPreservesLocalEmptyCategoryWhenClean() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        var settings = SyncSettings.defaults(deviceId: "mac-device")
+        settings.lastSyncRevision = 1
+        settings.hasLocalChanges = false
+        settings.conflictStrategy = .keepBoth
+        let local = makeSnapshot(
+            categories: ["test"],
+            categoryTemplates: [CategoryTemplate(category: "test")],
+            entries: []
+        )
+        let remote = makeSnapshot(
+            categories: [],
+            categoryTemplates: [],
+            entries: [],
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_100)
+        )
+        let remotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 2,
+                snapshot: remote
+            )
+        )
+        let client = FakeSyncClient(
+            downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)],
+            uploadStatusCodes: [200]
+        )
+
+        let result = try await engine.synchronize(localSnapshot: local, settings: settings, client: client)
+
+        #expect(result.uploaded)
+        #expect(result.snapshot.categories == ["test"])
+        #expect(result.snapshot.categoryTemplates.map(\.category) == ["test"])
+        #expect(result.snapshot.categoryTemplates.first?.fields.map(\.name) == ["名称", "备注"])
+        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.single))
+        #expect(uploaded.snapshot.categories == ["test"])
+        #expect(uploaded.snapshot.categoryTemplates.map(\.category) == ["test"])
+    }
+
+    @Test("Keep both does not restore a locally deleted empty category")
+    func keepBothDoesNotRestoreLocallyDeletedEmptyCategory() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        var settings = SyncSettings.defaults(deviceId: "mac-device")
+        settings.lastSyncRevision = 2
+        settings.hasLocalChanges = true
+        settings.conflictStrategy = .keepBoth
+        let local = makeSnapshot(
+            categories: [],
+            categoryTemplates: [],
+            entries: [],
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_100)
+        )
+        let remote = makeSnapshot(
+            categories: ["test"],
+            categoryTemplates: [CategoryTemplate(category: "test")],
+            entries: [],
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        let remotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 3,
+                snapshot: remote
+            )
+        )
+        let client = FakeSyncClient(
+            downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)],
+            uploadStatusCodes: [200]
+        )
+
+        let result = try await engine.synchronize(localSnapshot: local, settings: settings, client: client)
+
+        #expect(result.uploaded)
+        #expect(result.snapshot.categories == [])
+        #expect(result.snapshot.categoryTemplates == [])
+        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.single))
+        #expect(uploaded.snapshot.categories == [])
+        #expect(uploaded.snapshot.categoryTemplates == [])
+    }
+
+    @Test("Successful category deletion remains deleted across later sync rounds")
+    func successfulCategoryDeletionRemainsDeletedAcrossLaterSyncRounds() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+
+        for strategy in [SyncSettingsConflictStrategy.remoteWins, .keepBoth] {
+            var settings = SyncSettings.defaults(deviceId: "mac-device")
+            settings.lastSyncRevision = 2
+            settings.hasLocalChanges = true
+            settings.conflictStrategy = strategy
+            let locallyDeleted = makeSnapshot(
+                categories: [],
+                categoryTemplates: [],
+                entries: [],
+                updatedAt: Date(timeIntervalSince1970: 1_800_000_100)
+            )
+            let staleRemote = makeSnapshot(
+                categories: ["test"],
+                categoryTemplates: [CategoryTemplate(category: "test")],
+                entries: [],
+                updatedAt: Date(timeIntervalSince1970: 1_800_000_000)
+            )
+            let firstRemotePayload = try engine.encodePayload(
+                VaultSyncPayload(
+                    exportedAt: now,
+                    deviceId: "remote-device",
+                    revision: 3,
+                    snapshot: staleRemote
+                )
+            )
+            let firstClient = FakeSyncClient(
+                downloads: [RemoteSyncResult(payload: firstRemotePayload, statusCode: 200)],
+                uploadStatusCodes: [200]
+            )
+
+            let firstResult = try await engine.synchronize(
+                localSnapshot: locallyDeleted,
+                settings: settings,
+                client: firstClient
+            )
+            #expect(firstResult.snapshot.categories == [])
+
+            var cleanSettings = firstResult.settings
+            cleanSettings.hasLocalChanges = false
+            let laterRemotePayload = try engine.encodePayload(
+                VaultSyncPayload(
+                    exportedAt: now,
+                    deviceId: "other-device",
+                    revision: 5,
+                    snapshot: staleRemote
+                )
+            )
+            let laterClient = FakeSyncClient(
+                downloads: [RemoteSyncResult(payload: laterRemotePayload, statusCode: 200)],
+                uploadStatusCodes: [200]
+            )
+
+            let laterResult = try await engine.synchronize(
+                localSnapshot: firstResult.snapshot,
+                settings: cleanSettings,
+                client: laterClient
+            )
+
+            #expect(laterResult.snapshot.categories == [])
+            #expect(laterResult.snapshot.categoryTemplates == [])
+        }
+    }
+
+    @Test("Category deletion clears concurrently discovered entry references")
+    func categoryDeletionClearsConcurrentlyDiscoveredEntryReferences() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        var settings = SyncSettings.defaults(deviceId: "mac-device")
+        settings.lastSyncRevision = 2
+        settings.hasLocalChanges = true
+        settings.conflictStrategy = .keepBoth
+        let knownEntryID = "55555555-5555-5555-5555-555555555555"
+        let remoteOnlyEntryID = "66666666-6666-6666-6666-666666666666"
+        let local = makeSnapshot(
+            categories: [],
+            categoryTemplates: [],
+            entries: [
+                makeEntry(
+                    id: knownEntryID,
+                    label: "Known local entry",
+                    device: "mac-device",
+                    version: ["mac-device": 2]
+                )
+            ],
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_100)
+        )
+        let remote = makeSnapshot(
+            categories: ["test"],
+            categoryTemplates: [CategoryTemplate(category: "test")],
+            entries: [
+                makeEntry(
+                    id: knownEntryID,
+                    label: "Known remote entry",
+                    category: "test",
+                    device: "remote-device",
+                    version: ["mac-device": 1]
+                ),
+                makeEntry(
+                    id: remoteOnlyEntryID,
+                    label: "Remote-only entry",
+                    category: "test",
+                    device: "remote-device",
+                    version: ["remote-device": 1]
+                )
+            ],
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        let remotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 3,
+                snapshot: remote
+            )
+        )
+        let client = FakeSyncClient(
+            downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)],
+            uploadStatusCodes: [200]
+        )
+
+        let result = try await engine.synchronize(localSnapshot: local, settings: settings, client: client)
+
+        #expect(result.snapshot.categories == [])
+        #expect(result.snapshot.categoryTemplates == [])
+        #expect(result.snapshot.entries.filter { !$0.isDeleted }.allSatisfy { $0.payload.category.isEmpty })
+    }
+
+    @Test("Keep both does not restore old category name after local rename")
+    func keepBothDoesNotRestoreOldCategoryNameAfterLocalRename() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        var settings = SyncSettings.defaults(deviceId: "mac-device")
+        settings.lastSyncRevision = 2
+        settings.hasLocalChanges = true
+        settings.conflictStrategy = .keepBoth
+        let local = makeSnapshot(
+            categories: ["prod"],
+            categoryTemplates: [CategoryTemplate(category: "prod")],
+            entries: [],
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_100)
+        )
+        let remote = makeSnapshot(
+            categories: ["test"],
+            categoryTemplates: [CategoryTemplate(category: "test")],
+            entries: [],
+            updatedAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        let remotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 3,
+                snapshot: remote
+            )
+        )
+        let client = FakeSyncClient(
+            downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)],
+            uploadStatusCodes: [200]
+        )
+
+        let result = try await engine.synchronize(localSnapshot: local, settings: settings, client: client)
+
+        #expect(result.uploaded)
+        #expect(result.snapshot.categories == ["prod"])
+        #expect(result.snapshot.categoryTemplates.map(\.category) == ["prod"])
+        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.single))
+        #expect(uploaded.snapshot.categories == ["prod"])
+        #expect(uploaded.snapshot.categoryTemplates.map(\.category) == ["prod"])
+    }
+
+    @Test("Unchanged remote fingerprint skips full download when local is clean")
+    func unchangedRemoteFingerprintSkipsFullDownloadWhenLocalIsClean() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        var settings = SyncSettings.defaults(deviceId: "mac-device")
+        settings.lastRemoteFingerprint = #"etag:"same""#
+        settings.hasLocalChanges = false
+        let local = makeSnapshot(
+            entries: [makeEntry(id: "66666666-6666-6666-6666-666666666666", label: "Local", device: "mac")]
+        )
+        let client = FakeSyncClient(
+            downloads: [RemoteSyncResult(payload: "should-not-download", statusCode: 200)],
+            metadata: RemoteSyncMetadata(statusCode: 200, eTag: #""same""#)
+        )
+
+        let result = try await engine.synchronize(localSnapshot: local, settings: settings, client: client)
+
+        #expect(!result.uploaded)
+        #expect(!result.appliedRemote)
+        #expect(client.metadataCount == 1)
+        #expect(client.downloadCount == 0)
+        #expect(result.settings.lastSyncMessage == "Remote unchanged; skipped full sync download.")
+        #expect(result.settings.lastRemoteFingerprint == #"etag:"same""#)
+    }
+
+
+    @Test("Concurrent payload merges and uploads next revision")
+    func concurrentPayloadMergesAndUploadsNextRevision() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let conflictId = "33333333-3333-3333-3333-333333333333"
+        let engine = VaultSyncEngine(now: { now }, idGenerator: { conflictId })
+        var settings = SyncSettings.defaults(deviceId: "mac-device")
+        settings.lastSyncRevision = 2
+        settings.conflictStrategy = .localWins
+        let sharedId = "44444444-4444-4444-4444-444444444444"
+        let local = makeSnapshot(
+            categories: ["Local"],
+            tags: ["mac"],
+            entries: [makeEntry(id: sharedId, label: "Local", category: "Local", tags: ["mac"], device: "mac", version: ["mac": 2, "remote": 1])]
+        )
+        let remote = makeSnapshot(
+            categories: ["Remote"],
+            tags: ["remote"],
+            entries: [makeEntry(id: sharedId, label: "Remote", category: "Remote", tags: ["remote"], device: "remote", version: ["mac": 1, "remote": 2])]
+        )
+        let remotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 4,
+                snapshot: remote
+            )
+        )
+        let client = FakeSyncClient(
+            downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)],
+            uploadStatusCodes: [200]
+        )
+
+        let result = try await engine.synchronize(localSnapshot: local, settings: settings, client: client)
+
+        #expect(result.uploaded)
+        #expect(result.appliedRemote)
+        #expect(result.settings.lastSyncRevision == 5)
+        #expect(result.stats.conflicts == 1)
+        #expect(Set(result.snapshot.categories) == ["Local", "Remote"])
+        #expect(Set(result.snapshot.tags) == ["mac", "remote"])
+        #expect(result.snapshot.entries.count == 2)
+        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.single))
+        #expect(uploaded.revision == 5)
+        #expect(uploaded.snapshot.entries.contains { $0.id == conflictId })
+    }
+
+    @Test("Local taxonomy deletion is not restored from remote metadata when local has changes")
+    func localTaxonomyDeletionIsNotRestoredFromRemoteMetadataWhenLocalHasChanges() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        var settings = SyncSettings.defaults(deviceId: "mac-device")
+        settings.lastSyncRevision = 2
+        settings.hasLocalChanges = true
+        let sharedId = "77777777-7777-7777-7777-777777777777"
+        let local = makeSnapshot(
+            categories: [],
+            tags: [],
+            entries: [makeEntry(id: sharedId, label: "Local", device: "mac", version: ["mac": 2])]
+        )
+        let remote = makeSnapshot(
+            categories: ["Deleted Category"],
+            tags: ["deleted-tag"],
+            entries: [makeEntry(id: sharedId, label: "Remote", device: "remote", version: ["mac": 1])]
+        )
+        let remotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 2,
+                snapshot: remote
+            )
+        )
+        let client = FakeSyncClient(
+            downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)],
+            uploadStatusCodes: [200]
+        )
+
+        let result = try await engine.synchronize(localSnapshot: local, settings: settings, client: client)
+
+        #expect(result.uploaded)
+        #expect(result.snapshot.categories == [])
+        #expect(result.snapshot.tags == [])
+        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.single))
+        #expect(uploaded.snapshot.categories == [])
+        #expect(uploaded.snapshot.tags == [])
+    }
+
+    @Test("Local changes upload directly when remote revision has not advanced")
+    func localChangesUploadDirectlyWhenRemoteRevisionHasNotAdvanced() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let engine = VaultSyncEngine(now: { now })
+        var settings = SyncSettings.defaults(deviceId: "mac-device")
+        settings.lastSyncRevision = 3
+        settings.hasLocalChanges = true
+        let sharedId = "88888888-8888-8888-8888-888888888888"
+        let local = makeSnapshot(
+            categories: [],
+            tags: [],
+            entries: [
+                makeEntry(
+                    id: sharedId,
+                    label: "Local",
+                    category: "",
+                    tags: [],
+                    device: "mac",
+                    updatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+                    version: ["mac": 1]
+                )
+            ]
+        )
+        let remote = makeSnapshot(
+            categories: ["Old Category"],
+            tags: ["old-tag"],
+            entries: [
+                makeEntry(
+                    id: sharedId,
+                    label: "Remote",
+                    category: "Old Category",
+                    tags: ["old-tag"],
+                    device: "mac",
+                    updatedAt: Date(timeIntervalSince1970: 1_800_003_600),
+                    version: ["mac": 1]
+                )
+            ]
+        )
+        let remotePayload = try engine.encodePayload(
+            VaultSyncPayload(
+                exportedAt: now,
+                deviceId: "remote-device",
+                revision: 3,
+                snapshot: remote
+            )
+        )
+        let client = FakeSyncClient(
+            downloads: [RemoteSyncResult(payload: remotePayload, statusCode: 200)],
+            uploadStatusCodes: [200]
+        )
+
+        let result = try await engine.synchronize(localSnapshot: local, settings: settings, client: client)
+
+        #expect(result.uploaded)
+        #expect(!result.appliedRemote)
+        #expect(result.settings.lastSyncRevision == 4)
+        #expect(result.snapshot.categories == [])
+        #expect(result.snapshot.tags == [])
+        let uploaded = try #require(try engine.decodePayload(client.uploadedPayloads.single))
+        #expect(uploaded.revision == 4)
+        let uploadedEntry = try #require(uploaded.snapshot.entries.first)
+        #expect(uploadedEntry.label == "Local")
+        #expect(uploadedEntry.payload.category == "")
+        #expect(uploadedEntry.payload.tags == [])
+    }
+
+    @Test("Flutter v2 encrypted sync payload is decoded with the unlocked master password")
+    func flutterEncryptedPayloadDecodesWithFallbackDecoder() async throws {
+        let crypto = VaultCryptoService()
+        let password = "flutter-sync-password"
+        let recordSalt = Data((1...16).map(UInt8.init))
+        let metadataSalt = Data((17...32).map(UInt8.init))
+        let recordKey = try crypto.deriveKeyForTesting(
+            password: password,
+            salt: recordSalt,
+            iterations: 120_000
+        )
+        let metadataKey = try crypto.deriveKeyForTesting(
+            password: password,
+            salt: metadataSalt,
+            iterations: 120_000
+        )
+        let payloadRecord = try crypto.encrypt(
+            try jsonData([
+                "username": "flutter-user",
+                "password": "flutter-secret",
+                "token": "flutter-token",
+                "appId": "flutter-app",
+                "accessKey": "flutter-access",
+                "secretKey": "flutter-secret-key",
+                "notes": "from flutter sync",
+                "category": "Mobile",
+                "tags": ["flutter", "sync"]
+            ]),
+            key: recordKey,
+            nonceBytes: Data((33...44).map(UInt8.init))
+        )
+        let metadataRecord = try crypto.encrypt(
+            try jsonData([
+                "schemaVersion": 1,
+                "label": "Flutter Credential",
+                "type": "credential",
+                "createdAt": "2026-05-27T05:00:00.000Z",
+                "updatedAt": "2026-05-27T05:01:02.123Z",
+                "version": ["flutter-device": 7],
+                "updatedBy": "flutter-device",
+                "isDeleted": false,
+                "category": "Mobile",
+                "tags": ["flutter", "sync"],
+                "customFields": [[
+                    "id": "harmony-field:owner",
+                    "templateFieldId": "template_owner",
+                    "name": "Owner",
+                    "value": "harmony-entry:account"
+                ]]
+            ]),
+            key: metadataKey,
+            nonceBytes: Data((45...56).map(UInt8.init))
+        )
+        let globalMetadataRecord = try crypto.encrypt(
+            try jsonData([
+                "categories": ["Mobile"],
+                "tags": ["flutter", "sync"],
+                "categoryTemplates": [[
+                    "category": "Mobile",
+                    "fields": [[
+                        "id": "template_owner",
+                        "name": "Owner",
+                        "valueType": "entryReference",
+                        "targetCategory": "Accounts"
+                    ]]
+                ]],
+                "sortOrder": "updatedDesc",
+                "tagsUpdatedAt": 1_800_000_001_000,
+                "categoriesUpdatedAt": 1_800_000_001_000,
+                "recordKeyMetadataMigrated": false
+            ]),
+            key: metadataKey,
+            nonceBytes: Data((57...68).map(UInt8.init))
+        )
+        let rawPayload = try jsonString([
+            "version": 2,
+            "exportedAt": "2026-05-27T05:02:03.456Z",
+            "deviceId": "flutter-device",
+            "revision": 7,
+            "masterKey": [
+                "salt": recordSalt.base64EncodedString(),
+                "iterations": 120_000,
+                "verifier": recordKey.base64EncodedString(),
+                "metadataSalt": metadataSalt.base64EncodedString(),
+                "metadataIterations": 120_000
+            ],
+            "metadataRecord": [
+                "encryptedPayload": encryptedPayloadJson(globalMetadataRecord),
+                "kdfSalt": metadataSalt.base64EncodedString(),
+                "kdfIterations": 120_000
+            ],
+            "items": [[
+                "id": "harmony-entry:mobile",
+                "encryptedPayload": encryptedPayloadJson(payloadRecord),
+                "encryptedMetadata": encryptedPayloadJson(metadataRecord),
+                "kdfSalt": recordSalt.base64EncodedString(),
+                "kdfIterations": 120_000
+            ]]
+        ])
+        let engine = VaultSyncEngine(now: { Date(timeIntervalSince1970: 1_800_000_100) })
+        let decoder = FlutterSyncPayloadDecoder(masterPassword: password, crypto: crypto)
+
+        #expect(throws: (any Error).self) {
+            _ = try engine.decodePayload(rawPayload)
+        }
+
+        let decoded = try #require(try engine.decodePayload(rawPayload, fallbackDecoder: decoder.decode))
+        let entry = try #require(decoded.snapshot.entries.first)
+        #expect(decoded.deviceId == "flutter-device")
+        #expect(decoded.revision == 7)
+        #expect(decoded.snapshot.categories == ["Mobile"])
+        #expect(decoded.snapshot.tags == ["flutter", "sync"])
+        #expect(entry.id == "harmony-entry:mobile")
+        #expect(entry.label == "Flutter Credential")
+        #expect(entry.updatedBy == "flutter-device")
+        #expect(entry.version == ["flutter-device": 7])
+        #expect(entry.payload.category == "Mobile")
+        #expect(entry.payload.tags == ["flutter", "sync"])
+        #expect(entry.customFields == [
+            CustomField(
+                id: "harmony-field:owner",
+                templateFieldId: "template_owner",
+                name: "Owner",
+                value: "harmony-entry:account"
+            )
+        ])
+        #expect(decoded.snapshot.categoryTemplates == [
+            CategoryTemplate(
+                category: "Mobile",
+                fields: [
+                    FieldTemplate(
+                        id: "template_owner",
+                        name: "Owner",
+                        valueType: "entryReference",
+                        targetCategory: "Accounts"
+                    )
+                ]
+            )
+        ])
+        guard case .credential(let credential) = entry.payload else {
+            Issue.record("Expected credential payload")
+            return
+        }
+        #expect(credential.username == "flutter-user")
+        #expect(credential.password == "flutter-secret")
+
+        let client = FakeSyncClient(downloads: [RemoteSyncResult(payload: rawPayload, statusCode: 200)])
+        let result = try await engine.synchronize(
+            localSnapshot: makeSnapshot(entries: [], updatedAt: Date(timeIntervalSince1970: 1)),
+            settings: SyncSettings.defaults(deviceId: "mac-device"),
+            client: client,
+            remotePayloadDecoder: decoder.decode
+        )
+        #expect(result.appliedRemote)
+        #expect(result.uploaded)
+        #expect(result.snapshot.entries.first?.label == "Flutter Credential")
+        #expect(result.snapshot.categoryStates.first?.name == "Mobile")
+        #expect(result.snapshot.categoryStates.first?.isDeleted == false)
+        #expect(result.settings.lastSyncRevision == 8)
+    }
+}
+
+private final class FakeSyncClient: RemoteSyncClient, @unchecked Sendable {
+    private var downloads: [RemoteSyncResult]
+    private var uploadStatusCodes: [Int]
+    private var remoteMetadata: RemoteSyncMetadata
+    private(set) var uploadedPayloads: [String] = []
+    private(set) var downloadCount = 0
+    private(set) var metadataCount = 0
+
+    init(
+        downloads: [RemoteSyncResult],
+        uploadStatusCodes: [Int] = [],
+        metadata: RemoteSyncMetadata = RemoteSyncMetadata(statusCode: 501)
+    ) {
+        self.downloads = downloads
+        self.uploadStatusCodes = uploadStatusCodes
+        self.remoteMetadata = metadata
+    }
+
+    func metadata() async -> RemoteSyncMetadata {
+        metadataCount += 1
+        return remoteMetadata
+    }
+
+    func download() async -> RemoteSyncResult {
+        downloadCount += 1
+        return downloads.isEmpty ? RemoteSyncResult(payload: nil, statusCode: 404) : downloads.removeFirst()
+    }
+
+    func upload(_ payload: String) async -> RemoteSyncResult {
+        uploadedPayloads.append(payload)
+        let statusCode = uploadStatusCodes.isEmpty ? 200 : uploadStatusCodes.removeFirst()
+        return RemoteSyncResult(payload: nil, statusCode: statusCode)
+    }
+}
+
+private func makeSnapshot(
+    categories: [String] = [],
+    categoryTemplates: [CategoryTemplate] = [],
+    tags: [String] = [],
+    entries: [VaultEntry],
+    updatedAt: Date = Date(timeIntervalSince1970: 1_700_000_000)
+) -> VaultSnapshot {
+    VaultSnapshot(
+        entries: entries,
+        categories: categories,
+        categoryTemplates: categoryTemplates,
+        tags: tags,
+        security: SecuritySettings(requireTotp: true, totpSecret: "JBSWY3DPEHPK3PXP"),
+        syncStatus: "Idle",
+        lastBackupStatus: "No backup has run",
+        updatedAt: updatedAt
+    )
+}
+
+private func makeEntry(
+    id: String,
+    label: String,
+    category: String = "",
+    tags: [String] = [],
+    device: String,
+    updatedAt: Date = Date(timeIntervalSince1970: 1_700_000_100),
+    version: [String: Int] = [:],
+    isDeleted: Bool = false
+) -> VaultEntry {
+    VaultEntry(
+        id: id,
+        label: label,
+        type: .credential,
+        payload: .credential(
+            CredentialPayload(
+                username: "\(label.lowercased())@example.com",
+                password: "secret",
+                tags: tags,
+                category: category
+            )
+        ),
+        createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+        updatedAt: updatedAt,
+        isDeleted: isDeleted,
+        deletedAt: isDeleted ? updatedAt : nil,
+        version: version,
+        updatedBy: device
+    )
+}
+
+private extension Array where Element == String {
+    var single: String {
+        get throws {
+            try #require(count == 1)
+            return self[0]
+        }
+    }
+}
+
+private func encryptedPayloadJson(_ payload: EncryptedPayloadRecord) -> [String: Any] {
+    [
+        "ciphertext": payload.ciphertext,
+        "nonce": payload.nonce,
+        "mac": payload.mac,
+        "version": payload.version
+    ]
+}
+
+private func jsonData(_ object: [String: Any]) throws -> Data {
+    try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+}
+
+private func jsonString(_ object: [String: Any]) throws -> String {
+    let data = try jsonData(object)
+    return try #require(String(data: data, encoding: .utf8))
+}

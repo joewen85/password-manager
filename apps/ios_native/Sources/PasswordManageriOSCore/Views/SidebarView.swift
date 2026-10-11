@@ -1,0 +1,110 @@
+import SwiftUI
+
+struct SidebarView: View {
+    var store: VaultStore
+    @Binding var filter: VaultFilter
+    var showEntries: () -> Void
+    var runBackup: () -> Void
+    var restoreBackup: () -> Void
+    var exportSnapshot: () -> Void
+    var importSnapshot: () -> Void
+    var exportCategory: (String) -> Void
+    var editCategoryFields: (String) -> Void
+    var syncNow: () -> Void
+    var createCategory: () -> Void
+    var showSettings: () -> Void
+
+    var body: some View {
+        List {
+            Section {
+                filterButton(.all) {
+                    Label("All Items", systemImage: "tray.full")
+                }
+
+                ForEach(VaultEntryType.allCases) { type in
+                    filterButton(.type(type)) {
+                        Label(type.title, systemImage: type.systemImage)
+                    }
+                }
+            }
+
+            if !store.categories.isEmpty {
+                Section("Categories") {
+                    ForEach(store.categories, id: \.self) { category in
+                        filterButton(.category(category)) {
+                            Label(category, systemImage: "folder")
+                        }
+                            .contextMenu {
+                                Button("Edit Fields") {
+                                    editCategoryFields(category)
+                                }
+                                Button("Export Category") {
+                                    exportCategory(category)
+                                }
+                            }
+                    }
+                }
+            }
+
+            if !store.tags.isEmpty {
+                Section("Tags") {
+                    ForEach(store.tags, id: \.self) { tag in
+                        filterButton(.tag(tag)) {
+                            Label(tag, systemImage: "tag")
+                        }
+                    }
+                }
+            }
+
+            Section("Operations") {
+                Button(action: syncNow) {
+                    Label {
+                        Text("Sync Now")
+                    } icon: {
+                        if store.isSyncing {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                        }
+                    }
+                }
+                .disabled(store.isSyncing)
+                Button(action: createCategory) {
+                    Label("Create Category", systemImage: "folder.badge.plus")
+                }
+                Button(action: runBackup) {
+                    Label("Run Backup", systemImage: "externaldrive.badge.timemachine")
+                }
+                Button(action: restoreBackup) {
+                    Label("Restore Backup", systemImage: "clock.arrow.circlepath")
+                }
+                Button(action: exportSnapshot) {
+                    Label("Export JSON", systemImage: "square.and.arrow.up")
+                }
+                Button(action: importSnapshot) {
+                    Label("Import JSON", systemImage: "square.and.arrow.down")
+                }
+                Button(action: showSettings) {
+                    Label("Settings", systemImage: "gearshape")
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        .accessibilityIdentifier("vault-sidebar")
+
+    }
+
+    private func filterButton<LabelContent: View>(
+        _ target: VaultFilter,
+        @ViewBuilder label: () -> LabelContent
+    ) -> some View {
+        Button {
+            filter = target
+            showEntries()
+        } label: {
+            label()
+                .foregroundColor(filter == target ? .accentColor : .primary)
+        }
+    }
+}

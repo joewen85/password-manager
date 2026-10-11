@@ -1,0 +1,97 @@
+export enum SyncProviderType {
+  NONE = 'none',
+  WEBDAV = 'webdav',
+  NAS_WEBDAV = 'nasWebdav',
+  S3_PRESIGNED = 's3Presigned',
+  TENCENT_COS = 'tencentCos',
+  ALIYUN_OSS = 'aliyunOss'
+}
+
+export enum ConflictStrategy {
+  REMOTE_WINS = 'remoteWins',
+  LOCAL_WINS = 'localWins',
+  KEEP_BOTH = 'keepBoth'
+}
+
+export enum SyncIntervalUnit {
+  SECONDS = 'seconds',
+  MINUTES = 'minutes'
+}
+
+export interface SyncLogEntry {
+  timestamp: number;
+  level: 'info' | 'error';
+  message: string;
+}
+
+export interface SyncSettings {
+  providerType: SyncProviderType;
+  webdavUrl: string;
+  webdavUsername: string;
+  webdavPassword: string;
+  webdavPath: string;
+  presignedDownloadUrl: string;
+  presignedUploadUrl: string;
+  objectStorageAccessKeyId: string;
+  objectStorageSecretAccessKey: string;
+  objectStorageBucket: string;
+  objectStorageEndpoint: string;
+  objectStorageAppId: string;
+  objectStorageCustomUrl: string;
+  objectStorageObjectKey: string;
+  autoSyncEnabled: boolean;
+  autoSyncIntervalMinutes: number;
+  autoSyncIntervalValue: number;
+  autoSyncIntervalUnit: SyncIntervalUnit;
+  autoSyncOnUnlock: boolean;
+  conflictStrategy: ConflictStrategy;
+  syncMasterKey: boolean;
+  deviceId: string;
+  lastSyncRevision: number;
+  lastSyncAt: number;
+  lastSyncStatus: string;
+  lastSyncMessage: string;
+  lastRemoteFingerprint: string;
+  hasLocalChanges: boolean;
+  logs: SyncLogEntry[];
+}
+
+export function defaultSyncSettings(): SyncSettings {
+  return {
+    providerType: SyncProviderType.NONE,
+    webdavUrl: '',
+    webdavUsername: '',
+    webdavPassword: '',
+    webdavPath: '/vault.json',
+    presignedDownloadUrl: '',
+    presignedUploadUrl: '',
+    objectStorageAccessKeyId: '',
+    objectStorageSecretAccessKey: '',
+    objectStorageBucket: '',
+    objectStorageEndpoint: '',
+    objectStorageAppId: '',
+    objectStorageCustomUrl: '',
+    objectStorageObjectKey: 'vault.sync.json',
+    autoSyncEnabled: false,
+    autoSyncIntervalMinutes: 30,
+    autoSyncIntervalValue: 30,
+    autoSyncIntervalUnit: SyncIntervalUnit.MINUTES,
+    autoSyncOnUnlock: true,
+    conflictStrategy: ConflictStrategy.REMOTE_WINS,
+    syncMasterKey: true,
+    deviceId: generateDeviceId(),
+    lastSyncRevision: 0,
+    lastSyncAt: 0,
+    lastSyncStatus: '',
+    lastSyncMessage: '',
+    lastRemoteFingerprint: '',
+    hasLocalChanges: false,
+    logs: [],
+  };
+}
+
+function generateDeviceId(): string {
+  const ts = Date.now().toString(36);
+  const rand = Math.floor(Math.random() * 1_000_000_000).toString(36);
+  return `${ts}_${rand}`;
+}

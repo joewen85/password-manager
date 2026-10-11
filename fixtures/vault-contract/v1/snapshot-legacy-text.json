@@ -1,0 +1,58 @@
+{
+  "entries": [
+    {
+      "id": "77777777-7777-4777-8777-777777777777",
+      "label": "Legacy Entry",
+      "type": "credential",
+      "payload": {
+        "credential": {
+          "username": "legacy-user",
+          "password": "",
+          "accounts": [],
+          "token": "",
+          "appId": "",
+          "accessKey": "",
+          "secretKey": "",
+          "notes": "",
+          "tags": [],
+          "category": "Legacy"
+        }
+      },
+      "customFields": [
+        {
+          "id": "88888888-8888-4888-8888-888888888888",
+          "name": "Owner Team",
+          "value": "SRE"
+        }
+      ],
+      "createdAt": "2026-07-28T01:00:00Z",
+      "updatedAt": "2026-07-28T01:01:00Z",
+      "version": {},
+      "updatedBy": "fixture",
+      "isDeleted": false,
+      "deletedAt": null
+    }
+  ],
+  "categories": [
+    "Legacy"
+  ],
+  "categoryTemplates": [
+    {
+      "category": "Legacy",
+      "fields": [
+        {
+          "name": "Owner Team"
+        }
+      ]
+    }
+  ],
+  "tags": [],
+  "security": {
+    "requireTotp": false,
+    "totpSecret": ""
+  },
+  "syncStatus": "Fixture",
+  "backupStatus": "Fixture",
+  "lastBackupStatus": "Fixture",
+  "updatedAt": "2026-07-28T01:02:00Z"
+}

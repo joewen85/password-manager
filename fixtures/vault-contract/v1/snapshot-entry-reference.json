@@ -1,0 +1,125 @@
+{
+  "entries": [
+    {
+      "id": "harmony_target_01",
+      "label": "Production Account",
+      "type": "credential",
+      "payload": {
+        "credential": {
+          "username": "ops-user",
+          "password": "fixture-password",
+          "accounts": [],
+          "token": "",
+          "appId": "",
+          "accessKey": "",
+          "secretKey": "",
+          "notes": "",
+          "tags": [
+            "production"
+          ],
+          "category": "Accounts"
+        }
+      },
+      "customFields": [],
+      "createdAt": "2026-07-28T00:00:00Z",
+      "updatedAt": "2026-07-28T00:01:00Z",
+      "version": {
+        "fixture": 1
+      },
+      "updatedBy": "fixture",
+      "isDeleted": false,
+      "deletedAt": null
+    },
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "label": "Production Server",
+      "type": "server",
+      "payload": {
+        "server": {
+          "name": "prod-01",
+          "ipAddress": "192.0.2.10",
+          "port": "22",
+          "username": "root",
+          "password": "fixture-server-password",
+          "accounts": [],
+          "basicConfig": "",
+          "operatingSystem": "Linux",
+          "location": "",
+          "notes": "",
+          "tags": [
+            "production"
+          ],
+          "accountId": null,
+          "category": "Servers"
+        }
+      },
+      "customFields": [
+        {
+          "id": "harmony_field_01",
+          "templateFieldId": "44444444-4444-4444-8444-444444444444",
+          "name": "Owner",
+          "value": "harmony_target_01"
+        },
+        {
+          "id": "55555555-5555-4555-8555-555555555555",
+          "templateFieldId": "66666666-6666-4666-8666-666666666666",
+          "name": "Backup Owner",
+          "value": ""
+        }
+      ],
+      "createdAt": "2026-07-28T00:02:00Z",
+      "updatedAt": "2026-07-28T00:03:00Z",
+      "version": {
+        "fixture": 2
+      },
+      "updatedBy": "fixture",
+      "isDeleted": false,
+      "deletedAt": null
+    }
+  ],
+  "categories": [
+    "Accounts",
+    "Servers"
+  ],
+  "categoryTemplates": [
+    {
+      "category": "Accounts",
+      "fields": [
+        {
+          "id": "template_name",
+          "name": "Name",
+          "valueType": "text",
+          "targetCategory": ""
+        }
+      ]
+    },
+    {
+      "category": "Servers",
+      "fields": [
+        {
+          "id": "44444444-4444-4444-8444-444444444444",
+          "name": "Owner",
+          "valueType": "entryReference",
+          "targetCategory": "Accounts"
+        },
+        {
+          "id": "66666666-6666-4666-8666-666666666666",
+          "name": "Backup Owner",
+          "valueType": "entryReference",
+          "targetCategory": "Accounts"
+        }
+      ]
+    }
+  ],
+  "tags": [
+    "production"
+  ],
+  "security": {
+    "requireTotp": false,
+    "totpSecret": ""
+  },
+  "syncStatus": "Fixture",
+  "backupStatus": "Fixture",
+  "lastBackupStatus": "Fixture",
+  "updatedAt": "2026-07-28T00:04:00Z"
+}

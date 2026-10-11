@@ -1,0 +1,174 @@
+package life.devops.passwordmanager.model
+
+internal enum class EntryReferenceStatus {
+    EMPTY,
+    RESOLVED,
+    MISSING,
+    DELETED,
+    CATEGORY_MISMATCH,
+}
+
+internal data class EntryReferenceTarget(
+    val id: String,
+    val label: String,
+    val category: String,
+)
+
+internal data class EntryReferenceResolution(
+    val status: EntryReferenceStatus,
+    val target: EntryReferenceTarget? = null,
+)
+
+internal data class EntryReferenceCandidate(
+    val id: String,
+    val label: String,
+    val category: String,
+)
+
+internal fun resolveEntryReference(
+    field: CustomField,
+    template: CategoryTemplate?,
+    entries: List<VaultEntry>,
+): EntryReferenceResolution? =
+    resolveEntryReference(field, template) { targetId ->
+        entries.firstOrNull { entry -> entry.id == targetId }
+    }
+
+private inline fun resolveEntryReference(
+    field: CustomField,
+    template: CategoryTemplate?,
+    findTargetById: (String) -> VaultEntry?,
+): EntryReferenceResolution? {
+    val semantics = customFieldSemantics(field, template)
+    if (semantics.semantic != CustomFieldSemantic.ENTRY_REFERENCE) return null
+    val templateField = semantics.templateField ?: return null
+    if (field.value.isBlank()) {
+        return EntryReferenceResolution(status = EntryReferenceStatus.EMPTY)
+    }
+
+    val targetEntry = findTargetById(field.value)
+        ?: return EntryReferenceResolution(status = EntryReferenceStatus.MISSING)
+    val target = EntryReferenceTarget(
+        id = targetEntry.id,
+        label = targetEntry.label,
+        category = targetEntry.payload.category.trim(),
+    )
+    if (targetEntry.isDeleted) {
+        return EntryReferenceResolution(
+            status = EntryReferenceStatus.DELETED,
+            target = target,
+        )
+    }
+
+    val targetCategory = templateField.targetCategory.trim()
+    if (
+        targetCategory.isNotEmpty() &&
+        !target.category.equals(targetCategory, ignoreCase = true)
+    ) {
+        return EntryReferenceResolution(
+            status = EntryReferenceStatus.CATEGORY_MISMATCH,
+            target = target,
+        )
+    }
+    return EntryReferenceResolution(
+        status = EntryReferenceStatus.RESOLVED,
+        target = target,
+    )
+}
+
+internal fun VaultEntry.withEntryReferenceSearchProjection(
+    template: CategoryTemplate?,
+    entriesById: Map<String, VaultEntry>,
+    categoryTemplatesByName: Map<String, CategoryTemplate> = emptyMap(),
+): VaultEntry {
+    val projectedFields = customFields.map { field ->
+        val fieldReference = resolveFieldReference(
+            field = field,
+            sourceTemplate = template,
+            categoryTemplatesByName = categoryTemplatesByName,
+            entriesById = entriesById,
+        )
+        if (fieldReference != null) {
+            val searchableValue = if (fieldReference.status == FieldReferenceStatus.RESOLVED) {
+                listOfNotNull(
+                    fieldReference.targetEntry?.label,
+                    fieldReference.targetEntry?.category?.takeIf { it.isNotEmpty() },
+                    fieldReference.targetField?.name?.takeIf { it.isNotEmpty() },
+                ).joinToString(" ")
+            } else {
+                ""
+            }
+            return@map field.copy(value = searchableValue)
+        }
+        when (customFieldSemantics(field, template).semantic) {
+            CustomFieldSemantic.TEXT -> field
+            CustomFieldSemantic.UNSUPPORTED -> field.copy(value = "")
+            CustomFieldSemantic.FIELD_REFERENCE -> field.copy(value = "")
+            CustomFieldSemantic.ENTRY_REFERENCE -> {
+                val resolution = resolveEntryReference(field, template) { targetId ->
+                    entriesById[targetId]
+                }
+                val searchableValue = if (resolution?.status == EntryReferenceStatus.RESOLVED) {
+                    listOfNotNull(
+                        resolution.target?.label,
+                        resolution.target?.category?.takeIf { it.isNotEmpty() },
+                    ).joinToString(" ")
+                } else {
+                    ""
+                }
+                field.copy(value = searchableValue)
+            }
+        }
+    }
+    return if (projectedFields == customFields) this else copy(customFields = projectedFields)
+}
+
+internal fun entryReferenceCandidates(
+    entries: List<VaultEntry>,
+    targetCategory: String,
+    query: String,
+): List<EntryReferenceCandidate> {
+    val category = targetCategory.trim()
+    val searchQuery = query.trim()
+    return entries
+        .asSequence()
+        .filterNot { entry -> entry.isDeleted }
+        .map { entry ->
+            EntryReferenceCandidate(
+                id = entry.id,
+                label = entry.label,
+                category = entry.payload.category.trim(),
+            )
+        }
+        .filter { candidate ->
+            category.isEmpty() || candidate.category.equals(category, ignoreCase = true)
+        }
+        .filter { candidate ->
+            searchQuery.isEmpty() ||
+                candidate.label.contains(searchQuery, ignoreCase = true) ||
+                candidate.category.contains(searchQuery, ignoreCase = true)
+        }
+        .sortedWith(
+            compareBy<EntryReferenceCandidate> { candidate -> candidate.label.lowercase() }
+                .thenBy { candidate -> candidate.label }
+                .thenBy { candidate -> candidate.id }
+        )
+        .toList()
+}
+
+internal fun VaultEntry.remapEntryReferenceIds(
+    idMap: Map<String, String>,
+    template: CategoryTemplate?,
+): VaultEntry {
+    val remappedFields = customFields.map { field ->
+        if (
+            resolveEntryReference(field, template, emptyList()) == null &&
+            !isFieldReference(field, template)
+        ) {
+            return@map field
+        }
+        val destinationId = idMap[field.value] ?: return@map field
+        field.copy(value = destinationId)
+    }
+    return if (remappedFields == customFields) this else copy(customFields = remappedFields)
+}

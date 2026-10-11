@@ -1,0 +1,242 @@
+import Foundation
+import Testing
+@testable import PasswordManageriOSCore
+
+@Suite("VaultStore Taxonomy")
+struct VaultStoreTaxonomyTests {
+    @MainActor
+    @Test("Category presets accept custom field names")
+    func categoryPresetsAcceptCustomFieldNames() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManageriOSCategoryCustomFieldTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = VaultStore(
+            repository: FileVaultRepository(baseDirectory: directory),
+            syncSettingsRepository: nil
+        )
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+
+        #expect(store.addCategory("Infra", preset: .server, customFieldNames: ["Owner", "备注", ""]))
+
+        let template = try #require(store.categoryTemplates.first)
+        #expect(template.category == "Infra")
+        #expect(template.fields.map(\.name) == ["名称", "备注", "IP地址", "端口", "关联账号", "用户名", "密码", "Owner"])
+    }
+
+    @MainActor
+    @Test("Every category shortcut saves credential fields once", arguments: CategoryTypePreset.allCases)
+    func categoryShortcutsSaveCredentialFields(preset: CategoryTypePreset) throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CategoryCredentials-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(repository: repository, syncSettingsRepository: nil)
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+        #expect(store.addCategory(preset.title, preset: preset, customFieldNames: ["用户名", "密码"]))
+        let fields = try #require(store.categoryTemplates.first).fields
+        #expect(preset.fields.contains("用户名"))
+        #expect(preset.fields.contains("密码"))
+        #expect(fields.filter { $0.name == "用户名" }.count == 1)
+        #expect(fields.filter { $0.name == "密码" }.count == 1)
+        store.lock()
+        #expect(store.unlock(password: "test-password"))
+        #expect(store.categoryTemplates.first?.fields == fields)
+    }
+
+    @MainActor
+    @Test("Category custom fields are user-defined without requiring a type")
+    func categoryCustomFieldsAreUserDefinedWithoutRequiringAType() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManageriOSCategoryCustomOnlyTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = VaultStore(
+            repository: FileVaultRepository(baseDirectory: directory),
+            syncSettingsRepository: nil
+        )
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+
+        #expect(store.addCategory("Private", preset: nil, customFieldNames: []))
+        #expect(store.categoryTemplates.first { $0.category == "Private" }?.fields.map(\.name) == ["名称", "备注"])
+
+        #expect(store.addCategory("Ops", preset: nil, customFieldNames: ["服务入口", "关联账号", "Owner", "服务入口", ""]))
+        #expect(store.categoryTemplates.first { $0.category == "Ops" }?.fields.map(\.name) == ["名称", "备注", "服务入口", "关联账号", "Owner"])
+    }
+
+    @MainActor
+    @Test("Category template edits and imports advance category version")
+    func categoryTemplateMutationsAdvanceCategoryVersion() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManageriOSCategoryTemplateVersionTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(repository: repository, syncSettingsRepository: nil)
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+        #expect(store.addCategory("Private"))
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        func exportedSnapshot() throws -> VaultSnapshot {
+            store.exportSnapshot()
+            let exports = try FileManager.default.contentsOfDirectory(
+                at: repository.exportsDirectoryURL,
+                includingPropertiesForKeys: nil
+            ).filter { $0.lastPathComponent.hasPrefix("vault-export-") }
+            return try decoder.decode(VaultSnapshot.self, from: Data(contentsOf: try #require(exports.first)))
+        }
+        func versionTotal(_ snapshot: VaultSnapshot) throws -> Int {
+            try #require(snapshot.categoryStates.first { $0.name == "Private" })
+                .version.values.reduce(0, +)
+        }
+
+        let initialVersion = try versionTotal(exportedSnapshot())
+        let owner = FieldTemplate(id: "field-owner", name: "Owner")
+        #expect(store.updateCategoryTemplate(category: "Private", requestedCustomFields: [owner]))
+        let editedVersion = try versionTotal(exportedSnapshot())
+        #expect(editedVersion > initialVersion)
+
+        let imported = FieldTemplate(id: "field-imported", name: "Imported")
+        let scopedExport = ScopedVaultExport(
+            scope: .category,
+            exportedAt: Date(),
+            item: nil,
+            category: "Private",
+            items: [],
+            categoryTemplates: [CategoryTemplate(category: "Private", fields: [owner, imported])]
+        )
+        let fileName = "category-template-version-import.json"
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(scopedExport).write(
+            to: repository.importsDirectoryURL.appendingPathComponent(fileName)
+        )
+        store.importScopedExport(fileName: fileName, strategy: .keepCopy)
+
+        let importedVersion = try versionTotal(exportedSnapshot())
+        #expect(importedVersion > editedVersion)
+        #expect(store.categoryTemplates.first?.fields.contains(imported) == true)
+    }
+
+    @MainActor
+    @Test("Category template saves reject duplicate editable field names atomically")
+    func categoryTemplateRejectsDuplicateEditableNamesAtomically() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManageriOSCategoryDuplicateFieldTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = VaultStore(
+            repository: FileVaultRepository(baseDirectory: directory),
+            syncSettingsRepository: nil
+        )
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+        #expect(store.addCategory("Infra"))
+
+        let defaults = try #require(store.categoryTemplate(for: "Infra"))
+        #expect(!store.updateCategoryTemplate(
+            category: "Infra",
+            requestedCustomFields: [FieldTemplate(name: " 备注 ")]
+        ))
+        #expect(store.statusMessage == "Field name already exists: 备注.")
+        #expect(store.categoryTemplate(for: "Infra") == defaults)
+
+        #expect(!store.updateCategoryTemplate(
+            category: "Infra",
+            requestedCustomFields: [FieldTemplate(name: "Owner"), FieldTemplate(name: " owner ")]
+        ))
+        #expect(store.statusMessage == "Field name already exists: owner.")
+        #expect(store.categoryTemplate(for: "Infra") == defaults)
+
+        let owner = FieldTemplate(id: "owner", name: "Owner")
+        let reference = FieldTemplate(
+            id: "stored-reference",
+            name: "Account",
+            valueType: "fieldReference",
+            targetCategory: "Infra",
+            targetFieldId: owner.id
+        )
+        #expect(store.updateCategoryTemplate(
+            category: "Infra",
+            requestedCustomFields: [owner, reference]
+        ))
+        let configured = try #require(store.categoryTemplate(for: "Infra"))
+
+        var draft = EntryDraft(category: "Infra", templateFields: configured.fields)
+        draft.label = "Gateway"
+        let referenceIndex = try #require(draft.customFields.firstIndex {
+            $0.templateFieldId == reference.id
+        })
+        draft.customFields[referenceIndex].value = "opaque-target"
+        #expect(store.upsert(draft, editing: nil))
+        #expect(store.categoryTemplateStoredValueFieldIds("Infra").contains(reference.id))
+
+        var conflictingReference = reference
+        conflictingReference.name = " owner "
+        #expect(!store.updateCategoryTemplate(
+            category: "Infra",
+            requestedCustomFields: [owner, conflictingReference]
+        ))
+        #expect(store.statusMessage == "Field name already exists: owner.")
+        #expect(store.categoryTemplate(for: "Infra") == configured)
+    }
+
+    @MainActor
+    @Test("Only live source values keep a category field locked")
+    func deletedSourcesDoNotKeepTemplateFieldsLocked() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManageriOSLiveTemplateValueGate-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = VaultStore(
+            repository: FileVaultRepository(baseDirectory: directory),
+            syncSettingsRepository: nil
+        )
+        #expect(store.setupMasterPassword("test-password", confirmation: "test-password"))
+        #expect(store.addCategory("Accounts"))
+        #expect(store.addCategory("Original"))
+
+        let nameField = try #require(CategoryTemplate.defaultFields.first { $0.name == "名称" })
+        let reference = FieldTemplate(
+            id: "stored-reference",
+            name: "Owner",
+            valueType: "fieldReference",
+            targetCategory: "Accounts",
+            targetFieldId: nameField.id
+        )
+        #expect(store.updateCategoryTemplate(
+            category: "Original",
+            requestedCustomFields: [reference]
+        ))
+
+        var targetDraft = EntryDraft(
+            category: "Accounts",
+            templateFields: try #require(store.categoryTemplate(for: "Accounts")?.fields)
+        )
+        targetDraft.label = "Account"
+        #expect(store.upsert(targetDraft, editing: nil))
+        let target = try #require(store.entries.first { $0.label == "Account" })
+
+        let configured = try #require(store.categoryTemplate(for: "Original"))
+        var sourceDraft = EntryDraft(category: "Original", templateFields: configured.fields)
+        sourceDraft.label = "Source"
+        let referenceIndex = try #require(sourceDraft.customFields.firstIndex {
+            $0.templateFieldId == reference.id
+        })
+        sourceDraft.customFields[referenceIndex].value = target.id
+        #expect(store.upsert(sourceDraft, editing: nil))
+        let source = try #require(store.entries.first { $0.label == "Source" })
+
+        store.delete(target)
+        #expect(store.categoryTemplateStoredValueFieldIds("Original") == [reference.id])
+        #expect(store.updateEntryReference(entryID: source.id, fieldID: source.customFields[referenceIndex].id, targetID: ""))
+        #expect(store.categoryTemplateStoredValueFieldIds("Original").isEmpty)
+
+        sourceDraft.label = "Deleted Source"
+        sourceDraft.customFields[referenceIndex].value = target.id
+        #expect(store.upsert(sourceDraft, editing: nil))
+        let deletedSource = try #require(store.entries.first { $0.label == "Deleted Source" })
+        store.delete(deletedSource)
+        #expect(store.categoryTemplateStoredValueFieldIds("Original").isEmpty)
+
+        #expect(store.updateCategoryTemplate(category: "Original", requestedCustomFields: []))
+        #expect(store.categoryTemplate(for: "Original")?.fields.contains { $0.id == reference.id } == false)
+    }
+}

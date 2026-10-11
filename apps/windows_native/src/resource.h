@@ -1,0 +1,9 @@
+#pragma once
+
+#define IDS_APP_NAME 101
+#define IDS_COMPANY_NAME 102
+
+#define VER_FILE_VERSION 0,1,0,0
+#define VER_FILE_VERSION_STR "0.1.0.0\0"
+#define VER_PRODUCT_VERSION 0,1,0,0
+#define VER_PRODUCT_VERSION_STR "0.1.0\0"

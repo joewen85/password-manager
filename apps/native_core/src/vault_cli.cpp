@@ -1,0 +1,1660 @@
+#include "vault_cli.hpp"
+
+#include "vault_core.hpp"
+
+#include <curl/curl.h>
+
+#include <iostream>
+#include <algorithm>
+#include <cctype>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <map>
+#include <set>
+#include <stdexcept>
+#include <sstream>
+#include <string>
+#include <vector>
+
+namespace pm {
+namespace {
+namespace fs = std::filesystem;
+
+constexpr int kBackupRetentionCount = 5;
+
+struct CliOptions {
+    std::string vaultPath;
+};
+
+struct CommandAuth {
+    std::string password;
+    std::string totpCode;
+};
+
+struct NormalizedCommandLine {
+    CommandAuth auth;
+    std::vector<std::string> values;
+    std::vector<char*> argv;
+};
+
+void printUsage(const char* platformName, const char* defaultVaultPath) {
+    std::cout << "Password Manager " << platformName << " Native\n"
+              << "Auth options for vault commands:\n"
+              << "  <password>                    Legacy positional password\n"
+              << "  --password-stdin              Read the master password from stdin\n"
+              << "  --totp-code <code>            Unlock a TOTP-protected vault\n"
+              << "  --totp-stdin                  Read the TOTP code from stdin after any stdin password\n"
+              << "  --remote-password-stdin       Read a WebDAV password from stdin for sync\n"
+              << "  --sk-stdin                    Read an object-storage secret key from stdin for sync\n"
+              << "  --download-url-stdin          Read an S3 presigned download URL from stdin for sync\n"
+              << "  --upload-url-stdin            Read an S3 presigned upload URL from stdin for sync\n"
+              << "\n"
+              << "Commands:\n"
+              << "  init <password>|--password-stdin [--vault <path>]\n"
+              << "                              Create an encrypted vault file\n"
+              << "  status <password>|--password-stdin [--totp-code <code>|--totp-stdin] [--vault <path>]\n"
+              << "                              Unlock and print vault counts\n"
+              << "  add-category <password>|--password-stdin <name> [--shortcut server|service|account] [--field <name>]...\n"
+              << "               [--field-reference <name> <target-category> <target-field>]... [--vault <path>]\n"
+              << "                              Persist text and field-reference template fields in one command\n"
+              << "  add-entry <password>|--password-stdin --label <text> [--type credential|server|service]\n"
+              << "            [--username <value>] [--secret <value>] [--category <name>]\n"
+              << "            [--tag <name>]... [--note <text>] [--field <name=value>]...\n"
+              << "            [--field-reference <source-field> <target-entry-id-or-label>]... [--vault <path>]\n"
+              << "                              Add an entry and bind configured field references\n"
+              << "  list <password>|--password-stdin [--query <text>] [--type all|credential|server|service]\n"
+              << "       [--show-secret] [--vault <path>]\n"
+              << "                              Search entries without exposing secrets by default\n"
+              << "  show-entry <password>|--password-stdin <id> [--show-secret] [--vault <path>]\n"
+              << "                              Print one entry as JSON\n"
+              << "  delete-entry <password>|--password-stdin <id> [--vault <path>]\n"
+              << "                              Soft-delete one entry in the encrypted vault\n"
+              << "  backup <password>|--password-stdin [--vault <path>] [--backup-dir <dir>]\n"
+              << "                              Copy the encrypted vault envelope to backups/, keeping newest 5\n"
+              << "  list-backups [--vault <path>] [--backup-dir <dir>]\n"
+              << "                              List local encrypted backup envelopes\n"
+              << "  restore-backup <password>|--password-stdin [latest|file] [--vault <path>] [--backup-dir <dir>]\n"
+              << "                              Validate and restore an encrypted backup envelope\n"
+              << "  export-snapshot <password>|--password-stdin [--vault <path>] [--out <path>] [--export-dir <dir>]\n"
+              << "                              Write a plaintext JSON snapshot export\n"
+              << "  import-snapshot <password>|--password-stdin --in <path> [--vault <path>]\n"
+              << "                              Replace the unlocked vault with a plaintext JSON snapshot\n"
+              << "  sync <password>|--password-stdin --provider webdav|s3-presigned|tencent-cos|aliyun-oss [options]\n"
+              << "                              Merge local vault with remote object storage and upload when needed\n"
+              << "  category <name> [--shortcut server|service|account] [--field <name>]...\n"
+              << "                              Print category template JSON without saving\n"
+              << "  totp <base32-secret> <unix> Generate a TOTP code\n"
+              << "  self-test                   Run a small runtime check\n"
+              << "\nDefault vault: " << defaultVaultPath << "\n";
+}
+
+CategoryTypePreset parseShortcut(const std::string& value) {
+    if (value == "server") return CategoryTypePreset::Server;
+    if (value == "service") return CategoryTypePreset::Service;
+    if (value == "account") return CategoryTypePreset::Account;
+    throw std::invalid_argument("shortcut must be server, service, or account");
+}
+
+std::string parseEntryType(const std::string& value) {
+    if (value == "credential" || value == "server" || value == "service") return value;
+    throw std::invalid_argument("entry type must be credential, server, or service");
+}
+
+std::vector<FieldTemplate> fieldsForCli(
+    bool hasPreset,
+    CategoryTypePreset preset,
+    const std::vector<std::string>& customFields
+) {
+    return hasPreset ? categoryFieldsForPreset(preset, customFields) : categoryFieldsWithCustom(customFields);
+}
+
+CliOptions parseVaultOption(int argc, char** argv, int start, const char* defaultVaultPath) {
+    CliOptions options{defaultVaultPath};
+    for (int i = start; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--vault") {
+            if (++i >= argc) throw std::invalid_argument("--vault requires a value");
+            options.vaultPath = argv[i];
+        } else if (arg.rfind("--vault=", 0) == 0) {
+            options.vaultPath = arg.substr(8);
+        } else {
+            throw std::invalid_argument("unknown option: " + arg);
+        }
+    }
+    return options;
+}
+
+std::string readSensitiveLine(const std::string& label) {
+    std::string value;
+    if (!std::getline(std::cin, value)) {
+        throw std::invalid_argument("unable to read " + label + " from stdin");
+    }
+    if (!value.empty() && value.back() == '\r') value.pop_back();
+    return value;
+}
+
+bool commandRequiresPassword(const std::string& command) {
+    return command == "init" ||
+           command == "status" ||
+           command == "add-category" ||
+           command == "add-entry" ||
+           command == "list" ||
+           command == "show-entry" ||
+           command == "delete-entry" ||
+           command == "backup" ||
+           command == "restore-backup" ||
+           command == "export-snapshot" ||
+           command == "import-snapshot" ||
+           command == "sync";
+}
+
+void rebuildArgv(NormalizedCommandLine& commandLine) {
+    commandLine.argv.clear();
+    for (auto& value : commandLine.values) {
+        commandLine.argv.push_back(const_cast<char*>(value.c_str()));
+    }
+    commandLine.argv.push_back(nullptr);
+}
+
+NormalizedCommandLine normalizeCommandLine(int argc, char** argv, bool requiresPassword) {
+    NormalizedCommandLine commandLine;
+    for (int i = 0; i < std::min(argc, 2); ++i) commandLine.values.push_back(argv[i]);
+    if (!requiresPassword) {
+        for (int i = 2; i < argc; ++i) commandLine.values.push_back(argv[i]);
+        rebuildArgv(commandLine);
+        return commandLine;
+    }
+
+    std::vector<std::string> remaining;
+    bool readPasswordFromStdin = false;
+    bool hasTotpSource = false;
+    bool readTotpFromStdin = false;
+    for (int i = 2; i < argc; ++i) {
+        const std::string arg = argv[i];
+        auto requireValue = [&](const std::string& option) -> std::string {
+            if (++i >= argc) throw std::invalid_argument(option + " requires a value");
+            return argv[i];
+        };
+
+        if (arg == "--password-stdin") {
+            if (readPasswordFromStdin) throw std::invalid_argument("multiple password sources were provided");
+            readPasswordFromStdin = true;
+        } else if (arg == "--totp-code") {
+            if (hasTotpSource) throw std::invalid_argument("multiple TOTP code sources were provided");
+            commandLine.auth.totpCode = requireValue(arg);
+            hasTotpSource = true;
+        } else if (arg.rfind("--totp-code=", 0) == 0) {
+            if (hasTotpSource) throw std::invalid_argument("multiple TOTP code sources were provided");
+            commandLine.auth.totpCode = arg.substr(12);
+            hasTotpSource = true;
+        } else if (arg == "--totp-stdin") {
+            if (hasTotpSource) throw std::invalid_argument("multiple TOTP code sources were provided");
+            readTotpFromStdin = true;
+            hasTotpSource = true;
+        } else {
+            remaining.push_back(arg);
+        }
+    }
+
+    if (requiresPassword) {
+        if (readPasswordFromStdin) {
+            commandLine.auth.password = readSensitiveLine("password");
+        } else {
+            if (remaining.empty()) throw std::invalid_argument("password is required");
+            commandLine.auth.password = remaining.front();
+            remaining.erase(remaining.begin());
+        }
+        commandLine.values.push_back(commandLine.auth.password);
+    }
+    if (readTotpFromStdin) {
+        commandLine.auth.totpCode = readSensitiveLine("TOTP code");
+    }
+
+    commandLine.values.insert(commandLine.values.end(), remaining.begin(), remaining.end());
+    rebuildArgv(commandLine);
+    return commandLine;
+}
+
+void requireTotpIfNeeded(const CommandAuth& auth, const VaultSnapshot& snapshot) {
+    if (!snapshot.requireTotp) return;
+    if (snapshot.totpSecret.empty()) {
+        throw std::runtime_error("Vault requires TOTP but has no TOTP secret configured.");
+    }
+    if (auth.totpCode.empty()) {
+        throw std::invalid_argument("TOTP code is required for this vault. Use --totp-code or --totp-stdin.");
+    }
+    if (!verifyTotp(snapshot.totpSecret, auth.totpCode, static_cast<std::uint64_t>(std::time(nullptr)))) {
+        throw std::invalid_argument("TOTP code is invalid.");
+    }
+}
+
+struct CategoryFieldReferenceArgs {
+    std::string sourceFieldName;
+    std::string targetCategory;
+    std::string targetFieldName;
+};
+
+struct EntryFieldReferenceArgs {
+    std::string sourceFieldName;
+    std::string targetEntrySelector;
+};
+
+struct CategoryArgs {
+    std::string name;
+    std::vector<std::string> customFields;
+    std::vector<CategoryFieldReferenceArgs> fieldReferences;
+    CategoryTypePreset preset = CategoryTypePreset::Account;
+    bool hasPreset = false;
+    std::string vaultPath;
+};
+
+struct EntryArgs {
+    std::string label;
+    std::string type = "credential";
+    std::string username;
+    std::string secret;
+    std::string category;
+    std::string notes;
+    std::vector<std::string> tags;
+    std::vector<CustomField> customFields;
+    std::vector<EntryFieldReferenceArgs> fieldReferences;
+    std::string vaultPath;
+};
+
+struct ListArgs {
+    std::string query;
+    std::string type = "all";
+    bool showSecret = false;
+    std::string vaultPath;
+};
+
+struct ShowEntryArgs {
+    bool showSecret = false;
+    std::string vaultPath;
+};
+
+struct BackupArgs {
+    std::string vaultPath;
+    std::string backupDir;
+    std::string backupName = "latest";
+    bool hasBackupName = false;
+};
+
+struct ExportSnapshotArgs {
+    std::string vaultPath;
+    std::string exportDir;
+    std::string outPath;
+};
+
+struct ImportSnapshotArgs {
+    std::string vaultPath;
+    std::string inPath;
+};
+
+struct SyncArgs {
+    std::string vaultPath;
+    std::string statePath;
+    std::string provider;
+    ObjectSyncConfig config;
+    std::string downloadUrl;
+    std::string uploadUrl;
+    std::string webDavUsername;
+    std::string webDavPassword;
+    std::string deviceId;
+    std::string conflictStrategy;
+};
+
+struct HttpResult {
+    long statusCode = 0;
+    std::string body;
+    std::string fingerprint;
+};
+
+struct HeaderAccumulator {
+    std::string eTag;
+    std::string lastModified;
+    std::string contentLength;
+};
+
+struct CurlGlobal {
+    CurlGlobal() {
+        if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
+            throw std::runtime_error("Unable to initialize libcurl.");
+        }
+    }
+    ~CurlGlobal() {
+        curl_global_cleanup();
+    }
+};
+
+std::string maskedSecret(const std::string& value, bool showSecret) {
+    if (showSecret) return value;
+    return value.empty() ? "" : "******";
+}
+
+std::string trimAscii(std::string value) {
+    const auto first = value.find_first_not_of(" \t\n\r\f\v");
+    if (first == std::string::npos) return "";
+    const auto last = value.find_last_not_of(" \t\n\r\f\v");
+    return value.substr(first, last - first + 1);
+}
+
+std::string lowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+std::string defaultSyncStatePath(const std::string& vaultPath) {
+    return vaultPath + ".sync-state";
+}
+
+fs::path syncStatePointerPath(const std::string& vaultPath) {
+    return fs::path(vaultPath + ".sync-state-path");
+}
+
+std::string readOptionalLine(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return "";
+    std::string line;
+    std::getline(in, line);
+    return trimAscii(line);
+}
+
+std::string resolveSyncStatePath(const std::string& vaultPath, const std::string& explicitStatePath) {
+    if (!explicitStatePath.empty()) return explicitStatePath;
+    const auto linkedPath = readOptionalLine(syncStatePointerPath(vaultPath));
+    return linkedPath.empty() ? defaultSyncStatePath(vaultPath) : linkedPath;
+}
+
+bool isHttpSuccess(long statusCode) {
+    return statusCode >= 200 && statusCode < 300;
+}
+
+bool isHttpDownloadSuccess(long statusCode) {
+    return isHttpSuccess(statusCode) || statusCode == 404;
+}
+
+std::string syncFingerprint(const HeaderAccumulator& headers) {
+    std::vector<std::string> parts;
+    if (!headers.eTag.empty()) parts.push_back("etag:" + headers.eTag);
+    if (!headers.lastModified.empty()) parts.push_back("modified:" + headers.lastModified);
+    if (parts.empty()) return "";
+    if (!headers.contentLength.empty()) parts.push_back("length:" + headers.contentLength);
+    std::ostringstream out;
+    for (std::size_t index = 0; index < parts.size(); ++index) {
+        if (index > 0) out << "|";
+        out << parts[index];
+    }
+    return out.str();
+}
+
+std::size_t curlWriteCallback(char* ptr, std::size_t size, std::size_t nmemb, void* userdata) {
+    auto* body = static_cast<std::string*>(userdata);
+    body->append(ptr, size * nmemb);
+    return size * nmemb;
+}
+
+std::size_t curlHeaderCallback(char* buffer, std::size_t size, std::size_t nitems, void* userdata) {
+    const auto total = size * nitems;
+    std::string line(buffer, total);
+    const auto split = line.find(':');
+    if (split == std::string::npos) return total;
+    const auto key = lowerAscii(trimAscii(line.substr(0, split)));
+    const auto value = trimAscii(line.substr(split + 1));
+    auto* headers = static_cast<HeaderAccumulator*>(userdata);
+    if (key == "etag") {
+        headers->eTag = value;
+    } else if (key == "last-modified") {
+        headers->lastModified = value;
+    } else if (key == "content-length") {
+        headers->contentLength = value;
+    }
+    return total;
+}
+
+CustomField parseCustomField(const std::string& value) {
+    const auto split = value.find('=');
+    const auto fallbackSplit = value.find(':');
+    const auto pos = split == std::string::npos ? fallbackSplit : split;
+    if (pos == std::string::npos || pos == 0) throw std::invalid_argument("--field requires name=value");
+    CustomField field;
+    field.id = randomId();
+    field.name = value.substr(0, pos);
+    field.value = value.substr(pos + 1);
+    return field;
+}
+
+EntryArgs parseEntryArgs(int argc, char** argv, int start, const char* defaultVaultPath) {
+    EntryArgs args;
+    args.vaultPath = defaultVaultPath;
+    for (int i = start; i < argc; ++i) {
+        const std::string arg = argv[i];
+        auto requireValue = [&](const std::string& option) -> std::string {
+            if (++i >= argc) throw std::invalid_argument(option + " requires a value");
+            return argv[i];
+        };
+        if (arg == "--label") {
+            args.label = requireValue(arg);
+        } else if (arg.rfind("--label=", 0) == 0) {
+            args.label = arg.substr(8);
+        } else if (arg == "--type") {
+            args.type = parseEntryType(requireValue(arg));
+        } else if (arg.rfind("--type=", 0) == 0) {
+            args.type = parseEntryType(arg.substr(7));
+        } else if (arg == "--username") {
+            args.username = requireValue(arg);
+        } else if (arg.rfind("--username=", 0) == 0) {
+            args.username = arg.substr(11);
+        } else if (arg == "--secret") {
+            args.secret = requireValue(arg);
+        } else if (arg.rfind("--secret=", 0) == 0) {
+            args.secret = arg.substr(9);
+        } else if (arg == "--category") {
+            args.category = requireValue(arg);
+        } else if (arg.rfind("--category=", 0) == 0) {
+            args.category = arg.substr(11);
+        } else if (arg == "--tag") {
+            args.tags.push_back(requireValue(arg));
+        } else if (arg.rfind("--tag=", 0) == 0) {
+            args.tags.push_back(arg.substr(6));
+        } else if (arg == "--note" || arg == "--notes") {
+            args.notes = requireValue(arg);
+        } else if (arg.rfind("--note=", 0) == 0) {
+            args.notes = arg.substr(7);
+        } else if (arg.rfind("--notes=", 0) == 0) {
+            args.notes = arg.substr(8);
+        } else if (arg == "--field") {
+            args.customFields.push_back(parseCustomField(requireValue(arg)));
+        } else if (arg.rfind("--field=", 0) == 0) {
+            args.customFields.push_back(parseCustomField(arg.substr(8)));
+        } else if (arg == "--field-reference") {
+            args.fieldReferences.push_back(EntryFieldReferenceArgs{
+                requireValue(arg),
+                requireValue(arg),
+            });
+        } else if (arg.rfind("--field-reference=", 0) == 0) {
+            args.fieldReferences.push_back(EntryFieldReferenceArgs{
+                arg.substr(18),
+                requireValue("--field-reference"),
+            });
+        } else if (arg == "--vault") {
+            args.vaultPath = requireValue(arg);
+        } else if (arg.rfind("--vault=", 0) == 0) {
+            args.vaultPath = arg.substr(8);
+        } else {
+            throw std::invalid_argument("unknown entry option: " + arg);
+        }
+    }
+    if (args.label.empty()) throw std::invalid_argument("--label is required");
+    return args;
+}
+
+ListArgs parseListArgs(int argc, char** argv, int start, const char* defaultVaultPath) {
+    ListArgs args;
+    args.vaultPath = defaultVaultPath;
+    for (int i = start; i < argc; ++i) {
+        const std::string arg = argv[i];
+        auto requireValue = [&](const std::string& option) -> std::string {
+            if (++i >= argc) throw std::invalid_argument(option + " requires a value");
+            return argv[i];
+        };
+        if (arg == "--query") {
+            args.query = requireValue(arg);
+        } else if (arg.rfind("--query=", 0) == 0) {
+            args.query = arg.substr(8);
+        } else if (arg == "--type") {
+            args.type = requireValue(arg);
+        } else if (arg.rfind("--type=", 0) == 0) {
+            args.type = arg.substr(7);
+        } else if (arg == "--show-secret") {
+            args.showSecret = true;
+        } else if (arg == "--vault") {
+            args.vaultPath = requireValue(arg);
+        } else if (arg.rfind("--vault=", 0) == 0) {
+            args.vaultPath = arg.substr(8);
+        } else {
+            throw std::invalid_argument("unknown list option: " + arg);
+        }
+    }
+    if (args.type != "all") args.type = parseEntryType(args.type);
+    return args;
+}
+
+ShowEntryArgs parseShowEntryArgs(int argc, char** argv, int start, const char* defaultVaultPath) {
+    ShowEntryArgs args;
+    args.vaultPath = defaultVaultPath;
+    for (int i = start; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--show-secret") {
+            args.showSecret = true;
+        } else if (arg == "--vault") {
+            if (++i >= argc) throw std::invalid_argument("--vault requires a value");
+            args.vaultPath = argv[i];
+        } else if (arg.rfind("--vault=", 0) == 0) {
+            args.vaultPath = arg.substr(8);
+        } else {
+            throw std::invalid_argument("unknown show-entry option: " + arg);
+        }
+    }
+    return args;
+}
+
+CategoryArgs parseCategoryArgs(
+    int argc,
+    char** argv,
+    int nameIndex,
+    int optionStart,
+    const char* defaultVaultPath,
+    bool allowVault
+) {
+    if (argc <= nameIndex) throw std::invalid_argument("category name is required");
+    CategoryArgs args;
+    args.name = argv[nameIndex];
+    args.vaultPath = defaultVaultPath;
+    for (int i = optionStart; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--shortcut" || arg == "--preset") {
+            if (++i >= argc) throw std::invalid_argument(arg + " requires a value");
+            args.preset = parseShortcut(argv[i]);
+            args.hasPreset = true;
+        } else if (arg.rfind("--shortcut=", 0) == 0) {
+            args.preset = parseShortcut(arg.substr(11));
+            args.hasPreset = true;
+        } else if (arg.rfind("--preset=", 0) == 0) {
+            args.preset = parseShortcut(arg.substr(9));
+            args.hasPreset = true;
+        } else if (arg == "--field") {
+            if (++i >= argc) throw std::invalid_argument("--field requires a value");
+            args.customFields.push_back(argv[i]);
+        } else if (arg.rfind("--field=", 0) == 0) {
+            args.customFields.push_back(arg.substr(8));
+        } else if (arg == "--field-reference") {
+            if (i + 3 >= argc) {
+                throw std::invalid_argument("--field-reference requires source field, target category, and target field");
+            }
+            args.fieldReferences.push_back(CategoryFieldReferenceArgs{
+                argv[++i],
+                argv[++i],
+                argv[++i],
+            });
+        } else if (arg.rfind("--field-reference=", 0) == 0) {
+            if (i + 2 >= argc) {
+                throw std::invalid_argument("--field-reference requires source field, target category, and target field");
+            }
+            args.fieldReferences.push_back(CategoryFieldReferenceArgs{
+                arg.substr(18),
+                argv[++i],
+                argv[++i],
+            });
+        } else if (allowVault && arg == "--vault") {
+            if (++i >= argc) throw std::invalid_argument("--vault requires a value");
+            args.vaultPath = argv[i];
+        } else if (allowVault && arg.rfind("--vault=", 0) == 0) {
+            args.vaultPath = arg.substr(8);
+        } else {
+            throw std::invalid_argument("unknown category option: " + arg);
+        }
+    }
+    return args;
+}
+
+const CategoryTemplate* categoryTemplateByName(
+    const std::vector<CategoryTemplate>& templates,
+    const std::string& category
+) {
+    const auto key = lowerAscii(trimAscii(category));
+    const auto match = std::find_if(templates.begin(), templates.end(), [&](const CategoryTemplate& candidate) {
+        return lowerAscii(trimAscii(candidate.category)) == key;
+    });
+    return match == templates.end() ? nullptr : &*match;
+}
+
+const FieldTemplate* templateFieldByName(
+    const std::vector<FieldTemplate>& fields,
+    const std::string& fieldName
+) {
+    const auto key = lowerAscii(trimAscii(fieldName));
+    const auto match = std::find_if(fields.begin(), fields.end(), [&](const FieldTemplate& candidate) {
+        return lowerAscii(trimAscii(candidate.name)) == key;
+    });
+    return match == fields.end() ? nullptr : &*match;
+}
+
+void bindTextTemplateFieldsForCli(
+    std::vector<CustomField>& fields,
+    const std::string& category,
+    const std::vector<CategoryTemplate>& categoryTemplates
+) {
+    const auto* categoryTemplate = categoryTemplateByName(categoryTemplates, category);
+    if (categoryTemplate == nullptr) return;
+
+    for (auto& field : fields) {
+        const auto* templateField = templateFieldByName(categoryTemplate->fields, field.name);
+        if (templateField != nullptr && templateField->valueType == "text") {
+            field.templateFieldId = templateField->id;
+        }
+    }
+}
+
+std::vector<FieldTemplate> fieldReferenceTemplatesForCli(
+    const std::string& sourceCategory,
+    const std::vector<FieldTemplate>& existingFields,
+    const std::vector<CategoryFieldReferenceArgs>& definitions,
+    const std::vector<CategoryTemplate>& categoryTemplates
+) {
+    std::set<std::string> sourceFieldNames;
+    for (const auto& field : existingFields) {
+        sourceFieldNames.insert(lowerAscii(trimAscii(field.name)));
+    }
+
+    std::vector<FieldTemplate> references;
+    for (const auto& definition : definitions) {
+        const auto sourceFieldName = trimAscii(definition.sourceFieldName);
+        const auto targetCategoryName = trimAscii(definition.targetCategory);
+        const auto targetFieldName = trimAscii(definition.targetFieldName);
+        if (sourceFieldName.empty() || targetCategoryName.empty() || targetFieldName.empty()) {
+            throw std::invalid_argument("field reference names must not be empty");
+        }
+        if (!sourceFieldNames.insert(lowerAscii(sourceFieldName)).second) {
+            throw std::invalid_argument("field reference source field duplicates another field");
+        }
+        if (lowerAscii(trimAscii(sourceCategory)) == lowerAscii(targetCategoryName)
+            && lowerAscii(sourceFieldName) == lowerAscii(targetFieldName)) {
+            throw std::invalid_argument("field reference direct self-reference is not allowed");
+        }
+
+        const auto targetsCurrentCategory =
+            lowerAscii(trimAscii(sourceCategory)) == lowerAscii(targetCategoryName);
+        const auto* targetTemplate = targetsCurrentCategory
+            ? nullptr
+            : categoryTemplateByName(categoryTemplates, targetCategoryName);
+        const auto* targetField = targetsCurrentCategory
+            ? templateFieldByName(existingFields, targetFieldName)
+            : targetTemplate == nullptr ? nullptr : templateFieldByName(targetTemplate->fields, targetFieldName);
+        if (!targetsCurrentCategory && targetTemplate == nullptr) {
+            throw std::invalid_argument("field reference target category does not exist: " + targetCategoryName);
+        }
+        if (targetField == nullptr) {
+            throw std::invalid_argument("field reference target field does not exist: " + targetFieldName);
+        }
+        if (targetField->valueType != "text") {
+            throw std::invalid_argument("field reference target field must be text: " + targetFieldName);
+        }
+
+        const auto sourceFieldId = randomId();
+        if (targetsCurrentCategory && sourceFieldId == targetField->id) {
+            throw std::invalid_argument("field reference direct self-reference is not allowed");
+        }
+        references.push_back(FieldTemplate{
+            sourceFieldId,
+            sourceFieldName,
+            "fieldReference",
+            targetsCurrentCategory ? trimAscii(sourceCategory) : trimAscii(targetTemplate->category),
+            targetField->id,
+        });
+    }
+    return references;
+}
+
+CustomField fieldReferenceBindingForCli(
+    const EntryFieldReferenceArgs& binding,
+    const std::string& sourceCategory,
+    const std::vector<CategoryTemplate>& categoryTemplates,
+    const std::vector<VaultEntry>& entries
+) {
+    const auto* sourceTemplate = categoryTemplateByName(categoryTemplates, sourceCategory);
+    if (sourceTemplate == nullptr) {
+        throw std::invalid_argument("field reference source category does not exist: " + trimAscii(sourceCategory));
+    }
+    const auto sourceFieldName = trimAscii(binding.sourceFieldName);
+    const auto* sourceField = templateFieldByName(sourceTemplate->fields, sourceFieldName);
+    if (sourceField == nullptr) {
+        throw std::invalid_argument("field reference source field does not exist: " + sourceFieldName);
+    }
+    if (sourceField->valueType != "fieldReference") {
+        throw std::invalid_argument("field reference source field is not a field reference: " + sourceFieldName);
+    }
+
+    const auto targetCategory = trimAscii(sourceField->targetCategory);
+    if (targetCategory.empty() || trimAscii(sourceField->targetFieldId).empty()) {
+        throw std::invalid_argument("field reference source field configuration is invalid: " + sourceFieldName);
+    }
+    if (lowerAscii(trimAscii(sourceTemplate->category)) == lowerAscii(targetCategory)
+        && sourceField->id == sourceField->targetFieldId) {
+        throw std::invalid_argument("field reference direct self-reference is not allowed");
+    }
+    const auto* targetTemplate = categoryTemplateByName(categoryTemplates, targetCategory);
+    if (targetTemplate == nullptr) {
+        throw std::invalid_argument("field reference target category does not exist: " + targetCategory);
+    }
+    const auto targetField = std::find_if(
+        targetTemplate->fields.begin(),
+        targetTemplate->fields.end(),
+        [&](const FieldTemplate& candidate) { return candidate.id == sourceField->targetFieldId; }
+    );
+    if (targetField == targetTemplate->fields.end()) {
+        throw std::invalid_argument("field reference target field does not exist for source field: " + sourceFieldName);
+    }
+    if (targetField->valueType != "text") {
+        throw std::invalid_argument("field reference target field must be text for source field: " + sourceFieldName);
+    }
+
+    const auto selector = trimAscii(binding.targetEntrySelector);
+    if (selector.empty()) throw std::invalid_argument("field reference target entry selector must not be empty");
+    const auto exactId = std::find_if(entries.begin(), entries.end(), [&](const VaultEntry& candidate) {
+        return candidate.id == selector;
+    });
+    const VaultEntry* targetEntry = exactId == entries.end() ? nullptr : &*exactId;
+    if (targetEntry == nullptr) {
+        std::vector<const VaultEntry*> matches;
+        for (const auto& candidate : entries) {
+            if (!candidate.isDeleted
+                && lowerAscii(trimAscii(candidate.category)) == lowerAscii(targetCategory)
+                && lowerAscii(trimAscii(candidate.label)) == lowerAscii(selector)) {
+                matches.push_back(&candidate);
+            }
+        }
+        if (matches.size() > 1) {
+            throw std::invalid_argument("field reference target entry selector is ambiguous: " + selector);
+        }
+        if (matches.size() == 1) targetEntry = matches.front();
+    }
+    if (targetEntry == nullptr) {
+        throw std::invalid_argument("field reference target entry does not exist: " + selector);
+    }
+    if (targetEntry->isDeleted) {
+        throw std::invalid_argument("field reference target entry is deleted: " + selector);
+    }
+    if (lowerAscii(trimAscii(targetEntry->category)) != lowerAscii(targetCategory)) {
+        throw std::invalid_argument("field reference target entry category does not match: " + selector);
+    }
+
+    return CustomField{randomId(), sourceField->name, targetEntry->id, sourceField->id};
+}
+
+BackupArgs parseBackupArgs(int argc, char** argv, int start, const char* defaultVaultPath, bool allowBackupName) {
+    BackupArgs args;
+    args.vaultPath = defaultVaultPath;
+    for (int i = start; i < argc; ++i) {
+        const std::string arg = argv[i];
+        auto requireValue = [&](const std::string& option) -> std::string {
+            if (++i >= argc) throw std::invalid_argument(option + " requires a value");
+            return argv[i];
+        };
+        if (arg == "--vault") {
+            args.vaultPath = requireValue(arg);
+        } else if (arg.rfind("--vault=", 0) == 0) {
+            args.vaultPath = arg.substr(8);
+        } else if (arg == "--backup-dir") {
+            args.backupDir = requireValue(arg);
+        } else if (arg.rfind("--backup-dir=", 0) == 0) {
+            args.backupDir = arg.substr(13);
+        } else if (allowBackupName && arg == "--name") {
+            args.backupName = requireValue(arg);
+            args.hasBackupName = true;
+        } else if (allowBackupName && arg.rfind("--name=", 0) == 0) {
+            args.backupName = arg.substr(7);
+            args.hasBackupName = true;
+        } else if (allowBackupName && !args.hasBackupName && !arg.empty() && arg[0] != '-') {
+            args.backupName = arg;
+            args.hasBackupName = true;
+        } else {
+            throw std::invalid_argument("unknown backup option: " + arg);
+        }
+    }
+    return args;
+}
+
+ExportSnapshotArgs parseExportSnapshotArgs(int argc, char** argv, int start, const char* defaultVaultPath) {
+    ExportSnapshotArgs args;
+    args.vaultPath = defaultVaultPath;
+    for (int i = start; i < argc; ++i) {
+        const std::string arg = argv[i];
+        auto requireValue = [&](const std::string& option) -> std::string {
+            if (++i >= argc) throw std::invalid_argument(option + " requires a value");
+            return argv[i];
+        };
+        if (arg == "--vault") {
+            args.vaultPath = requireValue(arg);
+        } else if (arg.rfind("--vault=", 0) == 0) {
+            args.vaultPath = arg.substr(8);
+        } else if (arg == "--out") {
+            args.outPath = requireValue(arg);
+        } else if (arg.rfind("--out=", 0) == 0) {
+            args.outPath = arg.substr(6);
+        } else if (arg == "--export-dir") {
+            args.exportDir = requireValue(arg);
+        } else if (arg.rfind("--export-dir=", 0) == 0) {
+            args.exportDir = arg.substr(13);
+        } else {
+            throw std::invalid_argument("unknown export option: " + arg);
+        }
+    }
+    return args;
+}
+
+ImportSnapshotArgs parseImportSnapshotArgs(int argc, char** argv, int start, const char* defaultVaultPath) {
+    ImportSnapshotArgs args;
+    args.vaultPath = defaultVaultPath;
+    for (int i = start; i < argc; ++i) {
+        const std::string arg = argv[i];
+        auto requireValue = [&](const std::string& option) -> std::string {
+            if (++i >= argc) throw std::invalid_argument(option + " requires a value");
+            return argv[i];
+        };
+        if (arg == "--vault") {
+            args.vaultPath = requireValue(arg);
+        } else if (arg.rfind("--vault=", 0) == 0) {
+            args.vaultPath = arg.substr(8);
+        } else if (arg == "--in" || arg == "--input") {
+            args.inPath = requireValue(arg);
+        } else if (arg.rfind("--in=", 0) == 0) {
+            args.inPath = arg.substr(5);
+        } else if (arg.rfind("--input=", 0) == 0) {
+            args.inPath = arg.substr(8);
+        } else {
+            throw std::invalid_argument("unknown import option: " + arg);
+        }
+    }
+    if (args.inPath.empty()) throw std::invalid_argument("--in is required");
+    return args;
+}
+
+ObjectSyncProvider parseProvider(const std::string& value) {
+    const auto normalized = lowerAscii(trimAscii(value));
+    if (normalized == "webdav") return ObjectSyncProvider::WebDav;
+    if (normalized == "s3-presigned" || normalized == "presigned") return ObjectSyncProvider::S3Presigned;
+    if (normalized == "tencent-cos" || normalized == "cos") return ObjectSyncProvider::TencentCos;
+    if (normalized == "aliyun-oss" || normalized == "oss") return ObjectSyncProvider::AliyunOss;
+    throw std::invalid_argument("provider must be webdav, s3-presigned, tencent-cos, or aliyun-oss");
+}
+
+SyncArgs parseSyncArgs(int argc, char** argv, int start, const char* defaultVaultPath) {
+    SyncArgs args;
+    args.vaultPath = defaultVaultPath;
+    args.config.objectKey = "vault.sync.json";
+    for (int i = start; i < argc; ++i) {
+        const std::string arg = argv[i];
+        auto requireValue = [&](const std::string& option) -> std::string {
+            if (++i >= argc) throw std::invalid_argument(option + " requires a value");
+            return argv[i];
+        };
+        if (arg == "--vault") {
+            args.vaultPath = requireValue(arg);
+        } else if (arg.rfind("--vault=", 0) == 0) {
+            args.vaultPath = arg.substr(8);
+        } else if (arg == "--state") {
+            args.statePath = requireValue(arg);
+        } else if (arg.rfind("--state=", 0) == 0) {
+            args.statePath = arg.substr(8);
+        } else if (arg == "--provider") {
+            args.provider = requireValue(arg);
+            args.config.provider = parseProvider(args.provider);
+        } else if (arg.rfind("--provider=", 0) == 0) {
+            args.provider = arg.substr(11);
+            args.config.provider = parseProvider(args.provider);
+        } else if (arg == "--endpoint") {
+            args.config.endpoint = requireValue(arg);
+        } else if (arg.rfind("--endpoint=", 0) == 0) {
+            args.config.endpoint = arg.substr(11);
+        } else if (arg == "--custom-url") {
+            args.config.customUrl = requireValue(arg);
+        } else if (arg.rfind("--custom-url=", 0) == 0) {
+            args.config.customUrl = arg.substr(13);
+        } else if (arg == "--bucket") {
+            args.config.bucket = requireValue(arg);
+        } else if (arg.rfind("--bucket=", 0) == 0) {
+            args.config.bucket = arg.substr(9);
+        } else if (arg == "--appid" || arg == "--app-id") {
+            args.config.appId = requireValue(arg);
+        } else if (arg.rfind("--appid=", 0) == 0) {
+            args.config.appId = arg.substr(8);
+        } else if (arg.rfind("--app-id=", 0) == 0) {
+            args.config.appId = arg.substr(9);
+        } else if (arg == "--ak" || arg == "--access-key" || arg == "--access-key-id") {
+            args.config.accessKeyId = requireValue(arg);
+        } else if (arg.rfind("--ak=", 0) == 0) {
+            args.config.accessKeyId = arg.substr(5);
+        } else if (arg.rfind("--access-key=", 0) == 0) {
+            args.config.accessKeyId = arg.substr(13);
+        } else if (arg.rfind("--access-key-id=", 0) == 0) {
+            args.config.accessKeyId = arg.substr(16);
+        } else if (arg == "--sk" || arg == "--secret-key" || arg == "--secret-access-key") {
+            args.config.secretAccessKey = requireValue(arg);
+        } else if (arg.rfind("--sk=", 0) == 0) {
+            args.config.secretAccessKey = arg.substr(5);
+        } else if (arg.rfind("--secret-key=", 0) == 0) {
+            args.config.secretAccessKey = arg.substr(13);
+        } else if (arg.rfind("--secret-access-key=", 0) == 0) {
+            args.config.secretAccessKey = arg.substr(20);
+        } else if (arg == "--sk-stdin" || arg == "--secret-key-stdin" || arg == "--secret-access-key-stdin") {
+            args.config.secretAccessKey = readSensitiveLine("secret access key");
+        } else if (arg == "--object-key" || arg == "--path") {
+            args.config.objectKey = requireValue(arg);
+        } else if (arg.rfind("--object-key=", 0) == 0) {
+            args.config.objectKey = arg.substr(13);
+        } else if (arg.rfind("--path=", 0) == 0) {
+            args.config.objectKey = arg.substr(7);
+        } else if (arg == "--download-url") {
+            args.downloadUrl = requireValue(arg);
+        } else if (arg.rfind("--download-url=", 0) == 0) {
+            args.downloadUrl = arg.substr(15);
+        } else if (arg == "--download-url-stdin") {
+            args.downloadUrl = readSensitiveLine("download URL");
+        } else if (arg == "--upload-url") {
+            args.uploadUrl = requireValue(arg);
+        } else if (arg.rfind("--upload-url=", 0) == 0) {
+            args.uploadUrl = arg.substr(13);
+        } else if (arg == "--upload-url-stdin") {
+            args.uploadUrl = readSensitiveLine("upload URL");
+        } else if (arg == "--username") {
+            args.webDavUsername = requireValue(arg);
+        } else if (arg.rfind("--username=", 0) == 0) {
+            args.webDavUsername = arg.substr(11);
+        } else if (arg == "--remote-password") {
+            args.webDavPassword = requireValue(arg);
+        } else if (arg.rfind("--remote-password=", 0) == 0) {
+            args.webDavPassword = arg.substr(18);
+        } else if (arg == "--remote-password-stdin") {
+            args.webDavPassword = readSensitiveLine("remote password");
+        } else if (arg == "--device-id") {
+            args.deviceId = requireValue(arg);
+        } else if (arg.rfind("--device-id=", 0) == 0) {
+            args.deviceId = arg.substr(12);
+        } else if (arg == "--conflict-strategy") {
+            args.conflictStrategy = requireValue(arg);
+        } else if (arg.rfind("--conflict-strategy=", 0) == 0) {
+            args.conflictStrategy = arg.substr(20);
+        } else {
+            throw std::invalid_argument("unknown sync option: " + arg);
+        }
+    }
+    if (args.config.provider == ObjectSyncProvider::None) throw std::invalid_argument("--provider is required");
+    if (args.config.provider == ObjectSyncProvider::S3Presigned) {
+        if (args.downloadUrl.empty()) args.downloadUrl = args.config.customUrl;
+        if (args.uploadUrl.empty()) args.uploadUrl = args.config.customUrl;
+        if (args.downloadUrl.empty() || args.uploadUrl.empty()) {
+            throw std::invalid_argument("s3-presigned sync requires --download-url and --upload-url");
+        }
+    }
+    if (args.config.provider == ObjectSyncProvider::WebDav && args.config.endpoint.empty() && args.config.customUrl.empty()) {
+        throw std::invalid_argument("webdav sync requires --endpoint or --custom-url");
+    }
+    if (args.deviceId.empty()) args.deviceId = "native-cli";
+    if (args.conflictStrategy.empty()) args.conflictStrategy = "localWins";
+    args.statePath = resolveSyncStatePath(args.vaultPath, args.statePath);
+    return args;
+}
+
+VaultSnapshot loadUnlockedSnapshot(const CommandAuth& auth, const std::string& path) {
+    auto snapshot = decryptEnvelope(auth.password, loadEnvelopeFile(path));
+    requireTotpIfNeeded(auth, snapshot);
+    return snapshot;
+}
+
+void saveSnapshot(const std::string& password, const std::string& path, const VaultSnapshot& snapshot) {
+    saveEnvelopeFile(path, createEnvelope(password, snapshot));
+}
+
+void ensureParentDirectory(const fs::path& path);
+
+std::map<std::string, std::string> readKeyValueFile(const fs::path& path) {
+    std::map<std::string, std::string> values;
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return values;
+    std::string line;
+    while (std::getline(in, line)) {
+        const auto split = line.find('=');
+        if (split == std::string::npos) continue;
+        values[line.substr(0, split)] = line.substr(split + 1);
+    }
+    return values;
+}
+
+void writeKeyValueFile(const fs::path& path, const std::map<std::string, std::string>& values) {
+    ensureParentDirectory(path);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) throw std::runtime_error("Unable to open state file for writing: " + path.string());
+    for (const auto& [key, value] : values) out << key << "=" << value << "\n";
+    if (!out) throw std::runtime_error("Unable to write state file: " + path.string());
+}
+
+void writeSingleLineFile(const fs::path& path, const std::string& value) {
+    ensureParentDirectory(path);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) throw std::runtime_error("Unable to open state pointer for writing: " + path.string());
+    out << value << "\n";
+    if (!out) throw std::runtime_error("Unable to write state pointer: " + path.string());
+}
+
+SyncSettingsState loadSyncState(const SyncArgs& args) {
+    auto values = readKeyValueFile(args.statePath);
+    SyncSettingsState state;
+    state.deviceId = values.count("deviceId") ? values["deviceId"] : args.deviceId;
+    state.lastSyncRevision = values.count("lastSyncRevision") ? std::stoi(values["lastSyncRevision"]) : 0;
+    state.hasLocalChanges = values.count("hasLocalChanges") ? values["hasLocalChanges"] != "false" : true;
+    state.conflictStrategy = values.count("conflictStrategy") ? values["conflictStrategy"] : args.conflictStrategy;
+    state.lastRemoteFingerprint = values.count("lastRemoteFingerprint") ? values["lastRemoteFingerprint"] : "";
+    state.lastSyncStatus = values.count("lastSyncStatus") ? values["lastSyncStatus"] : "";
+    state.lastSyncMessage = values.count("lastSyncMessage") ? values["lastSyncMessage"] : "";
+    state.lastSyncAt = values.count("lastSyncAt") ? values["lastSyncAt"] : "";
+    if (!args.deviceId.empty() && state.deviceId.empty()) state.deviceId = args.deviceId;
+    if (!args.conflictStrategy.empty()) state.conflictStrategy = args.conflictStrategy;
+    return state;
+}
+
+void saveSyncState(const SyncArgs& args, const SyncSettingsState& state) {
+    writeKeyValueFile(args.statePath, {
+        {"deviceId", state.deviceId},
+        {"lastSyncRevision", std::to_string(state.lastSyncRevision)},
+        {"hasLocalChanges", state.hasLocalChanges ? "true" : "false"},
+        {"conflictStrategy", state.conflictStrategy},
+        {"lastRemoteFingerprint", state.lastRemoteFingerprint},
+        {"lastSyncStatus", state.lastSyncStatus},
+        {"lastSyncMessage", state.lastSyncMessage},
+        {"lastSyncAt", state.lastSyncAt},
+    });
+    if (args.statePath != defaultSyncStatePath(args.vaultPath)) {
+        writeSingleLineFile(syncStatePointerPath(args.vaultPath), args.statePath);
+    }
+}
+
+void markLocalChanges(const std::string& vaultPath) {
+    const auto statePath = fs::path(resolveSyncStatePath(vaultPath, ""));
+    auto values = readKeyValueFile(statePath);
+    if (values.empty()) return;
+    values["hasLocalChanges"] = "true";
+    writeKeyValueFile(statePath, values);
+}
+
+HttpResult performHttp(const ObjectSyncRequest& request, const SyncArgs& args) {
+    static CurlGlobal curlGlobal;
+    CURL* curl = curl_easy_init();
+    if (!curl) throw std::runtime_error("Unable to create HTTP client.");
+
+    std::string body;
+    HeaderAccumulator responseHeaders;
+    curl_slist* headers = nullptr;
+    try {
+        curl_easy_setopt(curl, CURLOPT_URL, request.objectUrl.c_str());
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, request.method.c_str());
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curlHeaderCallback);
+        curl_easy_setopt(curl, CURLOPT_HEADERDATA, &responseHeaders);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 12L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+
+        if (request.method == "HEAD") {
+            curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+        }
+        if (!request.body.empty() || request.method == "PUT") {
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request.body.data());
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(request.body.size()));
+        }
+        for (const auto& [key, value] : request.headers) {
+            headers = curl_slist_append(headers, (key + ": " + value).c_str());
+        }
+        if (headers) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        if (request.provider == ObjectSyncProvider::WebDav &&
+            (!args.webDavUsername.empty() || !args.webDavPassword.empty())) {
+            curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
+            curl_easy_setopt(curl, CURLOPT_USERNAME, args.webDavUsername.c_str());
+            curl_easy_setopt(curl, CURLOPT_PASSWORD, args.webDavPassword.c_str());
+        }
+
+        const auto code = curl_easy_perform(curl);
+        if (code != CURLE_OK) {
+            throw std::runtime_error(std::string("HTTP transport failed: ") + curl_easy_strerror(code));
+        }
+        long statusCode = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &statusCode);
+        if (headers) curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+        return HttpResult{statusCode, body, syncFingerprint(responseHeaders)};
+    } catch (...) {
+        if (headers) curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+        throw;
+    }
+}
+
+ObjectSyncRequest presignedRequest(const std::string& url, const std::string& method, const std::string& body = "") {
+    ObjectSyncRequest request;
+    request.provider = ObjectSyncProvider::S3Presigned;
+    request.objectUrl = url;
+    request.method = method;
+    request.body = body;
+    if (method == "PUT") request.headers["Content-Type"] = "application/json";
+    return request;
+}
+
+ObjectSyncRequest remoteRequest(const SyncArgs& args, const std::string& method, const std::string& body = "") {
+    if (args.config.provider == ObjectSyncProvider::S3Presigned) {
+        return presignedRequest(method == "PUT" ? args.uploadUrl : args.downloadUrl, method, body);
+    }
+    return buildObjectSyncSignedRequest(args.config, method, body);
+}
+
+HttpResult remoteDownload(const SyncArgs& args) {
+    auto request = remoteRequest(args, "GET");
+    return performHttp(request, args);
+}
+
+HttpResult remoteUpload(const SyncArgs& args, const std::string& payload) {
+    auto request = remoteRequest(args, "PUT", payload);
+    return performHttp(request, args);
+}
+
+std::string timestampForFileName(std::time_t now = std::time(nullptr)) {
+    std::tm tm{};
+#if defined(_WIN32)
+    gmtime_s(&tm, &now);
+#else
+    gmtime_r(&now, &tm);
+#endif
+    std::ostringstream out;
+    out << std::put_time(&tm, "%Y%m%d-%H%M%S");
+    return out.str();
+}
+
+fs::path siblingDirectory(const std::string& vaultPath, const std::string& directoryName) {
+    const auto parent = fs::path(vaultPath).parent_path();
+    return (parent.empty() ? fs::path(".") : parent) / directoryName;
+}
+
+fs::path backupDirectoryFor(const BackupArgs& args) {
+    return args.backupDir.empty() ? siblingDirectory(args.vaultPath, "backups") : fs::path(args.backupDir);
+}
+
+fs::path exportDirectoryFor(const ExportSnapshotArgs& args) {
+    return args.exportDir.empty() ? siblingDirectory(args.vaultPath, "exports") : fs::path(args.exportDir);
+}
+
+void ensureDirectory(const fs::path& directory) {
+    if (directory.empty()) return;
+    fs::create_directories(directory);
+    if (!fs::is_directory(directory)) throw std::runtime_error("Unable to create directory: " + directory.string());
+}
+
+void ensureParentDirectory(const fs::path& path) {
+    const auto parent = path.parent_path();
+    if (!parent.empty()) ensureDirectory(parent);
+}
+
+bool allDigits(const std::string& value, std::size_t start, std::size_t count) {
+    if (start + count > value.size()) return false;
+    for (std::size_t index = start; index < start + count; ++index) {
+        if (!std::isdigit(static_cast<unsigned char>(value[index]))) return false;
+    }
+    return true;
+}
+
+bool isBackupFileName(const std::string& name) {
+    return name.size() == 26 &&
+           name.rfind("vault-", 0) == 0 &&
+           name[14] == '-' &&
+           name.compare(21, 5, ".json") == 0 &&
+           allDigits(name, 6, 8) &&
+           allDigits(name, 15, 6);
+}
+
+std::vector<fs::path> listBackupPaths(const fs::path& backupDir) {
+    ensureDirectory(backupDir);
+    std::vector<fs::path> backups;
+    for (const auto& entry : fs::directory_iterator(backupDir)) {
+        if (entry.is_regular_file() && isBackupFileName(entry.path().filename().string())) {
+            backups.push_back(entry.path());
+        }
+    }
+    std::sort(backups.begin(), backups.end(), [](const fs::path& left, const fs::path& right) {
+        return left.filename().string() > right.filename().string();
+    });
+    return backups;
+}
+
+void pruneBackups(const fs::path& backupDir) {
+    const auto backups = listBackupPaths(backupDir);
+    for (std::size_t index = kBackupRetentionCount; index < backups.size(); ++index) {
+        fs::remove(backups[index]);
+    }
+}
+
+fs::path selectedBackupPath(const BackupArgs& args) {
+    const auto backupDir = backupDirectoryFor(args);
+    if (args.backupName.empty() || args.backupName == "latest") {
+        const auto backups = listBackupPaths(backupDir);
+        if (backups.empty()) throw std::runtime_error("No local backup is available.");
+        return backups.front();
+    }
+    const auto sanitizedName = fs::path(args.backupName).filename().string();
+    if (!isBackupFileName(sanitizedName)) throw std::invalid_argument("Backup file is not available.");
+    const auto backupPath = backupDir / sanitizedName;
+    if (!fs::is_regular_file(backupPath)) throw std::runtime_error("Backup file is not available.");
+    return backupPath;
+}
+
+std::string readTextFile(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("Unable to open file for reading: " + path.string());
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    if (!in.good() && !in.eof()) throw std::runtime_error("Unable to read file: " + path.string());
+    return buffer.str();
+}
+
+void writeTextFile(const fs::path& path, const std::string& text) {
+    ensureParentDirectory(path);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) throw std::runtime_error("Unable to open file for writing: " + path.string());
+    out << text;
+    if (!out) throw std::runtime_error("Unable to write file: " + path.string());
+}
+
+void printCounts(const VaultSnapshot& snapshot) {
+    const auto deleted = std::count_if(snapshot.entries.begin(), snapshot.entries.end(), [](const auto& entry) {
+        return entry.isDeleted;
+    });
+    std::cout << "entries=" << (snapshot.entries.size() - static_cast<std::size_t>(deleted))
+              << " deletedEntries=" << deleted
+              << " categories=" << snapshot.categories.size()
+              << " categoryTemplates=" << snapshot.categoryTemplates.size()
+              << " tags=" << snapshot.tags.size() << "\n";
+}
+
+void rebuildTaxonomy(VaultSnapshot& snapshot) {
+    std::set<std::string> deletedCategoryKeys;
+    auto categories = snapshot.categories;
+    for (const auto& state : snapshot.categoryStates) {
+        const auto key = lowerAscii(trimAscii(state.name));
+        if (key.empty()) continue;
+        if (state.isDeleted) {
+            deletedCategoryKeys.insert(key);
+        } else {
+            categories.push_back(trimAscii(state.name));
+        }
+    }
+    snapshot.categoryTemplates.erase(
+        std::remove_if(snapshot.categoryTemplates.begin(), snapshot.categoryTemplates.end(), [&](const auto& templateEntry) {
+            return deletedCategoryKeys.count(lowerAscii(trimAscii(templateEntry.category))) > 0;
+        }),
+        snapshot.categoryTemplates.end()
+    );
+    const auto rebuiltCategories = rebuildCategories(snapshot.entries, snapshot.categoryTemplates);
+    categories.insert(categories.end(), rebuiltCategories.begin(), rebuiltCategories.end());
+    std::sort(categories.begin(), categories.end());
+    categories.erase(std::unique(categories.begin(), categories.end()), categories.end());
+    categories.erase(
+        std::remove_if(categories.begin(), categories.end(), [&](const auto& category) {
+            return deletedCategoryKeys.count(lowerAscii(trimAscii(category))) > 0;
+        }),
+        categories.end()
+    );
+    snapshot.categories = categories;
+
+    auto tags = snapshot.tags;
+    const auto entryTags = rebuildTags(snapshot.entries);
+    tags.insert(tags.end(), entryTags.begin(), entryTags.end());
+    std::sort(tags.begin(), tags.end());
+    tags.erase(std::unique(tags.begin(), tags.end()), tags.end());
+    snapshot.tags = tags;
+    for (const auto& category : snapshot.categories) {
+        bool exists = false;
+        for (const auto& templateEntry : snapshot.categoryTemplates) {
+            if (templateEntry.category == category) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) snapshot.categoryTemplates.push_back(CategoryTemplate{category, defaultCategoryFields()});
+    }
+    std::sort(snapshot.categoryTemplates.begin(), snapshot.categoryTemplates.end(), [](const auto& left, const auto& right) {
+        return left.category < right.category;
+    });
+}
+
+void printEntryLine(const VaultEntry& entry, bool showSecret) {
+    std::cout << entry.id
+              << " | " << entry.type
+              << " | " << entry.label
+              << " | category=" << entry.category
+              << " | username=" << entry.username
+              << " | secret=" << maskedSecret(entry.secret, showSecret);
+    if (!entry.tags.empty()) {
+        std::cout << " | tags=";
+        for (std::size_t index = 0; index < entry.tags.size(); ++index) {
+            if (index > 0) std::cout << ",";
+            std::cout << entry.tags[index];
+        }
+    }
+    std::cout << "\n";
+}
+
+std::string entryJsonForDisplay(const VaultEntry& entry, const VaultSnapshot& source, bool showSecret) {
+    VaultEntry copy = entry;
+    if (!showSecret) {
+        copy.secret = maskedSecret(copy.secret, false);
+        copy.payloadJson.clear();
+    }
+    copy.customFields = projectCustomFieldsForDisplay(
+        entry,
+        source.categoryTemplates,
+        source.entries
+    );
+    VaultSnapshot snapshot;
+    snapshot.entries.push_back(copy);
+    rebuildTaxonomy(snapshot);
+    return serializeSnapshotJson(snapshot);
+}
+
+void printCategoryTemplate(int argc, char** argv, const char* defaultVaultPath) {
+    const auto args = parseCategoryArgs(argc, argv, 2, 3, defaultVaultPath, false);
+    if (!args.fieldReferences.empty()) {
+        throw std::invalid_argument("--field-reference requires add-category so the target field can be resolved from the vault");
+    }
+    VaultSnapshot snapshot;
+    const auto fields = fieldsForCli(args.hasPreset, args.preset, args.customFields);
+    if (!addCategory(snapshot, args.name, fields)) throw std::invalid_argument("category name is required");
+    std::cout << serializeSnapshotJson(snapshot) << "\n";
+}
+
+void initializeVault(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
+    const auto options = parseVaultOption(argc, argv, 3, defaultVaultPath);
+    VaultSnapshot snapshot;
+    saveSnapshot(auth.password, options.vaultPath, snapshot);
+    std::cout << "Encrypted vault written to " << options.vaultPath << "\n";
+}
+
+void printStatus(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
+    const auto options = parseVaultOption(argc, argv, 3, defaultVaultPath);
+    printCounts(loadUnlockedSnapshot(auth, options.vaultPath));
+}
+
+void addCategoryToVault(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
+    if (argc < 4) throw std::invalid_argument("password and category name are required");
+    const auto args = parseCategoryArgs(argc, argv, 3, 4, defaultVaultPath, true);
+    auto snapshot = loadUnlockedSnapshot(auth, args.vaultPath);
+    const auto baseFields = fieldsForCli(args.hasPreset, args.preset, args.customFields);
+    const auto referenceFields = fieldReferenceTemplatesForCli(
+        args.name,
+        baseFields,
+        args.fieldReferences,
+        snapshot.categoryTemplates
+    );
+    auto fields = baseFields;
+    fields.insert(fields.end(), referenceFields.begin(), referenceFields.end());
+    if (!addCategory(snapshot, args.name, fields)) throw std::invalid_argument("category already exists or is empty");
+    saveSnapshot(auth.password, args.vaultPath, snapshot);
+    markLocalChanges(args.vaultPath);
+    std::cout << "Category added to " << args.vaultPath << "\n";
+}
+
+void addEntryToVault(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
+    const auto args = parseEntryArgs(argc, argv, 3, defaultVaultPath);
+    auto snapshot = loadUnlockedSnapshot(auth, args.vaultPath);
+    auto entry = makeEntry(args.label, args.type, args.username, args.secret);
+    entry.category = args.category;
+    entry.tags = args.tags;
+    entry.notes = args.notes;
+    entry.customFields = args.customFields;
+    bindTextTemplateFieldsForCli(entry.customFields, entry.category, snapshot.categoryTemplates);
+    std::set<std::string> boundFieldNames;
+    for (const auto& field : entry.customFields) {
+        boundFieldNames.insert(lowerAscii(trimAscii(field.name)));
+    }
+    for (const auto& binding : args.fieldReferences) {
+        const auto bindingName = lowerAscii(trimAscii(binding.sourceFieldName));
+        if (!boundFieldNames.insert(bindingName).second) {
+            throw std::invalid_argument("field reference source field is bound more than once: " + trimAscii(binding.sourceFieldName));
+        }
+        entry.customFields.push_back(fieldReferenceBindingForCli(
+            binding,
+            entry.category,
+            snapshot.categoryTemplates,
+            snapshot.entries
+        ));
+    }
+    if (!entry.category.empty()) (void)addCategory(snapshot, entry.category);
+    snapshot.entries.push_back(entry);
+    rebuildTaxonomy(snapshot);
+    saveSnapshot(auth.password, args.vaultPath, snapshot);
+    markLocalChanges(args.vaultPath);
+    std::cout << "Entry added " << entry.id << " to " << args.vaultPath << "\n";
+}
+
+void listEntries(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
+    const auto args = parseListArgs(argc, argv, 3, defaultVaultPath);
+    const auto snapshot = loadUnlockedSnapshot(auth, args.vaultPath);
+    const auto entries = filterEntries(
+        snapshot.entries,
+        snapshot.categoryTemplates,
+        args.query,
+        args.type
+    );
+    std::cout << "matches=" << entries.size() << "\n";
+    for (const auto& entry : entries) printEntryLine(entry, args.showSecret);
+}
+
+void showEntry(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
+    if (argc < 4) throw std::invalid_argument("password and entry id are required");
+    const std::string id = argv[3];
+    const auto args = parseShowEntryArgs(argc, argv, 4, defaultVaultPath);
+    const auto snapshot = loadUnlockedSnapshot(auth, args.vaultPath);
+    for (const auto& entry : snapshot.entries) {
+        if (entry.id == id) {
+            std::cout << entryJsonForDisplay(entry, snapshot, args.showSecret) << "\n";
+            return;
+        }
+    }
+    throw std::invalid_argument("entry not found");
+}
+
+void deleteEntry(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
+    if (argc < 4) throw std::invalid_argument("password and entry id are required");
+    const std::string id = argv[3];
+    const auto options = parseVaultOption(argc, argv, 4, defaultVaultPath);
+    auto snapshot = loadUnlockedSnapshot(auth, options.vaultPath);
+    for (auto& entry : snapshot.entries) {
+        if (entry.id == id) {
+            entry.isDeleted = true;
+            entry.deletedAt = isoTimestamp();
+            entry.updatedAt = entry.deletedAt;
+            entry.updatedBy = "native-cli";
+            entry.version["native-cli"] += 1;
+            rebuildTaxonomy(snapshot);
+            saveSnapshot(auth.password, options.vaultPath, snapshot);
+            markLocalChanges(options.vaultPath);
+            std::cout << "Entry deleted " << id << "\n";
+            return;
+        }
+    }
+    throw std::invalid_argument("entry not found");
+}
+
+void backupVault(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
+    const auto args = parseBackupArgs(argc, argv, 3, defaultVaultPath, false);
+    auto snapshot = loadUnlockedSnapshot(auth, args.vaultPath);
+    const auto backupDir = backupDirectoryFor(args);
+    ensureDirectory(backupDir);
+    const auto backupPath = backupDir / ("vault-" + timestampForFileName() + ".json");
+    fs::copy_file(fs::path(args.vaultPath), backupPath, fs::copy_options::overwrite_existing);
+    pruneBackups(backupDir);
+    snapshot.backupStatus = "Backup saved: " + backupPath.filename().string();
+    saveSnapshot(auth.password, args.vaultPath, snapshot);
+    std::cout << snapshot.backupStatus << " (" << backupPath.string() << ")\n";
+}
+
+void listBackups(int argc, char** argv, const char* defaultVaultPath) {
+    const auto args = parseBackupArgs(argc, argv, 2, defaultVaultPath, false);
+    const auto backups = listBackupPaths(backupDirectoryFor(args));
+    std::cout << "backups=" << backups.size() << "\n";
+    for (const auto& backup : backups) {
+        std::cout << backup.filename().string() << " | bytes=" << fs::file_size(backup) << "\n";
+    }
+}
+
+void restoreBackup(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
+    const auto args = parseBackupArgs(argc, argv, 3, defaultVaultPath, true);
+    const auto backupPath = selectedBackupPath(args);
+    (void)loadUnlockedSnapshot(auth, args.vaultPath);
+    auto snapshot = decryptEnvelope(auth.password, loadEnvelopeFile(backupPath.string()));
+    requireTotpIfNeeded(auth, snapshot);
+    fs::copy_file(backupPath, fs::path(args.vaultPath), fs::copy_options::overwrite_existing);
+    snapshot.backupStatus = "Restored backup: " + backupPath.filename().string();
+    saveSnapshot(auth.password, args.vaultPath, snapshot);
+    markLocalChanges(args.vaultPath);
+    std::cout << snapshot.backupStatus << "\n";
+}
+
+void exportSnapshot(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
+    const auto args = parseExportSnapshotArgs(argc, argv, 3, defaultVaultPath);
+    auto snapshot = loadUnlockedSnapshot(auth, args.vaultPath);
+    rebuildTaxonomy(snapshot);
+    const auto exportPath = args.outPath.empty()
+        ? exportDirectoryFor(args) / ("vault-export-" + timestampForFileName() + ".json")
+        : fs::path(args.outPath);
+    writeTextFile(exportPath, serializeSnapshotJson(snapshot));
+    std::cout << "Export saved: " << exportPath.string() << "\n";
+}
+
+void importSnapshot(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
+    const auto args = parseImportSnapshotArgs(argc, argv, 3, defaultVaultPath);
+    (void)loadUnlockedSnapshot(auth, args.vaultPath);
+    auto snapshot = parseSnapshotJson(readTextFile(fs::path(args.inPath)));
+    rebuildTaxonomy(snapshot);
+    saveSnapshot(auth.password, args.vaultPath, snapshot);
+    markLocalChanges(args.vaultPath);
+    const auto active = std::count_if(snapshot.entries.begin(), snapshot.entries.end(), [](const auto& entry) {
+        return !entry.isDeleted;
+    });
+    std::cout << "Imported " << active << " active entries.\n";
+}
+
+void synchronizeVault(const CommandAuth& auth, int argc, char** argv, const char* defaultVaultPath) {
+    const auto args = parseSyncArgs(argc, argv, 3, defaultVaultPath);
+    auto localSnapshot = loadUnlockedSnapshot(auth, args.vaultPath);
+    auto settings = loadSyncState(args);
+
+    const auto download = remoteDownload(args);
+    if (!isHttpDownloadSuccess(download.statusCode)) {
+        throw std::runtime_error("Sync download failed with status " + std::to_string(download.statusCode) + ".");
+    }
+    const auto remoteBody = download.statusCode == 404 ? "" : download.body;
+    auto result = synchronizeSnapshots(localSnapshot, settings, remoteBody, download.fingerprint);
+
+    if (result.uploaded) {
+        const auto upload = remoteUpload(args, result.uploadPayloadJson);
+        if (!isHttpSuccess(upload.statusCode)) {
+            throw std::runtime_error("Sync upload failed with status " + std::to_string(upload.statusCode) + ".");
+        }
+    }
+
+    result.snapshot.syncStatus = result.settings.lastSyncStatus.empty() ? "Synced" : result.settings.lastSyncStatus;
+    saveSnapshot(auth.password, args.vaultPath, result.snapshot);
+    saveSyncState(args, result.settings);
+    std::cout << "Sync complete"
+              << " revision=" << result.settings.lastSyncRevision
+              << " uploaded=" << (result.uploaded ? "true" : "false")
+              << " appliedRemote=" << (result.appliedRemote ? "true" : "false")
+              << " conflicts=" << result.stats.conflicts
+              << " message=\"" << result.settings.lastSyncMessage << "\"\n";
+}
+
+void selfTest() {
+    VaultSnapshot snapshot;
+    snapshot.entries.push_back(makeEntry("Self Test", "credential", "self@example.com", "secret"));
+    auto envelope = createEnvelope("password", snapshot);
+    auto loaded = decryptEnvelope("password", envelope);
+    std::cout << loaded.syncStatus << "\n";
+}
+
+} // namespace
+
+int runNativeCli(int argc, char** argv, const char* platformName, const char* defaultVaultPath) {
+    try {
+        if (argc < 2) {
+            printUsage(platformName, defaultVaultPath);
+            return 0;
+        }
+        const std::string command = argv[1];
+        auto normalized = normalizeCommandLine(argc, argv, commandRequiresPassword(command));
+        const auto normalizedArgc = static_cast<int>(normalized.values.size());
+        auto normalizedArgv = normalized.argv.data();
+        if (command == "init") {
+            initializeVault(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "status") {
+            printStatus(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "add-category") {
+            addCategoryToVault(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "add-entry") {
+            addEntryToVault(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "list") {
+            listEntries(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "show-entry") {
+            showEntry(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "delete-entry") {
+            deleteEntry(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "backup") {
+            backupVault(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "list-backups") {
+            listBackups(argc, argv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "restore-backup") {
+            restoreBackup(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "export-snapshot") {
+            exportSnapshot(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "import-snapshot") {
+            importSnapshot(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "sync") {
+            synchronizeVault(normalized.auth, normalizedArgc, normalizedArgv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "category") {
+            printCategoryTemplate(argc, argv, defaultVaultPath);
+            return 0;
+        }
+        if (command == "totp" && argc == 4) {
+            std::cout << generateTotp(argv[2], std::stoull(argv[3])) << "\n";
+            return 0;
+        }
+        if (command == "self-test") {
+            selfTest();
+            return 0;
+        }
+        printUsage(platformName, defaultVaultPath);
+        return 1;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << "\n";
+        return 2;
+    }
+}
+
+} // namespace pm

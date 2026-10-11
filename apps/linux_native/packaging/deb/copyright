@@ -1,0 +1,10 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Password Manager Linux Native
+Source: https://life.devops
+
+Files: *
+Copyright: DevOps Life
+License: Proprietary
+ This package is built from the local Password Manager repository for internal
+ release validation. Replace this file with the final product license text
+ before public distribution.
