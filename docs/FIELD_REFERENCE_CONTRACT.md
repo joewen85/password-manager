@@ -19,6 +19,12 @@ Multiple references, recursive reference chains, cascading deletion, automatic d
 
 P1-P6 implement the legacy `entryReference` contract, resolver, lifecycle, safe projections, UI slices, and native CLI display. P7 adds the cross-platform compatibility layer for the new `fieldReference` shape: every maintained client can losslessly read, write, synchronize, import, and export `targetFieldId`. P8 adds the common one-hop resolver, lifecycle guards, safe search projection, copy-import remapping, and sync behavior on Android, HarmonyOS, iOS, macOS, and the Windows/Linux native core. P9-P11 expose creation and editing UI on HarmonyOS, Android, iOS, and macOS; P12 adds native CLI presentation. Existing `entryReference` behavior remains unchanged throughout this rollout. Unknown field types and orphaned bindings remain preserved, but their stored values stay hidden from display, copy, and search.
 
+## Saved Field Name Editing
+
+Android, HarmonyOS, iOS, and macOS allow naming a new entry field or category-template field before its first save. After saving, the name is read-only, and the save path preserves the stored name for the same field ID. Values and valid reference-target settings remain editable.
+
+To use a different name, delete the field and add a new one with a new ID. Category fields with stored values, referenced text targets, and unsupported field types retain their existing deletion/type protections. Reapplying a category template preserves the names of existing entry-field instances. Import, export, and synchronization retain their existing reconciliation behavior; this rule changes user editing only. Windows and Linux currently expose no field-editing GUI.
+
 ## JSON Shape
 
 Category template fields use the following shape:

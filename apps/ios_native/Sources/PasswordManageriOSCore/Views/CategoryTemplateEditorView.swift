@@ -8,6 +8,7 @@ struct CategoryTemplateEditorView: View {
     @State private var fields: [FieldTemplate]
     @State private var errorMessage: String?
 
+    private let savedFieldIDs: Set<String>
     private let storedValueFieldIDs: Set<String>
     private let referencedTargetFieldIDs: Set<String>
 
@@ -21,6 +22,7 @@ struct CategoryTemplateEditorView: View {
         _fields = State(initialValue: template.fields.filter {
             !baseNames.contains($0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
         })
+        savedFieldIDs = Set(template.fields.map(\.id))
         storedValueFieldIDs = store.categoryTemplateStoredValueFieldIds(category)
         referencedTargetFieldIDs = store.categoryTemplateReferencedTargetFieldIDs(category)
     }
@@ -31,7 +33,7 @@ struct CategoryTemplateEditorView: View {
                 Section {
                     Text(category)
                         .font(.headline)
-                    Text("Fields with saved values can be renamed, and reference targets can change, but their type cannot change and they cannot be removed.")
+                    Text("Saved field names are read-only. Delete and add a field to use a different name. Fields with saved values or references cannot be removed.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -48,6 +50,7 @@ struct CategoryTemplateEditorView: View {
                             sourceCategory: category,
                             categories: store.categories,
                             templates: prospectiveTemplates,
+                            isNameLocked: savedFieldIDs.contains(field.id),
                             isLocked: storedValueFieldIDs.contains(field.id)
                                 || referencedTargetFieldIDs.contains(field.id),
                             remove: { remove(field.id) }
@@ -111,6 +114,7 @@ struct CategoryTemplateFieldEditor: View {
     var sourceCategory: String
     var categories: [String]
     var templates: [CategoryTemplate]
+    var isNameLocked: Bool = false
     var isLocked: Bool
     var remove: () -> Void
 
@@ -119,6 +123,7 @@ struct CategoryTemplateFieldEditor: View {
             if isEditableCategoryFieldType(field.valueType) {
                 HStack(spacing: 8) {
                     TextField("Field Name", text: $field.name)
+                        .disabled(isNameLocked)
                     if !isLocked {
                         Button(role: .destructive, action: remove) {
                             Label("Remove Field", systemImage: "trash")

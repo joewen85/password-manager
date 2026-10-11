@@ -376,7 +376,7 @@ struct FieldLevelReferenceBehaviorTests {
         #expect(store.updateCategoryTemplate("Accounts", fields: [renamed]))
         #expect(store.categoryTemplates.first {
             $0.category.caseInsensitiveCompare("Accounts") == .orderedSame
-        }?.fields.first { $0.id == targetField.id }?.name == "Login name")
+        }?.fields.first { $0.id == targetField.id }?.name == targetField.name)
 
         #expect(store.renameCategory("ACCOUNTS", to: "Identity"))
         #expect(store.categoryTemplates.first {

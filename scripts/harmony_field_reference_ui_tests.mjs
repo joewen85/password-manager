@@ -160,7 +160,7 @@ function excludesSentinels(values, sentinels) {
 const canonicalLowercaseUuid =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-function main() {
+async function main() {
   [resolverPath, operationsPath, categoryEditingPath, controllerPath, indexPath].forEach((file) => {
     assert(fs.existsSync(file), `Required Harmony field-reference file exists: ${path.relative(root, file)}`);
   });
@@ -168,6 +168,82 @@ function main() {
   const runtime = loadRuntime();
   const controllerSource = fs.readFileSync(controllerPath, 'utf8');
   const indexSource = fs.readFileSync(indexPath, 'utf8');
+  const preserveNames = loadSourceFunction(controllerSource,
+    'function preserveSavedCustomFieldNames(', 'preserveSavedCustomFieldNames');
+  const normalizeFields = loadSourceFunction(controllerSource,
+    'function normalizeCustomFields(', 'normalizeCustomFields', {
+      readString: (value) => typeof value === 'string' ? value.trim() : '',
+      canonicalIdString: (value) => typeof value === 'string' ? value : '',
+      util: { generateRandomUUID: () => 'fresh-id' },
+    });
+  for (const methodName of ['updateCredentialEntry', 'updateServerEntry', 'updateServiceEntry']) {
+    const method = extractMethod(controllerSource, `  async ${methodName}(`)
+      .replace(/^\s*async /, 'async function ');
+    const update = vm.runInNewContext(stripTypeScriptTypes(`${method}\n;${methodName};`,
+      { mode: 'transform' }), {
+      preserveSavedCustomFieldNames: preserveNames,
+      normalizeCustomFields: normalizeFields,
+      normalizeTags: () => [], normalizeServiceAccounts: () => [], normalizeReferenceIds: () => [],
+      canonicalIdString: (value) => value ?? '',
+      VaultEntryType: { CREDENTIAL: 'credential', SERVER: 'server', SERVICE: 'service' },
+    });
+    const target = makeEntry('source', 'Entry', 'Accounts');
+    target.customFields = [{ id: 'saved', name: 'Owner', value: 'alice' }];
+    let persisted = 0;
+    const controller = {
+      ensureUnlocked() {}, requireVisibleEntry: () => target,
+      mergeCategories() {}, mergeTags() {}, async persist() { persisted += 1; },
+    };
+    const input = { label: 'Entry', category: 'Accounts', tags: [], customFields: [
+      { id: 'saved', name: 'Renamed', value: 'bob' },
+      { id: 'fresh', name: 'Region', value: 'east' },
+    ] };
+    await update.call(controller, target.id, input);
+    assert(target.customFields[0].name === 'Owner' && target.customFields[0].value === 'bob' &&
+      target.customFields[1].name === 'Region' && persisted === 1,
+    `${methodName} keeps saved names while saving changed values and new names`);
+    await update.call(controller, target.id, { ...input, customFields: [
+      { id: 'replacement', name: 'Primary Owner', value: 'carol' },
+    ] });
+    assert(target.customFields.length === 1 && target.customFields[0].id === 'replacement' &&
+      target.customFields[0].name === 'Primary Owner',
+    `${methodName} allows deletion and a newly named replacement`);
+    await update.call(controller, target.id, { ...input, customFields: [
+      { id: 'replacement', name: 'Changed again', value: 'dave' },
+    ] });
+    assert(target.customFields[0].name === 'Primary Owner' && target.customFields[0].value === 'dave',
+      `${methodName} locks the replacement name after its first save`);
+  }
+  const isNameLocked = loadIndexMethod(indexSource,
+    '  private isDraftFieldNameLocked(', 'isDraftFieldNameLocked');
+  const updateName = loadIndexMethod(indexSource,
+    '  private updateDraftCustomFieldName(', 'updateDraftCustomFieldName');
+  const updateCategoryName = loadIndexMethod(indexSource,
+    '  private updateCategoryDraftCustomFieldName(', 'updateCategoryDraftCustomFieldName');
+  const page = {
+    editingEntryId: 'saved-entry',
+    entries: [{ id: 'saved-entry', customFields: [{ id: 'saved', name: 'Owner' }] }],
+    draftCustomFields: [{ id: 'saved', name: 'Owner', value: 'alice' }, { id: 'fresh', name: '', value: '' }],
+    isDraftFieldNameLocked: isNameLocked,
+    categoryDraftCustomFields: [
+      { id: 'saved', templateFieldId: 'template-owner', name: 'Owner', value: '' },
+      { id: 'fresh', name: '', value: '' },
+    ],
+  };
+  updateName.call(page, 'saved', 'Renamed');
+  updateName.call(page, 'fresh', 'Region');
+  updateCategoryName.call(page, 'saved', 'Renamed');
+  updateCategoryName.call(page, 'fresh', 'Region');
+  assert(page.draftCustomFields[0].name === 'Owner' && page.draftCustomFields[1].name === 'Region',
+    'Entry editor blocks saved-name writes and accepts a fresh field name');
+  assert(page.categoryDraftCustomFields[0].name === 'Owner' &&
+    page.categoryDraftCustomFields[1].name === 'Region',
+  'Category editor blocks saved-name writes and accepts a fresh field name');
+  const savedTemplate = [{ id: 'owner', name: 'Owner', valueType: 'text' }];
+  const renamedTemplate = runtime.categoryTemplateFieldsForUserSave(savedTemplate,
+    [{ ...savedTemplate[0], name: 'Changed' }], new Set(), new Set());
+  assert(renamedTemplate.find((field) => field.id === 'owner')?.name === 'Owner',
+    'Category save preserves an existing field name without stored values');
   const indexGlobals = {
     EntryReferenceStatus: runtime.EntryReferenceStatus,
     FieldValueReferenceStatus: runtime.FieldValueReferenceStatus,
@@ -414,8 +490,8 @@ function main() {
   );
   assert(
     renamedTargetFieldSave.find((field) => field.id === referencedTargetText.id)?.name ===
-      'Directory Address',
-    'A referenced target text field can be renamed because its stable ID is unchanged',
+      'Email',
+    'A saved target field keeps its original name while its stable ID is unchanged',
   );
   const categoryTemplateFieldIdsWithStoredValues = loadIndexMethod(
     controllerSource,

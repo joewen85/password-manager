@@ -248,7 +248,7 @@ function checkFieldReferenceBehavior() {
   );
   const renamedText = editedTemplates.find((field) => field.name === 'Renamed Text');
   const preservedFuture = editedTemplates.find((field) => field.name === 'Owner');
-  assert(renamedText?.id === 'Opaque-Text-ID', 'Harmony category edits keep opaque template IDs when text fields are renamed');
+  assert(renamedText?.id === 'Generated-Replacement-ID', 'Harmony replacement fields use a new ID rather than rename a saved field');
   assert(preservedFuture?.id === 'Future-Template-ID', 'Harmony legacy category edits cannot remove unsupported template fields');
   assert(preservedFuture?.valueType === 'futureRelationV3', 'Harmony legacy category edits preserve unsupported field metadata');
 

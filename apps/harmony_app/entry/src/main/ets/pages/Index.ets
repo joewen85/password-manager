@@ -3675,6 +3675,7 @@ struct Index {
               .width('100%');
           } else {
             TextInput({ placeholder: '字段名称', text: field.name })
+              .enabled(typeof field.templateFieldId !== 'string' || field.templateFieldId.length === 0)
               .width('100%')
               .height(48)
               .backgroundColor(UI_SURFACE_ALT)
@@ -3696,7 +3697,7 @@ struct Index {
                 .fontWeight(FontWeight.Bold)
                 .fontColor(UI_MUTED)
                 .width('100%');
-              Text('已有条目保存了该字段值，可修改名称和目标配置，但不能删除或更改字段类型。')
+              Text('字段保存后名称不可修改；已有值或关联依赖的字段不能删除或更改类型，目标配置仍可修改。')
                 .fontSize(12)
                 .fontColor(UI_MUTED)
                 .width('100%');
@@ -3831,6 +3832,7 @@ struct Index {
         Column({ space: 8 }) {
           if (this.isMultilineField(field)) {
             TextInput({ placeholder: '字段名称', text: field.name })
+              .enabled(!this.isDraftFieldNameLocked(field.id))
               .width('100%')
               .height(48)
               .backgroundColor(UI_SURFACE_ALT)
@@ -3866,6 +3868,7 @@ struct Index {
           } else {
             Row({ space: 8 }) {
               TextInput({ placeholder: '字段名称', text: field.name })
+              .enabled(!this.isDraftFieldNameLocked(field.id))
                 .layoutWeight(2)
                 .height(48)
                 .backgroundColor(UI_SURFACE_ALT)
@@ -5067,7 +5070,7 @@ struct Index {
           typeof existing.templateFieldId === 'string' && existing.templateFieldId.length > 0
           ? existing.templateFieldId
           : templateField.id,
-        name: name,
+        name: existing?.name ?? name,
         value: existing?.value ?? '',
       };
       nextFields.push(nextField);
@@ -5168,7 +5171,15 @@ struct Index {
     this.draftCustomFields = [...this.draftCustomFields, field];
   }
 
+  private isDraftFieldNameLocked(id: string): boolean {
+    const saved = this.entries.find((entry: VaultEntry) => entry.id === this.editingEntryId);
+    return saved?.customFields.some((field: CustomField) => field.id === id) === true;
+  }
+
   private updateDraftCustomFieldName(id: string, value: string): void {
+    if (this.isDraftFieldNameLocked(id)) {
+      return;
+    }
     this.draftCustomFields = this.draftCustomFields.map((field: CustomField) => {
       if (field.id !== id) {
         return field;
@@ -5259,6 +5270,10 @@ struct Index {
   }
 
   private updateCategoryDraftCustomFieldName(id: string, value: string): void {
+    const saved = this.categoryDraftCustomFields.find((field: CustomField) => field.id === id);
+    if (typeof saved?.templateFieldId === 'string' && saved.templateFieldId.length > 0) {
+      return;
+    }
     this.categoryDraftCustomFields = this.categoryDraftCustomFields.map((field: CustomField) => {
       if (field.id !== id) {
         return field;

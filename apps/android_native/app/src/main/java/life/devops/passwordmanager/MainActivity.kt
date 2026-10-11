@@ -1043,6 +1043,7 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         val nameInput = input(text(R.string.custom_field_name)).apply {
                             setText(field.name)
+                            isEnabled = template.fields.none { it.id == field.id }
                             addTextChangedListener(SimpleTextWatcher { value ->
                                 updateField(index) { current -> current.copy(name = value) }
                             })
@@ -1908,7 +1909,10 @@ class MainActivity : AppCompatActivity() {
                 fieldsContainer.addView(LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(0, dp(4), 0, dp(8))
-                    val nameInput = input(text(R.string.custom_field_name)).apply { setText(field.name) }
+                    val nameInput = input(text(R.string.custom_field_name)).apply {
+                        setText(field.name)
+                        isEnabled = entry?.customFields.orEmpty().none { it.id == field.id }
+                    }
                     val valueInput = input(
                         hintText = text(R.string.custom_field_value),
                         singleLine = !isMultilineFieldName(field.name),
@@ -3698,7 +3702,8 @@ class MainActivity : AppCompatActivity() {
         val measuredHeight = dialogWindow.decorView.height
         val height = if (fillHeight || dialogWindow.decorView.findViewWithTag<View>("entry_editor_body") != null) {
             region.height
-        } else if (measuredHeight > region.height) region.height else ViewGroup.LayoutParams.WRAP_CONTENT
+        // Keep an already clamped dialog at its limit instead of alternating with WRAP_CONTENT.
+        } else if (measuredHeight >= region.height) region.height else ViewGroup.LayoutParams.WRAP_CONTENT
         val shownHeight = if (height > 0) height else measuredHeight.coerceAtMost(region.height)
         val y = region.top + (region.height - shownHeight) / 2
         if (params.width != region.width || params.height != height || params.x != region.left || params.y != y) {

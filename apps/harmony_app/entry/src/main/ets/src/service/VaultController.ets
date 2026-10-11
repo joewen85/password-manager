@@ -1056,7 +1056,7 @@ export class VaultController {
     this.ensureUnlocked();
     const target = this.requireVisibleEntry(entryId, VaultEntryType.CREDENTIAL);
     const tags = normalizeTags(input.tags);
-    const customFields = normalizeCustomFields(input.customFields);
+    const customFields = preserveSavedCustomFieldNames(normalizeCustomFields(input.customFields), target.customFields);
     target.label = input.label.trim();
     target.payload = {
       username: input.username,
@@ -1082,7 +1082,7 @@ export class VaultController {
     this.ensureUnlocked();
     const target = this.requireVisibleEntry(entryId, VaultEntryType.SERVER);
     const tags = normalizeTags(input.tags);
-    const customFields = normalizeCustomFields(input.customFields);
+    const customFields = preserveSavedCustomFieldNames(normalizeCustomFields(input.customFields), target.customFields);
     target.label = input.label.trim();
     target.payload = {
       name: input.name,
@@ -1110,7 +1110,7 @@ export class VaultController {
     this.ensureUnlocked();
     const target = this.requireVisibleEntry(entryId, VaultEntryType.SERVICE);
     const tags = normalizeTags(input.tags);
-    const customFields = normalizeCustomFields(input.customFields);
+    const customFields = preserveSavedCustomFieldNames(normalizeCustomFields(input.customFields), target.customFields);
     target.label = input.label.trim();
     target.payload = {
       name: input.name,
@@ -3425,16 +3425,11 @@ function mergeEditableTemplateFields(
 
   requestedFields.forEach((requestedField: FieldTemplate) => {
     const requestedName = readString(requestedField.name).toLowerCase();
-    let existingIndex = existingFields.findIndex(
+    const existingIndex = existingFields.findIndex(
       (field: FieldTemplate, index: number) =>
-        !usedExistingIndexes.has(index) && readString(field.name).toLowerCase() === requestedName,
+        !usedExistingIndexes.has(index) &&
+        (field.id === requestedField.id || readString(field.name).toLowerCase() === requestedName),
     );
-    if (existingIndex < 0) {
-      existingIndex = existingFields.findIndex(
-        (field: FieldTemplate, index: number) =>
-          !usedExistingIndexes.has(index) && normalizeFieldValueType(field.valueType) === 'text',
-      );
-    }
     if (existingIndex < 0) {
       merged.push(requestedField);
       return;
@@ -3443,7 +3438,7 @@ function mergeEditableTemplateFields(
     const existingField = existingFields[existingIndex];
     merged.push({
       id: existingField.id,
-      name: requestedField.name,
+      name: existingField.name,
       valueType: normalizeFieldValueType(existingField.valueType),
       targetCategory: readPreservedString(existingField.targetCategory),
       targetFieldId: readPreservedString(existingField.targetFieldId),
@@ -3734,6 +3729,18 @@ function normalizeTags(tags: string[]): string[] {
   const result = setToArray(uniq);
   result.sort((a: string, b: string) => a.localeCompare(b));
   return result;
+}
+
+function preserveSavedCustomFieldNames(fields: CustomField[], savedFields: CustomField[]): CustomField[] {
+  return fields.map((field: CustomField): CustomField => {
+    const saved = savedFields.find((candidate: CustomField) => candidate.id === field.id);
+    return {
+      id: field.id,
+      templateFieldId: field.templateFieldId,
+      name: saved?.name ?? field.name,
+      value: field.value,
+    };
+  });
 }
 
 function normalizeCustomFields(fields: CustomField[] | undefined): CustomField[] {

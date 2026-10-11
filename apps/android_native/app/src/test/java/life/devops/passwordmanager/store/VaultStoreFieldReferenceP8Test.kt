@@ -108,7 +108,7 @@ class VaultStoreFieldReferenceP8Test {
                 ),
             )
             assertEquals(
-                "Login name",
+                targetField.name,
                 store.categoryTemplate("Accounts")?.fields
                     ?.single { field -> field.id == targetField.id }
                     ?.name,
@@ -122,7 +122,7 @@ class VaultStoreFieldReferenceP8Test {
             )
             val afterTypeChange = assertNotNull(store.categoryTemplate("Accounts"))
                 .fields.single { it.id == targetField.id }
-            assertEquals("Login name", afterTypeChange.name)
+            assertEquals(targetField.name, afterTypeChange.name)
             assertEquals("text", afterTypeChange.valueType)
 
             assertTrue(store.updateCategoryTemplate("Accounts", emptyList()))

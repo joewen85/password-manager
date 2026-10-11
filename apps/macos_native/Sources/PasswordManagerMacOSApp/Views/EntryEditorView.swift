@@ -103,6 +103,7 @@ struct EntryEditorView: View {
 
                 TemplateFieldsEditor(
                     fields: $draft.customFields,
+                    savedFieldIDs: Set(entry?.customFields.map(\.id) ?? []),
                     protectedFieldIDs: draft.protectedCustomFieldIds,
                     sourceCategory: draft.category,
                     template: currentCategoryTemplate,
@@ -691,6 +692,7 @@ private struct CustomFieldsEditor: View {
 
 private struct TemplateFieldsEditor: View {
     @Binding var fields: [CustomField]
+    var savedFieldIDs: Set<String> = []
     var protectedFieldIDs: Set<String>
     var sourceCategory: String
     var template: CategoryTemplate?
@@ -760,7 +762,7 @@ private struct TemplateFieldsEditor: View {
                 onEditCategoryFields: onEditCategoryFields
             )
         } else if semantics.semantic == .text {
-            CustomFieldRow(field: fieldBinding, showsValue: true, remove: { remove(id: field.id) })
+            CustomFieldRow(field: fieldBinding, isNameLocked: savedFieldIDs.contains(field.id), showsValue: true, remove: { remove(id: field.id) })
         }
     }
 }
@@ -794,6 +796,7 @@ private struct ServiceAccountEditor: View {
 
 private struct CustomFieldRow: View {
     @Binding var field: CustomField
+    var isNameLocked: Bool = false
     var showsValue: Bool
     var remove: () -> Void
 
@@ -814,6 +817,7 @@ private struct CustomFieldRow: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     TextField(L10n.t("Field Name"), text: $field.name)
+                        .disabled(isNameLocked)
                         .textFieldStyle(.roundedBorder)
                         .frame(minWidth: 160)
                 }

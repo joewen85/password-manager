@@ -98,7 +98,7 @@
     <string name="no_custom_fields">No fields.</string>
     <string name="edit_fields">Edit fields</string>
     <string name="edit_category_fields">Edit category fields</string>
-    <string name="category_fields_hint">Create text fields or field references. A field reference requires a target category and text field.</string>
+    <string name="category_fields_hint">Saved field names are read-only. Delete and add a field to change its name. Field references require a target category and text field.</string>
     <string name="field_type">Field type</string>
     <string name="field_type_text">Text</string>
     <string name="field_type_entry_reference">Entry reference</string>

@@ -66,7 +66,7 @@ internal fun mergeCustomFieldsForLegacyEditorSave(
         }
         val editedIndex = remainingEdited.indexOfFirst { field -> field.id == original.id }
         if (editedIndex >= 0) {
-            merged += remainingEdited.removeAt(editedIndex)
+            merged += remainingEdited.removeAt(editedIndex).copy(name = original.name)
         }
     }
     merged += remainingEdited
@@ -101,7 +101,7 @@ internal fun mergeCustomFieldsForEditorSave(
         }
         val editedIndex = remainingEdited.indexOfFirst { field -> field.id == original.id }
         if (editedIndex >= 0) {
-            merged += remainingEdited.removeAt(editedIndex)
+            merged += remainingEdited.removeAt(editedIndex).copy(name = original.name)
         }
     }
     merged += remainingEdited
@@ -163,7 +163,7 @@ internal fun applyCategoryTemplateToDraft(
         }
         val field = existing?.field?.copy(
             templateFieldId = templateField.id,
-            name = name,
+            name = existing.field.name,
         ) ?: CustomField(
             templateFieldId = templateField.id,
             name = name,

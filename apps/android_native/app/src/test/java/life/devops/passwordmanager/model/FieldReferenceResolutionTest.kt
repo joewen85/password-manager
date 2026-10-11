@@ -208,7 +208,7 @@ class FieldReferenceResolutionTest {
     }
 
     @Test
-    fun referencedTargetTextFieldsCanBeRenamedButNotDeletedOrRetyped() {
+    fun referencedTargetTextFieldsKeepNamesAndCannotBeDeletedOrRetyped() {
         val referencedIds = fieldReferenceTargetFieldIds(
             targetCategory = " accounts ",
             templates = listOf(
@@ -233,7 +233,7 @@ class FieldReferenceResolutionTest {
             referencedTargetFieldIds = referencedIds,
         )
         assertEquals(
-            targetField.copy(name = "Login name"),
+            targetField,
             renamed.single { field -> field.id == targetField.id },
         )
 

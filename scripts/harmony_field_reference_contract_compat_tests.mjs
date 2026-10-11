@@ -269,12 +269,13 @@ function main() {
       targetCategory: '',
       targetFieldId: 'Preserved-Extension-Value',
     }],
-    [{ id: 'Requested-Text', name: 'New Name', valueType: 'text' }],
+    [{ id: 'Existing-Text', name: 'New Name', valueType: 'text' }],
   );
   assert(
     mergedEditable[0].id === 'Existing-Text' &&
+      mergedEditable[0].name === 'Old Name' &&
       mergedEditable[0].targetFieldId === 'Preserved-Extension-Value',
-    'Editable template merge keeps existing extension metadata',
+    'Editable template merge keeps saved names and existing extension metadata',
   );
 
   const sourceTemplates = [{ category: 'Servers', fields: [normalizedReference] }];

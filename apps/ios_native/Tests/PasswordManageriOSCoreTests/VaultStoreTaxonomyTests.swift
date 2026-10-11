@@ -170,6 +170,7 @@ struct VaultStoreTaxonomyTests {
         #expect(store.categoryTemplateStoredValueFieldIds("Infra").contains(reference.id))
 
         var conflictingReference = reference
+        conflictingReference.id = "new-conflicting-reference"
         conflictingReference.name = " owner "
         #expect(!store.updateCategoryTemplate(
             category: "Infra",

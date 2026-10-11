@@ -40,16 +40,28 @@ class CategoryTemplateEditingTest {
         )
 
         assertEquals(listOf("名称", "备注"), saved.take(2).map { it.name })
-        assertEquals("legacy-notes", saved.single { it.name == "Updated notes" }.id)
+        assertEquals("legacy-notes", saved.single { it.name == "Notes" }.id)
         assertEquals(
             owner.copy(
-                name = "Primary owner",
+                name = "Owner",
                 targetCategory = "Identity",
                 targetFieldId = " identity-email ",
             ),
             saved.single { it.id == owner.id },
         )
         assertTrue(saved.none { it.id == removable.id })
+    }
+
+    @Test
+    fun deletedFieldCanBeReplacedWithANewNamedField() {
+        val original = FieldTemplate(id = "original", name = "Owner")
+        val afterDeletion = categoryTemplateFieldsForUserSave(listOf(original), emptyList())
+        assertTrue(afterDeletion.none { it.id == original.id })
+        val replacement = FieldTemplate(id = "replacement", name = "Primary Owner")
+        val saved = categoryTemplateFieldsForUserSave(afterDeletion, listOf(replacement))
+        assertEquals(replacement, saved.single { it.id == replacement.id })
+        val renamed = categoryTemplateFieldsForUserSave(saved, listOf(replacement.copy(name = "Changed")))
+        assertEquals("Primary Owner", renamed.single { it.id == replacement.id }.name)
     }
 
     @Test
@@ -88,7 +100,7 @@ class CategoryTemplateEditingTest {
     }
 
     @Test
-    fun storedReferenceAllowsRenameAndTargetChanges() {
+    fun storedReferenceKeepsNameAndAllowsTargetChanges() {
         val reference = FieldTemplate(
             id = "stored-reference",
             name = "Owner",
@@ -111,7 +123,7 @@ class CategoryTemplateEditingTest {
 
         assertEquals(
             reference.copy(
-                name = "Primary owner",
+                name = "Owner",
                 targetCategory = "Identity",
                 targetFieldId = " identity-email ",
             ),
@@ -183,7 +195,7 @@ class CategoryTemplateEditingTest {
             existing = listOf(legacy),
             requestedCustomFields = listOf(legacy.copy(name = "Primary owner")),
         )
-        assertEquals("template_owner", saved.single { it.name == "Primary owner" }.id)
+        assertEquals("template_owner", saved.single { it.name == "Owner" }.id)
     }
 
     @Test
@@ -217,6 +229,6 @@ class CategoryTemplateEditingTest {
             requestedCustomFields = listOf(legacy.copy(name = "Primary owner")),
         )
 
-        assertEquals("   ", saved.single { it.name == "Primary owner" }.id)
+        assertEquals("   ", saved.single { it.name == "Owner" }.id)
     }
 }

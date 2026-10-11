@@ -189,7 +189,14 @@ final class VaultStore {
             entries[index].label = draft.label
             entries[index].type = finalPayload.storageKind
             entries[index].payload = finalPayload
-            entries[index].customFields = draft.normalizedCustomFields
+            let savedFields = entries[index].customFields
+            entries[index].customFields = draft.normalizedCustomFields.map { field in
+                var updated = field
+                if let saved = savedFields.first(where: { $0.id == field.id }) {
+                    updated.name = saved.name
+                }
+                return updated
+            }
             entries[index].updatedAt = now
             entries[index].isDeleted = false
             entries[index].deletedAt = nil
@@ -455,33 +462,17 @@ final class VaultStore {
             storedValueFieldIDs.contains($0.id)
                 || !isEditableCategoryFieldType($0.valueType)
         }
-        var claimedMandatoryNames = Set([nameField.name.lowercased()])
         var mandatoryFinalFields: [FieldTemplate] = []
         for existing in mandatoryFields {
             let isUnknown = !isEditableCategoryFieldType(existing.valueType)
             if isUnknown {
-                claimedMandatoryNames.insert(
-                    existing.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                )
                 mandatoryFinalFields.append(existing)
                 continue
             }
             let requested = requestedByID[existing.id]
-            let requestedName = requested?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let requestedNameKey = requestedName.lowercased()
-            let conflictsWithMandatoryField = mandatoryFields.contains {
-                $0.id != existing.id
-                    && $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == requestedNameKey
-            }
-            let canRename = !requestedName.isEmpty
-                && !requestedName.caseInsensitiveEquals("名称")
-                && !conflictsWithMandatoryField
-                && !claimedMandatoryNames.contains(requestedNameKey)
-            let name = canRename ? requestedName : existing.name
-            claimedMandatoryNames.insert(name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
             mandatoryFinalFields.append(FieldTemplate(
                 id: existing.id,
-                name: name,
+                name: existing.name,
                 valueType: existing.normalizedValueType,
                 targetCategory: existing.normalizedValueType == "fieldReference"
                     ? (requested?.targetCategory ?? existing.targetCategory)
@@ -511,7 +502,7 @@ final class VaultStore {
                 continue
             }
 
-            let name = requested.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let name = (existing?.name ?? requested.name).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty, !name.caseInsensitiveEquals("名称") else { continue }
             guard !reservedMandatoryNames.contains(name.lowercased()) else { continue }
             let requestedType = requested.normalizedValueType
@@ -1984,7 +1975,7 @@ struct EntryDraft: Equatable {
                 field: CustomField(
                     id: existing?.field.id ?? UUID().uuidString.lowercased(),
                     templateFieldId: templateField.id,
-                    name: name,
+                    name: existing?.field.name ?? name,
                     value: existing?.field.value ?? ""
                 ),
                 sourceCategory: targetCategory,

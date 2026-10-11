@@ -99,6 +99,7 @@ func categoryTemplateFieldsForUserSave(
         } else {
             var normalized = normalizedCategoryTemplateField(field)
             normalized.id = current.id
+            normalized.name = current.name
             merged.append(normalized)
         }
     }

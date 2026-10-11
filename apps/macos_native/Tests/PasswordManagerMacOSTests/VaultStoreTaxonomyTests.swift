@@ -404,7 +404,7 @@ struct VaultStoreTaxonomyTests {
         ))
 
         let updatedTemplate = try #require(store.categoryTemplates.first)
-        let renamedOwner = try #require(updatedTemplate.fields.first { $0.name == "Primary Owner" })
+        let renamedOwner = try #require(updatedTemplate.fields.first { $0.name == "Owner" })
         #expect(renamedOwner.id == ownerField.id)
         #expect(renamedOwner.valueType == "text")
         #expect(updatedTemplate.fields.contains(referenceField))
@@ -414,7 +414,7 @@ struct VaultStoreTaxonomyTests {
         let reloadedStore = VaultStore(repository: repository, syncSettingsRepository: nil)
         #expect(reloadedStore.unlock(password: "test-password"))
         let reloadedTemplate = try #require(reloadedStore.categoryTemplates.first)
-        #expect(reloadedTemplate.fields.first { $0.name == "Primary Owner" }?.id == ownerField.id)
+        #expect(reloadedTemplate.fields.first { $0.name == "Owner" }?.id == ownerField.id)
         #expect(reloadedTemplate.fields.contains(referenceField))
         #expect(reloadedTemplate.fields.contains(futureField))
     }

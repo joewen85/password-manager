@@ -504,7 +504,7 @@ struct FieldReferenceContractTests {
             CustomField(
                 id: "harmony-field:owner",
                 templateFieldId: "template_owner",
-                name: "Renamed Owner",
+                name: "Owner",
                 value: "harmony-entry:account"
             )
         ])

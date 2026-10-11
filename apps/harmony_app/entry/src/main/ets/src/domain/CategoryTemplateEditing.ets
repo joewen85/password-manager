@@ -53,7 +53,7 @@ export function categoryTemplateFieldsForUserSave(
     }
     const mergedField: FieldTemplate = {
       id: current.id,
-      name: field.name,
+      name: current.name,
       valueType: normalizeValueType(field.valueType),
       targetCategory: normalizeTargetCategory(field),
     };

@@ -157,7 +157,14 @@ final class VaultStore {
             entries[index].label = draft.label
             entries[index].type = draft.type
             entries[index].payload = finalPayload
-            entries[index].customFields = draft.normalizedCustomFields
+            let savedFields = entries[index].customFields
+            entries[index].customFields = draft.normalizedCustomFields.map { field in
+                var updated = field
+                if let saved = savedFields.first(where: { $0.id == field.id }) {
+                    updated.name = saved.name
+                }
+                return updated
+            }
             entries[index].updatedAt = now
             entries[index].isDeleted = false
             entries[index].deletedAt = nil
@@ -1350,7 +1357,7 @@ struct EntryDraft: Equatable {
                 configured = CustomField(
                     id: existing?.id ?? UUID().uuidString.lowercased(),
                     templateFieldId: templateField.id,
-                    name: name,
+                    name: existing?.name ?? name,
                     value: existing?.value ?? ""
                 )
             }

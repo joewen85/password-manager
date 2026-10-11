@@ -376,7 +376,7 @@ struct FieldLevelReferenceBehaviorTests {
         ))
         #expect(store.categoryTemplate(for: "Accounts")?.fields.first {
             $0.id == targetField.id
-        }?.name == "Login name")
+        }?.name == targetField.name)
     }
 }
 

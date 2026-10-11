@@ -38,7 +38,7 @@ internal fun categoryTemplateFieldsForUserSave(
             (current.id in storedValueFieldIds || isReferencedTextTarget) &&
                 normalizedCategoryFieldValueType(current.valueType) !=
                 normalizedCategoryFieldValueType(field.valueType) -> merged += current
-            else -> merged += normalizedCategoryTemplateField(field).copy(id = current.id)
+            else -> merged += normalizedCategoryTemplateField(field).copy(id = current.id, name = current.name)
         }
     }
 

@@ -74,6 +74,92 @@ class ModernFoldableUiInstrumentedTest {
     }
 
     @Test
+    fun savedCategoryNamesAreReadOnlyAndNewCategoryNamesLockAfterSave() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                unlockFixture(activity)
+                assertTrue(store(activity).addCategory("Name policy", null, listOf("Owner")))
+                MainActivity::class.java.getDeclaredMethod(
+                    "showCategoryTemplateEditor", String::class.java, kotlin.jvm.functions.Function0::class.java,
+                ).apply { isAccessible = true }.invoke(activity, "Name policy", {})
+            }
+            idle()
+            scenario.onActivity { activity ->
+                val views = descendants(editor(activity).window!!.decorView)
+                assertFalse(views.filterIsInstance<EditText>().single { it.text.toString() == "Owner" }.isEnabled)
+                views.filterIsInstance<MaterialButton>()
+                    .single { it.text.toString() == activity.getString(R.string.add_custom_field) }.performClick()
+                val newName = descendants(editor(activity).window!!.decorView).filterIsInstance<EditText>()
+                    .single { it.text.isNullOrEmpty() }
+                assertTrue(newName.isEnabled)
+                newName.setText("Region")
+                editor(activity).getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+                assertTrue(store(activity).categoryTemplate("Name policy")!!.fields.any { it.name == "Region" })
+            }
+            idle()
+            scenario.onActivity { activity ->
+                MainActivity::class.java.getDeclaredMethod(
+                    "showCategoryTemplateEditor", String::class.java, kotlin.jvm.functions.Function0::class.java,
+                ).apply { isAccessible = true }.invoke(activity, "Name policy", {})
+            }
+            idle()
+            scenario.onActivity { activity ->
+                val names = descendants(editor(activity).window!!.decorView).filterIsInstance<EditText>()
+                assertFalse(names.single { it.text.toString() == "Region" }.isEnabled)
+            }
+        }
+    }
+
+    @Test
+    fun savedFieldNamesAreReadOnlyWhileNewFieldNamesRemainEditable() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                unlockFixture(activity)
+                val saved = store(activity).listEntries().first { it.label == "GitHub" }
+                MainActivity::class.java.getDeclaredMethod(
+                    "showEditor", VaultEntry::class.java, String::class.java, String::class.java, String::class.java,
+                ).apply { isAccessible = true }.invoke(activity, saved, "", "", null)
+            }
+            idle()
+            scenario.onActivity { activity ->
+                val dialog = editor(activity)
+                val inputs = descendants(dialog.window!!.decorView).filterIsInstance<EditText>()
+                val name = inputs.single { it.text.toString() == "Username" }
+                val value = inputs.single { it.text.toString() == "demo@example.com" }
+                assertFalse(name.isEnabled)
+                assertTrue(value.isEnabled)
+                value.setText("updated@example.com")
+                descendants(dialog.window!!.decorView).filterIsInstance<MaterialButton>()
+                    .single { it.text.toString() == activity.getString(R.string.add_custom_field) }.performClick()
+            }
+            idle()
+            scenario.onActivity { activity ->
+                val dialog = editor(activity)
+                val names = descendants(dialog.window!!.decorView).filterIsInstance<TextInputLayout>()
+                    .filter { it.hint.toString() == activity.getString(R.string.custom_field_name) }
+                val newName = names.mapNotNull { it.editText }.single { it.text.isNullOrEmpty() }
+                assertTrue(newName.isEnabled)
+                newName.setText("Region")
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+                val saved = store(activity).listEntries().first { it.label == "GitHub" }
+                assertEquals("Username", saved.customFields.first { it.value == "updated@example.com" }.name)
+                assertTrue(saved.customFields.any { it.name == "Region" })
+                MainActivity::class.java.getDeclaredMethod(
+                    "showEditor", VaultEntry::class.java, String::class.java, String::class.java, String::class.java,
+                ).apply { isAccessible = true }.invoke(activity, saved, "", "", null)
+            }
+            idle()
+            capture("saved-field-names-locked")
+            scenario.onActivity { activity ->
+                val names = descendants(editor(activity).window!!.decorView).filterIsInstance<TextInputLayout>()
+                    .filter { it.hint.toString() == activity.getString(R.string.custom_field_name) }
+                    .mapNotNull { it.editText }
+                assertTrue(names.filter { it.text.toString() in listOf("Username", "Region") }.all { !it.isEnabled })
+            }
+        }
+    }
+
+    @Test
     fun editorPreservesUnsavedFieldsAcrossFoldChangesAndAvoidsVerticalHinge() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             var hinge = Rect()

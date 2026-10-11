@@ -98,7 +98,7 @@
     <string name="no_custom_fields">暂无字段。</string>
     <string name="edit_fields">编辑字段</string>
     <string name="edit_category_fields">编辑分类字段</string>
-    <string name="category_fields_hint">可创建文本字段或字段关联；字段关联必须选择目标分类和目标文本字段。</string>
+    <string name="category_fields_hint">字段保存后名称只读，改名需删除后重新添加。字段关联必须选择目标分类和目标文本字段。</string>
     <string name="field_type">字段类型</string>
     <string name="field_type_text">文本</string>
     <string name="field_type_entry_reference">关联条目</string>

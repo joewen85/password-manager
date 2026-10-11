@@ -350,6 +350,7 @@ private struct CategoryFieldsEditRequest: Identifiable {
 private struct CategoryFieldsEditView: View {
     @Bindable var store: VaultStore
     let category: String
+    let savedFieldIDs: Set<String>
     let storedValueFieldIDs: Set<String>
     let referencedTargetFieldIDs: Set<String>
     var onSaved: () -> Void
@@ -361,6 +362,7 @@ private struct CategoryFieldsEditView: View {
     init(store: VaultStore, request: CategoryFieldsEditRequest, onSaved: @escaping () -> Void) {
         self.store = store
         self.category = request.category
+        self.savedFieldIDs = Set(request.fields.map(\.id))
         self.storedValueFieldIDs = request.storedValueFieldIDs
         self.referencedTargetFieldIDs = request.referencedTargetFieldIDs
         self.onSaved = onSaved
@@ -373,6 +375,7 @@ private struct CategoryFieldsEditView: View {
                 Section(category) {
                     CategoryTemplateFieldEditor(
                         fields: $fields,
+                        savedFieldIDs: savedFieldIDs,
                         sourceCategory: category,
                         categories: store.categories,
                         templates: prospectiveTemplates,
@@ -477,6 +480,7 @@ struct CategoryTemplateCreationFieldsEditor: View {
 
 struct CategoryTemplateFieldEditor: View {
     @Binding var fields: [FieldTemplate]
+    var savedFieldIDs: Set<String> = []
     let sourceCategory: String
     let categories: [String]
     let templates: [CategoryTemplate]
@@ -494,6 +498,7 @@ struct CategoryTemplateFieldEditor: View {
                 VStack(alignment: .leading, spacing: 8) {
                     if isKnown {
                         TextField(L10n.t("Field Name"), text: fieldBinding.name)
+                            .disabled(savedFieldIDs.contains(field.id))
                             .textFieldStyle(.roundedBorder)
 
                         Picker(L10n.t("Field Type"), selection: fieldBinding.valueType) {
