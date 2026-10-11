@@ -47,6 +47,10 @@ class ModernFoldableUiInstrumentedTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
                 unlockFixture(activity)
+                assertEquals("Name", activity.getString(R.string.custom_field_name))
+                assertEquals("Value", activity.getString(R.string.custom_field_value))
+                assertFalse(activity.getString(R.string.custom_field_name).contains("custom", ignoreCase = true))
+                assertFalse(activity.getString(R.string.custom_field_value).contains("custom", ignoreCase = true))
                 val views = descendants(activity.window.decorView)
                 assertTrue(views.any { it is MaterialButton })
                 assertTrue(views.any { it is Chip })

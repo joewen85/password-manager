@@ -1374,7 +1374,6 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             background = rounded(uiColor(R.color.ui_surface_alt), dp(12), uiColor(R.color.ui_stroke))
             setPadding(dp(14), dp(12), dp(14), dp(12))
-            addView(label(text(R.string.custom_fields), 13f, uiColor(R.color.ui_muted), Typeface.BOLD))
             entry.customFields.forEach { field ->
                 val semantics = customFieldSemantics(field, template)
                 addView(LinearLayout(this@MainActivity).apply {
