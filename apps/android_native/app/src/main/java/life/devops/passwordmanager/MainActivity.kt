@@ -563,12 +563,14 @@ class MainActivity : AppCompatActivity() {
             isHorizontalScrollBarEnabled = false
             addView(LinearLayout(this@MainActivity).apply {
                 gravity = Gravity.CENTER_VERTICAL
-                addView(actionButton(text(R.string.create_label), primary = true) {
-                    showCreateMenu()
+                lateinit var createButton: Button
+                createButton = actionButton(text(R.string.create_label), primary = true) {
+                    showCreateMenu(createButton)
                 }.apply {
                     contentDescription = text(R.string.create_label)
                     (this as MaterialButton).setIconResource(R.drawable.ic_add_24)
-                }, wrapWrap(right = dp(12)))
+                }
+                addView(createButton, wrapWrap(right = dp(12)))
                 addView(toolbarIconButton(R.drawable.ic_sync_24, text(R.string.sync)) {
                     runSync()
                 }.also { registerSyncButton(it) }, wrapWrap(right = dp(8)))
@@ -800,7 +802,7 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun showCreateMenu(anchor: View? = null) {
+    private fun showCreateMenu(anchor: View) {
         val form = formRoot()
         form.addView(formTitle(text(R.string.create_label)))
         form.addView(label(text(R.string.create_entry_menu_hint), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(8)))

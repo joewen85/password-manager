@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.EditText
 import android.widget.LinearLayout
 import androidx.appcompat.app.AlertDialog
@@ -69,6 +70,47 @@ class ModernFoldableUiInstrumentedTest {
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
                 assertFalse(dialog.isShowing)
                 assertTrue(store(activity).listEntries().any { it.label == "Saved from Material editor" })
+            }
+        }
+    }
+
+    @Test
+    fun createButtonOpensAnchoredMenuAndEntryEditor() {
+        val automation = instrumentation.uiAutomation
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                unlockFixture(activity)
+            }
+            idle()
+            scenario.onActivity { activity ->
+                descendants(activity.window.decorView)
+                    .filterIsInstance<MaterialButton>()
+                    .single { it.text.toString() == activity.getString(R.string.create_label) }
+                    .performClick()
+            }
+            idle()
+            val actionText = instrumentation.targetContext.getString(R.string.create_entry)
+            var createEntry: AccessibilityNodeInfo? = null
+            val deadline = android.os.SystemClock.uptimeMillis() + 3_000
+            while (createEntry == null && android.os.SystemClock.uptimeMillis() < deadline) {
+                createEntry = automation.rootInActiveWindow
+                    ?.findAccessibilityNodeInfosByText(actionText)?.singleOrNull { it.isClickable }
+                if (createEntry == null) Thread.sleep(100)
+            }
+            assertNotNull("Create must open an accessible menu action within three seconds", createEntry)
+            val menuAction = createEntry!!
+            assertTrue("Create menu action must be visible after clicking Create", menuAction.isVisibleToUser)
+            val bounds = Rect()
+            menuAction.getBoundsInScreen(bounds)
+            scenario.onActivity { activity ->
+                val viewport = Rect()
+                activity.window.decorView.getWindowVisibleDisplayFrame(viewport)
+                assertTrue("Create menu action $bounds must fit in viewport $viewport", viewport.contains(bounds))
+            }
+            assertTrue(menuAction.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            idle()
+            scenario.onActivity { activity ->
+                assertTrue("Create entry should open the editor", editor(activity).isShowing)
             }
         }
     }
