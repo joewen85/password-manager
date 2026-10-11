@@ -109,6 +109,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
+import java.util.WeakHashMap
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -158,6 +159,7 @@ class MainActivity : AppCompatActivity() {
     private var windowLayoutInfo: WindowLayoutInfo? = null
     private var windowLayoutJob: Job? = null
     private val trackedDialogs = mutableSetOf<AlertDialog>()
+    private val dialogNaturalHeights = WeakHashMap<AlertDialog, Int>()
     private var editorRelayout: (() -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -3384,6 +3386,7 @@ class MainActivity : AppCompatActivity() {
                     initialPaddingBottom + insets.systemWindowInsetBottom,
                 )
             }
+            view.post { relayoutDialogs() }
             insets
         }
         root.requestApplyInsets()
@@ -3663,13 +3666,17 @@ class MainActivity : AppCompatActivity() {
                 trackedDialogs += dialog
                 dialog.window?.decorView?.apply {
                     addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> positionDialog(dialog) }
-                    setOnApplyWindowInsetsListener { _, insets ->
-                        positionDialog(dialog)
+                    setOnApplyWindowInsetsListener { view, insets ->
+                        // Root insets are updated after dispatch. Resize against the new IME state.
+                        view.post { if (dialog.isShowing) positionDialog(dialog) }
                         insets
                     }
                     addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
                         override fun onViewAttachedToWindow(view: View) = Unit
-                        override fun onViewDetachedFromWindow(view: View) { trackedDialogs -= dialog }
+                        override fun onViewDetachedFromWindow(view: View) {
+                            trackedDialogs -= dialog
+                            dialogNaturalHeights.remove(dialog)
+                        }
                     })
                 }
             }
@@ -3702,7 +3709,20 @@ class MainActivity : AppCompatActivity() {
         val region = dialogRegion()
         val params = dialogWindow.attributes
         val measuredHeight = dialogWindow.decorView.height
-        val height = if (fillHeight || dialogWindow.decorView.findViewWithTag<View>("entry_editor_body") != null) {
+        val isEditor = dialogWindow.decorView.findViewWithTag<View>("entry_editor_body") != null
+        val imeVisible = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            dialogWindow.decorView.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true
+        } else {
+            @Suppress("DEPRECATION")
+            (dialogWindow.decorView.rootWindowInsets?.systemWindowInsetBottom ?: 0) > 0
+        }
+        if (!isEditor && !imeVisible && measuredHeight > 0) {
+            dialogNaturalHeights[dialog] = maxOf(dialogNaturalHeights[dialog] ?: 0, measuredHeight)
+        }
+        val rememberedHeight = dialogNaturalHeights[dialog] ?: 0
+        val height = if (!isEditor && !fillHeight && !imeVisible && rememberedHeight > 0) {
+            rememberedHeight.coerceAtMost(region.height)
+        } else if (fillHeight || isEditor) {
             region.height
         // Keep an already clamped dialog at its limit instead of alternating with WRAP_CONTENT.
         } else if (measuredHeight >= region.height) region.height else ViewGroup.LayoutParams.WRAP_CONTENT
@@ -3717,6 +3737,15 @@ class MainActivity : AppCompatActivity() {
             params.y = y
             params.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
             dialogWindow.attributes = params
+            if (height == ViewGroup.LayoutParams.WRAP_CONTENT) {
+                // The IME resize pass may leave the decor view measured with the
+                // keyboard's smaller height. Switching back to WRAP_CONTENT needs
+                // a fresh measure pass before the next position calculation.
+                dialogWindow.decorView.requestLayout()
+                dialogWindow.decorView.post {
+                    if (dialog.isShowing) positionDialog(dialog)
+                }
+            }
         }
     }
 

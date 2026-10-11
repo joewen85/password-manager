@@ -245,6 +245,58 @@ class ModernFoldableUiInstrumentedTest {
     }
 
     @Test
+    fun dialogsRestoreHeightAfterKeyboardDismissal() {
+        org.junit.Assume.assumeTrue(android.os.Build.VERSION.SDK_INT >= 30)
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> unlockFixture(activity) }
+            for (settings in listOf(true, false)) {
+                scenario.onActivity { activity ->
+                    if (settings) {
+                        MainActivity::class.java.getDeclaredMethod("showSettings")
+                            .apply { isAccessible = true }.invoke(activity)
+                    } else openEditor(activity)
+                }
+                idle()
+                var initialHeight = 0
+                scenario.onActivity { activity -> initialHeight = editor(activity).window!!.decorView.height }
+                assertTrue(initialHeight > 0)
+                repeat(2) {
+                    scenario.onActivity { activity ->
+                        val dialog = editor(activity)
+                        val inputs = descendants(dialog.window!!.decorView).filterIsInstance<EditText>()
+                        val input = if (settings) {
+                            inputs.single { it.hint.toString() == activity.getString(R.string.idle_auto_lock_minutes) }
+                        } else inputs.first()
+                        input.requestFocus()
+                        dialog.window!!.insetsController!!.show(WindowInsets.Type.ime())
+                    }
+                    awaitDialogState(scenario, "Keyboard must appear and reduce dialog height", initialHeight) { dialog ->
+                        dialog.window!!.decorView.let { decor ->
+                            decor.rootWindowInsets.isVisible(WindowInsets.Type.ime()) && decor.height < initialHeight
+                        }
+                    }
+                    scenario.onActivity { activity ->
+                        editor(activity).window!!.insetsController!!.hide(WindowInsets.Type.ime())
+                    }
+                    awaitDialogState(scenario, "Dialog must restore its original height after keyboard dismissal", initialHeight) { dialog ->
+                        dialog.window!!.decorView.let { decor ->
+                            !decor.rootWindowInsets.isVisible(WindowInsets.Type.ime()) &&
+                                kotlin.math.abs(decor.height - initialHeight) <= 2
+                        }
+                    }
+                    scenario.onActivity { activity ->
+                        val dialog = editor(activity)
+                        assertTrue(dialog.getButton(AlertDialog.BUTTON_POSITIVE).getGlobalVisibleRect(Rect()))
+                        assertTrue(dialog.getButton(AlertDialog.BUTTON_NEGATIVE).getGlobalVisibleRect(Rect()))
+                    }
+                }
+                scenario.onActivity { activity -> editor(activity).dismiss() }
+                idle()
+            }
+        }
+    }
+
+    @Test
     fun keyboardKeepsEditorActionsAboveIme() {
         org.junit.Assume.assumeTrue(android.os.Build.VERSION.SDK_INT >= 30)
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
@@ -309,6 +361,29 @@ class ModernFoldableUiInstrumentedTest {
                 assertOutsideHinge(cancel, hinge)
             }
         }
+    }
+
+    private fun awaitDialogState(
+        scenario: ActivityScenario<MainActivity>,
+        message: String,
+        expectedHeight: Int,
+        predicate: (AlertDialog) -> Boolean,
+    ) {
+        val deadline = android.os.SystemClock.uptimeMillis() + 5_000
+        var matched = false
+        while (!matched && android.os.SystemClock.uptimeMillis() < deadline) {
+            idle()
+            scenario.onActivity { activity -> matched = predicate(editor(activity)) }
+            if (!matched) Thread.sleep(100)
+        }
+        var state = ""
+        scenario.onActivity { activity ->
+            val decor = editor(activity).window!!.decorView
+            state = "initial=$expectedHeight, height=${decor.height}, windowHeight=${editor(activity).window!!.attributes.height}, " +
+                "dialogIme=${decor.rootWindowInsets.getInsets(WindowInsets.Type.ime()).bottom}, " +
+                "activityIme=${activity.window.decorView.rootWindowInsets.getInsets(WindowInsets.Type.ime()).bottom}"
+        }
+        assertTrue("$message ($state)", matched)
     }
 
     private fun unlockFixture(activity: MainActivity) {
