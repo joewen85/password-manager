@@ -1,14 +1,16 @@
 <resources>
     <color name="launcher_background">#0F172A</color>
-    <color name="ui_background">#F4F6F8</color>
+    <color name="ui_background">#F6F8FC</color>
     <color name="ui_surface">#FFFFFF</color>
-    <color name="ui_surface_alt">#F8FAFC</color>
-    <color name="ui_selected">#EBF3FF</color>
-    <color name="ui_text">#181F2A</color>
-    <color name="ui_muted">#636F80</color>
-    <color name="ui_stroke">#DAE1EA</color>
-    <color name="ui_accent">#245DC4</color>
-    <color name="ui_error">#B91C1C</color>
-    <color name="ui_error_surface">#FEF2F2</color>
-    <color name="ui_error_stroke">#FECACA</color>
+    <color name="ui_surface_alt">#EEF1F8</color>
+    <color name="ui_selected">#DFE5FF</color>
+    <color name="ui_text">#1A1C25</color>
+    <color name="ui_muted">#45495A</color>
+    <color name="ui_stroke">#C5C8D4</color>
+    <color name="ui_accent">#3357C8</color>
+    <color name="ui_on_accent">#FFFFFF</color>
+    <color name="ui_on_selected">#182B6A</color>
+    <color name="ui_error">#BA1A1A</color>
+    <color name="ui_error_surface">#FFEDEA</color>
+    <color name="ui_error_stroke">#FFB4AB</color>
 </resources>

@@ -1,10 +1,28 @@
 <resources>
-    <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
+    <style name="BaseAppTheme" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowBackground">@color/ui_background</item>
         <item name="android:navigationBarColor">@color/ui_background</item>
         <item name="android:statusBarColor">@color/ui_background</item>
-        <item name="android:colorAccent">@color/ui_accent</item>
+        <item name="colorPrimary">@color/ui_accent</item>
+        <item name="colorOnPrimary">@color/ui_on_accent</item>
+        <item name="colorPrimaryContainer">@color/ui_selected</item>
+        <item name="colorOnPrimaryContainer">@color/ui_on_selected</item>
+        <item name="colorSecondaryContainer">@color/ui_selected</item>
+        <item name="colorOnSecondaryContainer">@color/ui_on_selected</item>
+        <item name="colorSurface">@color/ui_surface</item>
+        <item name="colorSurfaceContainer">@color/ui_surface_alt</item>
+        <item name="colorSurfaceContainerHigh">@color/ui_surface</item>
+        <item name="colorOnSurface">@color/ui_text</item>
+        <item name="colorSurfaceVariant">@color/ui_surface_alt</item>
+        <item name="colorOnSurfaceVariant">@color/ui_muted</item>
+        <item name="colorOutline">@color/ui_stroke</item>
+        <item name="colorError">@color/ui_error</item>
+        <item name="colorErrorContainer">@color/ui_error_surface</item>
+        <item name="android:colorBackground">@color/ui_background</item>
+        <item name="textInputStyle">@style/Widget.Material3.TextInputLayout.OutlinedBox</item>
     </style>
+    <style name="AppTheme" parent="BaseAppTheme" />
+    <bool name="light_system_bars">false</bool>
 </resources>

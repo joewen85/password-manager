@@ -1,7 +1,7 @@
 package life.devops.passwordmanager
 
 import android.app.Activity
-import android.app.AlertDialog
+import androidx.appcompat.app.AlertDialog
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.content.Context
@@ -29,11 +29,13 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
+import android.view.WindowManager
 import android.view.animation.LinearInterpolator
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.HorizontalScrollView
@@ -46,7 +48,11 @@ import android.widget.Toast
 import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
-import androidx.fragment.app.FragmentActivity
+import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.chip.Chip
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.textfield.TextInputLayout
 import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowLayoutInfo
 import androidx.window.layout.WindowInfoTracker
@@ -107,7 +113,7 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
-class MainActivity : FragmentActivity() {
+class MainActivity : AppCompatActivity() {
     private lateinit var store: VaultStore
     private lateinit var biometricCredentialStore: BiometricCredentialStore
     private lateinit var appPreferences: SharedPreferences
@@ -151,6 +157,8 @@ class MainActivity : FragmentActivity() {
     private val layoutScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var windowLayoutInfo: WindowLayoutInfo? = null
     private var windowLayoutJob: Job? = null
+    private val trackedDialogs = mutableSetOf<AlertDialog>()
+    private var editorRelayout: (() -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -183,7 +191,7 @@ class MainActivity : FragmentActivity() {
         return super.dispatchTouchEvent(ev)
     }
 
-    override fun dispatchKeyEvent(event: KeyEvent?): Boolean {
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         markUserActivity()
         return super.dispatchKeyEvent(event)
     }
@@ -191,10 +199,11 @@ class MainActivity : FragmentActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         if (store.isUnlocked) {
-            showHome()
+            showHome(preserveEntryScroll = true)
         } else {
             showUnlock()
         }
+        relayoutDialogs()
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -428,110 +437,91 @@ class MainActivity : FragmentActivity() {
 
     private fun showHome(preserveEntryScroll: Boolean = false) {
         val entryScrollAnchor = if (preserveEntryScroll) captureEntryScrollAnchor() else null
-        val foldInfo = currentFoldInfo()
-        val expandedLayout = isExpandedLayout(foldInfo)
-        val tabletopLayout = foldInfo?.isHorizontalSeparating == true
-        val page = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        val expanded = isExpandedLayout()
+        val page = FrameLayout(this).apply {
+            setPadding(dp(16), dp(12), dp(16), dp(16))
             setBackgroundColor(uiColor(R.color.ui_background))
         }
-        page.addView(topBar(), matchWrap())
-        page.addView(statusSummary(), matchWrap(left = dp(16), right = dp(16), top = dp(8)))
-
-        val body = LinearLayout(this).apply {
-            orientation = if (expandedLayout && !tabletopLayout) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(16))
+        val listColumn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(topBar(), matchWrap())
+            addView(statusSummary(), matchWrap(top = dp(8), bottom = dp(16)))
+            addView(listPane(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         }
-
-        val listPane = listPane()
-        if (expandedLayout && !tabletopLayout) {
-            body.addView(listPane, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.0f))
-            detailPane = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(14), 0, 0, 0)
+        page.addView(listColumn)
+        detailPane = if (expanded) LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            page.addView(this)
+        } else null
+        page.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            val origin = IntArray(2)
+            page.getLocationInWindow(origin)
+            val regions = WindowLayoutPolicy.paneRegions(
+                available = WindowLayoutPolicy.Region(
+                    origin[0] + page.paddingLeft,
+                    origin[1] + page.paddingTop,
+                    origin[0] + page.width - page.paddingRight,
+                    origin[1] + page.height - page.paddingBottom,
+                ),
+                fold = currentFoldInfo()?.toPolicyFold(),
+                twoPane = expanded,
+                gap = dp(16),
+            )
+            val panes = listOfNotNull(listColumn, detailPane)
+            panes.zip(regions).forEach { (pane, region) ->
+                val params = FrameLayout.LayoutParams(region.width, region.height).apply {
+                    gravity = Gravity.TOP or Gravity.LEFT
+                    leftMargin = region.left - origin[0] - page.paddingLeft
+                    topMargin = region.top - origin[1] - page.paddingTop
+                }
+                val previous = pane.layoutParams as? FrameLayout.LayoutParams
+                if (previous == null || previous.width != params.width || previous.height != params.height ||
+                    previous.leftMargin != params.leftMargin || previous.topMargin != params.topMargin
+                ) {
+                    pane.layoutParams = params
+                }
             }
-            body.addView(detailPane, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.35f))
-        } else if (expandedLayout) {
-            body.addView(listPane, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f))
-            detailPane = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(0, dp(14), 0, 0)
-            }
-            body.addView(detailPane, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f))
-        } else {
-            body.addView(listPane, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-            ))
-            detailPane = null
         }
-
-        page.addView(body, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            0,
-            1f
-        ))
         setContentViewWithSystemBars(page)
         refreshEntries()
         restoreEntryScrollAnchor(entryScrollAnchor)
-        if (expandedLayout) {
-            renderDetailPane(selectedEntry)
-        }
+        if (expanded) renderDetailPane(selectedEntry)
     }
 
     private fun topBar(): LinearLayout =
         LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(10), dp(16), dp(8))
+            orientation = LinearLayout.VERTICAL
             addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(label(text(R.string.app_name), 19f, uiColor(R.color.ui_text), Typeface.BOLD))
-                addView(securityTag(text(R.string.native_android_vault)), wrapWrap(top = dp(4)))
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(toolbarIconButton(R.drawable.ic_add_24, text(R.string.create_label), accent = true) {
-                showCreateMenu(it)
-            }, wrapWrap(right = dp(2)))
-            addView(toolbarIconButton(R.drawable.ic_sync_24, text(R.string.sync)) {
-                runSync()
-            }.also { registerSyncButton(it) }, wrapWrap(right = dp(2)))
-            addView(toolbarIconButton(R.drawable.ic_cloud_upload_24, text(R.string.backups)) {
-                showBackupCenter(it)
-            }, wrapWrap(right = dp(2)))
-            addView(toolbarIconButton(R.drawable.ic_more_vertical_24, text(R.string.more_actions)) {
-                showMoreActions(it)
-            }, wrapWrap(right = dp(2)))
-            addView(toolbarIconButton(R.drawable.ic_lock_24, text(R.string.lock)) {
-                lockVaultAndShowUnlock()
-            }, wrapWrap())
+                gravity = Gravity.CENTER_VERTICAL
+                addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(label(text(R.string.app_name), 24f, uiColor(R.color.ui_text), Typeface.BOLD))
+                    addView(label(text(R.string.native_android_vault), 12f, uiColor(R.color.ui_muted)), matchWrap(top = dp(4)))
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(toolbarIconButton(R.drawable.ic_more_vertical_24, text(R.string.more_actions)) {
+                    showMoreActions(it)
+                }, wrapWrap())
+                addView(toolbarIconButton(R.drawable.ic_lock_24, text(R.string.lock)) {
+                    lockVaultAndShowUnlock()
+                }, wrapWrap())
+            }, matchWrap())
+            addView(actionStrip(), matchWrap(top = dp(12)))
         }
 
-    private fun statusSummary(): LinearLayout {
-        val activeCount = store.listEntries().size
-        val categoryCount = store.categories().size
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+    private fun statusSummary(): LinearLayout =
+        LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
-            background = rounded(uiColor(R.color.ui_surface_alt), compactRadius(), uiColor(R.color.ui_stroke))
-            setPadding(dp(10), 0, dp(10), 0)
-            minimumHeight = compactControlHeight()
             addView(label(
-                "${text(R.string.entries)} $activeCount · ${text(R.string.categories)} $categoryCount · ${text(R.string.sync)} ${store.syncStatus}",
-                11f,
-                uiColor(R.color.ui_muted)
-            ).apply {
-                maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                "${text(R.string.entries)} ${store.listEntries().size}  ·  ${text(R.string.categories)} ${store.categories().size}  ·  ${text(R.string.sync)} ${store.syncStatus}",
+                12f,
+                uiColor(R.color.ui_muted),
+            ), matchWrap())
         }
-    }
 
     private fun listPane(): LinearLayout =
         card().apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(12), dp(14), dp(14))
-            addView(categoryChipStrip(), matchWrap())
             searchField = filterSearchInput(text(R.string.search_vault_scoped)).apply {
                 setSingleLine(true)
                 setText(searchQuery)
@@ -548,8 +538,9 @@ class MainActivity : FragmentActivity() {
                     true
                 }
             }
-            addView(searchBox(searchField), matchWrap(top = dp(16)))
-            addView(tagChipStrip(), matchWrap(top = dp(16)))
+            addView(searchBox(searchField), matchWrap())
+            addView(categoryChipStrip(), matchWrap(top = dp(12)))
+            addView(tagChipStrip(), matchWrap(top = dp(4)))
 
             entriesContainer = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
@@ -571,19 +562,18 @@ class MainActivity : FragmentActivity() {
         HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                addView(toolbarIconButton(R.drawable.ic_add_24, text(R.string.create_label), accent = true) {
-                    showCreateMenu(it)
-                }, wrapWrap(right = dp(4)))
+                addView(actionButton(text(R.string.create_label), primary = true) {
+                    showCreateMenu()
+                }.apply {
+                    contentDescription = text(R.string.create_label)
+                    (this as MaterialButton).setIconResource(R.drawable.ic_add_24)
+                }, wrapWrap(right = dp(12)))
                 addView(toolbarIconButton(R.drawable.ic_sync_24, text(R.string.sync)) {
                     runSync()
-                }.also { registerSyncButton(it) }, wrapWrap(right = dp(4)))
+                }.also { registerSyncButton(it) }, wrapWrap(right = dp(8)))
                 addView(toolbarIconButton(R.drawable.ic_cloud_upload_24, text(R.string.backups)) {
                     showBackupCenter(it)
-                }, wrapWrap(right = dp(4)))
-                addView(toolbarIconButton(R.drawable.ic_more_vertical_24, text(R.string.more_actions)) {
-                    showMoreActions(it)
                 }, wrapWrap())
             })
         }
@@ -616,7 +606,7 @@ class MainActivity : FragmentActivity() {
             addView(HorizontalScrollView(this@MainActivity).apply {
                 isHorizontalScrollBarEnabled = false
                 addView(LinearLayout(this@MainActivity).apply {
-                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
                     addView(filterChip(text(R.string.all), selectedTag == null, showCheck = true) {
                         selectedTag = null
                         showHome()
@@ -627,37 +617,39 @@ class MainActivity : FragmentActivity() {
                             showHome()
                         }, wrapWrap(right = dp(8)))
                     }
+                    val hiddenCount = tags.size - visibleTags.size
+                    if (hiddenCount > 0) {
+                        addView(filterChip(text(R.string.more_count, hiddenCount), selected = false) {
+                            showTagSelectionDialog(tags, selectedTag?.let(::setOf).orEmpty()) { selected ->
+                                selectedTag = selected.firstOrNull()
+                                showHome()
+                            }
+                        }, wrapWrap())
+                    }
                 })
             }, matchWrap())
-            val hiddenCount = tags.size - visibleTags.size
-            if (hiddenCount > 0) {
-                addView(filterChip(text(R.string.more_count, hiddenCount), selected = false) {
-                    showTagSelectionDialog(tags, selectedTag?.let(::setOf).orEmpty()) { selected ->
-                        selectedTag = selected.firstOrNull()
-                        showHome()
-                    }
-                }, wrapWrap(top = dp(12)))
-            }
         }
 
     private fun searchBox(input: EditText): LinearLayout =
         LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = filterSearchHeight()
-            setPadding(dp(14), 0, dp(14), 0)
-            background = rounded(uiColor(R.color.ui_surface_alt), dp(14), uiColor(R.color.ui_stroke))
-            addView(label("⌕", 24f, uiColor(R.color.ui_text)), wrapWrap(right = dp(12)))
-            addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+            minimumHeight = dp(56)
+            setPadding(dp(16), 0, dp(4), 0)
+            background = rounded(uiColor(R.color.ui_surface_alt), dp(28), Color.TRANSPARENT)
+            addView(ImageView(this@MainActivity).apply {
+                setImageResource(R.drawable.ic_search_24)
+                setColorFilter(uiColor(R.color.ui_muted))
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, LinearLayout.LayoutParams(dp(24), dp(24)).apply { rightMargin = dp(12) })
+            addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(label("?", 18f, uiColor(R.color.ui_muted), Typeface.BOLD).apply {
                 gravity = Gravity.CENTER
-                background = rounded(Color.TRANSPARENT, dp(999), uiColor(R.color.ui_muted))
+                contentDescription = text(R.string.search_syntax_title)
+                background = iconRipple()
                 isClickable = true
                 isFocusable = true
-                setOnClickListener {
-                    showSearchSyntaxPopup(this)
-                }
-            }, LinearLayout.LayoutParams(dp(26), dp(26)))
+                setOnClickListener { showSearchSyntaxPopup(this) }
+            }, LinearLayout.LayoutParams(dp(48), dp(48)))
         }
 
     private fun showSearchSyntaxPopup(anchor: View) {
@@ -716,26 +708,42 @@ class MainActivity : FragmentActivity() {
         val selected = selectedEntry?.id == entry.id
         return LinearLayout(this).apply {
             tag = entry.id
-            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
             isClickable = true
             isFocusable = true
-            background = rounded(if (selected) uiColor(R.color.ui_selected) else uiColor(R.color.ui_surface_alt), dp(14), if (selected) uiColor(R.color.ui_accent) else uiColor(R.color.ui_stroke))
-            setPadding(dp(14), dp(12), dp(14), dp(12))
+            isSelected = selected
+            background = RippleDrawable(
+                ColorStateList.valueOf(uiColor(R.color.ui_selected)),
+                rounded(if (selected) uiColor(R.color.ui_selected) else uiColor(R.color.ui_surface), dp(20), Color.TRANSPARENT),
+                rounded(Color.WHITE, dp(20), Color.TRANSPARENT),
+            )
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            addView(label(
+                entry.label.trim().take(1).uppercase().ifBlank { "•" },
+                18f, uiColor(R.color.ui_on_selected), Typeface.BOLD,
+            ).apply {
+                gravity = Gravity.CENTER
+                background = rounded(uiColor(R.color.ui_selected), dp(14), Color.TRANSPARENT)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { rightMargin = dp(12) })
             addView(LinearLayout(this@MainActivity).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                addView(label(entry.label.ifBlank { text(R.string.untitled) }, 16f, uiColor(R.color.ui_text), Typeface.BOLD), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            })
-            val meta = buildString {
-                append(entry.payload.category.ifBlank { text(R.string.uncategorized) })
-                if (entry.payload.tags.isNotEmpty()) {
-                    append("  ")
-                    append(entry.payload.tags.joinToString(", ") { "#$it" })
+                orientation = LinearLayout.VERTICAL
+                addView(label(entry.label.ifBlank { text(R.string.untitled) }, 16f, uiColor(R.color.ui_text), Typeface.BOLD).apply {
+                    maxLines = 2
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                })
+                val meta = buildString {
+                    append(entry.payload.category.ifBlank { text(R.string.uncategorized) })
+                    if (entry.payload.tags.isNotEmpty()) {
+                        append("  ·  ")
+                        append(entry.payload.tags.joinToString(" ") { "#$it" })
+                    }
                 }
-            }
-            addView(label(meta, 13f, uiColor(R.color.ui_muted)).apply {
-                setPadding(0, dp(6), 0, 0)
-                maxLines = 2
-            })
+                addView(label(meta, 13f, uiColor(R.color.ui_muted)).apply {
+                    maxLines = 2
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                }, matchWrap(top = dp(4)))
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             setOnClickListener {
                 selectedEntry = entry
                 showDetail(entry)
@@ -778,7 +786,7 @@ class MainActivity : FragmentActivity() {
                 },
             ))
         }
-        dialog = AlertDialog.Builder(this)
+        dialog = materialDialogBuilder()
             .setView(ScrollView(this).apply { addView(content) })
             .setPositiveButton(text(R.string.edit)) { _, _ -> showEditor(entry) }
             .setNegativeButton(text(R.string.delete)) { _, _ ->
@@ -849,7 +857,7 @@ class MainActivity : FragmentActivity() {
         form.addView(actionButton(text(R.string.manage_tags), primary = false) {
             showTaxonomyListEditor(TaxonomyKind.TAG)
         }, matchWrap(top = dp(10)))
-        AlertDialog.Builder(this)
+        materialDialogBuilder()
             .setView(form)
             .setNegativeButton(text(R.string.close), null)
             .show()
@@ -861,7 +869,7 @@ class MainActivity : FragmentActivity() {
         form.addView(formTitle(text(R.string.clear_data)))
         form.addView(label(text(R.string.clear_data_warning), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(8)))
         form.addView(password, matchWrap(top = dp(14)))
-        val dialog = AlertDialog.Builder(this)
+        val dialog = materialDialogBuilder()
             .setView(form)
             .setPositiveButton(text(R.string.clear_data_confirm), null)
             .setNegativeButton(text(R.string.cancel), null)
@@ -913,7 +921,7 @@ class MainActivity : FragmentActivity() {
                 form.addView(taxonomyRow(kind, value), matchWrap(top = dp(8)))
             }
         }
-        activeTaxonomyListDialog = AlertDialog.Builder(this)
+        activeTaxonomyListDialog = materialDialogBuilder()
             .setView(ScrollView(this).apply { addView(form) })
             .setNegativeButton(text(R.string.close), null)
             .show()
@@ -1162,7 +1170,7 @@ class MainActivity : FragmentActivity() {
             addView(fieldsContainer, matchWrap(top = dp(8)))
         }
         renderFields()
-        val dialog = AlertDialog.Builder(this)
+        val dialog = materialDialogBuilder()
             .setView(ScrollView(this).apply { addView(form) })
             .setPositiveButton(text(R.string.save), null)
             .setNegativeButton(text(R.string.cancel), null)
@@ -1211,7 +1219,7 @@ class MainActivity : FragmentActivity() {
         val field = input(title).apply { setText(oldValue) }
         form.addView(formTitle(title))
         form.addView(field, matchWrap(top = dp(12)))
-        AlertDialog.Builder(this)
+        materialDialogBuilder()
             .setView(form)
             .setPositiveButton(text(R.string.save)) { _, _ ->
                 val newValue = field.text.toString()
@@ -1241,7 +1249,7 @@ class MainActivity : FragmentActivity() {
             TaxonomyKind.CATEGORY -> text(R.string.delete_category_confirm, value)
             TaxonomyKind.TAG -> text(R.string.delete_tag_confirm, value)
         }
-        AlertDialog.Builder(this)
+        materialDialogBuilder()
             .setTitle(title)
             .setMessage(message)
             .setPositiveButton(text(R.string.delete)) { _, _ ->
@@ -1682,6 +1690,7 @@ class MainActivity : FragmentActivity() {
         val form = formRoot()
         val fieldsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val label = input(text(R.string.label_field)).apply { setText(draft.label) }
+        val labelInputLayout = labeledInput(label, text(R.string.label_field))
         var selectedEntryType = draft.type
         var selectedCategory = draft.category
         val selectedTags = draft.tags.toMutableSet()
@@ -1745,10 +1754,6 @@ class MainActivity : FragmentActivity() {
                 renderFields()
             }
         }
-        val tagsSummary = TextView(this).apply {
-            setTextColor(uiColor(R.color.ui_muted))
-            textSize = 12f
-        }
         lateinit var renderSelectedTags: () -> Unit
         val typeChipsContainer = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         fun renderTypeChips() {
@@ -1762,6 +1767,8 @@ class MainActivity : FragmentActivity() {
         }
         val tagsPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(56)
             isClickable = true
             isFocusable = true
             background = rounded(uiColor(R.color.ui_surface_alt), dp(12), uiColor(R.color.ui_stroke))
@@ -1779,7 +1786,6 @@ class MainActivity : FragmentActivity() {
         }
         renderSelectedTags = {
             tagsPanel.removeAllViews()
-            tagsPanel.addView(tagsSummary)
             val chips = HorizontalScrollView(this@MainActivity).apply {
                 isHorizontalScrollBarEnabled = false
                 addView(LinearLayout(this@MainActivity).apply {
@@ -1813,7 +1819,6 @@ class MainActivity : FragmentActivity() {
             addView(label(text(R.string.tags), 12f, uiColor(R.color.ui_muted), Typeface.BOLD))
             addView(tagsPanel, matchWrap(top = dp(4)))
         }
-        tagsSummary.text = text(R.string.selected_tags)
         renderSelectedTags()
         openReferencePicker = referencePicker@{ fieldId ->
             val state = customFieldStates.firstOrNull { candidate -> candidate.field.id == fieldId }
@@ -1903,19 +1908,24 @@ class MainActivity : FragmentActivity() {
                 val field = state.field
                 fieldsContainer.addView(LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
-                    background = rounded(uiColor(R.color.ui_surface_alt), dp(12), uiColor(R.color.ui_stroke))
-                    setPadding(dp(12), dp(12), dp(12), dp(12))
+                    setPadding(0, dp(4), 0, dp(8))
                     val nameInput = input(text(R.string.custom_field_name)).apply { setText(field.name) }
                     val valueInput = input(
                         hintText = text(R.string.custom_field_value),
                         singleLine = !isMultilineFieldName(field.name),
                     ).apply { setText(field.value) }
-                    addView(nameInput, matchWrap())
-                    addView(valueInput, matchWrap(top = dp(8)))
-                    addView(actionButton(text(R.string.delete), primary = false, compact = true) {
-                        removeDraftCustomField(field.id)
-                        renderFields()
-                    }, wrapWrap(top = dp(8)))
+                    addView(LinearLayout(this@MainActivity).apply {
+                        gravity = Gravity.CENTER_VERTICAL
+                        addView(labeledInput(nameInput, text(R.string.custom_field_name)), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                        addView(toolbarIconButton(
+                            R.drawable.ic_close_24,
+                            text(R.string.delete_named_field, field.name.ifBlank { text(R.string.custom_field) }),
+                        ) {
+                            removeDraftCustomField(field.id)
+                            renderFields()
+                        }, wrapWrap(left = dp(8)))
+                    }, matchWrap())
+                    addView(labeledInput(valueInput, text(R.string.custom_field_value)), matchWrap(top = dp(8)))
                     nameInput.addTextChangedListener(SimpleTextWatcher { value ->
                         updateDraftCustomFieldName(field.id, value)
                     })
@@ -2059,25 +2069,52 @@ class MainActivity : FragmentActivity() {
                 renderFields()
             }, matchWrap(top = dp(10)))
         }
-        form.addView(formTitle(if (entry == null) text(R.string.new_entry) else text(R.string.edit_entry)))
-        form.addView(label, matchWrap(top = dp(12)))
+        form.addView(labelInputLayout, matchWrap())
         if (!isCreating) {
             form.addView(typeRow, matchWrap(top = dp(10)))
         }
         form.addView(categoryRow, matchWrap(top = dp(10)))
         form.addView(tagsRow, matchWrap(top = dp(10)))
-        form.addView(fieldsContainer)
         renderTypeChips()
         renderFields()
-        val dialog = AlertDialog.Builder(this)
-            .setView(ScrollView(this).apply { addView(form) })
+        val editorBody = LinearLayout(this).apply { tag = "entry_editor_body" }
+        var columns: Boolean? = null
+        val reflow = {
+            val useColumns = WindowLayoutPolicy.useEditorColumns(
+                availableWidthDp = (dialogRegion().width / resources.displayMetrics.density).toInt() - 48,
+                fontScale = resources.configuration.fontScale,
+            )
+            if (columns != useColumns) {
+                (form.parent as? ViewGroup)?.removeView(form)
+                (fieldsContainer.parent as? ViewGroup)?.removeView(fieldsContainer)
+                editorBody.removeAllViews()
+                columns = useColumns
+                editorBody.orientation = if (useColumns) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+                if (useColumns) {
+                    form.setPadding(dp(24), dp(8), dp(16), dp(24))
+                    fieldsContainer.setPadding(dp(8), 0, dp(24), dp(24))
+                    editorBody.addView(ScrollView(this).apply { addView(form) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 0.4f))
+                    editorBody.addView(ScrollView(this).apply { addView(fieldsContainer) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 0.6f))
+                } else {
+                    form.setPadding(dp(24), dp(8), dp(24), dp(24))
+                    fieldsContainer.setPadding(0, 0, 0, 0)
+                    form.addView(fieldsContainer, matchWrap(top = dp(12)))
+                    editorBody.addView(ScrollView(this).apply { addView(form) }, matchWrap())
+                }
+            }
+        }
+        reflow()
+        val dialog = materialDialogBuilder()
+            .setTitle(if (entry == null) text(R.string.new_entry) else text(R.string.edit_entry))
+            .setView(editorBody)
             .setPositiveButton(text(R.string.save), null)
             .setNegativeButton(text(R.string.cancel), null)
             .create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 if (label.text.toString().isBlank()) {
-                    toast(text(R.string.label_required))
+                    labelInputLayout.error = text(R.string.label_required)
+                    label.requestFocus()
                     return@setOnClickListener
                 }
                 val savedDraft = EntryDraft(
@@ -2099,7 +2136,10 @@ class MainActivity : FragmentActivity() {
                 showHome()
             }
         }
+        dialog.setOnDismissListener { editorRelayout = null }
+        editorRelayout = reflow
         dialog.show()
+        positionDialog(dialog, fillHeight = true)
         focusReferenceFieldId?.let(openReferencePicker)
     }
 
@@ -2170,7 +2210,7 @@ class MainActivity : FragmentActivity() {
             topMargin = dp(6)
         })
         render()
-        dialog = AlertDialog.Builder(this)
+        dialog = materialDialogBuilder()
             .setView(form)
             .setNegativeButton(text(R.string.cancel), null)
             .show()
@@ -2225,7 +2265,7 @@ class MainActivity : FragmentActivity() {
         form.addView(actionButton(text(R.string.create_app_private_backup), primary = false) {
             runBackup()
         }, matchWrap(top = dp(10)))
-        AlertDialog.Builder(this)
+        materialDialogBuilder()
             .setView(form)
             .setNegativeButton(text(R.string.close), null)
             .show()
@@ -2253,7 +2293,7 @@ class MainActivity : FragmentActivity() {
             }
             form.addView(checkBox, matchWrap(top = dp(6)))
         }
-        val dialog = AlertDialog.Builder(this)
+        val dialog = materialDialogBuilder()
             .setView(ScrollView(this).apply { addView(form) })
             .setPositiveButton(text(R.string.export_selected), null)
             .setNeutralButton(text(R.string.export_all), null)
@@ -2311,7 +2351,7 @@ class MainActivity : FragmentActivity() {
         form.addView(actionButton(text(R.string.choose_item_category_json), primary = false) {
             showScopedImportDialog()
         }, matchWrap(top = dp(10)))
-        AlertDialog.Builder(this)
+        materialDialogBuilder()
             .setView(form)
             .setNegativeButton(text(R.string.close), null)
             .show()
@@ -2519,7 +2559,7 @@ class MainActivity : FragmentActivity() {
         if (kind == TaxonomyKind.CATEGORY) {
             form.addView(customFieldsContainer, matchWrap(top = dp(12)))
         }
-        val dialog = AlertDialog.Builder(this)
+        val dialog = materialDialogBuilder()
             .setView(ScrollView(this).apply { addView(form) })
             .setPositiveButton(text(R.string.save), null)
             .setNegativeButton(text(R.string.cancel), null)
@@ -2611,7 +2651,7 @@ class MainActivity : FragmentActivity() {
                 form.addView(syncLogRow(log), matchWrap(top = dp(8)))
             }
         }
-        dialog = AlertDialog.Builder(this)
+        dialog = materialDialogBuilder()
             .setView(ScrollView(this).apply { addView(form) })
             .setNegativeButton(text(R.string.close), null)
             .show()
@@ -2675,7 +2715,7 @@ class MainActivity : FragmentActivity() {
         val content = formRoot()
         content.addView(formTitle(text(R.string.restore_backup)))
         content.addView(label(text(R.string.restore_backup_confirm, backup.fileName), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(8)))
-        AlertDialog.Builder(this)
+        materialDialogBuilder()
             .setView(content)
             .setPositiveButton(text(R.string.restore)) { _, _ ->
                 store.restoreBackup(backup.fileName)
@@ -2695,7 +2735,7 @@ class MainActivity : FragmentActivity() {
             13f,
             uiColor(R.color.ui_muted)
         ), matchWrap(top = dp(8)))
-        AlertDialog.Builder(this)
+        materialDialogBuilder()
             .setView(form)
             .setPositiveButton(text(R.string.choose_file)) { _, _ ->
                 openJsonDocument(PendingImportKind.SNAPSHOT)
@@ -2730,7 +2770,7 @@ class MainActivity : FragmentActivity() {
             form.addView(category, matchWrap(top = dp(14)))
         }
         form.addView(manualCategory, matchWrap(top = dp(14)))
-        AlertDialog.Builder(this)
+        materialDialogBuilder()
             .setView(form)
             .setPositiveButton(text(R.string.save)) { _, _ ->
                 val value = if (category != null) {
@@ -2764,7 +2804,7 @@ class MainActivity : FragmentActivity() {
         ), matchWrap(top = dp(8)))
         form.addView(label(text(R.string.conflict_strategy), 12f, uiColor(R.color.ui_muted), Typeface.BOLD), matchWrap(top = dp(14)))
         form.addView(strategy, matchWrap(top = dp(4)))
-        AlertDialog.Builder(this)
+        materialDialogBuilder()
             .setView(form)
             .setPositiveButton(text(R.string.choose_file)) { _, _ ->
                 val selectedStrategy = ImportConflictStrategy.entries[strategy.selectedItemPosition]
@@ -2941,7 +2981,7 @@ class MainActivity : FragmentActivity() {
         form.addView(label(text(R.string.revision_value, settings.lastSyncRevision), 13f, uiColor(R.color.ui_muted)), matchWrap(top = dp(2)))
         updateProviderFieldVisibility()
 
-        val dialog = AlertDialog.Builder(this)
+        val dialog = materialDialogBuilder()
             .setView(ScrollView(this).apply { addView(form) })
             .setPositiveButton(text(R.string.save), null)
             .setNegativeButton(text(R.string.cancel), null)
@@ -3266,7 +3306,7 @@ class MainActivity : FragmentActivity() {
 
     private fun showImportResult(message: String) {
         if (isFinishing) return
-        AlertDialog.Builder(this)
+        materialDialogBuilder()
             .setTitle(text(R.string.import_label))
             .setMessage(message)
             .setPositiveButton(text(R.string.close), null)
@@ -3363,15 +3403,11 @@ class MainActivity : FragmentActivity() {
             WindowInfoTracker.getOrCreate(this@MainActivity)
                 .windowLayoutInfo(this@MainActivity)
                 .collectLatest { info ->
-                    val previousFoldInfo = currentFoldInfo()
-                    val wasExpanded = isExpandedLayout(previousFoldInfo)
-                    val wasTabletop = previousFoldInfo?.isHorizontalSeparating == true
+                    val previous = currentFoldInfo()
                     windowLayoutInfo = info
-                    val nextFoldInfo = currentFoldInfo()
-                    val didChangeExpanded = wasExpanded != isExpandedLayout(nextFoldInfo)
-                    val didChangePosture = wasTabletop != (nextFoldInfo?.isHorizontalSeparating == true)
-                    if (store.isUnlocked && (didChangeExpanded || didChangePosture)) {
-                        showHome()
+                    if (previous != currentFoldInfo()) {
+                        if (store.isUnlocked) showHome(preserveEntryScroll = true)
+                        relayoutDialogs()
                     }
                 }
         }
@@ -3391,8 +3427,9 @@ class MainActivity : FragmentActivity() {
             ?.let { feature ->
                 FoldInfo(
                     orientation = feature.orientation,
-                    widthPx = feature.bounds.width(),
-                    heightPx = feature.bounds.height(),
+                    bounds = WindowLayoutPolicy.Region(
+                        feature.bounds.left, feature.bounds.top, feature.bounds.right, feature.bounds.bottom,
+                    ),
                 )
             }
 
@@ -3493,7 +3530,7 @@ class MainActivity : FragmentActivity() {
         form.addView(list, matchWrap(top = dp(8)))
         renderSelected()
         render()
-        dialog = AlertDialog.Builder(this)
+        dialog = materialDialogBuilder()
             .setView(ScrollView(this).apply { addView(form) })
             .setPositiveButton(text(R.string.save)) { _, _ -> onSelected(selected) }
             .setNegativeButton(text(R.string.cancel), null)
@@ -3528,7 +3565,7 @@ class MainActivity : FragmentActivity() {
             }
         }
         form.addView(list, matchWrap(top = compactGap()))
-        dialog = AlertDialog.Builder(this)
+        dialog = materialDialogBuilder()
             .setView(ScrollView(this).apply { addView(form) })
             .setNegativeButton(text(R.string.cancel), null)
             .show()
@@ -3597,15 +3634,94 @@ class MainActivity : FragmentActivity() {
         }, matchWrap(top = compactGap()))
         form.addView(list, matchWrap(top = compactGap()))
         render()
-        dialog = AlertDialog.Builder(this)
+        dialog = materialDialogBuilder()
             .setView(ScrollView(this).apply { addView(form) })
             .setNegativeButton(text(R.string.cancel), null)
             .show()
     }
 
+    private fun labeledInput(editText: EditText, title: String): TextInputLayout =
+        TextInputLayout(this).apply {
+            hint = title
+            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
+            setBoxCornerRadii(dp(12).toFloat(), dp(12).toFloat(), dp(12).toFloat(), dp(12).toFloat())
+            editText.background = null
+            editText.hint = null
+            editText.setPadding(dp(16), dp(16), dp(16), dp(12))
+            editText.minHeight = dp(56)
+            addView(editText, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+
+    private fun materialDialogBuilder(): MaterialAlertDialogBuilder =
+        object : MaterialAlertDialogBuilder(this) {
+            override fun create(): AlertDialog = super.create().also { dialog ->
+                trackedDialogs += dialog
+                dialog.window?.decorView?.apply {
+                    addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> positionDialog(dialog) }
+                    setOnApplyWindowInsetsListener { _, insets ->
+                        positionDialog(dialog)
+                        insets
+                    }
+                    addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                        override fun onViewAttachedToWindow(view: View) = Unit
+                        override fun onViewDetachedFromWindow(view: View) { trackedDialogs -= dialog }
+                    })
+                }
+            }
+        }
+
+    private fun dialogRegion(): WindowLayoutPolicy.Region {
+        // Dialog-local bar insets change as the dialog moves. Use the activity window's
+        // stable coordinate space for system bars, the keyboard, and folding features.
+        val insets = window.decorView.rootWindowInsets
+        val metrics = resources.displayMetrics
+        val width = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) windowManager.currentWindowMetrics.bounds.width() else metrics.widthPixels
+        val height = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) windowManager.currentWindowMetrics.bounds.height() else metrics.heightPixels
+        val available = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && insets != null) {
+            val safe = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout() or WindowInsets.Type.ime())
+            WindowLayoutPolicy.Region(safe.left, safe.top, width - safe.right, height - safe.bottom)
+        } else {
+            @Suppress("DEPRECATION")
+            WindowLayoutPolicy.Region(
+                insets?.systemWindowInsetLeft ?: 0,
+                insets?.systemWindowInsetTop ?: 0,
+                width - (insets?.systemWindowInsetRight ?: 0),
+                height - (insets?.systemWindowInsetBottom ?: 0),
+            )
+        }
+        return WindowLayoutPolicy.dialogRegion(available, currentFoldInfo()?.toPolicyFold(), dp(16), dp(760), dp(840))
+    }
+
+    private fun positionDialog(dialog: AlertDialog, fillHeight: Boolean = false) {
+        val dialogWindow = dialog.window ?: return
+        val region = dialogRegion()
+        val params = dialogWindow.attributes
+        val measuredHeight = dialogWindow.decorView.height
+        val height = if (fillHeight || dialogWindow.decorView.findViewWithTag<View>("entry_editor_body") != null) {
+            region.height
+        } else if (measuredHeight > region.height) region.height else ViewGroup.LayoutParams.WRAP_CONTENT
+        val shownHeight = if (height > 0) height else measuredHeight.coerceAtMost(region.height)
+        val y = region.top + (region.height - shownHeight) / 2
+        if (params.width != region.width || params.height != height || params.x != region.left || params.y != y) {
+            params.gravity = Gravity.TOP or Gravity.LEFT
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+            params.width = region.width
+            params.height = height
+            params.x = region.left
+            params.y = y
+            params.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+            dialogWindow.attributes = params
+        }
+    }
+
+    private fun relayoutDialogs() {
+        editorRelayout?.invoke()
+        trackedDialogs.toList().filter { it.isShowing }.forEach { positionDialog(it) }
+    }
+
     private fun card(): LinearLayout =
         LinearLayout(this).apply {
-            background = rounded(uiColor(R.color.ui_surface), dp(18), uiColor(R.color.ui_stroke))
+            background = rounded(uiColor(R.color.ui_surface), dp(24), Color.TRANSPARENT)
         }
 
     private fun input(
@@ -3647,15 +3763,20 @@ class MainActivity : FragmentActivity() {
         actionButton(textValue, primary, compact = false, onClick = onClick)
 
     private fun actionButton(textValue: String, primary: Boolean, compact: Boolean, onClick: () -> Unit): Button =
-        Button(this).apply {
+        MaterialButton(this, null, if (primary) com.google.android.material.R.attr.materialButtonStyle else com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
             text = textValue
-            textSize = if (compact) 12f else 13f
+            textSize = if (compact) 13f else 14f
             isAllCaps = false
-            minHeight = if (compact) dp(40) else dp(44)
-            minWidth = if (compact) dp(72) else dp(88)
-            setPadding(if (compact) dp(12) else dp(14), 0, if (compact) dp(12) else dp(14), 0)
-            setTextColor(if (primary) Color.WHITE else uiColor(R.color.ui_text))
-            background = rounded(if (primary) uiColor(R.color.ui_accent) else uiColor(R.color.ui_surface_alt), dp(12), if (primary) uiColor(R.color.ui_accent) else uiColor(R.color.ui_stroke))
+            minHeight = dp(48)
+            minWidth = dp(if (compact) 72 else 96)
+            insetTop = 0
+            insetBottom = 0
+            cornerRadius = dp(24)
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+            setTextColor(uiColor(if (primary) R.color.ui_on_accent else R.color.ui_accent))
+            backgroundTintList = ColorStateList.valueOf(uiColor(if (primary) R.color.ui_accent else R.color.ui_surface))
+            strokeColor = ColorStateList.valueOf(uiColor(R.color.ui_stroke))
+            strokeWidth = if (primary) 0 else dp(1)
             setOnClickListener { onClick() }
         }
 
@@ -3671,7 +3792,7 @@ class MainActivity : FragmentActivity() {
             minWidth = dp(if (isCompactWidth()) 52 else 64)
             gravity = Gravity.CENTER
             setPadding(compactHorizontalPadding(), 0, compactHorizontalPadding(), 0)
-            setTextColor(if (selected) Color.WHITE else uiColor(R.color.ui_text))
+            setTextColor(if (selected) uiColor(R.color.ui_on_accent) else uiColor(R.color.ui_text))
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             background = rounded(if (selected) uiColor(R.color.ui_accent) else uiColor(R.color.ui_surface_alt), compactRadius(), if (selected) uiColor(R.color.ui_accent) else uiColor(R.color.ui_stroke))
             isClickable = true
@@ -3690,7 +3811,7 @@ class MainActivity : FragmentActivity() {
             minHeight = dp(48)
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(14), 0, dp(14), 0)
-            setTextColor(if (selected) Color.WHITE else uiColor(R.color.ui_text))
+            setTextColor(if (selected) uiColor(R.color.ui_on_accent) else uiColor(R.color.ui_text))
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             background = rounded(if (selected) uiColor(R.color.ui_accent) else uiColor(R.color.ui_surface_alt), dp(12), if (selected) uiColor(R.color.ui_accent) else uiColor(R.color.ui_stroke))
             isClickable = true
@@ -3729,8 +3850,8 @@ class MainActivity : FragmentActivity() {
             setImageResource(iconRes)
             setColorFilter(if (accent) uiColor(R.color.ui_accent) else uiColor(R.color.ui_text))
             scaleType = ImageView.ScaleType.CENTER
-            minimumWidth = dp(44)
-            minimumHeight = dp(44)
+            minimumWidth = dp(48)
+            minimumHeight = dp(48)
             setPadding(dp(10), dp(10), dp(10), dp(10))
             background = iconRipple()
             isClickable = true
@@ -3744,25 +3865,24 @@ class MainActivity : FragmentActivity() {
         showCheck: Boolean = false,
         onClick: () -> Unit,
     ): TextView =
-        TextView(this).apply {
-            text = if (selected && showCheck) "✓  $textValue" else textValue
-            textSize = if (isCompactWidth()) 13f else 14f
-            minHeight = chipHeight()
-            minWidth = dp(if (isCompactWidth()) 70 else 82)
-            gravity = Gravity.CENTER
-            setPadding(dp(if (isCompactWidth()) 14 else 18), 0, dp(if (isCompactWidth()) 14 else 18), 0)
-            setTextColor(if (selected) Color.WHITE else uiColor(R.color.ui_text))
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            background = rounded(if (selected) uiColor(R.color.ui_accent) else uiColor(R.color.ui_surface_alt), dp(999), uiColor(R.color.ui_stroke))
-            isClickable = true
-            isFocusable = true
+        Chip(this).apply {
+            text = textValue
+            textSize = 13f
+            isCheckable = true
+            isChecked = selected
+            isCheckedIconVisible = showCheck
+            setEnsureMinTouchTargetSize(true)
+            chipMinHeight = dp(36).toFloat()
+            setTextColor(uiColor(if (selected) R.color.ui_on_selected else R.color.ui_muted))
+            chipBackgroundColor = ColorStateList.valueOf(uiColor(if (selected) R.color.ui_selected else R.color.ui_surface_alt))
+            chipStrokeWidth = 0f
             setOnClickListener { onClick() }
         }
 
     private fun pill(textValue: String, selected: Boolean): TextView =
-        label(textValue, 11f, if (selected) Color.WHITE else uiColor(R.color.ui_muted), Typeface.BOLD).apply {
+        label(textValue, 12f, if (selected) uiColor(R.color.ui_on_selected) else uiColor(R.color.ui_muted), Typeface.BOLD).apply {
             setPadding(dp(10), dp(5), dp(10), dp(5))
-            background = rounded(if (selected) uiColor(R.color.ui_accent) else uiColor(R.color.ui_surface), dp(999), if (selected) uiColor(R.color.ui_accent) else uiColor(R.color.ui_stroke))
+            background = rounded(if (selected) uiColor(R.color.ui_selected) else uiColor(R.color.ui_surface_alt), dp(999), Color.TRANSPARENT)
         }
 
     private fun securityTag(textValue: String): TextView =
@@ -3777,7 +3897,6 @@ class MainActivity : FragmentActivity() {
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(20), dp(20), dp(8))
-            minimumWidth = dp(320)
         }
 
     private fun showAnchoredPopup(
@@ -3896,8 +4015,7 @@ class MainActivity : FragmentActivity() {
     private fun isCompactWidth(): Boolean =
         resources.displayMetrics.widthPixels < dp(420)
 
-    private fun compactControlHeight(): Int =
-        dp(if (isCompactWidth()) 28 else 32)
+    private fun compactControlHeight(): Int = dp(48)
 
     private fun searchControlHeight(): Int =
         dp(if (isCompactWidth()) 42 else 48)
@@ -3962,11 +4080,12 @@ class MainActivity : FragmentActivity() {
 
     private data class FoldInfo(
         val orientation: FoldingFeature.Orientation,
-        val widthPx: Int,
-        val heightPx: Int,
+        val bounds: WindowLayoutPolicy.Region,
     ) {
         val isHorizontalSeparating: Boolean =
             orientation == FoldingFeature.Orientation.HORIZONTAL
+
+        fun toPolicyFold(): WindowLayoutPolicy.Fold = WindowLayoutPolicy.Fold(bounds, isHorizontalSeparating)
     }
 
     private companion object {

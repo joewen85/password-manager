@@ -1,6 +1,5 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
 }
 
 val releaseStoreFilePath = providers.gradleProperty("PASSWORD_MANAGER_RELEASE_STORE_FILE")
@@ -36,12 +35,15 @@ val androidVersionName = providers.gradleProperty("VERSION_NAME")
 
 android {
     namespace = "life.devops.passwordmanager"
-    compileSdk = 36
+    compileSdk {
+        version = release(37)
+    }
+    buildToolsVersion = "37.0.0"
 
     defaultConfig {
         applicationId = "life.devops.passwordmanager"
         minSdk = 26
-        targetSdk = 36
+        targetSdk = 37
         versionCode = androidVersionCode.get()
         versionName = androidVersionName.get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -81,10 +83,12 @@ kotlin {
 }
 
 dependencies {
+    implementation("com.google.android.material:material:1.13.0")
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.window:window:1.4.0")
-    testImplementation(kotlin("test"))
+    testImplementation(kotlin("test-junit"))
     testImplementation("org.json:json:20250517")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.window:window-testing:1.4.0")
 }
