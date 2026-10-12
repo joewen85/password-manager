@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 final class PasswordManageriOSLaunchUITests: XCTestCase {
     override func setUpWithError() throws {
@@ -151,6 +152,60 @@ final class PasswordManageriOSLaunchUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Duo Test Beta"].firstMatch.waitForExistence(timeout: 3))
         defer { XCUIDevice.shared.orientation = .portrait }
     }
+
+    func testListDetailDividerResizesOnIPadOnlyWithoutDuplicateActions() throws {
+        let supportsColumnResize = UIDevice.current.userInterfaceIdiom == .pad
+        let app = launchFixture()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        app.staticTexts["Duo Test Alpha"].firstMatch.tap()
+        let detailTitle = app.staticTexts["entry-detail-title"]
+        XCTAssertTrue(detailTitle.waitForExistence(timeout: 3))
+        let entryRow = app.cells.containing(.staticText, identifier: "Duo Test Alpha").firstMatch
+        guard entryRow.waitForExistence(timeout: 2),
+              entryRow.isHittable,
+              detailTitle.isHittable,
+              entryRow.frame.maxX < detailTitle.frame.minX else {
+            throw XCTSkip("Requires an expanded split layout with the list and detail visible together.")
+        }
+        let initialWidth = entryRow.frame.width
+        XCTAssertGreaterThan(initialWidth, 100)
+
+        let window = app.windows.firstMatch
+        let windowFrame = window.frame
+        let dividerX = (entryRow.frame.maxX + detailTitle.frame.minX) / 2
+        let start = window.coordinate(withNormalizedOffset: CGVector(
+            dx: (dividerX - windowFrame.minX) / windowFrame.width,
+            dy: 0.5
+        ))
+        let end = window.coordinate(withNormalizedOffset: CGVector(
+            dx: (dividerX + 120 - windowFrame.minX) / windowFrame.width,
+            dy: 0.5
+        ))
+        start.press(forDuration: 0.15, thenDragTo: end)
+
+        let resizedRow = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in entryRow.frame.width > initialWidth + 24 },
+            object: nil
+        )
+        let resizeResult = XCTWaiter.wait(for: [resizedRow], timeout: supportsColumnResize ? 5 : 1.5)
+        if supportsColumnResize {
+            XCTAssertEqual(
+                resizeResult,
+                .completed,
+                "Expected dragging the list/detail divider to grow the list from \(initialWidth)."
+            )
+        } else {
+            XCTAssertEqual(resizeResult, .timedOut, "Only iPad should resize list/detail columns by dragging.")
+            XCTAssertLessThanOrEqual(abs(entryRow.frame.width - initialWidth), 24)
+        }
+
+        XCTAssertEqual(app.buttons.matching(identifier: "Add Entry").count, 1)
+        XCTAssertEqual(app.buttons.matching(identifier: "Lock").count, 1)
+        XCTAssertTrue(app.buttons["Edit"].exists)
+        XCTAssertTrue(app.buttons["Delete"].exists)
+    }
+
     private func tapVisibleButton(_ name: String, in app: XCUIApplication) {
         // Native toolbars move actions into More when the current width or text size needs it.
         if !app.buttons.matching(identifier: name).allElementsBoundByIndex.contains(where: { $0.isHittable }),
