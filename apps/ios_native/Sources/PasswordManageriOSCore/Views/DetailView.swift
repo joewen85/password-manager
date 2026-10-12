@@ -7,6 +7,7 @@ struct DetailView: View {
     var editEntry: (VaultEntry) -> Void
     var deleteEntry: (VaultEntry) -> Void
     var exportEntry: (VaultEntry) -> Void
+    var showsToolbarActions: Bool = true
     var openReference: (VaultEntry) -> Void = { _ in }
     var updateReference: (VaultEntry, String, String) -> Void = { _, _, _ in }
     var repairCategoryFields: (String) -> Void = { _ in }
@@ -54,7 +55,7 @@ struct DetailView: View {
             }
         }
         .toolbar {
-            if let entry {
+            if showsToolbarActions, let entry {
                 ToolbarItemGroup(placement: .primaryAction) {
                     Button { exportEntry(entry) } label: {
                         Label("Export", systemImage: "square.and.arrow.up")

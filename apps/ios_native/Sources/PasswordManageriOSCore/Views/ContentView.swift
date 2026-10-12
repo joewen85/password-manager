@@ -28,9 +28,16 @@ struct ContentView: View {
             GeometryReader { geometry in
 #if os(iOS)
                 let supportsResizableColumns = UIDevice.current.userInterfaceIdiom == .pad
+                let isPhone = UIDevice.current.userInterfaceIdiom == .phone
 #else
                 let supportsResizableColumns = false
+                let isPhone = false
 #endif
+                let usesDuoBottomActionBar = DuoToolbarLayout.usesBottomBar(
+                    isPhone: isPhone,
+                    isRegularWidth: horizontalSizeClass == .regular,
+                    displaySize: geometry.size
+                )
                 let minimumListWidth = EntryListDetailLayout.minimumListWidth
                 let maximumListWidth = supportsResizableColumns
                     ? max(minimumListWidth, geometry.size.width * CGFloat(EntryListDetailLayout.maximumRatio))
@@ -39,78 +46,102 @@ struct ContentView: View {
                     ? min(maximumListWidth, max(minimumListWidth, geometry.size.width * CGFloat(EntryListDetailLayout.defaultRatio)))
                     : 300
 
-                NavigationSplitView(
-                    columnVisibility: $columnVisibility,
-                    preferredCompactColumn: $preferredCompactColumn
-                ) {
-                    SidebarView(
-                        store: store,
-                        filter: $filter,
-                        showEntries: showEntries,
-                        runBackup: store.runBackup,
-                        restoreBackup: store.restoreLatestBackup,
-                        exportSnapshot: store.exportSnapshot,
-                        importSnapshot: { isPresentingImport = true },
-                        exportCategory: store.exportCategory,
-                        editCategoryFields: { category in
-                            editingCategoryTemplate = category
-                            isPresentingCategoryTemplateEditor = true
-                        },
-                        syncNow: store.syncNow,
-                        createCategory: { isPresentingCategoryCreation = true },
-                        showSettings: { isPresentingSettings = true }
-                    )
-                    .navigationTitle("Vault")
-                    .toolbar {
-                        if horizontalSizeClass == .compact {
-                            vaultToolbar
+                    NavigationSplitView(
+                        columnVisibility: $columnVisibility,
+                        preferredCompactColumn: $preferredCompactColumn
+                    ) {
+                        SidebarView(
+                            store: store,
+                            filter: $filter,
+                            showEntries: showEntries,
+                            runBackup: store.runBackup,
+                            restoreBackup: store.restoreLatestBackup,
+                            exportSnapshot: store.exportSnapshot,
+                            importSnapshot: { isPresentingImport = true },
+                            exportCategory: store.exportCategory,
+                            editCategoryFields: { category in
+                                editingCategoryTemplate = category
+                                isPresentingCategoryTemplateEditor = true
+                            },
+                            syncNow: store.syncNow,
+                            createCategory: { isPresentingCategoryCreation = true },
+                            showSettings: { isPresentingSettings = true }
+                        )
+                        .contentMargins(.bottom, usesDuoBottomActionBar ? 96 : nil, for: .scrollContent)
+                        .navigationTitle("Vault")
+                        .toolbar {
+                            if horizontalSizeClass == .compact {
+                                vaultToolbar
+                            }
+                        }
+                        .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 300)
+                    } content: {
+                        EntryListView(
+                            entries: visibleEntries,
+                            selection: $selection
+                        )
+                        .contentMargins(.bottom, usesDuoBottomActionBar ? 96 : nil, for: .scrollContent)
+                        .navigationTitle("Entries")
+                        .toolbar {
+                            if horizontalSizeClass == .compact {
+                                vaultToolbar
+                            }
+                        }
+                        .navigationSplitViewColumnWidth(
+                            min: minimumListWidth,
+                            ideal: idealListWidth,
+                            max: maximumListWidth
+                        )
+                        #if os(iOS)
+                        .searchable(
+                            text: $searchText,
+                            placement: usesDuoBottomActionBar ? .navigationBarDrawer(displayMode: .always) : .automatic,
+                            prompt: "Search vault"
+                        )
+                        #else
+                        .searchable(text: $searchText, prompt: "Search vault")
+                        #endif
+                    } detail: {
+                        DetailView(
+                            entry: selectedEntry,
+                            entries: store.entries,
+                            categoryTemplates: store.categoryTemplates,
+                            editEntry: beginEditing,
+                            deleteEntry: deleteSelectedEntry,
+                            exportEntry: { exportingEntry = $0 },
+                            showsToolbarActions: !usesDuoBottomActionBar,
+                            openReference: { target in
+                                filter = .all
+                                searchText = ""
+                                selection = target.id
+                                preferredCompactColumn = .detail
+                            },
+                            updateReference: { entry, fieldID, targetID in
+                                _ = store.updateEntryReference(
+                                    entryID: entry.id,
+                                    fieldID: fieldID,
+                                    targetID: targetID
+                                )
+                            },
+                            repairCategoryFields: beginEditingCategoryFields
+                        )
+                        .contentMargins(.bottom, usesDuoBottomActionBar ? 96 : nil, for: .scrollContent)
+                        .navigationTitle("Entry")
+                        .toolbar {
+                            if !usesDuoBottomActionBar {
+                                vaultToolbar
+                            }
                         }
                     }
-                    .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 300)
-                } content: {
-                    EntryListView(
-                        entries: visibleEntries,
-                        selection: $selection
-                    )
-                    .navigationTitle("Entries")
-                    .toolbar { vaultToolbar }
-                    .navigationSplitViewColumnWidth(
-                        min: minimumListWidth,
-                        ideal: idealListWidth,
-                        max: maximumListWidth
-                    )
-                    .searchable(text: $searchText, prompt: "Search vault")
-                } detail: {
-                    DetailView(
-                        entry: selectedEntry,
-                        entries: store.entries,
-                        categoryTemplates: store.categoryTemplates,
-                        editEntry: beginEditing,
-                        deleteEntry: deleteSelectedEntry,
-                        exportEntry: { exportingEntry = $0 },
-                        openReference: { target in
-                            filter = .all
-                            searchText = ""
-                            selection = target.id
-                            preferredCompactColumn = .detail
-                        },
-                        updateReference: { entry, fieldID, targetID in
-                            _ = store.updateEntryReference(
-                                entryID: entry.id,
-                                fieldID: fieldID,
-                                targetID: targetID
-                            )
-                        },
-                        repairCategoryFields: beginEditingCategoryFields
-                    )
-                    .navigationTitle("Entry")
-                    .toolbar {
-                        if horizontalSizeClass == .compact {
-                            vaultToolbar
+                    .navigationSplitViewStyle(.balanced)
+                    .overlay(alignment: .bottom) {
+                        if usesDuoBottomActionBar {
+                            duoBottomActionBar
+                                .frame(maxWidth: 560)
+                                .padding(.horizontal, 24)
+                                .padding(.bottom, 12)
                         }
                     }
-                }
-                .navigationSplitViewStyle(.balanced)
                 .sheet(item: $editorPresentation) { presentation in
                     EntryEditorView(
                         entry: presentation.entry,
@@ -251,6 +282,61 @@ struct ContentView: View {
         }
     }
 
+    private var duoBottomActionBar: some View {
+        HStack(spacing: 4) {
+            duoActionButton("Add Entry", systemImage: "plus", identifier: "duo.action.add", action: beginAddingEntry)
+            duoActionButton("Import", accessibilityTitle: "Import Entry/Category JSON", systemImage: "square.and.arrow.down", identifier: "duo.action.import") {
+                isPresentingScopedImport = true
+            }
+            duoActionButton("Lock", systemImage: "lock", identifier: "duo.action.lock", action: store.lock)
+            if let selectedEntry {
+                duoActionButton("Export", systemImage: "square.and.arrow.up", identifier: "duo.action.export") {
+                    exportingEntry = selectedEntry
+                }
+                duoActionButton("Edit", systemImage: "pencil", identifier: "duo.action.edit") {
+                    beginEditing(selectedEntry)
+                }
+                duoActionButton("Delete", systemImage: "trash", identifier: "duo.action.delete", role: .destructive) {
+                    deleteSelectedEntry(selectedEntry)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("duo.action-bar")
+        .modifier(DuoToolbarGlass())
+        .contentShape(Capsule())
+    }
+
+    private func duoActionButton(
+        _ title: LocalizedStringKey,
+        accessibilityTitle: LocalizedStringKey? = nil,
+        systemImage: String,
+        identifier: String,
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(role: role, action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 26, weight: .regular))
+                    .frame(height: 28)
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 56)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(Text(accessibilityTitle ?? title))
+        .accessibilityLabel(accessibilityTitle ?? title)
+        .accessibilityIdentifier(identifier)
+    }
+
     private var visibleEntries: [VaultEntry] {
         store.filteredEntries(searchText: searchText, filter: filter)
     }
@@ -310,6 +396,26 @@ private enum EntryListDetailLayout {
     static let defaultRatio = 0.36
     static let maximumRatio = 0.50
     static let minimumListWidth: CGFloat = 240
+}
+
+enum DuoToolbarLayout {
+    static func usesBottomBar(isPhone: Bool, isRegularWidth: Bool, displaySize: CGSize) -> Bool {
+        isPhone && isRegularWidth && displaySize.height > displaySize.width
+    }
+}
+
+private struct DuoToolbarGlass: ViewModifier {
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        if #available(iOS 26.0, *) {
+            content.glassEffect(.regular, in: Capsule())
+        } else {
+            content.background(.regularMaterial, in: Capsule())
+        }
+        #else
+        content.background(.regularMaterial, in: Capsule())
+        #endif
+    }
 }
 
 private struct EntryEditorPresentation: Identifiable {

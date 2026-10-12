@@ -8,7 +8,7 @@ final class PasswordManageriOSLaunchUITests: XCTestCase {
 
     func testInitialVaultScreenHasRequiredControls() throws {
         let app = XCUIApplication()
-        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
+        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES", "-app.language", "english"]
         app.launch()
 
         let initializeTitle = app.staticTexts["Initialize Vault"]
@@ -42,6 +42,7 @@ final class PasswordManageriOSLaunchUITests: XCTestCase {
 
     func testVaultFormRemainsReachableWithKeyboardAndRotation() throws {
         let app = XCUIApplication()
+        app.launchArguments += ["-app.language", "english"]
         app.launch()
         let password = app.secureTextFields["Master password"]
         XCTAssertTrue(password.waitForExistence(timeout: 8))
@@ -79,7 +80,7 @@ final class PasswordManageriOSLaunchUITests: XCTestCase {
     #if DEBUG
     private func launchFixture(extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-testing-vault", "-ApplePersistenceIgnoreState", "YES"] + extraArguments
+        app.launchArguments = ["--ui-testing-vault", "-ApplePersistenceIgnoreState", "YES", "-app.language", "english"] + extraArguments
         app.launch()
         XCTAssertTrue(app.staticTexts["Duo Test Alpha"].waitForExistence(timeout: 12))
         return app
@@ -129,6 +130,8 @@ final class PasswordManageriOSLaunchUITests: XCTestCase {
         let app = launchFixture()
         app.staticTexts["Duo Test Alpha"].firstMatch.tap()
         XCTAssertTrue(app.buttons["Edit"].waitForExistence(timeout: 3))
+        XCTAssertEqual(app.buttons.matching(identifier: "Add Entry").count, 1)
+        XCTAssertEqual(app.buttons.matching(identifier: "Lock").count, 1)
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(app.buttons["Edit"].waitForExistence(timeout: 3))
         XCUIDevice.shared.orientation = .portrait
@@ -153,8 +156,10 @@ final class PasswordManageriOSLaunchUITests: XCTestCase {
         defer { XCUIDevice.shared.orientation = .portrait }
     }
 
-    func testListDetailDividerResizesOnIPadOnlyWithoutDuplicateActions() throws {
-        let supportsColumnResize = UIDevice.current.userInterfaceIdiom == .pad
+    func testListDetailDividerResizesOnIPad() throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else {
+            throw XCTSkip("This regression runs on iPad.")
+        }
         let app = launchFixture()
         XCUIDevice.shared.orientation = .landscapeLeft
         defer { XCUIDevice.shared.orientation = .portrait }
@@ -188,22 +193,59 @@ final class PasswordManageriOSLaunchUITests: XCTestCase {
             predicate: NSPredicate { _, _ in entryRow.frame.width > initialWidth + 24 },
             object: nil
         )
-        let resizeResult = XCTWaiter.wait(for: [resizedRow], timeout: supportsColumnResize ? 5 : 1.5)
-        if supportsColumnResize {
-            XCTAssertEqual(
-                resizeResult,
-                .completed,
-                "Expected dragging the list/detail divider to grow the list from \(initialWidth)."
-            )
-        } else {
-            XCTAssertEqual(resizeResult, .timedOut, "Only iPad should resize list/detail columns by dragging.")
-            XCTAssertLessThanOrEqual(abs(entryRow.frame.width - initialWidth), 24)
-        }
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [resizedRow], timeout: 5),
+            .completed,
+            "Expected dragging the list/detail divider to grow the list from \(initialWidth)."
+        )
 
         XCTAssertEqual(app.buttons.matching(identifier: "Add Entry").count, 1)
         XCTAssertEqual(app.buttons.matching(identifier: "Lock").count, 1)
         XCTAssertTrue(app.buttons["Edit"].exists)
         XCTAssertTrue(app.buttons["Delete"].exists)
+    }
+
+    func testDuoToolbarUsesSideInLandscapeAndGlassBarInPortrait() throws {
+        guard ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] == "iPhone Duo" else {
+            throw XCTSkip("This regression runs on iPhone Duo.")
+        }
+        let app = launchFixture()
+        app.staticTexts["Duo Test Alpha"].firstMatch.tap()
+        // Device Hub controls the inner display pose independently of XCTest's device orientation.
+        let windowFrame = app.windows.firstMatch.frame
+        let bottomBar = app.descendants(matching: .any)["duo.action-bar"]
+        if windowFrame.width > windowFrame.height {
+            XCTAssertTrue(bottomBar.waitForNonExistence(timeout: 5), "Landscape should use the system vertical action bar.")
+            XCTAssertTrue(app.buttons["Edit"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["Delete"].exists)
+            XCTAssertEqual(app.buttons.matching(identifier: "Add Entry").count, 1)
+            return
+        }
+        XCTAssertTrue(bottomBar.waitForExistence(timeout: 5), "Portrait should show the bottom glass action bar.")
+        XCTAssertTrue(app.buttons["duo.action.add"].isHittable)
+        XCTAssertTrue(app.buttons["duo.action.edit"].isHittable)
+        let detailTitle = app.staticTexts["entry-detail-title"]
+        XCTAssertTrue(detailTitle.waitForExistence(timeout: 3))
+        XCTAssertLessThan(detailTitle.frame.maxY, bottomBar.frame.minY, "The selected entry detail must remain above the floating bar.")
+        XCTAssertEqual(app.buttons.matching(identifier: "Edit").count, 1, "Portrait must not duplicate edit actions.")
+        XCTAssertEqual(app.buttons.matching(identifier: "duo.action.add").count, 1)
+        XCTAssertGreaterThan(windowFrame.height, windowFrame.width, "The bottom action bar should appear on the inner portrait display.")
+        XCTAssertLessThan(abs(bottomBar.frame.midX - windowFrame.midX), 24, "The action bar should be centered on the display.")
+        XCTAssertGreaterThan(bottomBar.frame.minY, windowFrame.maxY - 160, "The action bar should sit at the bottom of the display.")
+        XCTAssertGreaterThanOrEqual(bottomBar.frame.height, 72, "The glass bar must leave room for large symbols and labels.")
+        XCTAssertGreaterThan(bottomBar.frame.width, windowFrame.width * 0.7)
+        XCTAssertGreaterThanOrEqual(app.buttons["duo.action.edit"].frame.height, 56)
+        let entryList = app.collectionViews.containing(.staticText, identifier: "Duo Test Beta").firstMatch
+        XCTAssertGreaterThan(entryList.frame.maxY, bottomBar.frame.minY, "The glass bar should float over the content instead of occupying a footer.")
+        let search = app.searchFields.firstMatch
+        if search.exists {
+            XCTAssertLessThanOrEqual(search.frame.maxY, bottomBar.frame.minY, "The search field must remain above the action bar.")
+        }
+        app.buttons["duo.action.edit"].tap()
+        XCTAssertTrue(app.textFields["Label"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["entry-editor-cancel"].isHittable)
+        app.buttons["entry-editor-cancel"].tap()
+        XCTAssertTrue(bottomBar.waitForExistence(timeout: 3))
     }
 
     private func tapVisibleButton(_ name: String, in app: XCUIApplication) {
@@ -276,7 +318,7 @@ final class PasswordManageriOSLaunchUITests: XCTestCase {
     private func showSidebar(in app: XCUIApplication) {
         for _ in 0..<2 where !app.buttons["All Items"].firstMatch.isHittable {
             let navigation = app.buttons.matching(NSPredicate(
-                format: "identifier CONTAINS[c] 'Sidebar' OR label CONTAINS[c] 'Sidebar' OR identifier == 'BackButton' OR label == 'Vault'"
+                format: "identifier CONTAINS[c] 'Sidebar' OR label CONTAINS[c] 'Sidebar' OR label CONTAINS '边栏' OR identifier == 'BackButton' OR label == 'Vault'"
             )).allElementsBoundByIndex.first { $0.isHittable }
             XCTAssertNotNil(navigation, app.buttons.debugDescription)
             navigation?.tap()
@@ -288,11 +330,21 @@ final class PasswordManageriOSLaunchUITests: XCTestCase {
         let app = launchFixture()
         showSidebar(in: app)
         let sidebar = app.descendants(matching: .any)["vault-sidebar"].firstMatch
-        for _ in 0..<4 where !app.buttons["Settings"].firstMatch.isHittable {
+        let settingsButton = app.buttons["Settings"].firstMatch
+        let actionBar = app.descendants(matching: .any)["duo.action-bar"].firstMatch
+        for _ in 0..<4 where !settingsButton.isHittable || (actionBar.exists && settingsButton.frame.intersects(actionBar.frame)) {
             sidebar.swipeUp()
         }
+        if actionBar.exists {
+            XCTAssertLessThanOrEqual(settingsButton.frame.maxY, actionBar.frame.minY, "The last sidebar action must scroll above the floating bar.")
+        }
         tapVisibleButton("Settings", in: app)
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 3))
         let provider = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Provider'")).firstMatch
+        for _ in 0..<5 where !provider.isHittable {
+            let settingsForm = try XCTUnwrap(app.collectionViews.allElementsBoundByIndex.last { $0.isHittable })
+            settingsForm.swipeUp()
+        }
         XCTAssertTrue(provider.waitForExistence(timeout: 3))
         provider.tap()
         app.buttons["WebDAV"].tap()
@@ -308,10 +360,16 @@ final class PasswordManageriOSLaunchUITests: XCTestCase {
         if !app.buttons["Settings"].firstMatch.isHittable {
             showSidebar(in: app)
         }
-        for _ in 0..<4 where !app.buttons["Settings"].firstMatch.isHittable {
+        for _ in 0..<4 where !settingsButton.isHittable || (actionBar.exists && settingsButton.frame.intersects(actionBar.frame)) {
             sidebar.swipeUp()
         }
         tapVisibleButton("Settings", in: app)
+        for _ in 0..<5 where !provider.isHittable {
+            let settingsForm = try XCTUnwrap(app.collectionViews.allElementsBoundByIndex.last { $0.isHittable })
+            settingsForm.swipeUp()
+        }
+        XCTAssertTrue(provider.isHittable)
+        XCTAssertTrue(provider.label.contains("None"), "Closing Settings must discard the unsaved provider change.")
         XCTAssertFalse(app.textFields["WebDAV URL"].exists)
         app.buttons["Done"].tap()
     }
