@@ -3,34 +3,62 @@ import SwiftUI
 struct EntryListView: View {
     var entries: [VaultEntry]
     @Binding var selection: VaultEntry.ID?
+    var onScrollDirectionChange: ((Bool) -> Void)? = nil
+    var openEntry: ((VaultEntry) -> Void)? = nil
 
     @State private var scrollPosition: VaultEntry.ID?
+    @State private var lastDragTranslation: CGFloat = 0
     @ScaledMetric(relativeTo: .body) private var iconWidth = 18
 
+    @ViewBuilder
     var body: some View {
-        List(entries, selection: $selection) { entry in
-            NavigationLink(value: entry.id) {
-                HStack(spacing: 10) {
-                    Image(systemName: entry.type.systemImage)
-                        .foregroundStyle(.secondary)
-                        .frame(width: iconWidth)
-                        .accessibilityIdentifier("entry-list-icon-\(entry.id)")
+        if onScrollDirectionChange != nil {
+            entryList.simultaneousGesture(scrollDirectionGesture)
+        } else {
+            entryList
+        }
+    }
 
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(entry.label)
-                            .lineLimit(1)
+    private var scrollDirectionGesture: some Gesture {
+        DragGesture(minimumDistance: 8)
+            .onChanged { value in
+                let difference = value.translation.height - lastDragTranslation
+                guard abs(difference) > 3 else { return }
+                lastDragTranslation = value.translation.height
+                onScrollDirectionChange?(DuoCategoryTabScrollState.isVisible(
+                    forFingerMovement: difference
+                ))
+            }
+            .onEnded { _ in
+                lastDragTranslation = 0
+            }
+    }
 
-                        Text(entry.subtitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+    private var entryList: some View {
+        Group {
+            if let openEntry {
+                List(entries) { entry in
+                    Button {
+                        selection = entry.id
+                        openEntry(entry)
+                    } label: {
+                        entryRow(entry)
                     }
+                    .buttonStyle(.plain)
+                    .id(entry.id)
+                }
+            } else {
+                List(entries, selection: $selection) { entry in
+                    NavigationLink(value: entry.id) {
+                        entryRow(entry)
+                    }
+                    .tag(entry.id)
+                    .id(entry.id)
                 }
             }
-            .tag(entry.id)
-            .id(entry.id)
         }
         .scrollPosition(id: $scrollPosition)
+        .contentMargins(.bottom, onScrollDirectionChange == nil ? nil : 92, for: .scrollContent)
         .onChange(of: entryIDs) { _, nextIDs in
             guard let scrollPosition, !nextIDs.contains(scrollPosition) else { return }
             self.scrollPosition = fallbackScrollPosition(in: nextIDs)
@@ -40,6 +68,26 @@ struct EntryListView: View {
                 ContentUnavailableView("No Entries", systemImage: "key.slash")
             }
         }
+    }
+
+    private func entryRow(_ entry: VaultEntry) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: entry.type.systemImage)
+                .foregroundStyle(.secondary)
+                .frame(width: iconWidth)
+                .accessibilityIdentifier("entry-list-icon-\(entry.id)")
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(entry.label)
+                    .lineLimit(1)
+
+                Text(entry.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .contentShape(Rectangle())
     }
 
     private var entryIDs: [VaultEntry.ID] {

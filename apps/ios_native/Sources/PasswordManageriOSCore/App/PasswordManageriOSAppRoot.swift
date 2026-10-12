@@ -17,7 +17,9 @@ public struct PasswordManageriOSAppRoot: View {
     public init() {
         #if DEBUG && targetEnvironment(simulator)
         if ProcessInfo.processInfo.arguments.contains("--ui-testing-vault") {
-            _vaultStore = State(initialValue: DebugUIFixture.makeStore())
+            _vaultStore = State(initialValue: DebugUIFixture.makeStore(
+                includeManyCategories: ProcessInfo.processInfo.arguments.contains("--ui-testing-many-categories")
+            ))
             return
         }
         #endif

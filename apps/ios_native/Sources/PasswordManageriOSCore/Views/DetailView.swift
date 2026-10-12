@@ -8,6 +8,7 @@ struct DetailView: View {
     var deleteEntry: (VaultEntry) -> Void
     var exportEntry: (VaultEntry) -> Void
     var showsToolbarActions: Bool = true
+    var showsEntryTitle: Bool = true
     var openReference: (VaultEntry) -> Void = { _ in }
     var updateReference: (VaultEntry, String, String) -> Void = { _, _, _ in }
     var repairCategoryFields: (String) -> Void = { _ in }
@@ -20,9 +21,11 @@ struct DetailView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Label(entry.payload.category.isEmpty ? "Uncategorized" : entry.payload.category, systemImage: "folder")
                                 .foregroundStyle(.secondary)
-                            Text(entry.label)
-                                .font(.largeTitle.bold())
-                                .accessibilityIdentifier("entry-detail-title")
+                            if showsEntryTitle {
+                                Text(entry.label)
+                                    .font(.largeTitle.bold())
+                                    .accessibilityIdentifier("entry-detail-title")
+                            }
                         }
 
                         DetailSection(title: "Overview") {
