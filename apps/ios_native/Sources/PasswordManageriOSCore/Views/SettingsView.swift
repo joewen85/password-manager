@@ -3,6 +3,8 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var store: VaultStore
     @Environment(\.dismiss) private var dismiss
+    @AppStorage(AppPreferences.languageStorageKey) private var languagePreference = AppLanguage.system.rawValue
+    @AppStorage(AppPreferences.appearanceStorageKey) private var appearancePreference = AppAppearance.system.rawValue
     @AppStorage("biometric_unlock_enabled") private var biometricUnlockEnabled = false
     @AppStorage("idle_auto_lock_minutes") private var idleAutoLockMinutes = 0
     @State private var hasInitializedDraft = false
@@ -16,6 +18,19 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("App") {
+                    Picker("Language", selection: $languagePreference) {
+                        Text("System Default").tag(AppLanguage.system.rawValue)
+                        Text("English").tag(AppLanguage.english.rawValue)
+                        Text("Simplified Chinese").tag(AppLanguage.simplifiedChinese.rawValue)
+                    }
+                    Picker("Appearance", selection: $appearancePreference) {
+                        Text("System Default").tag(AppAppearance.system.rawValue)
+                        Text("Light").tag(AppAppearance.light.rawValue)
+                        Text("Dark").tag(AppAppearance.dark.rawValue)
+                    }
+                }
+
                 Section("Security") {
                     Toggle(
                         "Require 2FA code on unlock",

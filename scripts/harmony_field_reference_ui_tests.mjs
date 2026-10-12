@@ -157,6 +157,16 @@ function excludesSentinels(values, sentinels) {
   );
 }
 
+const pageLocalization = {
+  localized(value) {
+    return value;
+  },
+  localizedFormat(template, values) {
+    return values.reduce((result, value, index) =>
+      result.replace(`{${index}}`, value), template);
+  },
+};
+
 const canonicalLowercaseUuid =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -643,6 +653,7 @@ async function main() {
     value: 'Servers',
   };
   const sameCategoryValidationState = {
+    ...pageLocalization,
     categoryDraft: 'Servers',
     categoryRenameSource: '',
     categoryDraftFieldValueType() {
@@ -1122,6 +1133,7 @@ async function main() {
     },
   ];
   const detailState = {
+    ...pageLocalization,
     entryReferenceDetailResolution(_entry, field) {
       return field.resolution;
     },
@@ -1255,6 +1267,7 @@ async function main() {
     },
   ];
   const fieldDetailState = {
+    ...pageLocalization,
     fieldReferenceDetailResolution(_entry, field) {
       return field.resolution;
     },
@@ -1309,6 +1322,7 @@ async function main() {
   });
 
   const summaryState = {
+    ...pageLocalization,
     ...unsupportedState,
     isEntryReferenceCustomField(_entry, field) {
       return field.kind === 'reference';

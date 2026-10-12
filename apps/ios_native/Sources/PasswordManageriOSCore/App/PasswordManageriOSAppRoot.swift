@@ -3,6 +3,8 @@ import Combine
 
 public struct PasswordManageriOSAppRoot: View {
     @State private var vaultStore: VaultStore
+    @AppStorage(AppPreferences.languageStorageKey) private var languagePreference = AppLanguage.system.rawValue
+    @AppStorage(AppPreferences.appearanceStorageKey) private var appearancePreference = AppAppearance.system.rawValue
     @AppStorage("idle_auto_lock_minutes") private var idleAutoLockMinutes = 0
     @Environment(\.scenePhase) private var scenePhase
     @State private var lastUserActivityAt = Date()
@@ -24,6 +26,8 @@ public struct PasswordManageriOSAppRoot: View {
 
     public var body: some View {
         ContentView(store: vaultStore)
+            .environment(\.locale, AppLanguage.resolve(languagePreference).locale)
+            .preferredColorScheme(AppAppearance.resolve(appearancePreference).colorScheme)
             #if os(iOS)
             .background(KeyboardDismissalView().allowsHitTesting(false))
             #endif

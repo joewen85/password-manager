@@ -18,6 +18,11 @@ export default class EntryAbility extends UIAbility {
         return;
       }
       console.info('Succeeded in loading the content.');
+      windowStage.getMainWindow().then((mainWindow: window.Window) => {
+        mainWindow.getUIContext().runScopedTask(() => {
+          Environment.envProp('languageCode', 'en');
+        });
+      });
     });
   }
 

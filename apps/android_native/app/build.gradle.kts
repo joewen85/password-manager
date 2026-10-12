@@ -83,6 +83,7 @@ kotlin {
 }
 
 dependencies {
+    implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.13.0")
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.window:window:1.4.0")

@@ -1,4 +1,4 @@
-import { Context } from '@kit.AbilityKit';
+import { ConfigurationConstant, Context } from '@kit.AbilityKit';
 import { util } from '@kit.ArkTS';
 import { window } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
@@ -29,6 +29,16 @@ import {
 import { VaultCryptoService } from '../src/security/VaultCryptoService';
 import { BiometricCredentialStore } from '../src/security/BiometricCredentialStore';
 import { InMemoryVaultStore, PreferencesVaultStore } from '../src/storage/VaultStore';
+import { AppUiPreferencesStore } from '../src/storage/AppUiPreferencesStore';
+import {
+  AppAppearancePreference,
+  AppLanguagePreference,
+  AppUiPreferences,
+  defaultAppUiPreferences,
+  normalizeAppAppearance,
+  normalizeAppLanguage,
+} from '../src/domain/AppUiPreferences';
+import { formatLocalizedText, localizeText, resolveAppLanguage } from '../src/domain/AppLocalization';
 import {
   ConflictStrategy,
   SyncIntervalUnit,
@@ -132,6 +142,7 @@ struct Index {
   private vaultController: VaultController | null = null;
   private biometricCredentialStore: BiometricCredentialStore | null = null;
   private hostContext: Context | null = null;
+  private appUiPreferencesStore: AppUiPreferencesStore | null = null;
   private searchInputController: TextInputController = new TextInputController();
   private entryListScroller: Scroller = new Scroller();
   private appWindow: window.Window | null = null;
@@ -147,6 +158,8 @@ struct Index {
   private lastActivityAt: number = Date.now();
   private biometricAutoPrompted: boolean = false;
 
+  @StorageProp('languageCode') private systemLanguageCode: string = 'en';
+
   @State private ready: boolean = false;
   @State private hasMasterKey: boolean = false;
   @State private unlocked: boolean = false;
@@ -159,6 +172,8 @@ struct Index {
   @State private foldableDevice: boolean = false;
   @State private currentFoldStatus: number = 0;
   @State private keyboardHeight: number = 0;
+  @State private appLanguage: AppLanguagePreference = 'system';
+  @State private appAppearance: AppAppearancePreference = 'system';
 
   @State private password: string = '';
   @State private confirmPassword: string = '';
@@ -253,6 +268,20 @@ struct Index {
       this.biometricCredentialStore = null;
     }
     if (this.hostContext !== null) {
+      try {
+        this.appUiPreferencesStore = await AppUiPreferencesStore.create(this.hostContext);
+        const uiPreferences: AppUiPreferences = await this.appUiPreferencesStore.read();
+        this.appLanguage = uiPreferences.language;
+        this.appAppearance = uiPreferences.appearance;
+      } catch (error) {
+        const defaults = defaultAppUiPreferences();
+        this.appLanguage = defaults.language;
+        this.appAppearance = defaults.appearance;
+        console.error(`App UI preferences unavailable: ${error}`);
+      }
+      this.applyAppAppearance();
+    }
+    if (this.hostContext !== null) {
       await this.bindKeyboardAvoidance(this.hostContext);
     }
     await this.controller().initialize();
@@ -285,7 +314,7 @@ struct Index {
         this.ToastBanner();
       }
       if (!this.ready) {
-        Text('正在加载...').fontSize(18).fontWeight(FontWeight.Medium);
+        Text(this.localized("正在加载...")).fontSize(18).fontWeight(FontWeight.Medium);
       } else if (!this.unlocked) {
         this.UnlockView();
       } else {
@@ -316,18 +345,18 @@ struct Index {
   @Builder
   private UnlockView() {
     Column({ space: 12 }) {
-      Text(this.hasMasterKey ? '解锁密码库' : '初始化密码库')
+      Text(this.localized(this.hasMasterKey ? '解锁密码库' : '初始化密码库'))
         .fontSize(26)
         .fontWeight(FontWeight.Bold)
         .fontColor(UI_TEXT);
 
-      Text(this.hasMasterKey && this.biometricUnlockEnabled && this.biometricUnlockAvailable && this.biometricFailureCount < 3
+      Text(this.localized(this.hasMasterKey && this.biometricUnlockEnabled && this.biometricUnlockAvailable && this.biometricFailureCount < 3
         ? '正在调用生物识别；失败 3 次后请输入主密码。'
-        : (this.hasMasterKey ? '请输入主密码继续。' : '首次使用，请设置主密码。'))
+        : (this.hasMasterKey ? '请输入主密码继续。' : '首次使用，请设置主密码。')))
         .fontSize(14)
         .fontColor(UI_MUTED);
 
-      TextInput({ placeholder: '主密码', text: $$this.password })
+      TextInput({ placeholder: this.localized("主密码"), text: $$this.password })
         .type(InputType.Password)
         .width('100%')
         .height(48)
@@ -343,7 +372,7 @@ struct Index {
         .padding({ left: 12, right: 12 });
 
       if (!this.hasMasterKey) {
-        TextInput({ placeholder: '确认主密码', text: $$this.confirmPassword })
+        TextInput({ placeholder: this.localized("确认主密码"), text: $$this.confirmPassword })
           .type(InputType.Password)
           .width('100%')
           .height(48)
@@ -360,7 +389,7 @@ struct Index {
       }
 
       if (this.hasMasterKey) {
-        TextInput({ placeholder: '动态验证码(启用2FA后必填)', text: $$this.unlockTotpCode })
+        TextInput({ placeholder: this.localized("动态验证码(启用2FA后必填)"), text: $$this.unlockTotpCode })
           .type(InputType.Number)
           .width('100%')
           .height(48)
@@ -376,17 +405,17 @@ struct Index {
           .padding({ left: 12, right: 12 });
 
         if (this.unlockRemainingSeconds > 0) {
-          Text(`解锁暂时受限，请在 ${this.unlockRemainingSeconds} 秒后重试`)
+          Text(this.localizedFormat('解锁暂时受限，请在 {0} 秒后重试', [String(this.unlockRemainingSeconds)]))
             .fontSize(12)
             .fontColor(UI_DANGER);
         } else if (this.unlockFailedAttempts > 0) {
-          Text(`剩余尝试次数 ${this.remainingUnlockAttempts()} 次`)
+          Text(this.localizedFormat('剩余尝试次数 {0} 次', [String(this.remainingUnlockAttempts())]))
             .fontSize(12)
             .fontColor(UI_DANGER);
         }
       }
 
-      Button(this.hasMasterKey ? '解锁' : '初始化')
+      Button(this.localized(this.hasMasterKey ? '解锁' : '初始化'))
         .type(ButtonType.Capsule)
         .width('100%')
         .height(44)
@@ -395,7 +424,7 @@ struct Index {
         });
 
       if (this.hasMasterKey && this.biometricUnlockEnabled && this.biometricUnlockAvailable && this.biometricFailureCount > 0 && this.biometricFailureCount < 3) {
-        Button(this.biometricBusy ? '正在验证...' : '重试生物识别')
+        Button(this.localized(this.biometricBusy ? '正在验证...' : '重试生物识别'))
           .type(ButtonType.Normal)
           .width('100%')
           .height(44)
@@ -505,14 +534,14 @@ struct Index {
   private HeaderToolbarContent() {
     Row() {
       Column({ space: 4 }) {
-        Text('密码管理器')
+        Text(this.localized("密码管理器"))
           .fontSize(this.headerTitleFontSize())
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_TEXT)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis });
         if (this.showHeaderSubtitle()) {
-          Text('鸿蒙原生密码库')
+          Text(this.localized("鸿蒙原生密码库"))
             .fontSize(11)
             .fontWeight(FontWeight.Bold)
             .fontColor(UI_ACCENT)
@@ -588,7 +617,7 @@ struct Index {
     .backgroundColor(UI_SURFACE)
     .border({ width: 1, color: UI_STROKE })
     .borderRadius(12)
-    .accessibilityText('同步')
+    .accessibilityText(this.localized("同步"))
     .onClick(action);
   }
 
@@ -663,7 +692,7 @@ struct Index {
   @Builder
   private FloatingPanelHeader(title: string) {
     Row() {
-      Text(title)
+      Text(this.localized(title))
         .fontSize(16)
         .fontWeight(FontWeight.Bold)
         .fontColor(UI_TEXT);
@@ -698,6 +727,7 @@ struct Index {
       this.FloatingPanelHeader('设置');
       Scroll() {
         Column({ space: 12 }) {
+          this.AppUiPreferencesSection();
           this.SecuritySection();
           this.SyncSection();
           this.DeviceSection();
@@ -709,6 +739,66 @@ struct Index {
       .height(this.settingsPanelScrollHeight());
     }
     .width('100%');
+  }
+
+  @Builder
+  private AppUiPreferencesSection() {
+    Column({ space: 8 }) {
+      this.SectionTitle(this.localized('应用'));
+      Text(this.localized('语言'))
+        .fontSize(12)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_MUTED);
+      Row({ space: 6 }) {
+        this.AppPreferenceChoice(this.localized('跟随系统'), this.appLanguage === 'system', () => {
+          this.setAppLanguage('system');
+        });
+        this.AppPreferenceChoice(this.localized('English'), this.appLanguage === 'english', () => {
+          this.setAppLanguage('english');
+        });
+        this.AppPreferenceChoice(this.localized('简体中文'), this.appLanguage === 'simplifiedChinese', () => {
+          this.setAppLanguage('simplifiedChinese');
+        });
+      }
+      Text(this.localized('外观'))
+        .fontSize(12)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(UI_MUTED);
+      Row({ space: 6 }) {
+        this.AppPreferenceChoice(this.localized('跟随系统'), this.appAppearance === 'system', () => {
+          this.setAppAppearance('system');
+        });
+        this.AppPreferenceChoice(this.localized('浅色'), this.appAppearance === 'light', () => {
+          this.setAppAppearance('light');
+        });
+        this.AppPreferenceChoice(this.localized('深色'), this.appAppearance === 'dark', () => {
+          this.setAppAppearance('dark');
+        });
+      }
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(UI_SURFACE)
+    .border({ width: 1, color: UI_STROKE })
+    .borderRadius(14);
+  }
+
+  @Builder
+  private AppPreferenceChoice(label: string, selected: boolean, action: () => void) {
+    Text(label)
+      .fontSize(12)
+      .fontWeight(FontWeight.Bold)
+      .fontColor(selected ? '#FFFFFF' : UI_TEXT)
+      .height(40)
+      .layoutWeight(1)
+      .constraintSize({ minWidth: 0 })
+      .maxLines(2)
+      .textOverflow({ overflow: TextOverflow.Ellipsis })
+      .textAlign(TextAlign.Center)
+      .backgroundColor(selected ? UI_ACCENT : UI_SURFACE_ALT)
+      .border({ width: 1, color: selected ? UI_ACCENT : UI_STROKE })
+      .borderRadius(10)
+      .onClick(action);
   }
 
   @Builder
@@ -747,18 +837,18 @@ struct Index {
   private BackupOverlayPanel() {
     Column({ space: 10 }) {
       this.FloatingPanelHeader('备份');
-      Text('加密本地备份保存在应用私有存储中，并保留最近 5 个。')
+      Text(this.localized("加密本地备份保存在应用私有存储中，并保留最近 5 个。"))
         .fontSize(13)
         .fontColor(UI_MUTED);
       this.OverlayActionButton(this.backupBusy ? '备份中...' : '立即创建备份', true, () => {
         this.onRunBackup();
       });
-      Text('可用备份')
+      Text(this.localized("可用备份"))
         .fontSize(12)
         .fontWeight(FontWeight.Bold)
         .fontColor(UI_ACCENT);
       if (this.backups.length === 0) {
-        Text('尚未创建备份。')
+        Text(this.localized("尚未创建备份。"))
           .fontSize(13)
           .fontColor(UI_MUTED);
       } else {
@@ -806,10 +896,10 @@ struct Index {
   private ClearDataOverlayPanel() {
     Column({ space: 10 }) {
       this.FloatingPanelHeader('清空数据');
-      Text('将清空所有条目、分类、标签和密码库安全设置。请输入创建时使用的主密码确认。')
+      Text(this.localized("将清空所有条目、分类、标签和密码库安全设置。请输入创建时使用的主密码确认。"))
         .fontSize(13)
         .fontColor(UI_MUTED);
-      TextInput({ placeholder: '主密码', text: $$this.clearDataPassword })
+      TextInput({ placeholder: this.localized("主密码"), text: $$this.clearDataPassword })
         .type(InputType.Password)
         .width('100%')
         .height(48)
@@ -835,7 +925,7 @@ struct Index {
     Column({ space: 10 }) {
       this.FloatingPanelHeader('分类');
       Row({ space: 8 }) {
-        TextInput({ placeholder: '搜索分类', text: $$this.draftCategorySearch })
+        TextInput({ placeholder: this.localized("搜索分类"), text: $$this.draftCategorySearch })
           .layoutWeight(1)
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
@@ -874,7 +964,7 @@ struct Index {
               this.CategorySelectRow(category, this.draftCategory === category);
             }, (category: string) => category);
           } else if (!this.showUncategorizedDraftCategory()) {
-            Text('没有匹配分类，可点击 + 创建。')
+            Text(this.localized("没有匹配分类，可点击 + 创建。"))
               .fontSize(13)
               .fontColor(UI_MUTED);
           }
@@ -924,7 +1014,7 @@ struct Index {
         .fontSize(12)
         .fontColor(UI_MUTED)
         .width('100%');
-      TextInput({ placeholder: '搜索条目名称或分类', text: $$this.draftReferenceSearch })
+      TextInput({ placeholder: this.localized("搜索条目名称或分类"), text: $$this.draftReferenceSearch })
         .width('100%')
         .height(48)
         .backgroundColor(UI_SURFACE_ALT)
@@ -979,7 +1069,7 @@ struct Index {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%');
-        Text(entry.category.length > 0 ? entry.category : '未分类')
+        Text(entry.category.length > 0 ? entry.category : this.localized('未分类'))
           .fontSize(12)
           .fontColor(selected ? '#FFFFFF' : UI_MUTED)
           .maxLines(1)
@@ -1010,7 +1100,7 @@ struct Index {
       this.FloatingPanelHeader('创建分类');
       Scroll() {
         Column({ space: 10 }) {
-          TextInput({ placeholder: '分类名称（必填）', text: $$this.categoryDraft })
+          TextInput({ placeholder: this.localized("分类名称（必填）"), text: $$this.categoryDraft })
             .width('100%')
             .height(48)
             .backgroundColor(UI_SURFACE_ALT)
@@ -1024,7 +1114,7 @@ struct Index {
             .borderRadius(12)
             .padding({ left: 14, right: 14 });
           if (!this.categoryCreateReturnToEntry) {
-            Text('字段快捷键')
+            Text(this.localized("字段快捷键"))
               .fontSize(12)
               .fontWeight(FontWeight.Bold)
               .fontColor(UI_MUTED);
@@ -1057,7 +1147,7 @@ struct Index {
   private TagCreateOverlayPanel() {
     Column({ space: 10 }) {
       this.FloatingPanelHeader('创建标签');
-      TextInput({ placeholder: '标签名称（必填）', text: $$this.tagDraft })
+      TextInput({ placeholder: this.localized("标签名称（必填）"), text: $$this.tagDraft })
         .width('100%')
         .height(48)
         .backgroundColor(UI_SURFACE_ALT)
@@ -1079,7 +1169,7 @@ struct Index {
 
   @Builder
   private OverlayActionButton(label: string, primary: boolean, action: () => void) {
-    Text(label)
+    Text(this.localized(label))
       .fontSize(14)
       .fontWeight(FontWeight.Bold)
       .fontColor(primary ? '#FFFFFF' : UI_TEXT)
@@ -1094,7 +1184,7 @@ struct Index {
 
   @Builder
   private SmallGhostButton(label: string, action: () => void) {
-    Text(label)
+    Text(this.localized(label))
       .fontSize(12)
       .fontWeight(FontWeight.Bold)
       .fontColor(UI_TEXT)
@@ -1110,7 +1200,11 @@ struct Index {
   @Builder
   private StatusSummary() {
     Row() {
-      Text(`条目 ${this.entries.length} · 分类 ${this.categories.length} · 同步 ${this.syncStatus}`)
+      Text(this.localizedFormat('条目 {0} · 分类 {1} · 同步 {2}', [
+        String(this.entries.length),
+        String(this.categories.length),
+        this.localized(this.syncStatus),
+      ]))
         .fontSize(11)
         .fontColor(UI_MUTED)
         .maxLines(1)
@@ -1127,7 +1221,7 @@ struct Index {
 
   @Builder
   private SectionTitle(title: string) {
-    Text(title)
+    Text(this.localized(title))
       .fontSize(13)
       .fontWeight(FontWeight.Bold)
       .fontColor(UI_ACCENT);
@@ -1136,11 +1230,11 @@ struct Index {
   @Builder
   private SettingToggleRow(label: string, enabled: boolean, action: () => void) {
     Row() {
-      Text(label)
+      Text(this.localized(label))
         .fontSize(15)
         .fontColor(UI_TEXT)
         .layoutWeight(1);
-      Text(enabled ? '已开启' : '已关闭')
+      Text(this.localized(enabled ? '已开启' : '已关闭'))
         .fontSize(13)
         .fontWeight(FontWeight.Bold)
         .fontColor(enabled ? '#FFFFFF' : UI_TEXT)
@@ -1157,8 +1251,8 @@ struct Index {
   }
 
   @Builder
-  private ChoiceChip(label: string, selected: boolean, action: () => void) {
-    Text(label)
+  private ChoiceChip(label: string, selected: boolean, action: () => void, localizeLabel: boolean = true) {
+    Text(localizeLabel ? this.localized(label) : label)
       .fontSize(13)
       .fontWeight(FontWeight.Bold)
       .fontColor(selected ? '#FFFFFF' : UI_TEXT)
@@ -1169,7 +1263,7 @@ struct Index {
       .backgroundColor(selected ? UI_ACCENT : UI_SURFACE_ALT)
       .border({ width: 1, color: selected ? UI_ACCENT : UI_STROKE })
       .borderRadius(12)
-      .accessibilityText(`${label}，${selected ? '已选择' : '未选择'}`)
+      .accessibilityText(`${localizeLabel ? this.localized(label) : label}，${this.localized(selected ? '已选择' : '未选择')}`)
       .onClick(action);
   }
 
@@ -1208,12 +1302,12 @@ struct Index {
       });
 
       if (!this.biometricUnlockAvailable) {
-        Text('此设备没有可用的强生物识别硬件或尚未录入。')
+        Text(this.localized("此设备没有可用的强生物识别硬件或尚未录入。"))
           .fontSize(12)
           .fontColor(UI_DANGER);
       }
       if (this.biometricUnlockRequested && !this.biometricUnlockEnabled) {
-        TextInput({ placeholder: '输入主密码以启用生物识别', text: $$this.securityBiometricMasterPassword })
+        TextInput({ placeholder: this.localized("输入主密码以启用生物识别"), text: $$this.securityBiometricMasterPassword })
           .type(InputType.Password)
           .width('100%')
           .height(48)
@@ -1229,11 +1323,11 @@ struct Index {
           .padding({ left: 14, right: 14 });
       }
 
-      Text('闲置自动锁定')
+      Text(this.localized("闲置自动锁定"))
         .fontSize(12)
         .fontWeight(FontWeight.Bold)
         .fontColor(UI_MUTED);
-      TextInput({ placeholder: '分钟，0 为关闭', text: $$this.securityIdleAutoLockMinutes })
+      TextInput({ placeholder: this.localized("分钟，0 为关闭"), text: $$this.securityIdleAutoLockMinutes })
         .type(InputType.Number)
         .width('100%')
         .height(48)
@@ -1247,11 +1341,11 @@ struct Index {
         .border({ width: 1, color: UI_STROKE })
         .borderRadius(12)
         .padding({ left: 14, right: 14 });
-      Text('输入 0 表示关闭；取值范围 0-1440。')
+      Text(this.localized("输入 0 表示关闭；取值范围 0-1440。"))
         .fontSize(12)
         .fontColor(UI_MUTED);
 
-      Text(this.securityRequireTotp ? '解锁时将强制校验动态验证码。' : '当前未启用2FA。')
+      Text(this.localized(this.securityRequireTotp ? '解锁时将强制校验动态验证码。' : '当前未启用2FA。'))
         .fontSize(12)
         .fontColor(UI_MUTED);
 
@@ -1272,12 +1366,12 @@ struct Index {
       Row() {
         this.SectionTitle('同步');
         Blank();
-        Text(`修订 ${this.syncRevision}`)
+        Text(this.localizedFormat('修订 {0}', [String(this.syncRevision)]))
           .fontSize(12)
           .fontColor(UI_MUTED);
       }
 
-      Text('提供商')
+      Text(this.localized("提供商"))
         .fontSize(12)
         .fontWeight(FontWeight.Bold)
         .fontColor(UI_MUTED);
@@ -1320,7 +1414,7 @@ struct Index {
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
-        TextInput({ placeholder: '路径，例如 /vault.json', text: $$this.syncWebdavPath })
+        TextInput({ placeholder: this.localized("路径，例如 /vault.json"), text: $$this.syncWebdavPath })
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
@@ -1333,7 +1427,7 @@ struct Index {
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
-        TextInput({ placeholder: '用户名，可选', text: $$this.syncWebdavUsername })
+        TextInput({ placeholder: this.localized("用户名，可选"), text: $$this.syncWebdavUsername })
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
@@ -1346,7 +1440,7 @@ struct Index {
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
-        TextInput({ placeholder: '密码，可选', text: $$this.syncWebdavPassword })
+        TextInput({ placeholder: this.localized("密码，可选"), text: $$this.syncWebdavPassword })
           .type(InputType.Password)
           .width('100%')
           .height(48)
@@ -1364,7 +1458,7 @@ struct Index {
 
       if (this.syncProviderType === SyncProviderType.S3_PRESIGNED) {
         this.SectionTitle('预签名 URL 设置');
-        TextInput({ placeholder: '下载 URL', text: $$this.syncPresignedDownloadUrl })
+        TextInput({ placeholder: this.localized("下载 URL"), text: $$this.syncPresignedDownloadUrl })
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
@@ -1377,7 +1471,7 @@ struct Index {
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
-        TextInput({ placeholder: '上传 URL', text: $$this.syncPresignedUploadUrl })
+        TextInput({ placeholder: this.localized("上传 URL"), text: $$this.syncPresignedUploadUrl })
           .type(InputType.Password)
           .width('100%')
           .height(48)
@@ -1398,7 +1492,7 @@ struct Index {
         this.syncProviderType === SyncProviderType.ALIYUN_OSS
       ) {
         this.SectionTitle(this.syncProviderType === SyncProviderType.TENCENT_COS ? '腾讯云 COS 设置' : '阿里云 OSS 设置');
-        TextInput({ placeholder: 'Access Key / SecretId（必填）', text: $$this.syncObjectStorageAccessKeyId })
+        TextInput({ placeholder: this.localized("Access Key / SecretId（必填）"), text: $$this.syncObjectStorageAccessKeyId })
           .type(InputType.Password)
           .width('100%')
           .height(48)
@@ -1412,7 +1506,7 @@ struct Index {
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
-        TextInput({ placeholder: 'Secret Key（必填）', text: $$this.syncObjectStorageSecretAccessKey })
+        TextInput({ placeholder: this.localized("Secret Key（必填）"), text: $$this.syncObjectStorageSecretAccessKey })
           .type(InputType.Password)
           .width('100%')
           .height(48)
@@ -1426,7 +1520,7 @@ struct Index {
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
-        TextInput({ placeholder: 'Bucket（必填）', text: $$this.syncObjectStorageBucket })
+        TextInput({ placeholder: this.localized("Bucket（必填）"), text: $$this.syncObjectStorageBucket })
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
@@ -1439,7 +1533,7 @@ struct Index {
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
-        TextInput({ placeholder: this.syncProviderType === SyncProviderType.TENCENT_COS ? 'Endpoint，例如 cos.ap-shanghai.myqcloud.com' : 'Endpoint，例如 oss-cn-hangzhou.aliyuncs.com', text: $$this.syncObjectStorageEndpoint })
+        TextInput({ placeholder: this.localized(this.syncProviderType === SyncProviderType.TENCENT_COS ? 'Endpoint，例如 cos.ap-shanghai.myqcloud.com' : 'Endpoint，例如 oss-cn-hangzhou.aliyuncs.com'), text: $$this.syncObjectStorageEndpoint })
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
@@ -1453,7 +1547,7 @@ struct Index {
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
         if (this.syncProviderType === SyncProviderType.TENCENT_COS) {
-          TextInput({ placeholder: 'AppID，可选；未包含在 bucket 时自动追加', text: $$this.syncObjectStorageAppId })
+          TextInput({ placeholder: this.localized("AppID，可选；未包含在 bucket 时自动追加"), text: $$this.syncObjectStorageAppId })
             .width('100%')
             .height(48)
             .backgroundColor(UI_SURFACE_ALT)
@@ -1467,7 +1561,7 @@ struct Index {
             .borderRadius(12)
             .padding({ left: 14, right: 14 });
         }
-        TextInput({ placeholder: '自定义 URL，可选；填写后优先生效', text: $$this.syncObjectStorageCustomUrl })
+        TextInput({ placeholder: this.localized("自定义 URL，可选；填写后优先生效"), text: $$this.syncObjectStorageCustomUrl })
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
@@ -1480,7 +1574,7 @@ struct Index {
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
-        TextInput({ placeholder: '对象 Key，例如 vault.sync.json', text: $$this.syncObjectStorageObjectKey })
+        TextInput({ placeholder: this.localized("对象 Key，例如 vault.sync.json"), text: $$this.syncObjectStorageObjectKey })
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
@@ -1499,12 +1593,12 @@ struct Index {
         this.syncAutoEnabled = !this.syncAutoEnabled;
       });
       Row({ space: 8 }) {
-        Text('同步间隔')
+        Text(this.localized("同步间隔"))
           .fontSize(12)
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_MUTED)
           .width(72);
-        TextInput({ placeholder: '数值', text: $$this.syncIntervalValue })
+        TextInput({ placeholder: this.localized("数值"), text: $$this.syncIntervalValue })
           .type(InputType.Number)
           .layoutWeight(1)
           .height(48)
@@ -1534,11 +1628,11 @@ struct Index {
       this.SettingToggleRow('同步主密钥元数据', this.syncMasterKey, () => {
         this.syncMasterKey = !this.syncMasterKey;
       });
-      Text('开启后同步包会携带主密钥元数据，便于新设备通过同一主密码解密同步数据。')
+      Text(this.localized("开启后同步包会携带主密钥元数据，便于新设备通过同一主密码解密同步数据。"))
         .fontSize(12)
         .fontColor(UI_MUTED);
 
-      Text('冲突策略')
+      Text(this.localized("冲突策略"))
         .fontSize(12)
         .fontWeight(FontWeight.Bold)
         .fontColor(UI_MUTED);
@@ -1571,7 +1665,7 @@ struct Index {
         .layoutWeight(1)
       }
 
-      Text(this.syncStatus)
+      Text(this.localized(this.syncStatus))
         .fontSize(12)
         .fontColor(UI_MUTED);
 
@@ -1598,10 +1692,10 @@ struct Index {
   private DeviceSection() {
     Column({ space: 6 }) {
       this.SectionTitle('设备');
-      Text(`设备 ${this.syncDeviceId.length > 0 ? this.syncDeviceId : '-'}`)
+      Text(this.localizedFormat('设备 {0}', [this.syncDeviceId.length > 0 ? this.syncDeviceId : '-']))
         .fontSize(13)
         .fontColor(UI_MUTED);
-      Text(`修订 ${this.syncRevision}`)
+      Text(this.localizedFormat('修订 {0}', [String(this.syncRevision)]))
         .fontSize(13)
         .fontColor(UI_MUTED);
     }
@@ -1614,7 +1708,7 @@ struct Index {
 
   @Builder
   private PrimaryTextButton(label: string, action: () => void) {
-    Text(label)
+    Text(this.localized(label))
       .fontSize(14)
       .fontWeight(FontWeight.Bold)
       .fontColor('#FFFFFF')
@@ -1628,7 +1722,7 @@ struct Index {
 
   @Builder
   private SecondaryTextButton(label: string, action: () => void) {
-    Text(label)
+    Text(this.localized(label))
       .fontSize(14)
       .fontWeight(FontWeight.Bold)
       .fontColor(UI_TEXT)
@@ -1650,7 +1744,7 @@ struct Index {
           .height(18)
           .color(UI_TEXT);
       } else {
-        Text('立即同步')
+        Text(this.localized("立即同步"))
           .fontSize(14)
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_TEXT);
@@ -1662,7 +1756,7 @@ struct Index {
     .border({ width: 1, color: UI_STROKE })
     .borderRadius(12)
     .opacity(this.syncBusy ? 0.72 : 1)
-    .accessibilityText('立即同步')
+    .accessibilityText(this.localized("立即同步"))
     .onClick(action);
   }
 
@@ -1673,7 +1767,7 @@ struct Index {
         Flex({ wrap: FlexWrap.Wrap }) {
           this.FilterPill('全部分类', () => this.selectedCategory.trim().length === 0, () => {
             this.handleCategoryFilterSelection('');
-          });
+          }, true);
           ForEach(this.categories, (category: string) => {
             this.FilterPill(category, () => this.isFocusedCategory(category), () => {
               this.handleCategoryFilterSelection(category);
@@ -1684,7 +1778,7 @@ struct Index {
 
       Row({ space: 8 }) {
         TextInput({
-          placeholder: '搜索密码库，如 ip:1.2.3.4 name:xxx',
+          placeholder: this.localized("搜索密码库，如 ip:1.2.3.4 name:xxx"),
           text: $$this.searchQuery,
           controller: this.searchInputController
         })
@@ -1720,7 +1814,7 @@ struct Index {
         Flex({ wrap: FlexWrap.Wrap }) {
           this.FilterPill('全部标签', () => this.selectedTag.length === 0, () => {
             this.handleTagFilterSelection('');
-          });
+          }, true);
           ForEach(this.tags, (tag: string) => {
             this.FilterPill(tag, () => this.selectedTag === tag, () => {
               this.handleTagFilterSelection(tag);
@@ -1771,7 +1865,7 @@ struct Index {
     Column({ space: 10 }) {
       this.FloatingPanelHeader('条目详情');
       if (this.selectedDetailEntry() === null) {
-        Text('条目不存在或已删除')
+        Text(this.localized("条目不存在或已删除"))
           .fontSize(13)
           .fontColor(UI_MUTED)
           .width('100%')
@@ -1787,7 +1881,7 @@ struct Index {
   @Builder
   private EntryEditorFormContent() {
     Column({ space: 10 }) {
-      TextInput({ placeholder: '名称（必填）', text: $$this.draftLabel })
+      TextInput({ placeholder: this.localized("名称（必填）"), text: $$this.draftLabel })
         .width('100%')
         .height(48)
         .backgroundColor(UI_SURFACE_ALT)
@@ -1819,7 +1913,7 @@ struct Index {
   private TagSection() {
     Column({ space: 10 }) {
       Row() {
-        Text('标签管理')
+        Text(this.localized("标签管理"))
           .fontSize(22)
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_TEXT);
@@ -1830,7 +1924,7 @@ struct Index {
       }
 
       Row({ space: 8 }) {
-        TextInput({ placeholder: '新增标签', text: $$this.tagDraft })
+        TextInput({ placeholder: this.localized("新增标签"), text: $$this.tagDraft })
           .layoutWeight(1)
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
@@ -1843,7 +1937,7 @@ struct Index {
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
-        Text('添加')
+        Text(this.localized("添加"))
           .fontSize(13)
           .fontWeight(FontWeight.Bold)
           .fontColor('#FFFFFF')
@@ -1860,7 +1954,7 @@ struct Index {
           ForEach(this.tags, (tag: string) => {
             Row({ space: 4 }) {
               Text(tag).fontSize(13);
-              Text('删除')
+              Text(this.localized("删除"))
                 .fontSize(11)
                 .fontWeight(FontWeight.Bold)
                 .fontColor(UI_DANGER)
@@ -1882,7 +1976,7 @@ struct Index {
           }, (tag: string) => tag);
         }
       } else {
-        Text('暂无标签')
+        Text(this.localized("暂无标签"))
           .fontSize(13)
           .fontColor(UI_MUTED);
       }
@@ -1898,12 +1992,12 @@ struct Index {
   private CategorySection() {
     Column({ space: 12 }) {
       Row() {
-        Text('分类管理')
+        Text(this.localized("分类管理"))
           .fontSize(22)
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_TEXT);
         Blank();
-        Text('导入')
+        Text(this.localized("导入"))
           .fontSize(13)
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_ACCENT)
@@ -1917,11 +2011,13 @@ struct Index {
       }
 
       Column({ space: 10 }) {
-        Text(this.categoryRenameSource.length > 0 ? `编辑分类: ${this.categoryRenameSource}` : '新增分类')
+        Text(this.categoryRenameSource.length > 0
+          ? this.localizedFormat('编辑分类: {0}', [this.categoryRenameSource])
+          : this.localized('新增分类'))
           .fontSize(12)
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_MUTED);
-        TextInput({ placeholder: '分类名称（必填）', text: $$this.categoryDraft })
+        TextInput({ placeholder: this.localized("分类名称（必填）"), text: $$this.categoryDraft })
           .width('100%')
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
@@ -1934,7 +2030,7 @@ struct Index {
           .border({ width: 1, color: UI_STROKE })
           .borderRadius(12)
           .padding({ left: 14, right: 14 });
-        Text('字段快捷键')
+        Text(this.localized("字段快捷键"))
           .fontSize(12)
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_MUTED);
@@ -1985,7 +2081,7 @@ struct Index {
         }
         .width('100%');
       } else {
-        Text('暂无分类')
+        Text(this.localized("暂无分类"))
           .fontSize(13)
           .fontColor(UI_MUTED);
       }
@@ -2008,7 +2104,7 @@ struct Index {
           .layoutWeight(1)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis });
-        Text(`${this.categoryEntryCount(category)} 条`)
+        Text(this.localizedFormat('{0} 条', [String(this.categoryEntryCount(category))]))
           .fontSize(11)
           .fontWeight(FontWeight.Bold)
           .fontColor(this.isEditingCategory(category) || this.isFocusedCategory(category) ? UI_ACCENT : UI_MUTED)
@@ -2021,7 +2117,7 @@ struct Index {
       .onClick(() => {
         this.focusCategory(category);
       });
-      Text(`字段: ${this.categoryFieldSummary(category)}`)
+      Text(this.localizedFormat('字段: {0}', [this.categoryFieldSummary(category)]))
         .fontSize(12)
         .fontColor(UI_MUTED)
         .maxLines(2)
@@ -2051,7 +2147,7 @@ struct Index {
 
   @Builder
   private CategoryRowActionButton(label: string, primary: boolean, danger: boolean, action: () => void) {
-    Text(label)
+    Text(this.localized(label))
       .fontSize(12)
       .fontWeight(FontWeight.Bold)
       .fontColor(primary ? '#FFFFFF' : (danger ? UI_DANGER : UI_ACCENT))
@@ -2068,12 +2164,12 @@ struct Index {
   private EntryListSection() {
     Column({ space: 10 }) {
       Row() {
-        Text('条目列表')
+        Text(this.localized("条目列表"))
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_TEXT);
         Blank();
-        Text(`共 ${this.filteredEntries().length} 条`)
+        Text(this.localizedFormat('共 {0} 条', [String(this.filteredEntries().length)]))
           .fontSize(12)
           .fontColor(UI_MUTED);
       }
@@ -2084,11 +2180,11 @@ struct Index {
 
       if (this.filteredEntries().length === 0) {
         Column({ space: 10 }) {
-          Text('暂无条目')
+          Text(this.localized("暂无条目"))
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
             .fontColor(UI_TEXT);
-          Text('点右上角 + 创建第一个条目。')
+          Text(this.localized("点右上角 + 创建第一个条目。"))
             .fontSize(13)
             .fontColor(UI_MUTED);
           this.PrimaryTextButton('新建条目', () => {
@@ -2118,7 +2214,9 @@ struct Index {
                   .fontColor(this.entrySummaryMatched(entry) ? UI_ACCENT : UI_MUTED)
                   .maxLines(2)
                   .textOverflow({ overflow: TextOverflow.Ellipsis });
-                Text(`${this.entryCategory(entry) || '未分类'}${entry.tags.length > 0 ? '  ' + entry.tags.map((tag: string) => '#' + tag).join(', ') : ''}`)
+                Text((this.entryCategory(entry) || this.localized('未分类')) + (entry.tags.length > 0
+                  ? '  ' + entry.tags.map((tag: string) => '#' + tag).join(', ')
+                  : ''))
                   .fontSize(12)
                   .fontColor(this.entryCategoryMatched(entry) ? UI_ACCENT : UI_MUTED)
                   .maxLines(2)
@@ -2134,7 +2232,7 @@ struct Index {
                     .fontColor(UI_MUTED);
                   Blank();
                   if (!this.useWideLayout()) {
-                    Text('查看')
+                    Text(this.localized("查看"))
                       .fontSize(12)
                       .fontWeight(FontWeight.Bold)
                       .fontColor(UI_ACCENT)
@@ -2143,7 +2241,7 @@ struct Index {
                         this.openEntryDetailOverlay(entry);
                       });
                   }
-                  Text('导出')
+                  Text(this.localized("导出"))
                     .fontSize(12)
                     .fontWeight(FontWeight.Bold)
                     .fontColor(UI_ACCENT)
@@ -2151,7 +2249,7 @@ struct Index {
                     .onClick(() => {
                       this.toggleExportPanel(entry);
                     });
-                  Text('编辑')
+                  Text(this.localized("编辑"))
                     .fontSize(12)
                     .fontWeight(FontWeight.Bold)
                     .fontColor(UI_ACCENT)
@@ -2159,7 +2257,7 @@ struct Index {
                     .onClick(() => {
                       this.startEditEntry(entry);
                     });
-                  Text('删除')
+                  Text(this.localized("删除"))
                     .fontSize(12)
                     .fontWeight(FontWeight.Bold)
                     .fontColor(UI_DANGER)
@@ -2202,7 +2300,7 @@ struct Index {
   private EntryDetailSection() {
     Column({ space: 10 }) {
       Row() {
-        Text('条目详情')
+        Text(this.localized("条目详情"))
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_TEXT);
@@ -2210,11 +2308,11 @@ struct Index {
 
       if (this.selectedDetailEntry() === null) {
         Column({ space: 8 }) {
-          Text(this.filteredEntries().length === 0 ? '暂无可查看条目' : '选择左侧条目查看详情')
+          Text(this.localized(this.filteredEntries().length === 0 ? '暂无可查看条目' : '选择左侧条目查看详情'))
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
             .fontColor(UI_TEXT);
-          Text(this.filteredEntries().length === 0 ? '点左上角 + 创建第一个条目。' : '详情会固定显示在右侧，不再挤占列表位置。')
+          Text(this.localized(this.filteredEntries().length === 0 ? '点左上角 + 创建第一个条目。' : '详情会固定显示在右侧，不再挤占列表位置。'))
             .fontSize(13)
             .fontColor(UI_MUTED);
         }
@@ -2244,10 +2342,10 @@ struct Index {
           .fontColor(UI_TEXT)
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis });
-        this.DetailValueRow('分类', this.entryCategory(entry) || '未分类');
-        this.DetailValueRow('标签', entry.tags.length > 0 ? entry.tags.join(', ') : '-');
+        this.DetailValueRow(this.localized('分类'), this.entryCategory(entry) || this.localized('未分类'));
+        this.DetailValueRow(this.localized('标签'), entry.tags.length > 0 ? entry.tags.join(', ') : '-');
         if (entry.customFields.length > 0) {
-          Text('自定义字段')
+          Text(this.localized("自定义字段"))
             .fontSize(12)
             .fontWeight(FontWeight.Bold)
             .fontColor(UI_MUTED)
@@ -2257,7 +2355,7 @@ struct Index {
               this.FieldReferenceDetailRow(entry, field);
               if (this.fieldReferenceResolvedValue(entry, field).length > 0) {
                 this.DetailValueRow(
-                  `${field.name.length > 0 ? field.name : '关联字段'} · 解析值`,
+                  (field.name.length > 0 ? field.name : this.localized('关联字段')) + ' · ' + this.localized('解析值'),
                   this.fieldReferenceResolvedValue(entry, field),
                 );
               }
@@ -2266,7 +2364,7 @@ struct Index {
             } else if (this.isUnsupportedCustomField(entry, field)) {
               this.UnsupportedDetailFieldRow(field);
             } else {
-              this.DetailValueRow(field.name.length > 0 ? field.name : '字段', field.value);
+              this.DetailValueRow(field.name.length > 0 ? field.name : this.localized('字段'), field.value);
             }
           }, (field: CustomField) => field.id);
         }
@@ -2297,12 +2395,12 @@ struct Index {
   @Builder
   private EntryReferenceDetailRow(entry: VaultEntry, field: CustomField) {
     Column({ space: 6 }) {
-      Text(field.name.length > 0 ? field.name : '关联字段')
+      Text(field.name.length > 0 ? field.name : this.localized('关联字段'))
         .fontSize(11)
         .fontWeight(FontWeight.Bold)
         .fontColor(UI_MUTED)
         .width('100%');
-      Text(this.entryReferenceDetailText(entry, field))
+      Text(this.localized(this.entryReferenceDetailText(entry, field)))
         .fontSize(14)
         .fontColor(this.entryReferenceDetailColor(entry, field))
         .width('100%')
@@ -2344,12 +2442,12 @@ struct Index {
   @Builder
   private FieldReferenceDetailRow(entry: VaultEntry, field: CustomField) {
     Column({ space: 6 }) {
-      Text(field.name.length > 0 ? field.name : '关联字段')
+      Text(field.name.length > 0 ? field.name : this.localized('关联字段'))
         .fontSize(11)
         .fontWeight(FontWeight.Bold)
         .fontColor(UI_MUTED)
         .width('100%');
-      Text(this.fieldReferenceDetailText(entry, field))
+      Text(this.localized(this.fieldReferenceDetailText(entry, field)))
         .fontSize(14)
         .fontColor(this.fieldReferenceDetailColor(entry, field))
         .width('100%')
@@ -2400,12 +2498,12 @@ struct Index {
   @Builder
   private UnsupportedDetailFieldRow(field: CustomField) {
     Column({ space: 4 }) {
-      Text(field.name.length > 0 ? field.name : '未知字段')
+      Text(field.name.length > 0 ? field.name : this.localized('未知字段'))
         .fontSize(11)
         .fontWeight(FontWeight.Bold)
         .fontColor(UI_MUTED)
         .width('100%');
-      Text('当前版本不支持此字段类型，原值已保留。')
+      Text(this.localized("当前版本不支持此字段类型，原值已保留。"))
         .fontSize(13)
         .fontColor(UI_DANGER)
         .width('100%');
@@ -2427,7 +2525,7 @@ struct Index {
           .fontColor(UI_MUTED);
         Blank();
         if (value.trim().length > 0) {
-          Text('复制')
+          Text(this.localized("复制"))
             .fontSize(11)
             .fontWeight(FontWeight.Bold)
             .fontColor(UI_ACCENT)
@@ -2488,14 +2586,14 @@ struct Index {
   @Builder
   private EntryOverview(entry: VaultEntry) {
     Column({ space: 4 }) {
-      Text('概览').fontSize(12).fontWeight(FontWeight.Medium).fontColor('#1F2B2D');
-      Text(`标签: ${entry.tags.length > 0 ? entry.tags.join(', ') : '-'}`)
+      Text(this.localized("概览")).fontSize(12).fontWeight(FontWeight.Medium).fontColor('#1F2B2D');
+        Text(this.localizedFormat('标签: {0}', [entry.tags.length > 0 ? entry.tags.join(', ') : '-']))
         .fontSize(11)
         .fontColor('#5E6A6C')
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis });
       if (entry.customFields.length > 0) {
-        Text(`自定义字段: ${entry.customFields.map((field: CustomField) => field.name).join(', ')}`)
+        Text(this.localizedFormat('自定义字段: {0}', [entry.customFields.map((field: CustomField) => field.name).join(', ')]))
           .fontSize(11)
           .fontColor('#5E6A6C')
           .maxLines(2)
@@ -2511,7 +2609,7 @@ struct Index {
   @Builder
   private EntryExportPanel(entry: VaultEntry) {
     Column({ space: 8 }) {
-      Text('选择导出字段').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_TEXT);
+      Text(this.localized("选择导出字段")).fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_TEXT);
       Flex({ wrap: FlexWrap.Wrap }) {
         ForEach(this.exportFieldOptions(entry), (option: ExportFieldOption) => {
           this.FilterPill(option.label, () => this.exportSelectedFieldIds.includes(option.id), () => {
@@ -3056,11 +3154,11 @@ struct Index {
     try {
       const prompt = this.uiPromptAction();
       const confirmation = await prompt.showDialog({
-        title: '恢复备份',
-        message: `恢复 ${backup.fileName}？当前密码库数据会被替换。`,
+        title: this.localized("恢复备份"),
+        message: this.localizedFormat('恢复 {0}？当前密码库数据会被替换。', [backup.fileName]),
         buttons: [
-          { text: '取消', color: '#666666' },
-          { text: '恢复', color: UI_ACCENT, primary: true },
+          { text: this.localized("取消"), color: '#666666' },
+          { text: this.localized("恢复"), color: UI_ACCENT, primary: true },
         ],
       });
       if (confirmation.index !== 1) {
@@ -3251,18 +3349,22 @@ struct Index {
             (candidate: FieldTemplate) => candidate.id === field.targetFieldId,
           );
           const targetFieldName = targetField?.name.trim() ?? '';
-          return `${name} → ${targetCategory.length > 0 ? targetCategory : '未配置分类'} / ${targetFieldName.length > 0 ? targetFieldName : '未配置字段'}`;
+          return this.localizedFormat('{0} → {1} / {2}', [
+            name,
+            targetCategory.length > 0 ? targetCategory : this.localized('未配置分类'),
+            targetFieldName.length > 0 ? targetFieldName : this.localized('未配置字段'),
+          ]);
         }
         if (valueType === 'entryReference') {
-          return `${name}（旧关联，只读）`;
+          return this.localizedFormat('{0}（旧关联，只读）', [name]);
         }
         if (!isEditableCategoryFieldType(valueType)) {
-          return `${name}（只读）`;
+          return this.localizedFormat('{0}（只读）', [name]);
         }
         return name;
       })
       .filter((name: string) => name.length > 0)
-      .join('、');
+      .join(', ');
   }
 
   private categoryEntryCount(category: string): number {
@@ -3545,7 +3647,7 @@ struct Index {
   @Builder
   private EntryCategorySelect() {
     Column({ space: 6 }) {
-      Text('分类').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
+      Text(this.localized("分类")).fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
       Row({ space: 8 }) {
         Text(this.categoryDisplayName(this.draftCategory))
           .fontSize(14)
@@ -3561,7 +3663,7 @@ struct Index {
           .onClick(() => {
             this.openCategorySelectOverlay();
           });
-        Text('选择')
+        Text(this.localized("选择"))
           .fontSize(13)
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_ACCENT)
@@ -3581,7 +3683,7 @@ struct Index {
   @Builder
   private EntryTagMultiSelect() {
     Column({ space: 6 }) {
-      Text('标签').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
+      Text(this.localized("标签")).fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
       if (this.draftSelectedTags.length > 0) {
         Flex({ wrap: FlexWrap.Wrap }) {
           ForEach(this.draftSelectedTags, (tag: string) => {
@@ -3591,12 +3693,12 @@ struct Index {
           }, (tag: string) => tag);
         }
       } else {
-        Text('未选择标签')
+        Text(this.localized("未选择标签"))
           .fontSize(12)
           .fontColor(UI_MUTED);
       }
       Row({ space: 8 }) {
-        TextInput({ placeholder: '搜索标签', text: $$this.draftTagSearch })
+        TextInput({ placeholder: this.localized("搜索标签"), text: $$this.draftTagSearch })
           .layoutWeight(1)
           .height(48)
           .backgroundColor(UI_SURFACE_ALT)
@@ -3638,7 +3740,7 @@ struct Index {
           }, (tag: string) => tag);
         }
       } else {
-        Text('没有匹配标签，可点 + 创建')
+        Text(this.localized("没有匹配标签，可点 + 创建"))
           .fontSize(12)
           .fontColor(UI_MUTED);
       }
@@ -3648,33 +3750,33 @@ struct Index {
   @Builder
   private CategoryDraftCustomFieldsEditor() {
     Column({ space: 6 }) {
-      Text('自定义字段')
+      Text(this.localized("自定义字段"))
         .fontSize(12)
         .fontWeight(FontWeight.Bold)
         .fontColor(UI_MUTED);
       if (this.categoryDraftCustomFields.length === 0) {
-        Text('字段默认只有名称和备注，可在下方添加自定义字段')
+        Text(this.localized("字段默认只有名称和备注，可在下方添加自定义字段"))
           .fontSize(12)
           .fontColor(UI_MUTED);
       }
       ForEach(this.categoryDraftCustomFields, (field: CustomField) => {
         Column({ space: 8 }) {
           if (this.isCategoryDraftFieldReadOnly(field.id)) {
-            Text(field.name.length > 0 ? field.name : '未知字段')
+          Text(field.name.length > 0 ? field.name : this.localized('未知字段'))
               .fontSize(14)
               .fontWeight(FontWeight.Bold)
               .fontColor(UI_TEXT)
               .width('100%');
-            Text(`字段类型: ${this.categoryDraftFieldValueType(field.id)}`)
+            Text(this.localizedFormat('字段类型: {0}', [this.localized(this.categoryDraftFieldValueType(field.id) === 'fieldReference' ? '关联字段' : '文本')]))
               .fontSize(12)
               .fontColor(UI_MUTED)
               .width('100%');
-            Text('当前版本无法编辑该字段，原配置已保留。')
+            Text(this.localized("当前版本无法编辑该字段，原配置已保留。"))
               .fontSize(12)
               .fontColor(UI_DANGER)
               .width('100%');
           } else {
-            TextInput({ placeholder: '字段名称', text: field.name })
+            TextInput({ placeholder: this.localized("字段名称"), text: field.name })
               .enabled(typeof field.templateFieldId !== 'string' || field.templateFieldId.length === 0)
               .width('100%')
               .height(48)
@@ -3692,17 +3794,17 @@ struct Index {
                 this.updateCategoryDraftCustomFieldName(field.id, value);
               });
             if (this.isCategoryDraftFieldTypeLocked(field.id)) {
-              Text(`字段类型: ${this.categoryDraftFieldValueType(field.id) === 'fieldReference' ? '关联字段' : '文本'}`)
+              Text(this.localizedFormat('字段类型: {0}', [this.localized(this.categoryDraftFieldValueType(field.id) === 'fieldReference' ? '关联字段' : '文本')]))
                 .fontSize(12)
                 .fontWeight(FontWeight.Bold)
                 .fontColor(UI_MUTED)
                 .width('100%');
-              Text('字段保存后名称不可修改；已有值或关联依赖的字段不能删除或更改类型，目标配置仍可修改。')
+              Text(this.localized("字段保存后名称不可修改；已有值或关联依赖的字段不能删除或更改类型，目标配置仍可修改。"))
                 .fontSize(12)
                 .fontColor(UI_MUTED)
                 .width('100%');
             } else {
-              Text('字段类型')
+              Text(this.localized("字段类型"))
                 .fontSize(12)
                 .fontWeight(FontWeight.Bold)
                 .fontColor(UI_MUTED)
@@ -3725,7 +3827,7 @@ struct Index {
             }
             if (!this.isCategoryDraftFieldTypeLocked(field.id)) {
               Row({ space: 8 }) {
-                Text('删除')
+                Text(this.localized("删除"))
                   .height(44)
                   .padding({ left: 10, right: 10 })
                   .fontSize(13)
@@ -3755,30 +3857,30 @@ struct Index {
   @Builder
   private CategoryDraftTargetCategoryEditor(field: CustomField) {
     Column({ space: 6 }) {
-      Text('目标分类')
+      Text(this.localized("目标分类"))
         .fontSize(12)
         .fontWeight(FontWeight.Bold)
         .fontColor(UI_MUTED)
         .width('100%');
-      Text('先选择目标分类，再选择该分类中的文本字段；不能直接关联当前字段。')
+      Text(this.localized("先选择目标分类，再选择该分类中的文本字段；不能直接关联当前字段。"))
         .fontSize(12)
         .fontColor(UI_MUTED)
         .width('100%');
       Flex({ wrap: FlexWrap.Wrap }) {
         if (this.categoryDraftHasMissingTargetCategory(field)) {
-          this.ChoiceChip(`不可用: ${field.value.trim()}`, true, () => {});
+          this.ChoiceChip(`不可用: ${field.value.trim()}`, true, () => {}, false);
         }
         ForEach(this.categoryDraftTargetCategories(), (category: string) => {
           this.ChoiceChip(category, this.sameCategoryName(field.value, category), () => {
             this.updateCategoryDraftTargetCategory(field.id, category);
-          });
+          }, false);
         }, (category: string) => category);
       }
       if (field.value.trim().length > 0 && !this.categoryDraftHasMissingTargetCategory(field)) {
         this.CategoryDraftTargetFieldEditor(field);
       }
       if (this.categoryDraftFieldReferenceError(field).length > 0) {
-        Text(this.categoryDraftFieldReferenceError(field))
+        Text(this.localized(this.categoryDraftFieldReferenceError(field)))
           .fontSize(12)
           .fontColor(UI_DANGER)
           .width('100%');
@@ -3790,7 +3892,7 @@ struct Index {
   @Builder
   private CategoryDraftTargetFieldEditor(field: CustomField) {
     Column({ space: 6 }) {
-      Text('目标字段')
+      Text(this.localized("目标字段"))
         .fontSize(12)
         .fontWeight(FontWeight.Bold)
         .fontColor(UI_MUTED)
@@ -3806,11 +3908,12 @@ struct Index {
             () => {
               this.updateCategoryDraftTargetFieldId(field.id, template.id);
             },
+            false,
           );
         }, (template: FieldTemplate) => template.id);
       }
       if (this.categoryDraftTargetFieldTemplates(field).length === 0) {
-        Text('所选分类没有可关联的文本字段。')
+        Text(this.localized("所选分类没有可关联的文本字段。"))
           .fontSize(12)
           .fontColor(UI_DANGER)
           .width('100%');
@@ -3822,16 +3925,16 @@ struct Index {
   @Builder
   private CustomFieldsEditor() {
     Column({ space: 6 }) {
-      Text('字段').fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
+      Text(this.localized("字段")).fontSize(12).fontWeight(FontWeight.Bold).fontColor(UI_MUTED);
       if (this.editableDraftCustomFields().length === 0) {
-        Text('字段默认只有名称和备注，可在下方添加自定义字段')
+        Text(this.localized("字段默认只有名称和备注，可在下方添加自定义字段"))
           .fontSize(12)
           .fontColor(UI_MUTED);
       }
       ForEach(this.editableDraftCustomFields(), (field: CustomField) => {
         Column({ space: 8 }) {
           if (this.isMultilineField(field)) {
-            TextInput({ placeholder: '字段名称', text: field.name })
+            TextInput({ placeholder: this.localized("字段名称"), text: field.name })
               .enabled(!this.isDraftFieldNameLocked(field.id))
               .width('100%')
               .height(48)
@@ -3848,7 +3951,7 @@ struct Index {
               .onChange((value: string) => {
                 this.updateDraftCustomFieldName(field.id, value);
               });
-            TextArea({ placeholder: '字段值', text: field.value })
+            TextArea({ placeholder: this.localized("字段值"), text: field.value })
               .width('100%')
               .height(120)
               .enterKeyType(EnterKeyType.NEW_LINE)
@@ -3867,7 +3970,7 @@ struct Index {
               });
           } else {
             Row({ space: 8 }) {
-              TextInput({ placeholder: '字段名称', text: field.name })
+              TextInput({ placeholder: this.localized("字段名称"), text: field.name })
               .enabled(!this.isDraftFieldNameLocked(field.id))
                 .layoutWeight(2)
                 .height(48)
@@ -3884,7 +3987,7 @@ struct Index {
                 .onChange((value: string) => {
                   this.updateDraftCustomFieldName(field.id, value);
                 });
-              TextInput({ placeholder: '字段值', text: field.value })
+              TextInput({ placeholder: this.localized("字段值"), text: field.value })
                 .layoutWeight(3)
                 .height(48)
                 .backgroundColor(UI_SURFACE_ALT)
@@ -3903,7 +4006,7 @@ struct Index {
             }
             .width('100%');
           }
-          Text('删除')
+          Text(this.localized("删除"))
             .height(36)
             .padding({ left: 10, right: 10 })
             .fontSize(13)
@@ -3939,7 +4042,7 @@ struct Index {
         .textAlign(TextAlign.Center)
         .backgroundColor(UI_SELECTED)
         .borderRadius(8);
-      Text(label)
+      Text(this.localized(label))
         .fontSize(14)
         .fontWeight(FontWeight.Bold)
         .fontColor(UI_ACCENT);
@@ -3957,7 +4060,7 @@ struct Index {
   private EntryReferenceFieldsEditor() {
     if (this.editableDraftReferenceFields().length > 0) {
       Column({ space: 6 }) {
-        Text('关联字段')
+        Text(this.localized("关联字段"))
           .fontSize(12)
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_MUTED)
@@ -3977,7 +4080,7 @@ struct Index {
   @Builder
   private EntryReferenceFieldEditor(field: CustomField) {
     Column({ space: 8 }) {
-      Text(field.name.length > 0 ? field.name : '关联字段')
+      Text(field.name.length > 0 ? field.name : this.localized('关联字段'))
         .fontSize(14)
         .fontWeight(FontWeight.Bold)
         .fontColor(UI_TEXT)
@@ -4020,7 +4123,7 @@ struct Index {
   @Builder
   private FieldReferenceFieldEditor(field: CustomField) {
     Column({ space: 8 }) {
-      Text(field.name.length > 0 ? field.name : '关联字段')
+      Text(field.name.length > 0 ? field.name : this.localized('关联字段'))
         .fontSize(14)
         .fontWeight(FontWeight.Bold)
         .fontColor(UI_TEXT)
@@ -4044,7 +4147,7 @@ struct Index {
           }
           .layoutWeight(1);
         } else {
-          Text('请先在分类管理中修复目标字段配置。')
+          Text(this.localized("请先在分类管理中修复目标字段配置。"))
             .fontSize(12)
             .fontColor(UI_DANGER)
             .layoutWeight(1);
@@ -4071,12 +4174,12 @@ struct Index {
   private UnsupportedDraftFieldsNotice() {
     if (this.unsupportedDraftCustomFields().length > 0) {
       Column({ space: 4 }) {
-        Text(`另有 ${this.unsupportedDraftCustomFields().length} 个当前版本不支持的字段`)
+        Text(this.localizedFormat('另有 {0} 个当前版本不支持的字段', [String(this.unsupportedDraftCustomFields().length)]))
           .fontSize(12)
           .fontWeight(FontWeight.Bold)
           .fontColor(UI_DANGER)
           .width('100%');
-        Text('这些字段不会显示原值，也不会被修改或删除；保存时会原样保留。')
+        Text(this.localized("这些字段不会显示原值，也不会被修改或删除；保存时会原样保留。"))
           .fontSize(12)
           .fontColor(UI_MUTED)
           .width('100%');
@@ -4197,11 +4300,11 @@ struct Index {
     try {
       const prompt = this.uiPromptAction();
       const confirmation = await prompt.showDialog({
-        title: '导入预览',
+        title: this.localized("导入预览"),
         message,
         buttons: [
-          { text: '取消', color: '#666666' },
-          { text: '继续', color: UI_ACCENT, primary: true },
+          { text: this.localized("取消"), color: '#666666' },
+          { text: this.localized("继续"), color: UI_ACCENT, primary: true },
         ],
       });
       if (confirmation.index !== 1) {
@@ -4211,11 +4314,11 @@ struct Index {
         return ImportConflictStrategy.KEEP_COPY;
       }
       const action = await prompt.showActionMenu({
-        title: '冲突处理策略',
+        title: this.localized("冲突处理策略"),
         buttons: [
-          { text: '保留副本', color: UI_ACCENT },
-          { text: '覆盖现有', color: UI_ACCENT },
-          { text: '跳过冲突', color: '#666666' },
+          { text: this.localized("保留副本"), color: UI_ACCENT },
+          { text: this.localized("覆盖现有"), color: UI_ACCENT },
+          { text: this.localized("跳过冲突"), color: '#666666' },
         ],
       });
       if (action.index === 0) {
@@ -4264,10 +4367,10 @@ struct Index {
     try {
       const prompt = this.uiPromptAction();
       await prompt.showDialog({
-        title: '搜索用法',
-        message: '普通关键词按当前分类匹配；tag:xxx 或 #xxx 可跨分类全局匹配标签；多个词按 AND 过滤。\n\n字段前缀：name:xxx 名称/标题，category:xxx 分类，tag:xxx 标签，app:xxx 应用ID，server:xxx 服务器，ip:xxx 服务器IP或服务地址。也支持自定义字段 key:value，如 owner:sre。\n\n示例：tag:prod ip:10.0，name:aws owner:sre。',
+        title: this.localized("搜索用法"),
+        message: this.localized("普通关键词按当前分类匹配；tag:xxx 或 #xxx 可跨分类全局匹配标签；多个词按 AND 过滤。\n\n字段前缀：name:xxx 名称/标题，category:xxx 分类，tag:xxx 标签，app:xxx 应用ID，server:xxx 服务器，ip:xxx 服务器IP或服务地址。也支持自定义字段 key:value，如 owner:sre。\n\n示例：tag:prod ip:10.0，name:aws owner:sre。"),
         buttons: [
-          { text: '知道了', color: UI_ACCENT, primary: true },
+          { text: this.localized("知道了"), color: UI_ACCENT, primary: true },
         ],
       });
     } catch (error) {
@@ -4487,8 +4590,8 @@ struct Index {
   private entryReferenceSelectorTitle(): string {
     const field = this.activeDraftReferenceField();
     return field === null || field.name.trim().length === 0
-      ? '选择关联条目'
-      : `选择“${field.name.trim()}”`;
+      ? this.localized('选择关联条目')
+      : this.localizedFormat('选择“{0}”', [field.name.trim()]);
   }
 
   private entryReferenceSelectorHint(): string {
@@ -4496,13 +4599,13 @@ struct Index {
     const category = template?.targetCategory?.trim() ?? '';
     if (template !== null && this.isEntryReferenceTemplateField(template)) {
       return category.length > 0
-        ? `仅显示“${category}”分类中的可用条目。`
-        : '显示全部分类中的可用条目。';
+        ? this.localizedFormat('仅显示“{0}”分类中的可用条目。', [category])
+        : this.localized('显示全部分类中的可用条目。');
     }
     const fieldName = this.fieldReferenceTargetTemplate(template)?.name.trim() ?? '';
     return category.length > 0 && fieldName.length > 0
-      ? `目标路径: ${category} / ${fieldName}。仅显示该分类中的可用条目。`
-      : '当前字段的目标分类或目标字段配置不完整。';
+      ? this.localizedFormat('目标路径: {0} / {1}。仅显示该分类中的可用条目。', [category, fieldName])
+      : this.localized('当前字段的目标分类或目标字段配置不完整。');
   }
 
   private entryReferenceSelectorEmptyText(): string {
@@ -4511,12 +4614,12 @@ struct Index {
     if (template !== null && this.isFieldReferenceTemplateField(template)) {
       const targetField = this.fieldReferenceTargetTemplate(template);
       if (targetField === null || !this.isTextTemplateField(targetField)) {
-        return '请先修复字段的目标分类和目标字段配置';
+        return this.localized('请先修复字段的目标分类和目标字段配置');
       }
     }
     return category.length > 0
-      ? `“${category}”分类暂无可关联条目`
-      : '暂无可关联条目';
+      ? this.localizedFormat('“{0}”分类暂无可关联条目', [category])
+      : this.localized('暂无可关联条目');
   }
 
   private selectActiveDraftReference(entryId: string): void {
@@ -4806,7 +4909,7 @@ struct Index {
   }
 
   private categoryDisplayName(category: string): string {
-    return category.trim().length > 0 ? category : '未分类';
+    return category.trim().length > 0 ? category : this.localized('未分类');
   }
 
   private toolbarIconSize(): number {
@@ -5514,8 +5617,11 @@ struct Index {
     if (invalid === undefined) {
       return '';
     }
-    const label = invalid.name.trim().length > 0 ? invalid.name.trim() : '未命名字段';
-    return `字段“${label}”：${this.categoryDraftFieldReferenceError(invalid)}`;
+    const label = invalid.name.trim().length > 0 ? invalid.name.trim() : this.localized('未命名字段');
+    return this.localizedFormat('字段“{0}”：{1}', [
+      label,
+      this.localized(this.categoryDraftFieldReferenceError(invalid)),
+    ]);
   }
 
   private normalizedDraftCustomFields(): CustomField[] {
@@ -5600,24 +5706,30 @@ struct Index {
   private entryReferenceDraftDisplayValue(field: CustomField): string {
     const resolution = this.entryReferenceDraftResolution(field);
     if (resolution === null || resolution.status === EntryReferenceStatus.EMPTY) {
-      return '未选择关联条目';
+      return this.localized('未选择关联条目');
     }
     if (resolution.status === EntryReferenceStatus.MISSING) {
-      return '关联条目不存在';
+      return this.localized('关联条目不存在');
     }
     if (resolution.status === EntryReferenceStatus.DELETED) {
       return resolution.target === undefined
-        ? '关联条目已删除'
-        : `${resolution.target.label} · 已删除`;
+        ? this.localized('关联条目已删除')
+        : this.localizedFormat('{0} · 已删除', [resolution.target.label]);
     }
     if (resolution.status === EntryReferenceStatus.CATEGORY_MISMATCH) {
       return resolution.target === undefined
-        ? '关联条目分类不匹配'
-        : `${resolution.target.label} · 当前分类: ${resolution.target.category || '未分类'}`;
+        ? this.localized('关联条目分类不匹配')
+        : this.localizedFormat('{0} · 当前分类: {1}', [
+          resolution.target.label,
+          resolution.target.category || this.localized('未分类'),
+        ]);
     }
     return resolution.target === undefined
-      ? '关联条目不存在'
-      : `${resolution.target.label} · ${resolution.target.category || '未分类'}`;
+      ? this.localized('关联条目不存在')
+      : this.localizedFormat('{0} · {1}', [
+        resolution.target.label,
+        resolution.target.category || this.localized('未分类'),
+      ]);
   }
 
   private entryReferenceDraftStatusColor(field: CustomField): Resource {
@@ -5636,8 +5748,8 @@ struct Index {
     const definition = this.templateDefinitionForCustomField(field, this.draftCategory);
     const targetCategory = definition?.targetCategory?.trim() ?? '';
     return targetCategory.length > 0
-      ? `目标分类: ${targetCategory}`
-      : '目标分类: 不限分类';
+      ? this.localizedFormat('目标分类: {0}', [targetCategory])
+      : this.localized('目标分类: 不限分类');
   }
 
   private entryReferenceDraftActionLabel(field: CustomField): string {
@@ -5687,38 +5799,44 @@ struct Index {
   private fieldReferenceDraftDisplayValue(field: CustomField): string {
     const resolution = this.fieldReferenceDraftResolution(field);
     if (resolution === null || resolution.status === FieldValueReferenceStatus.EMPTY) {
-      return '未选择目标条目';
+      return this.localized('未选择目标条目');
     }
     if (resolution.status === FieldValueReferenceStatus.INVALID_CONFIGURATION) {
-      return '字段关联配置不完整或存在直接自引用';
+      return this.localized('字段关联配置不完整或存在直接自引用');
     }
     if (resolution.status === FieldValueReferenceStatus.MISSING) {
-      return '目标条目不存在';
+      return this.localized('目标条目不存在');
     }
     if (resolution.status === FieldValueReferenceStatus.DELETED) {
       return resolution.target === undefined
-        ? '目标条目已删除'
-        : `${resolution.target.label} · 目标条目已删除`;
+        ? this.localized('目标条目已删除')
+        : this.localizedFormat('{0} · 目标条目已删除', [resolution.target.label]);
     }
     if (resolution.status === FieldValueReferenceStatus.CATEGORY_MISMATCH) {
       return resolution.target === undefined
-        ? '目标条目分类不匹配'
-        : `${resolution.target.label} · 当前分类: ${resolution.target.category || '未分类'}`;
+        ? this.localized('目标条目分类不匹配')
+        : this.localizedFormat('{0} · 当前分类: {1}', [
+          resolution.target.label,
+          resolution.target.category || this.localized('未分类'),
+        ]);
     }
     if (resolution.status === FieldValueReferenceStatus.TARGET_FIELD_MISSING) {
-      return '目标字段已删除';
+      return this.localized('目标字段已删除');
     }
     if (resolution.status === FieldValueReferenceStatus.TARGET_FIELD_UNSUPPORTED) {
-      return '目标字段不再是文本类型';
+      return this.localized('目标字段不再是文本类型');
     }
     if (resolution.status === FieldValueReferenceStatus.TARGET_FIELD_EMPTY) {
       return resolution.target === undefined
-        ? '目标字段值为空'
-        : `${resolution.target.label} → ${resolution.target.fieldName || '目标字段'} · 值为空`;
+        ? this.localized('目标字段值为空')
+        : this.localizedFormat('{0} → {1} · 值为空', [
+          resolution.target.label,
+          resolution.target.fieldName || this.localized('目标字段'),
+        ]);
     }
     return resolution.target === undefined
-      ? '目标条目不存在'
-      : `${resolution.target.label} → ${resolution.target.fieldName}`;
+      ? this.localized('目标条目不存在')
+      : this.localizedFormat('{0} → {1}', [resolution.target.label, resolution.target.fieldName]);
   }
 
   private fieldReferenceDraftStatusColor(field: CustomField): Resource {
@@ -5737,7 +5855,10 @@ struct Index {
     const category = definition?.targetCategory?.trim() ?? '';
     const targetField = this.fieldReferenceTargetTemplate(definition ?? null);
     const fieldName = targetField?.name.trim() ?? '';
-    return `目标路径: ${category.length > 0 ? category : '未配置分类'} / ${fieldName.length > 0 ? fieldName : '未配置字段'}`;
+    return this.localizedFormat('目标路径: {0} / {1}', [
+      category.length > 0 ? category : this.localized('未配置分类'),
+      fieldName.length > 0 ? fieldName : this.localized('未配置字段'),
+    ]);
   }
 
   private fieldReferenceDraftActionLabel(field: CustomField): string {
@@ -5855,31 +5976,38 @@ struct Index {
   private entryReferenceDetailText(entry: VaultEntry, field: CustomField): string {
     const resolution = this.entryReferenceDetailResolution(entry, field);
     if (resolution === null || resolution.status === EntryReferenceStatus.EMPTY) {
-      return '未选择关联条目';
+      return this.localized('未选择关联条目');
     }
     if (resolution.status === EntryReferenceStatus.MISSING) {
-      return '关联条目不存在';
+      return this.localized('关联条目不存在');
     }
     if (resolution.status === EntryReferenceStatus.DELETED) {
       return resolution.target === undefined
-        ? '关联条目已删除'
-        : `${resolution.target.label} · 已删除`;
+        ? this.localized('关联条目已删除')
+        : this.localizedFormat('{0} · 已删除', [resolution.target.label]);
     }
     if (resolution.status === EntryReferenceStatus.CATEGORY_MISMATCH) {
       const definition = this.templateDefinitionForCustomField(field, this.entryCategory(entry));
       const requiredCategory = definition?.targetCategory?.trim() ?? '';
       if (resolution.target === undefined) {
         return requiredCategory.length > 0
-          ? `关联条目已不在“${requiredCategory}”分类`
-          : '关联条目分类不匹配';
+          ? this.localizedFormat('关联条目已不在“{0}”分类', [requiredCategory])
+          : this.localized('关联条目分类不匹配');
       }
       return requiredCategory.length > 0
-        ? `${resolution.target.label} · 当前: ${resolution.target.category || '未分类'} · 要求: ${requiredCategory}`
-        : `${resolution.target.label} · 分类不匹配`;
+        ? this.localizedFormat('{0} · 当前: {1} · 要求: {2}', [
+          resolution.target.label,
+          resolution.target.category || this.localized('未分类'),
+          requiredCategory,
+        ])
+        : this.localizedFormat('{0} · 分类不匹配', [resolution.target.label]);
     }
     return resolution.target === undefined
-      ? '关联条目不存在'
-      : `${resolution.target.label} · ${resolution.target.category || '未分类'}`;
+      ? this.localized('关联条目不存在')
+      : this.localizedFormat('{0} · {1}', [
+        resolution.target.label,
+        resolution.target.category || this.localized('未分类'),
+      ]);
   }
 
   private entryReferenceDetailColor(entry: VaultEntry, field: CustomField): Resource {
@@ -5925,45 +6053,53 @@ struct Index {
     const category = definition?.targetCategory?.trim() ?? '';
     const targetField = this.fieldReferenceTargetTemplate(definition ?? null);
     const fieldName = targetField?.name.trim() ?? '';
-    return `${field.name.length > 0 ? field.name : '关联字段'} → ${category.length > 0 ? category : '未配置分类'} / ${fieldName.length > 0 ? fieldName : '未配置字段'}`;
+    return this.localizedFormat('{0} → {1} / {2}', [
+      field.name.length > 0 ? field.name : this.localized('关联字段'),
+      category.length > 0 ? category : this.localized('未配置分类'),
+      fieldName.length > 0 ? fieldName : this.localized('未配置字段'),
+    ]);
   }
 
   private fieldReferenceDetailText(entry: VaultEntry, field: CustomField): string {
     const resolution = this.fieldReferenceDetailResolution(entry, field);
     const path = this.fieldReferenceConfiguredPath(entry, field);
     if (resolution === null || resolution.status === FieldValueReferenceStatus.EMPTY) {
-      return `${path} · 未选择目标条目`;
+      return this.localizedFormat('{0} · 未选择目标条目', [path]);
     }
     if (resolution.status === FieldValueReferenceStatus.INVALID_CONFIGURATION) {
-      return `${path} · 配置无效或存在直接自引用`;
+      return this.localizedFormat('{0} · 配置无效或存在直接自引用', [path]);
     }
     if (resolution.status === FieldValueReferenceStatus.MISSING) {
-      return `${path} · 目标条目不存在`;
+      return this.localizedFormat('{0} · 目标条目不存在', [path]);
     }
     if (resolution.status === FieldValueReferenceStatus.DELETED) {
       return resolution.target === undefined
-        ? `${path} · 目标条目已删除`
-        : `${path} · ${resolution.target.label} · 目标条目已删除`;
+        ? this.localizedFormat('{0} · 目标条目已删除', [path])
+        : this.localizedFormat('{0} · {1} · 目标条目已删除', [path, resolution.target.label]);
     }
     if (resolution.status === FieldValueReferenceStatus.CATEGORY_MISMATCH) {
       return resolution.target === undefined
-        ? `${path} · 目标条目分类不匹配`
-        : `${path} · ${resolution.target.label} 当前位于 ${resolution.target.category || '未分类'}`;
+        ? this.localizedFormat('{0} · 目标条目分类不匹配', [path])
+        : this.localizedFormat('{0} · {1} 当前位于 {2}', [
+          path,
+          resolution.target.label,
+          resolution.target.category || this.localized('未分类'),
+        ]);
     }
     if (resolution.status === FieldValueReferenceStatus.TARGET_FIELD_MISSING) {
-      return `${path} · 目标字段已删除`;
+      return this.localizedFormat('{0} · 目标字段已删除', [path]);
     }
     if (resolution.status === FieldValueReferenceStatus.TARGET_FIELD_UNSUPPORTED) {
-      return `${path} · 目标字段不再是文本类型`;
+      return this.localizedFormat('{0} · 目标字段不再是文本类型', [path]);
     }
     if (resolution.status === FieldValueReferenceStatus.TARGET_FIELD_EMPTY) {
       return resolution.target === undefined
-        ? `${path} · 目标字段值为空`
-        : `${path} · ${resolution.target.label} · 目标字段值为空`;
+        ? this.localizedFormat('{0} · 目标字段值为空', [path])
+        : this.localizedFormat('{0} · {1} · 目标字段值为空', [path, resolution.target.label]);
     }
     return resolution.target === undefined
-      ? `${path} · 目标条目不存在`
-      : `${path} · ${resolution.target.label} · 已解析`;
+      ? this.localizedFormat('{0} · 目标条目不存在', [path])
+      : this.localizedFormat('{0} · {1} · 已解析', [path, resolution.target.label]);
   }
 
   private fieldReferenceDetailColor(entry: VaultEntry, field: CustomField): Resource {
@@ -6227,17 +6363,17 @@ struct Index {
   private activeFilterLabels(resultCount: number): string[] {
     const labels: string[] = [];
     if (this.selectedCategory.trim().length > 0) {
-      labels.push(`分类: ${this.selectedCategory.trim()}`);
+      labels.push(this.localizedFormat('分类: {0}', [this.selectedCategory.trim()]));
     }
     if (this.selectedTag.trim().length > 0) {
-      labels.push(`标签: ${this.selectedTag.trim()}`);
+      labels.push(this.localizedFormat('筛选标签: {0}', [this.selectedTag.trim()]));
     }
     if (this.searchQuery.trim().length > 0) {
       labels.push(this.usesGlobalTagSearch(this.parseSearchTerms(this.searchQuery))
-        ? '搜索: 全局标签'
-        : '搜索: 当前分类');
+        ? this.localized('搜索: 全局标签')
+        : this.localized('搜索: 当前分类'));
     }
-    labels.push(`结果: ${resultCount}`);
+    labels.push(this.localizedFormat('结果: {0}', [String(resultCount)]));
     return labels;
   }
 
@@ -6412,17 +6548,17 @@ struct Index {
   private entryMatchLabels(entry: VaultEntry): string[] {
     const labels: string[] = [];
     if (this.entryTitleMatched(entry) && this.searchQuery.trim().length > 0) {
-      labels.push('命中标题');
+      labels.push(this.localized('命中标题'));
     }
     if (this.entrySummaryMatched(entry) && this.searchQuery.trim().length > 0) {
-      labels.push('命中字段');
+      labels.push(this.localized('命中字段'));
     }
     if (this.entryCategoryMatched(entry)) {
-      labels.push('命中分类');
+      labels.push(this.localized('命中分类'));
     }
     const matchedTags = entry.tags.filter((tag: string) => this.tagMatched(tag));
     if (matchedTags.length > 0) {
-      labels.push(`命中标签 ${matchedTags.length}`);
+      labels.push(this.localizedFormat('命中标签 {0}', [String(matchedTags.length)]));
     }
     return labels;
   }
@@ -6661,7 +6797,7 @@ struct Index {
     Flex({ wrap: FlexWrap.Wrap }) {
       this.FilterPill('未分类', () => selectedCategory.trim().length === 0, () => {
         onSelected('');
-      });
+      }, true);
       ForEach(this.categories, (category: string) => {
         this.FilterPill(category, () => this.sameCategoryName(selectedCategory, category), () => {
           onSelected(category);
@@ -6671,8 +6807,8 @@ struct Index {
   }
 
   @Builder
-  private FilterPill(label: string, isSelected: () => boolean, action: () => void) {
-    Text(label)
+  private FilterPill(label: string, isSelected: () => boolean, action: () => void, localizeLabel: boolean = false) {
+    Text(localizeLabel ? this.localized(label) : label)
       .fontSize(13)
       .fontWeight(FontWeight.Bold)
       .fontColor(isSelected() ? '#FFFFFF' : UI_TEXT)
@@ -6705,12 +6841,12 @@ struct Index {
 
   private typeLabel(type: VaultEntryType): string {
     if (type === VaultEntryType.CREDENTIAL) {
-      return '账号';
+      return this.localized('账号');
     }
     if (type === VaultEntryType.SERVER) {
-      return '服务器';
+      return this.localized('服务器');
     }
-    return '服务';
+    return this.localized('服务');
   }
 
   private entrySummary(entry: VaultEntry): string {
@@ -6730,38 +6866,88 @@ struct Index {
   }
 
   private entrySummaryField(entry: VaultEntry, field: CustomField): string {
-    const name = field.name.trim().length > 0 ? field.name.trim() : '字段';
+    const name = field.name.trim().length > 0 ? field.name.trim() : this.localized('字段');
     if (this.isFieldReferenceCustomField(entry, field)) {
       const resolution = this.fieldReferenceDetailResolution(entry, field);
       if (resolution === null || resolution.status === FieldValueReferenceStatus.EMPTY) {
-        return `${name}: 未关联`;
+        return this.localizedFormat('{0}: 未关联', [name]);
       }
       if (
         resolution.status === FieldValueReferenceStatus.RESOLVED &&
         resolution.target !== undefined
       ) {
-        return `${name}: ${resolution.target.label} / ${resolution.target.fieldName}`;
+        return this.localizedFormat('{0}: {1} / {2}', [name, resolution.target.label, resolution.target.fieldName]);
       }
-      return `${name}: 关联失效`;
+      return this.localizedFormat('{0}: 关联失效', [name]);
     }
     if (this.isEntryReferenceCustomField(entry, field)) {
       const resolution = this.entryReferenceDetailResolution(entry, field);
       if (resolution === null || resolution.status === EntryReferenceStatus.EMPTY) {
-        return `${name}: 未关联`;
+        return this.localizedFormat('{0}: 未关联', [name]);
       }
       if (resolution.status === EntryReferenceStatus.RESOLVED && resolution.target !== undefined) {
-        return `${name}: ${resolution.target.label}`;
+        return this.localizedFormat('{0}: {1}', [name, resolution.target.label]);
       }
-      return `${name}: 关联失效`;
+      return this.localizedFormat('{0}: 关联失效', [name]);
     }
     if (this.isUnsupportedCustomField(entry, field)) {
-      return `${name}: 不支持的字段`;
+      return this.localizedFormat('{0}: 不支持的字段', [name]);
     }
-    return field.value.trim().length > 0 ? `${name}: ${field.value}` : '';
+    return field.value.trim().length > 0 ? this.localizedFormat('{0}: {1}', [name, field.value]) : '';
+  }
+
+  private currentLanguage(): string {
+    return resolveAppLanguage(this.appLanguage, this.systemLanguageCode);
+  }
+
+  private localizedFormat(template: string, values: string[]): string {
+    return formatLocalizedText(template, this.currentLanguage(), values);
+  }
+
+  private localized(value: string): string {
+    return localizeText(value, this.currentLanguage());
+  }
+
+  private setAppLanguage(value: string): void {
+    this.appLanguage = normalizeAppLanguage(value);
+    this.persistAppUiPreferences();
+  }
+
+  private setAppAppearance(value: string): void {
+    this.appAppearance = normalizeAppAppearance(value);
+    this.applyAppAppearance();
+    this.persistAppUiPreferences();
+  }
+
+  private applyAppAppearance(): void {
+    if (this.hostContext === null) {
+      return;
+    }
+    const colorMode = this.appAppearance === 'light'
+      ? ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT
+      : this.appAppearance === 'dark'
+        ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK
+        : ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
+    this.hostContext.getApplicationContext().setColorMode(colorMode);
+  }
+
+  private async persistAppUiPreferences(): Promise<void> {
+    if (this.appUiPreferencesStore === null) {
+      return;
+    }
+    try {
+      await this.appUiPreferencesStore.write({
+        language: this.appLanguage,
+        appearance: this.appAppearance,
+      });
+    } catch (error) {
+      console.error(`Save app UI preferences failed: ${error}`);
+      this.toast('应用设置保存失败');
+    }
   }
 
   private toast(message: string): void {
-    const clean = message.trim();
+    const clean = this.localized(message.trim());
     if (clean.length === 0) {
       return;
     }

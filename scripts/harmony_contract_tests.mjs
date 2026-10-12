@@ -438,7 +438,7 @@ function checkEntryEditorUiContract() {
   assert(!page.includes('private AccountsEditor'), 'Harmony page does not define legacy account editor');
   assertMatches(
     page,
-    /if\s*\(\s*!this\.categoryCreateReturnToEntry\s*\)\s*{\s*Text\('字段快捷键'\)/s,
+    /if\s*\(\s*!this\.categoryCreateReturnToEntry\s*\)\s*{\s*Text\(this\.localized\(["']字段快捷键["']\)\)/s,
     'Harmony category creation from entry editor hides preset shortcut chips',
   );
   const categoryDraftEditor = page.slice(
@@ -609,7 +609,7 @@ function checkCategoryManagementContract() {
 function checkCategoryFocusContract() {
   const page = read(files.indexPage);
   assertIncludes(page, 'this.FilterPill(category, () => this.isFocusedCategory(category)', 'Harmony category filter highlights the focused category');
-  assertIncludes(page, 'private FilterPill(label: string, isSelected: () => boolean, action: () => void)', 'Harmony filter pills recompute selection reactively via a selector');
+  assertIncludes(page, 'private FilterPill(label: string, isSelected: () => boolean, action: () => void, localizeLabel: boolean = false)', 'Harmony filter pills recompute selection reactively via a selector');
   assertIncludes(page, '.backgroundColor(isSelected() ? UI_ACCENT : UI_SURFACE_ALT)', 'Harmony filter pill fill tracks live selection state');
   assertIncludes(page, 'this.focusCategory(clean);', 'Harmony category filter selection focuses the requested category');
   assertIncludes(page, 'this.draftCategory = this.currentFocusedCategory();', 'Harmony new entries inherit the focused category');

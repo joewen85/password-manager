@@ -57,6 +57,13 @@ else
   status=1
 fi
 
+if node "$ROOT_DIR/scripts/harmony_app_ui_preferences_tests.mjs"; then
+  ok "Harmony app UI preference tests passed"
+else
+  fail "Harmony app UI preference tests failed"
+  status=1
+fi
+
 if node "$ROOT_DIR/scripts/harmony_category_sync_tests.mjs"; then
   ok "Harmony category sync regression tests passed"
 else

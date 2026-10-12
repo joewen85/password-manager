@@ -49,6 +49,7 @@ import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.chip.Chip
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -163,10 +164,14 @@ class MainActivity : AppCompatActivity() {
     private var editorRelayout: (() -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val preferences = getSharedPreferences(AppPreferencesName, Context.MODE_PRIVATE)
+        AppCompatDelegate.setDefaultNightMode(
+            AppAppearance.fromPreference(preferences.getString(PrefAppAppearance, null)).nightMode
+        )
         super.onCreate(savedInstanceState)
         store = VaultStore(this)
         biometricCredentialStore = BiometricCredentialStore(this)
-        appPreferences = getSharedPreferences(AppPreferencesName, Context.MODE_PRIVATE)
+        appPreferences = preferences
         observeWindowLayout()
         idleLockHandler.postDelayed(idleLockRunnable, IdleLockCheckIntervalMs)
         autoSyncHandler.postDelayed(autoSyncRunnable, AutoSyncCheckIntervalMs)
@@ -2824,6 +2829,26 @@ class MainActivity : AppCompatActivity() {
     private fun showSettings() {
         val form = formRoot()
         val settings = store.syncSettings
+        val appLanguage = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                listOf(
+                    text(R.string.system_default),
+                    text(R.string.english),
+                    text(R.string.simplified_chinese),
+                ),
+            )
+            setSelection(AppLanguage.fromLocaleTags(AppCompatDelegate.getApplicationLocales().toLanguageTags()).ordinal)
+        }
+        val appAppearance = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                listOf(text(R.string.system_default), text(R.string.light), text(R.string.dark)),
+            )
+            setSelection(AppAppearance.fromPreference(appPreferences.getString(PrefAppAppearance, null)).ordinal)
+        }
         val requireTotp = CheckBox(this).apply {
             text = text(R.string.require_totp_on_unlock)
             isChecked = store.requireTotp
@@ -2945,6 +2970,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         form.addView(formTitle(text(R.string.settings)))
+        form.addView(sectionTitle(text(R.string.app)), matchWrap(top = dp(12)))
+        form.addView(label(text(R.string.language), 12f, uiColor(R.color.ui_muted), Typeface.BOLD), matchWrap(top = dp(8)))
+        form.addView(appLanguage, matchWrap(top = dp(4)))
+        form.addView(label(text(R.string.appearance), 12f, uiColor(R.color.ui_muted), Typeface.BOLD), matchWrap(top = dp(8)))
+        form.addView(appAppearance, matchWrap(top = dp(4)))
         form.addView(sectionTitle(text(R.string.security)), matchWrap(top = dp(12)))
         form.addView(requireTotp, matchWrap(top = dp(4)))
         form.addView(secret, matchWrap(top = dp(8)))
@@ -3053,7 +3083,24 @@ class MainActivity : AppCompatActivity() {
                         syncMasterKey = syncMasterKey.isChecked,
                     )
                 )
+                val selectedLanguage = AppLanguage.entries[appLanguage.selectedItemPosition]
+                val selectedAppearance = AppAppearance.entries[appAppearance.selectedItemPosition]
+                val currentLanguage = AppLanguage.fromLocaleTags(
+                    AppCompatDelegate.getApplicationLocales().toLanguageTags()
+                )
+                val currentAppearance = AppAppearance.fromPreference(
+                    appPreferences.getString(PrefAppAppearance, null)
+                )
+                appPreferences.edit()
+                    .putString(PrefAppAppearance, selectedAppearance.preferenceValue)
+                    .apply()
                 dialog.dismiss()
+                if (selectedLanguage != currentLanguage) {
+                    AppCompatDelegate.setApplicationLocales(selectedLanguage.toLocaleListCompat())
+                }
+                if (selectedAppearance != currentAppearance) {
+                    AppCompatDelegate.setDefaultNightMode(selectedAppearance.nightMode)
+                }
                 showHome()
                 toast(store.statusMessage ?: text(R.string.settings_saved))
             }
@@ -4127,6 +4174,7 @@ class MainActivity : AppCompatActivity() {
         const val RequestCodeCreateDocument = 4101
         const val RequestCodeOpenDocument = 4102
         const val AppPreferencesName = "password_manager_android_preferences"
+        const val PrefAppAppearance = "app_appearance"
         const val PrefBiometricUnlockEnabled = "biometric_unlock_enabled"
         const val PrefIdleAutoLockMinutes = "idle_auto_lock_minutes"
         const val MaxBiometricFailures = 3

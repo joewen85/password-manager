@@ -20,6 +20,14 @@
     <string name="create_vault">创建密码库</string>
     <string name="operation_failed">操作失败</string>
     <string name="settings">设置</string>
+    <string name="app">应用</string>
+    <string name="language">语言</string>
+    <string name="appearance">外观</string>
+    <string name="system_default">跟随系统</string>
+    <string name="english">English</string>
+    <string name="simplified_chinese">简体中文</string>
+    <string name="light">浅色</string>
+    <string name="dark">深色</string>
     <string name="lock">锁定</string>
     <string name="entries">条目</string>
     <string name="categories">分类</string>
