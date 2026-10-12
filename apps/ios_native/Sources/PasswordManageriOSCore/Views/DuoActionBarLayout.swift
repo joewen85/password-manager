@@ -9,7 +9,7 @@ struct DuoToolbarAction: Identifiable {
 }
 
 struct DuoActionBarLayout {
-    static let maximumVisibleActions = 4
+    static let maximumVisibleActions = 5
 
     let visibleActions: [DuoToolbarAction]
     let overflowActions: [DuoToolbarAction]

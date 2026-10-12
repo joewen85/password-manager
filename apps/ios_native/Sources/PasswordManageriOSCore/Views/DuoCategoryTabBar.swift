@@ -1,20 +1,34 @@
 import SwiftUI
 
 struct DuoCategoryTabLayout: Equatable {
-    static let maximumVisibleCategories = 5
+    static let maximumVisibleTabs = 6
+    static let maximumVisibleCategoriesWithoutOverflow = maximumVisibleTabs - 1
+    static let maximumVisibleCategoriesWithOverflow = maximumVisibleTabs - 2
 
     let visibleCategories: [String]
     let overflowCategories: [String]
 
     init(categories: [String]) {
-        visibleCategories = Array(categories.prefix(Self.maximumVisibleCategories))
-        overflowCategories = Array(categories.dropFirst(Self.maximumVisibleCategories))
+        let visibleCategoryCount = categories.count > Self.maximumVisibleCategoriesWithoutOverflow
+            ? Self.maximumVisibleCategoriesWithOverflow
+            : Self.maximumVisibleCategoriesWithoutOverflow
+        visibleCategories = Array(categories.prefix(visibleCategoryCount))
+        overflowCategories = Array(categories.dropFirst(visibleCategoryCount))
     }
 }
 
 enum DuoCategoryTabScrollState {
-    static func isVisible(forFingerMovement movement: CGFloat) -> Bool {
-        movement > 0
+    static let minimumIdleScrollDelta: CGFloat = 64
+
+    static func visibility(forContentOffsetDelta delta: CGFloat, isScrollActive: Bool) -> Bool? {
+        guard isScrollActive || abs(delta) > minimumIdleScrollDelta else { return nil }
+        if delta > 1 {
+            return false
+        }
+        if delta < -1 {
+            return true
+        }
+        return nil
     }
 }
 

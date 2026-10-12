@@ -32,12 +32,12 @@ func expandedPortraitLayoutIsLimitedToRegularWidthPhonesInPortrait() {
 }
 
 @Test
-func categoryTabLayoutShowsFiveCategoriesAndKeepsTheRestForMore() {
+func categoryTabLayoutKeepsAllAndMoreWithinSixTabs() {
     let categories = (1...7).map { "Category \($0)" }
     let layout = DuoCategoryTabLayout(categories: categories)
 
-    #expect(layout.visibleCategories == Array(categories.prefix(5)))
-    #expect(layout.overflowCategories == ["Category 6", "Category 7"])
+    #expect(layout.visibleCategories == Array(categories.prefix(4)))
+    #expect(layout.overflowCategories == Array(categories.suffix(3)))
 }
 
 @Test
@@ -50,29 +50,48 @@ func categoryTabLayoutDoesNotAddMoreWhenFiveOrFewerExist() {
 }
 
 @Test
-func categoryTabsHideWhenScrollingDownAndReturnWhenScrollingUp() {
-    #expect(!DuoCategoryTabScrollState.isVisible(forFingerMovement: -20))
-    #expect(DuoCategoryTabScrollState.isVisible(forFingerMovement: 20))
+func categoryTabLayoutUsesTheSixthSlotForMoreWhenNeeded() {
+    let categories = (1...6).map { "Category \($0)" }
+    let layout = DuoCategoryTabLayout(categories: categories)
+
+    #expect(layout.visibleCategories == Array(categories.prefix(4)))
+    #expect(layout.overflowCategories == ["Category 5", "Category 6"])
+    #expect(1 + layout.visibleCategories.count + 1 == DuoCategoryTabLayout.maximumVisibleTabs)
 }
 
 @Test
-func actionBarShowsAtMostFourActionsAndKeepsTheRestForMore() {
-    let actions = (1...6).map { index in
+func categoryTabsHideOnDownwardContentScrollAndReturnOnUpwardScroll() {
+    #expect(DuoCategoryTabScrollState.visibility(forContentOffsetDelta: 20, isScrollActive: true) == false)
+    #expect(DuoCategoryTabScrollState.visibility(forContentOffsetDelta: -20, isScrollActive: true) == true)
+    #expect(DuoCategoryTabScrollState.visibility(forContentOffsetDelta: 0, isScrollActive: true) == nil)
+}
+
+@Test
+func categoryTabsIgnoreSmallIdleLayoutOffsetsButFollowLargeScrollJumps() {
+    #expect(DuoCategoryTabScrollState.visibility(forContentOffsetDelta: 52, isScrollActive: false) == nil)
+    #expect(DuoCategoryTabScrollState.visibility(forContentOffsetDelta: 73, isScrollActive: false) == false)
+    #expect(DuoCategoryTabScrollState.visibility(forContentOffsetDelta: -73, isScrollActive: false) == true)
+}
+
+@Test
+func actionBarShowsSyncEditExportDeleteAndLockBeforeMore() {
+    let actionIDs = ["sync", "edit", "export", "delete", "lock", "add"]
+    let actions = actionIDs.map { id in
         DuoToolbarAction(
-            id: "action.\(index)",
-            title: "Action \(index)",
+            id: id,
+            title: id.capitalized,
             systemImage: "circle",
             perform: {}
         )
     }
     let layout = DuoActionBarLayout(actions: actions)
 
-    #expect(layout.visibleActions.map(\.id) == ["action.1", "action.2", "action.3", "action.4"])
-    #expect(layout.overflowActions.map(\.id) == ["action.5", "action.6"])
+    #expect(layout.visibleActions.map(\.id) == ["sync", "edit", "export", "delete", "lock"])
+    #expect(layout.overflowActions.map(\.id) == ["add"])
 }
 
 @Test
-func actionBarDoesNotOverflowFourOrFewerActions() {
+func actionBarDoesNotOverflowFiveOrFewerActions() {
     let actions = (1...4).map { index in
         DuoToolbarAction(
             id: "action.\(index)",

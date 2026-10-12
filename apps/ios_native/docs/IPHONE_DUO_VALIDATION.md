@@ -106,3 +106,9 @@ Core 回归共 138 项通过（133 项 Swift Testing、5 项 XCTest）。布局�
 UI 测试通过启动参数固定应用语言，兼容系统侧栏按钮的中文标签。最终 Duo 全量回归执行 11 项，10 项通过、1 项 iPad 专属测试跳过、0 失败，包含设置草稿保持与关闭不保存。此前一次全量运行中，首屏测试遇到模拟器 `kAXErrorServerNotFound`；该用例单独复跑通过，随后全量重跑也全部通过。新版浮层专项检查胶囊尺寸、按钮高度、列表延伸到浮层下方、搜索避让及编辑取消。真机的玻璃观感及较低 iOS 版本的 material 回退尚未手动验证。
 
 详情页顶部栏调整（2026-10-12）：展开竖屏时保留系统返回键，将玻璃标题与图标功能栏放在其右侧同一行。使用 Device Hub 的 iPhone Duo（iOS 27.1）打开独立测试库中的条目，确认返回键、标题、4 个快捷操作和更多菜单同排；打开更多菜单后点击系统返回键，列表成功恢复。窄标题会按剩余宽度截断。此次未运行 XCTest；Swift Testing 139 项通过，iOS 27.1 模拟器构建通过。
+
+## 展开竖屏顶部栏与分类显隐（2026-10-13）
+
+顶部栏按 Entries、搜索、操作排列。条目详情沿用系统返回键，后接同步、编辑、导出、删除、锁定和更多；条目名称显示在详情正文。分类栏限制为 All、最多 4 个分类和“…”共 6 项，剩余分类由弹层展示。列表内容下滚时隐藏分类栏，上滚时恢复。
+
+使用 Computer Use 操作 Device Hub 的 iPhone Duo（iOS 27.1），通过 `--ui-testing-vault --ui-testing-many-categories` 启动独立测试数据。验证下滚后分类栏隐藏、上滚后恢复；“…”弹层展示 Duo Category 4–7；详情页返回键和 5 个快捷操作同排，更多菜单保留添加和导入；条目名称出现在正文。Swift Testing 定向用例 `actionBarShowsSyncEditExportDeleteAndLockBeforeMore` 通过；iOS 27.1 Simulator Debug 构建通过。本次未运行 XCTest，也未清除模拟器数据。

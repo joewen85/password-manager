@@ -284,7 +284,6 @@ struct ContentView: View {
     private var duoExpandedPortraitNavigation: some View {
         NavigationStack(path: $duoNavigationPath) {
             VStack(spacing: 0) {
-                duoPortraitActionBar(for: nil)
                 EntryListView(
                     entries: visibleEntries,
                     selection: $selection,
@@ -310,8 +309,21 @@ struct ContentView: View {
             .navigationTitle("")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Text("Entries")
+                        .font(.headline)
+                        .fixedSize()
+                        .accessibilityIdentifier("duo.action-bar.title")
+                }
+                ToolbarItem(placement: .principal) {
+                    duoPortraitSearchField
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    duoPortraitActionBar(for: selectedEntry)
+                }
+            }
             #endif
-            .searchable(text: $searchText, prompt: "Search vault")
             .navigationDestination(for: String.self) { entryID in
                 duoPortraitDetail(entryID: entryID)
             }
@@ -336,7 +348,7 @@ struct ContentView: View {
                 deleteEntry: deleteSelectedEntry,
                 exportEntry: { exportingEntry = $0 },
                 showsToolbarActions: false,
-                showsEntryTitle: false,
+                showsEntryTitle: true,
                 openReference: { target in
                     filter = .all
                     searchText = ""
@@ -357,34 +369,65 @@ struct ContentView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarLeading) {
-                duoPortraitActionBar(for: entry, minWidth: 340)
+                duoPortraitActionBar(for: entry)
             }
         }
         #endif
     }
 
-    private func duoPortraitActionBar(for entry: VaultEntry?, minWidth: CGFloat? = nil) -> some View {
+    private var duoPortraitSearchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+
+            TextField("Search vault", text: $searchText)
+#if os(iOS)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+#endif
+                .accessibilityIdentifier("duo.entries.search")
+
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear Search")
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(minWidth: 120, maxWidth: 240, minHeight: 40)
+        .background(.regularMaterial, in: Capsule())
+        .overlay {
+            Capsule().strokeBorder(.quaternary, lineWidth: 0.5)
+        }
+    }
+
+    private func duoPortraitActionBar(for entry: VaultEntry?) -> some View {
         let layout = DuoActionBarLayout(actions: duoPortraitActions(for: entry))
+        let visibleActions = entry == nil
+            ? Array(layout.visibleActions.prefix(1))
+            : layout.visibleActions
+        let overflowActions = entry == nil
+            ? Array(layout.visibleActions.dropFirst()) + layout.overflowActions
+            : layout.overflowActions
 
         return HStack(spacing: 4) {
-            Text(entry?.label ?? "Entries")
-                .font(.headline)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityIdentifier("duo.action-bar.title")
-
-            ForEach(layout.visibleActions) { action in
+            ForEach(visibleActions) { action in
                 duoActionButton(action)
             }
 
             Menu {
-                if !layout.overflowActions.isEmpty {
+                if !overflowActions.isEmpty {
                     Section {
-                        ForEach(layout.overflowActions) { action in
+                        ForEach(overflowActions) { action in
                             Button(role: action.role, action: action.perform) {
                                 Label(action.title, systemImage: action.systemImage)
                             }
+                            .disabled(action.id == "duo.action.sync" && store.isSyncing)
                             .accessibilityIdentifier("\(action.id).overflow")
                         }
                     }
@@ -425,10 +468,6 @@ struct ContentView: View {
                     }
                 }
                 Section("Vault") {
-                    Button(action: store.syncNow) {
-                        Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                    .disabled(store.isSyncing)
                     Button {
                         isPresentingCategoryCreation = true
                     } label: {
@@ -464,12 +503,8 @@ struct ContentView: View {
             .accessibilityLabel("More Actions")
             .accessibilityIdentifier("duo.action.more")
         }
-        .frame(minWidth: minWidth)
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
-        .frame(maxWidth: 920)
-        .padding(.horizontal, 20)
-        .frame(maxWidth: .infinity)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("duo.action-bar")
         .modifier(DuoToolbarGlass())
@@ -477,6 +512,12 @@ struct ContentView: View {
     }
 
     private func duoPortraitActions(for entry: VaultEntry?) -> [DuoToolbarAction] {
+        let syncAction = DuoToolbarAction(
+            id: "duo.action.sync",
+            title: "Sync Now",
+            systemImage: "arrow.triangle.2.circlepath",
+            perform: store.syncNow
+        )
         let addAction = DuoToolbarAction(
             id: "duo.action.add",
             title: "Add Entry",
@@ -497,21 +538,22 @@ struct ContentView: View {
         )
 
         guard let entry else {
-            return [addAction, importAction, lockAction]
+            return [syncAction, addAction, importAction, lockAction]
         }
 
         return [
-            DuoToolbarAction(
-                id: "duo.action.export",
-                title: "Export Entry",
-                systemImage: "square.and.arrow.up",
-                perform: { exportingEntry = entry }
-            ),
+            syncAction,
             DuoToolbarAction(
                 id: "duo.action.edit",
                 title: "Edit Entry",
                 systemImage: "pencil",
                 perform: { beginEditing(entry) }
+            ),
+            DuoToolbarAction(
+                id: "duo.action.export",
+                title: "Export Entry",
+                systemImage: "square.and.arrow.up",
+                perform: { exportingEntry = entry }
             ),
             DuoToolbarAction(
                 id: "duo.action.delete",
@@ -520,9 +562,9 @@ struct ContentView: View {
                 role: .destructive,
                 perform: { deleteSelectedEntry(entry) }
             ),
+            lockAction,
             addAction,
-            importAction,
-            lockAction
+            importAction
         ]
     }
 
@@ -534,6 +576,7 @@ struct ContentView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(action.id == "duo.action.sync" && store.isSyncing)
         .help(action.title)
         .accessibilityLabel(action.title)
         .accessibilityIdentifier(action.id)
