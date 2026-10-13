@@ -4,6 +4,7 @@ final class EncryptedRemoteSyncClient: RemoteSyncClient, @unchecked Sendable {
     private let delegate: RemoteSyncClient
     private let crypto: VaultCryptoService
     private let vaultKey: Data
+    private let masterPassword: String
     private let masterKeyRecord: MasterKeyRecord?
     private let includeMasterKeyRecord: Bool
     private(set) var downloadedPlaintextRemote = false
@@ -12,12 +13,14 @@ final class EncryptedRemoteSyncClient: RemoteSyncClient, @unchecked Sendable {
         delegate: RemoteSyncClient,
         crypto: VaultCryptoService,
         vaultKey: Data,
+        masterPassword: String,
         masterKeyRecord: MasterKeyRecord?,
         includeMasterKeyRecord: Bool
     ) {
         self.delegate = delegate
         self.crypto = crypto
         self.vaultKey = vaultKey
+        self.masterPassword = masterPassword
         self.masterKeyRecord = masterKeyRecord
         self.includeMasterKeyRecord = includeMasterKeyRecord
     }
@@ -88,7 +91,20 @@ final class EncryptedRemoteSyncClient: RemoteSyncClient, @unchecked Sendable {
             throw VaultSyncEngineError.invalidRemotePayload
         }
         let envelope = try decoder.decode(EncryptedVaultSyncEnvelope.self, from: data)
-        let snapshot = try decoder.decode(VaultSnapshot.self, from: crypto.decrypt(envelope.encryptedVault, key: vaultKey))
+        let snapshotData: Data
+        do {
+            snapshotData = try crypto.decrypt(envelope.encryptedVault, key: vaultKey)
+        } catch {
+            guard let remoteMasterKeyRecord = envelope.masterKeyRecord else {
+                throw error
+            }
+            let remoteVaultKey = try crypto.verify(
+                password: masterPassword,
+                record: remoteMasterKeyRecord
+            )
+            snapshotData = try crypto.decrypt(envelope.encryptedVault, key: remoteVaultKey)
+        }
+        let snapshot = try decoder.decode(VaultSnapshot.self, from: snapshotData)
         let payload = VaultSyncPayload(
             version: envelope.version,
             exportedAt: envelope.exportedAt,

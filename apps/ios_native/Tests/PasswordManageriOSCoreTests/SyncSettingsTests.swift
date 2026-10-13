@@ -608,6 +608,79 @@ struct SyncSettingsTests {
     }
 
     @MainActor
+    @Test("Independent encrypted vaults synchronize only after remote key verification", arguments: [
+        ("shared-password", true, false, true),
+        ("different-password", true, false, false),
+        ("shared-password", false, false, false),
+        ("shared-password", true, true, false)
+    ])
+    func independentEncryptedVaultSync(
+        remotePassword: String,
+        includesMetadata: Bool,
+        isTampered: Bool,
+        shouldSucceed: Bool
+    ) async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PasswordManageriOSIndependentSyncTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = FileVaultRepository(baseDirectory: directory)
+        let store = VaultStore(repository: repository, syncSettingsRepository: nil)
+        #expect(store.setupMasterPassword("shared-password", confirmation: "shared-password"))
+        var draft = EntryDraft()
+        draft.label = "Local Entry"
+        #expect(store.upsert(draft, editing: nil))
+        let originalRecord = try #require(try repository.loadEnvelope()?.masterKeyRecord)
+        let crypto = VaultCryptoService()
+        let remoteRecord = try crypto.makeMasterKeyRecord(
+            password: remotePassword,
+            salt: Data(repeating: 0x44, count: 16),
+            metadataSalt: Data(repeating: 0x55, count: 16),
+            iterations: 1_000
+        )
+        #expect(originalRecord.saltBase64 != remoteRecord.saltBase64)
+        let remoteSnapshot = VaultSnapshot(entries: [VaultEntry(
+            label: "Remote Entry",
+            type: .credential,
+            payload: .credential(CredentialPayload(password: "remote-fixture-secret"))
+        )])
+        var encryptedVault = try crypto.encrypt(
+            try makeSyncPayloadEncoder().encode(remoteSnapshot),
+            key: crypto.verify(password: remotePassword, record: remoteRecord)
+        )
+        if isTampered {
+            encryptedVault.mac = Data(repeating: 0, count: 16).base64EncodedString()
+        }
+        let envelope = TestEncryptedVaultSyncEnvelope(
+            version: 1, exportedAt: Date(), deviceId: "remote-device", revision: 1,
+            masterKeyRecord: includesMetadata ? remoteRecord : nil,
+            encryptedVault: encryptedVault
+        )
+        let payload = String(decoding: try makeSyncPayloadEncoder().encode(envelope), as: UTF8.self)
+        let client = VaultStoreSyncFakeClient(
+            downloads: [RemoteSyncResult(payload: payload, statusCode: 200)],
+            uploadStatusCodes: [200]
+        )
+
+        await store.syncNow(client: client)
+
+        #expect(store.entries.contains { $0.label == "Local Entry" })
+        #expect(store.entries.contains { $0.label == "Remote Entry" } == shouldSucceed)
+        #expect(store.syncSettings.lastSyncStatus == (shouldSucceed ? "success" : "error"))
+        #expect(try repository.loadEnvelope()?.masterKeyRecord == originalRecord)
+        if shouldSucceed {
+            let upload = try #require(client.uploadedPayloads.first)
+            #expect(!upload.contains("remote-fixture-secret"))
+            let decoded = try decodeEncryptedSyncPayload(upload, repository: repository, password: "shared-password")
+            #expect(decoded.snapshot.entries.contains { $0.label == "Remote Entry" })
+            let reloadedStore = VaultStore(repository: repository, syncSettingsRepository: nil)
+            #expect(reloadedStore.unlock(password: "shared-password"))
+            #expect(reloadedStore.entries.contains { $0.label == "Remote Entry" })
+        } else {
+            #expect(client.uploadedPayloads.isEmpty)
+        }
+    }
+
+    @MainActor
     @Test("Unchanged sync does not republish the entry collection")
     func unchangedSyncDoesNotRepublishEntryCollection() async throws {
         let directory = FileManager.default.temporaryDirectory

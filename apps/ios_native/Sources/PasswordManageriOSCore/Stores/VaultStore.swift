@@ -664,6 +664,7 @@ final class VaultStore {
                     delegate: client,
                     crypto: crypto,
                     vaultKey: vaultKey,
+                    masterPassword: masterPassword,
                     masterKeyRecord: masterKeyRecord,
                     includeMasterKeyRecord: syncSettings.syncMasterKey
                 )
