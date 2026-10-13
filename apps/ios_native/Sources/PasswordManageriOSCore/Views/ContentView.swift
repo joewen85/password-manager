@@ -320,7 +320,7 @@ struct ContentView: View {
                     duoPortraitSearchField
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    duoPortraitActionBar(for: selectedEntry)
+                    duoPortraitActionBar(for: nil)
                 }
             }
             #endif
@@ -399,7 +399,8 @@ struct ContentView: View {
             }
         }
         .padding(.horizontal, 12)
-        .frame(minWidth: 120, maxWidth: 240, minHeight: 40)
+        .frame(minWidth: 120, maxWidth: 240)
+        .frame(height: 52)
         .background(.regularMaterial, in: Capsule())
         .overlay {
             Capsule().strokeBorder(.quaternary, lineWidth: 0.5)
@@ -408,22 +409,16 @@ struct ContentView: View {
 
     private func duoPortraitActionBar(for entry: VaultEntry?) -> some View {
         let layout = DuoActionBarLayout(actions: duoPortraitActions(for: entry))
-        let visibleActions = entry == nil
-            ? Array(layout.visibleActions.prefix(1))
-            : layout.visibleActions
-        let overflowActions = entry == nil
-            ? Array(layout.visibleActions.dropFirst()) + layout.overflowActions
-            : layout.overflowActions
 
         return HStack(spacing: 4) {
-            ForEach(visibleActions) { action in
+            ForEach(layout.visibleActions) { action in
                 duoActionButton(action)
             }
 
             Menu {
-                if !overflowActions.isEmpty {
+                if !layout.overflowActions.isEmpty {
                     Section {
-                        ForEach(overflowActions) { action in
+                        ForEach(layout.overflowActions) { action in
                             Button(role: action.role, action: action.perform) {
                                 Label(action.title, systemImage: action.systemImage)
                             }
@@ -472,6 +467,11 @@ struct ContentView: View {
                         isPresentingCategoryCreation = true
                     } label: {
                         Label("Create Category", systemImage: "folder.badge.plus")
+                    }
+                    Button {
+                        isPresentingScopedImport = true
+                    } label: {
+                        Label("Import Entry/Category JSON", systemImage: "square.and.arrow.down")
                     }
                     Button(action: store.runBackup) {
                         Label("Run Backup", systemImage: "externaldrive.badge.timemachine")
@@ -538,7 +538,7 @@ struct ContentView: View {
         )
 
         guard let entry else {
-            return [syncAction, addAction, importAction, lockAction]
+            return [syncAction, addAction, lockAction]
         }
 
         return [

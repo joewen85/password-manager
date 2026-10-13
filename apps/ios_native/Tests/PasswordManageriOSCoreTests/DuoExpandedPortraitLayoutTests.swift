@@ -61,16 +61,39 @@ func categoryTabLayoutUsesTheSixthSlotForMoreWhenNeeded() {
 
 @Test
 func categoryTabsHideOnDownwardContentScrollAndReturnOnUpwardScroll() {
-    #expect(DuoCategoryTabScrollState.visibility(forContentOffsetDelta: 20, isScrollActive: true) == false)
-    #expect(DuoCategoryTabScrollState.visibility(forContentOffsetDelta: -20, isScrollActive: true) == true)
-    #expect(DuoCategoryTabScrollState.visibility(forContentOffsetDelta: 0, isScrollActive: true) == nil)
+    var state = DuoCategoryTabScrollState()
+    #expect(state.visibility(forFingerMovement: -20) == false)
+    #expect(state.visibility(forFingerMovement: 20) == true)
+    #expect(state.visibility(forFingerMovement: 0) == nil)
 }
 
 @Test
-func categoryTabsIgnoreSmallIdleLayoutOffsetsButFollowLargeScrollJumps() {
-    #expect(DuoCategoryTabScrollState.visibility(forContentOffsetDelta: 52, isScrollActive: false) == nil)
-    #expect(DuoCategoryTabScrollState.visibility(forContentOffsetDelta: 73, isScrollActive: false) == false)
-    #expect(DuoCategoryTabScrollState.visibility(forContentOffsetDelta: -73, isScrollActive: false) == true)
+func categoryTabsFollowSlowFingerMovementInBothDirections() {
+    var state = DuoCategoryTabScrollState()
+
+    for _ in 0..<11 {
+        #expect(state.visibility(forFingerMovement: -0.25) == nil)
+    }
+    #expect(state.visibility(forFingerMovement: -0.25) == false)
+
+    for _ in 0..<11 {
+        #expect(state.visibility(forFingerMovement: 0.25) == nil)
+    }
+    #expect(state.visibility(forFingerMovement: 0.25) == true)
+}
+
+@Test
+func categoryTabsResetAccumulationWhenFingerDirectionChanges() {
+    var state = DuoCategoryTabScrollState()
+
+    for _ in 0..<7 {
+        #expect(state.visibility(forFingerMovement: -0.25) == nil)
+    }
+    #expect(state.visibility(forFingerMovement: 0.25) == nil)
+    for _ in 0..<10 {
+        #expect(state.visibility(forFingerMovement: 0.25) == nil)
+    }
+    #expect(state.visibility(forFingerMovement: 0.25) == true)
 }
 
 @Test

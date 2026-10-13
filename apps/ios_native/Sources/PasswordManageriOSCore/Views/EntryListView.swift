@@ -8,34 +8,13 @@ struct EntryListView: View {
 
     @State private var scrollPosition: VaultEntry.ID?
     @State private var lastDragTranslation: CGFloat = 0
-    @State private var lastObservedContentOffset: CGFloat?
-    @State private var isScrollPhaseActive = false
+    @State private var categoryTabScrollState = DuoCategoryTabScrollState()
     @ScaledMetric(relativeTo: .body) private var iconWidth = 18
 
     @ViewBuilder
     var body: some View {
         if onScrollDirectionChange != nil {
-            if #available(iOS 18.0, macOS 15.0, *) {
-                entryList
-                    .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                        geometry.contentOffset.y
-                    } action: { _, currentOffset in
-                        let lastOffset = lastObservedContentOffset
-                        lastObservedContentOffset = currentOffset
-                        guard let lastOffset else { return }
-                        reportVisibility(
-                            forContentOffsetDelta: currentOffset - lastOffset,
-                            isScrollActive: isScrollPhaseActive
-                        )
-                    }
-                    .onScrollPhaseChange { _, phase in
-                        isScrollPhaseActive = phase == .interacting
-                            || phase == .decelerating
-                            || phase == .animating
-                    }
-            } else {
-                entryList.simultaneousGesture(scrollDirectionGesture)
-            }
+            entryList.simultaneousGesture(scrollDirectionGesture)
         } else {
             entryList
         }
@@ -45,20 +24,18 @@ struct EntryListView: View {
         DragGesture(minimumDistance: 8)
             .onChanged { value in
                 let difference = value.translation.height - lastDragTranslation
-                guard abs(difference) > 3 else { return }
+                guard abs(difference) > 0.1 else { return }
                 lastDragTranslation = value.translation.height
-                reportVisibility(forContentOffsetDelta: -difference, isScrollActive: true)
+                reportVisibility(forFingerMovement: difference)
             }
             .onEnded { _ in
                 lastDragTranslation = 0
+                categoryTabScrollState.reset()
             }
     }
 
-    private func reportVisibility(forContentOffsetDelta delta: CGFloat, isScrollActive: Bool) {
-        guard let isVisible = DuoCategoryTabScrollState.visibility(
-            forContentOffsetDelta: delta,
-            isScrollActive: isScrollActive
-        ) else { return }
+    private func reportVisibility(forFingerMovement movement: CGFloat) {
+        guard let isVisible = categoryTabScrollState.visibility(forFingerMovement: movement) else { return }
         onScrollDirectionChange?(isVisible)
     }
 

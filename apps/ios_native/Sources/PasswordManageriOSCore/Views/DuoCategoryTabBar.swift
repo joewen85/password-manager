@@ -17,18 +17,28 @@ struct DuoCategoryTabLayout: Equatable {
     }
 }
 
-enum DuoCategoryTabScrollState {
-    static let minimumIdleScrollDelta: CGFloat = 64
+struct DuoCategoryTabScrollState {
+    static let minimumDirectionDistance: CGFloat = 3
 
-    static func visibility(forContentOffsetDelta delta: CGFloat, isScrollActive: Bool) -> Bool? {
-        guard isScrollActive || abs(delta) > minimumIdleScrollDelta else { return nil }
-        if delta > 1 {
-            return false
+    private var accumulatedFingerMovement: CGFloat = 0
+
+    mutating func visibility(forFingerMovement movement: CGFloat) -> Bool? {
+        guard movement != 0 else { return nil }
+
+        if accumulatedFingerMovement != 0,
+           (accumulatedFingerMovement > 0) != (movement > 0) {
+            accumulatedFingerMovement = 0
         }
-        if delta < -1 {
-            return true
-        }
-        return nil
+        accumulatedFingerMovement += movement
+        guard abs(accumulatedFingerMovement) >= Self.minimumDirectionDistance else { return nil }
+
+        let isVisible = accumulatedFingerMovement > 0
+        accumulatedFingerMovement = 0
+        return isVisible
+    }
+
+    mutating func reset() {
+        accumulatedFingerMovement = 0
     }
 }
 

@@ -112,3 +112,9 @@ UI 测试通过启动参数固定应用语言，兼容系统侧栏按钮的中�
 顶部栏按 Entries、搜索、操作排列。条目详情沿用系统返回键，后接同步、编辑、导出、删除、锁定和更多；条目名称显示在详情正文。分类栏限制为 All、最多 4 个分类和“…”共 6 项，剩余分类由弹层展示。列表内容下滚时隐藏分类栏，上滚时恢复。
 
 使用 Computer Use 操作 Device Hub 的 iPhone Duo（iOS 27.1），通过 `--ui-testing-vault --ui-testing-many-categories` 启动独立测试数据。验证下滚后分类栏隐藏、上滚后恢复；“…”弹层展示 Duo Category 4–7；详情页返回键和 5 个快捷操作同排，更多菜单保留添加和导入；条目名称出现在正文。Swift Testing 定向用例 `actionBarShowsSyncEditExportDeleteAndLockBeforeMore` 通过；iOS 27.1 Simulator Debug 构建通过。本次未运行 XCTest，也未清除模拟器数据。
+
+## 展开竖屏顶栏与慢速滚动修正（2026-10-13）
+
+列表顶栏固定显示同步、添加、锁定，导入留在更多菜单；避免根列表残留选中状态展示详情操作。搜索胶囊与功能胶囊统一为 52 pt 高。分类栏显隐改由列表的同时垂直拖动手势驱动，累计 3 pt 的同向移动触发显隐，反向时重新累计，慢速拖动也能响应。
+
+在 Device Hub 的 iPhone Duo（iOS 27.1）中使用 Computer Use 检查顶栏三个按钮及胶囊高度；短距离向上拖动后分类栏从画面和辅助功能树中消失，反向拖动后恢复。Swift Testing 全部 142 项通过，iOS 27.1 Simulator Debug 构建通过；未运行 XCTest，未清除模拟器数据。
